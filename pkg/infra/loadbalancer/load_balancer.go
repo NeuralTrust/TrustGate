@@ -53,6 +53,7 @@ type LoadBalancer struct {
 	poolSize   int
 	routes     []routingdomain.Route
 	backendIDs []string
+	smart      *registry.SmartRoutingConfig
 	successCh  chan *registry.Registry
 	factory    Factory
 	done       chan struct{}
@@ -99,6 +100,7 @@ func NewLoadBalancer(
 		poolSize:   len(pool.Routes),
 		routes:     pool.Routes,
 		backendIDs: backendIDs,
+		smart:      pool.SmartRoutingConfig,
 		successCh:  make(chan *registry.Registry, 1000),
 		factory:    factory,
 		done:       make(chan struct{}),
@@ -109,6 +111,14 @@ func NewLoadBalancer(
 
 func (lb *LoadBalancer) Routes() []routingdomain.Route {
 	return lb.routes
+}
+
+func (lb *LoadBalancer) Algorithm() string {
+	return lb.strategy.Name()
+}
+
+func (lb *LoadBalancer) SmartRouting() *registry.SmartRoutingConfig {
+	return lb.smart
 }
 
 func healthKey(backendID string) string {

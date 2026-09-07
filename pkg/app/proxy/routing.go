@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -27,9 +28,12 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 type routedBackend struct {
@@ -38,6 +42,7 @@ type routedBackend struct {
 	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
+	baseline     *trace.RouteBaseline
 }
 
 func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
@@ -47,7 +52,8 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		return intent, nil, err
 	}
 	in.Request.RequestedModel = ref
-	if intent.IsZero() && !isRoleBased(in.Consumer) {
+	needed := capabilityRequiresProviderSupport(in.Request)
+	if intent.IsZero() && !isRoleBased(in.Consumer) && needed == "" {
 		return intent, nil, nil
 	}
 	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
@@ -60,11 +66,74 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
+	if needed != "" {
+		candidates = filterCandidatesByCapability(candidates, needed)
+	}
+	if needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, in.Request)
+	}
 	if candidates.Len() == 0 {
+		if needed != "" && intent.IsQualified() {
+			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
+			f.logRejectedIntent(in.Consumer, ref, err)
+			return intent, nil, err
+		}
 		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}
 	return intent, candidates, nil
+}
+
+func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	switch req.ProxyCapability {
+	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages,
+		capabilityAudioSpeech, capabilityAudioTranscription:
+		return req.ProxyCapability
+	default:
+		return ""
+	}
+}
+
+func isAudioCapability(capability string) bool {
+	return capability == capabilityAudioSpeech || capability == capabilityAudioTranscription
+}
+
+func filterCandidatesByCapability(candidates *routingdomain.CandidateSet, capability string) *routingdomain.CandidateSet {
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.SupportsCapability(c.Registry.Provider(), capability)
+	})
+}
+
+func filterCandidatesByFilesID(candidates *routingdomain.CandidateSet, req *infracontext.RequestContext) *routingdomain.CandidateSet {
+	if req == nil {
+		return candidates
+	}
+	fileID := providers.FilesIDFromPath(req.Path)
+	if fileID == "" {
+		return candidates
+	}
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.ProviderMatchesFilesID(c.Registry.Provider(), fileID)
+	})
+}
+
+func filesIDNotFound(req *infracontext.RequestContext, resp *ProviderResponse) bool {
+	if req == nil || resp == nil || req.ProxyCapability != capabilityFiles {
+		return false
+	}
+	if providers.FilesIDFromPath(req.Path) == "" {
+		return false
+	}
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
@@ -107,6 +176,12 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	}
 	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
+		if req.ProxyCapability == capabilityImages && providers.IsImagesMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractImagesModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
+		if isAudioCapability(req.ProxyCapability) && providers.IsAudioMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractAudioModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
 		return "", nil
 	}
 	if hasModelID {
@@ -198,6 +273,7 @@ func (f *forwarder) routeBackend(
 	}
 	excluded := nonCandidateRoutes(lb, rc, candidates)
 	route, err := lb.NextRoute(ctx, req, excluded)
+	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
@@ -209,7 +285,45 @@ func (f *forwarder) routeBackend(
 		}
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
-	return routedBackend{lb: lb, route: *route, excluded: excluded}, nil
+	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
+}
+
+func smartRoutingBaseline(
+	lb *loadbalancer.LoadBalancer,
+	excluded map[routingdomain.RouteKey]struct{},
+) *trace.RouteBaseline {
+	if lb == nil || lb.Algorithm() != algorithm.SmartRouting {
+		return nil
+	}
+	tier, ok := lb.SmartRouting().HighestTier()
+	if !ok {
+		return nil
+	}
+	model := tier.RouteModel()
+	for _, route := range lb.Routes() {
+		if route.Registry == nil || route.Registry.ID != tier.RegistryID {
+			continue
+		}
+		if model != "" && route.Model != model {
+			continue
+		}
+		if _, skip := excluded[route.Key()]; skip {
+			continue
+		}
+		slug := route.Model
+		if slug == "" {
+			slug = route.Default
+		}
+		if slug == "" {
+			return nil
+		}
+		return &trace.RouteBaseline{
+			Provider: route.Registry.Provider(),
+			Model:    slug,
+			Pricing:  route.Registry.Pricing(),
+		}
+	}
+	return nil
 }
 
 func (f *forwarder) routeLoadBalancer(

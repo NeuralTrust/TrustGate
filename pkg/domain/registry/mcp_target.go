@@ -51,6 +51,17 @@ func (m MCPProtocolMode) Validate() error {
 	}
 }
 
+type MCPSource string
+
+const (
+	MCPSourceRemote  MCPSource = "mcp"
+	MCPSourceOpenAPI MCPSource = "openapi"
+)
+
+type OpenAPITarget struct {
+	SpecURL string `json:"spec_url"`
+}
+
 type MCPAuthMode string
 
 const (
@@ -116,18 +127,85 @@ type MCPTarget struct {
 	// connected, mirroring how an LLM registry stores its provider code. Empty
 	// for custom servers added by raw URL.
 	Code         string            `json:"code,omitempty"`
-	URL          string            `json:"url"`
+	Source       MCPSource         `json:"source,omitempty"`
+	URL          string            `json:"url,omitempty"`
 	Transport    MCPTransport      `json:"transport,omitempty"`
 	ProtocolMode MCPProtocolMode   `json:"protocol_mode,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 	Auth         *MCPAuth          `json:"auth,omitempty"`
+	OpenAPI      *OpenAPITarget    `json:"openapi,omitempty"`
+	// URLVariables declares the per-user placeholders in URL (e.g. {account_url},
+	// {instance}) that each principal fills at install time. It is copied verbatim
+	// from the catalog entry when a registry is materialised, so the dial path is
+	// self-contained: it knows which placeholders to substitute, which are
+	// required, and which are secret (vault) vs plain (installation config) —
+	// without re-reading the catalog. Empty for servers whose URL is fully
+	// determined (the common case). See ResolveURL.
+	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+	// InstanceConfig carries one instance's resolved plain URL-variable values when
+	// the Store scoper exposes several instances of the same catalog code for a
+	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
+	// a per-instance registry clone, never persisted (json:"-") and never part of
+	// the config snapshot; the dial-time resolver prefers it over the by-code
+	// installation lookup, which cannot tell one instance from another. Nil in the
+	// common single-instance case, where the by-code lookup is unambiguous.
+	InstanceConfig map[string]string `json:"-"`
+}
+
+// MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.
+// It is the registry-side mirror of the catalog's url_variable: the shared
+// registry carries the declaration, each principal's installation carries the
+// value (a plain value in installation.Config, or a secret in the vault).
+type MCPURLVariable struct {
+	// Name is the placeholder token: {Name} in the URL template.
+	Name string `json:"name"`
+	// Description is human help shown when collecting the value.
+	Description string `json:"description,omitempty"`
+	// Required fails the install if the principal does not supply the value.
+	Required bool `json:"required,omitempty"`
+	// Secret routes the value to the vault instead of installation config, and
+	// keeps it out of the model context (collected via the connect link, never as
+	// a chat argument).
+	Secret bool `json:"secret,omitempty"`
+	// In is where the placeholder sits: "" (a host or path segment, validated to a
+	// structure-safe charset) or "query" (a query-string value, percent-escaped).
+	In string `json:"in,omitempty"`
+}
+
+// URLVariableIn values.
+const (
+	URLVariableInQuery = "query"
+)
+
+// HasURLVariables reports whether this target's URL carries per-user
+// placeholders that must be resolved from a principal's install before dialing.
+func (t *MCPTarget) HasURLVariables() bool {
+	return t != nil && len(t.URLVariables) > 0
+}
+
+// RequiredURLVariables returns the names of the placeholders a principal must
+// supply. SecretURLVariables returns those that route to the vault.
+func (t *MCPTarget) RequiredURLVariables() []string {
+	if t == nil {
+		return nil
+	}
+	var out []string
+	for _, v := range t.URLVariables {
+		if v.Required {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }
 
 func (t *MCPTarget) Normalize() {
 	if t == nil {
 		return
 	}
-	if t.Transport == "" {
+	if t.Source == "" {
+		t.Source = MCPSourceRemote
+	}
+	if t.Source == MCPSourceRemote && t.Transport == "" {
 		t.Transport = MCPTransportStreamableHTTP
 	}
 	if t.ProtocolMode == "" {
@@ -153,24 +231,55 @@ func (t *MCPTarget) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// targetURLValid reports whether the target URL is a valid http(s) URL, treating
+// declared URL-variable placeholders as already filled. A template such as
+// https://{instance}.service-now.com/mcp is legitimate even though "{" is not a
+// legal host character until a principal's value replaces it at dial time, so the
+// placeholders are substituted with a benign sentinel before the check. Servers
+// with no URL variables are validated verbatim, unchanged from before.
+func (t *MCPTarget) targetURLValid() bool {
+	u := t.URL
+	if len(t.URLVariables) > 0 {
+		u = urlTemplateToken.ReplaceAllString(u, "x")
+	}
+	return isHTTPURL(u)
+}
+
 func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
 	}
 	t.Normalize()
-	if strings.TrimSpace(t.URL) == "" {
-		return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
+	source := t.Source
+	if source == "" {
+		source = MCPSourceRemote
 	}
-	u, err := url.Parse(t.URL)
-	if err != nil {
-		return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if (scheme != "http" && scheme != "https") || u.Host == "" {
-		return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
-	}
-	if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
-		return fmt.Errorf("%w: unsupported transport %q", ErrInvalidMCPTarget, t.Transport)
+	switch source {
+	case MCPSourceRemote:
+		if strings.TrimSpace(t.URL) == "" {
+			return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
+		}
+		if !t.targetURLValid() {
+			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
+			return fmt.Errorf("%w: unsupported transport %q", ErrInvalidMCPTarget, t.Transport)
+		}
+		if t.OpenAPI != nil {
+			return fmt.Errorf("%w: openapi is only valid for openapi sources", ErrInvalidMCPTarget)
+		}
+	case MCPSourceOpenAPI:
+		if t.OpenAPI == nil || !isHTTPURL(t.OpenAPI.SpecURL) {
+			return fmt.Errorf("%w: openapi.spec_url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.URL != "" && !t.targetURLValid() {
+			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.Transport != "" {
+			return fmt.Errorf("%w: transport is not valid for openapi sources", ErrInvalidMCPTarget)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported source %q", ErrInvalidMCPTarget, t.Source)
 	}
 	if err := t.ProtocolMode.Validate(); err != nil {
 		return err
@@ -178,6 +287,13 @@ func (t *MCPTarget) Validate() error {
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {
 			return err
+		}
+		if source == MCPSourceOpenAPI &&
+			t.Auth.Mode != "" &&
+			t.Auth.Mode != MCPAuthModeNone &&
+			t.Auth.Mode != MCPAuthModeStatic &&
+			t.Auth.Mode != MCPAuthModeClientCredentials {
+			return fmt.Errorf("%w: auth mode %q is not supported for openapi sources", ErrInvalidMCPTarget, t.Auth.Mode)
 		}
 	}
 	return nil

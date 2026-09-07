@@ -121,20 +121,82 @@ type CanonicalReasoning struct {
 }
 
 // CanonicalUsage holds token counts in a provider-neutral split: Input / Output / Total.
-// The three buckets are the canonical view; sub-counts are optional refinements
-// of InputTokens / OutputTokens (NOT subtracted from the totals). The
-// nil-on-absence and total-synthesis contracts live in newCanonicalUsage.
+// InputTokens and OutputTokens are the whole prompt and the whole completion as
+// the provider bills them, whatever rate each token falls under. Every other
+// count names a sub-population of one of those two that bills at a different
+// rate, and is always a strict subset of its parent: providers that report a
+// count beside its parent rather than inside it are folded in by their adapter,
+// so one pricing expression is correct everywhere. CachedInputTokens and
+// CacheWriteInputTokens are also disjoint from each other. The nil-on-absence
+// and total-synthesis contracts live in newCanonicalUsage.
 type CanonicalUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
-	// Provider-specific cache/billing fields (pass-through).
-	CacheCreationInputTokens int    `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int    `json:"cache_read_input_tokens,omitempty"`
-	ServiceTier              string `json:"service_tier,omitempty"`
-	CachedInputTokens        int    `json:"cached_input_tokens,omitempty"`     // sub-count of InputTokens
-	ReasoningOutputTokens    int    `json:"reasoning_output_tokens,omitempty"` // sub-count of OutputTokens
-	ToolUseInputTokens       int    `json:"tool_use_input_tokens,omitempty"`   // sub-count of InputTokens
+
+	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens int `json:"cache_write_input_tokens,omitempty"`
+	ToolUseInputTokens    int `json:"tool_use_input_tokens,omitempty"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
+
+	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with
+	// Anthropic's one-hour TTL, which bills at 2x input where the five-minute
+	// default bills at 1.25x. Carried because the wire reports it; not yet priced
+	// separately, since the catalog publishes a single cache-write rate.
+	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
+
+	ServiceTier string `json:"service_tier,omitempty"`
+}
+
+// PlainInputTokens is the share of the prompt that bills at the plain input
+// rate, once the sub-populations with their own rates are removed.
+func (u *CanonicalUsage) PlainInputTokens() int {
+	if u == nil {
+		return 0
+	}
+	plain := u.InputTokens - u.CachedInputTokens - u.CacheWriteInputTokens
+	if plain < 0 {
+		return u.InputTokens
+	}
+	return plain
+}
+
+// MergeUsage folds a later usage report into an earlier one, keeping the larger
+// of every count. Providers stream usage in pieces and do not all repeat every
+// field: Anthropic reports the prompt and both cache buckets on message_start
+// and the completion on message_delta, so a later event that omits a field must
+// not erase what an earlier one established. Token counts within a request only
+// ever grow, which is what makes the larger value the right one to keep.
+func MergeUsage(prev, next *CanonicalUsage) *CanonicalUsage {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	out := *prev
+	out.InputTokens = maxTokens(prev.InputTokens, next.InputTokens)
+	out.OutputTokens = maxTokens(prev.OutputTokens, next.OutputTokens)
+	out.TotalTokens = maxTokens(prev.TotalTokens, next.TotalTokens)
+	out.CachedInputTokens = maxTokens(prev.CachedInputTokens, next.CachedInputTokens)
+	out.CacheWriteInputTokens = maxTokens(prev.CacheWriteInputTokens, next.CacheWriteInputTokens)
+	out.CacheWrite1hInputTokens = maxTokens(prev.CacheWrite1hInputTokens, next.CacheWrite1hInputTokens)
+	out.ToolUseInputTokens = maxTokens(prev.ToolUseInputTokens, next.ToolUseInputTokens)
+	out.ReasoningOutputTokens = maxTokens(prev.ReasoningOutputTokens, next.ReasoningOutputTokens)
+	if next.ServiceTier != "" {
+		out.ServiceTier = next.ServiceTier
+	}
+	if sum := out.InputTokens + out.OutputTokens; out.TotalTokens < sum {
+		out.TotalTokens = sum
+	}
+	return &out
+}
+
+func maxTokens(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // newCanonicalUsage returns the canonical usage view, or nil when no tokens are

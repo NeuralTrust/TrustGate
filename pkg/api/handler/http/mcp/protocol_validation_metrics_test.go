@@ -82,7 +82,8 @@ func TestHandler_AuthAndPathSkipProtocolCounter(t *testing.T) {
 		skipped, _ = c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool)
 		return err
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), rec)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil,
+		mcphttp.WithProtocolRecorder(rec))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 
@@ -118,7 +119,8 @@ func newAppWithProtocolRecorder(t *testing.T, rec mcphttp.ProtocolValidationReco
 		}
 		return err
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), rec)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil,
+		mcphttp.WithProtocolRecorder(rec))
 	app.Post(mcpPath, handler.Handle)
 	return app
 }
@@ -152,7 +154,8 @@ func newAppWithMCPPolicy(
 		}
 		return err
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), rec)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil,
+		mcphttp.WithProtocolRecorder(rec))
 	app.Post(mcpPath, handler.Handle)
 	return app
 }

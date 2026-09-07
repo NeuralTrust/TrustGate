@@ -37,6 +37,7 @@ func normalizeModernResult(
 	result any,
 	rc *appconsumer.RoutableConsumer,
 	caps map[string]any,
+	connections []string,
 ) (map[string]any, error) {
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -68,7 +69,7 @@ func normalizeModernResult(
 	}
 	metadata[modernServerInfoKey] = map[string]any{
 		"name":    serverName,
-		"version": serverVersion + "+" + surfaceFingerprint(rc),
+		"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
 	}
 	normalized["_meta"] = metadata
 	if isTask {

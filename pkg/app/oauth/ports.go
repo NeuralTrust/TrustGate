@@ -25,6 +25,7 @@ import (
 type ProviderToken struct {
 	AccessToken  string
 	RefreshToken string
+	IDToken      string
 	Scopes       []string
 	ExpiresAt    time.Time
 }

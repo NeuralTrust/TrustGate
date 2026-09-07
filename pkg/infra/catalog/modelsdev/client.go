@@ -46,6 +46,11 @@ type Model struct {
 	MaxOutput     int
 	InputPrice    string
 	OutputPrice   string
+	// CacheReadPrice and CacheWritePrice are the rates for prompt tokens served
+	// from, and written to, the provider's cache. Empty when models.dev publishes
+	// none, which the resolver reads as "bills at the plain input rate".
+	CacheReadPrice  string
+	CacheWritePrice string
 	// ReleaseDate is the provider release date as published by models.dev
 	// ("YYYY-MM-DD"); empty when models.dev does not report one.
 	ReleaseDate string
@@ -83,8 +88,10 @@ type apiModel struct {
 		Output  int `json:"output"`
 	} `json:"limit"`
 	Cost struct {
-		Input  float64 `json:"input"`
-		Output float64 `json:"output"`
+		Input      float64 `json:"input"`
+		Output     float64 `json:"output"`
+		CacheRead  float64 `json:"cache_read"`
+		CacheWrite float64 `json:"cache_write"`
 	} `json:"cost"`
 	ReleaseDate string `json:"release_date"`
 	Modalities  struct {
@@ -153,6 +160,8 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 				MaxOutput:        m.Limit.Output,
 				InputPrice:       formatPerTokenPrice(m.Cost.Input),
 				OutputPrice:      formatPerTokenPrice(m.Cost.Output),
+				CacheReadPrice:   formatPerTokenPrice(m.Cost.CacheRead),
+				CacheWritePrice:  formatPerTokenPrice(m.Cost.CacheWrite),
 				ReleaseDate:      m.ReleaseDate,
 				InputModalities:  m.Modalities.Input,
 				OutputModalities: m.Modalities.Output,

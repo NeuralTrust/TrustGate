@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -28,14 +29,29 @@ const (
 	ConnectStartPath    = "/oauth/connect/*"
 	ConnectCallbackPath = "/oauth/callback/*"
 	DisconnectPath      = "/oauth/disconnect/*"
+	BrandAssetPath      = "/oauth/brands/*"
 )
 
 type ConnectHandler struct {
-	connect appoauth.ConnectService
+	connect            appoauth.ConnectService
+	catalog            appcatalog.MCPServerCatalog
+	oauthPublicBaseURL string
 }
 
-func NewConnectHandler(connect appoauth.ConnectService) *ConnectHandler {
-	return &ConnectHandler{connect: connect}
+// NewConnectHandler builds the MCP upstream-connect OAuth handlers.
+// oauthPublicBaseURL, when non-empty, is used as the redirect_uri origin for
+// authorize and code exchange instead of the request Host (see
+// MCP_OAUTH_PUBLIC_BASE_URL). Empty keeps per-request BaseURL behavior.
+func NewConnectHandler(
+	connect appoauth.ConnectService,
+	catalog appcatalog.MCPServerCatalog,
+	oauthPublicBaseURL string,
+) *ConnectHandler {
+	return &ConnectHandler{
+		connect:            connect,
+		catalog:            catalog,
+		oauthPublicBaseURL: strings.TrimRight(strings.TrimSpace(oauthPublicBaseURL), "/"),
+	}
 }
 
 func (h *ConnectHandler) Page(c *fiber.Ctx) error {
@@ -47,7 +63,7 @@ func (h *ConnectHandler) Page(c *fiber.Ctx) error {
 }
 
 func (h *ConnectHandler) Start(c *fiber.Ctx) error {
-	location, err := h.connect.Start(c.UserContext(), c.BaseURL(), c.Query("ticket"), providerParam(c))
+	location, err := h.connect.Start(c.UserContext(), h.connectBaseURL(c), c.Query("ticket"), providerParam(c))
 	if err != nil {
 		return h.pageError(c, err)
 	}
@@ -56,7 +72,7 @@ func (h *ConnectHandler) Start(c *fiber.Ctx) error {
 
 func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 	ticketID, err := h.connect.Callback(
-		c.UserContext(), c.BaseURL(), providerParam(c),
+		c.UserContext(), h.connectBaseURL(c), providerParam(c),
 		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
 		c.Query("iss"),
 	)
@@ -77,6 +93,16 @@ func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
 	return h.showPage(c, ticket, "")
 }
 
+// connectBaseURL is the origin embedded in upstream IdP redirect_uri values.
+// Prefer the configured platform public base so multi-tenant cloud can share
+// one OAuth app allowlist; fall back to the request origin for self-hosted.
+func (h *ConnectHandler) connectBaseURL(c *fiber.Ctx) string {
+	if h.oauthPublicBaseURL != "" {
+		return h.oauthPublicBaseURL
+	}
+	return c.BaseURL()
+}
+
 func providerParam(c *fiber.Ctx) string {
 	return strings.TrimPrefix(c.Params("*"), "/")
 }
@@ -86,7 +112,7 @@ func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 	if err != nil {
 		return h.pageError(c, err)
 	}
-	return renderConnectPage(c, page, ticket, flash)
+	return renderConnectPage(c, page, ticket, flash, h.catalog)
 }
 
 func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {

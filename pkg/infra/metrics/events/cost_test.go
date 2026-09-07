@@ -45,3 +45,40 @@ func TestCost_MarshalJSON_UsesDecimalNotation(t *testing.T) {
 		"currency": "USD"
 	}`, s)
 }
+
+func TestCost_MarshalJSON_SavingsUsesDecimalNotation(t *testing.T) {
+	savings := events.DecimalFloat(2.4e-7)
+	cost := events.Cost{
+		PromptUsd:     events.DecimalFloat(2.4e-6),
+		CompletionUsd: events.DecimalFloat(1.44e-5),
+		TotalUsd:      events.DecimalFloat(1.68e-5),
+		SavingsUsd:    &savings,
+		Currency:      "USD",
+	}
+
+	data, err := json.Marshal(cost)
+	require.NoError(t, err)
+
+	s := string(data)
+	scientific := regexp.MustCompile(`[0-9]e[+-]?[0-9]`)
+	assert.False(t, scientific.MatchString(s), "cost JSON must not use scientific notation: %s", s)
+	assert.JSONEq(t, `{
+		"prompt_usd": 0.0000024,
+		"completion_usd": 0.0000144,
+		"total_usd": 0.0000168,
+		"savings_usd": 0.00000024,
+		"currency": "USD"
+	}`, s)
+}
+
+func TestCost_MarshalJSON_KeepsZeroSavingsAndOmitsAbsent(t *testing.T) {
+	zero := events.DecimalFloat(0)
+	served, err := json.Marshal(events.Cost{Currency: "USD", SavingsUsd: &zero})
+	require.NoError(t, err)
+	assert.Contains(t, string(served), `"savings_usd":0`,
+		"a request served by the top tier saved nothing, which is not the same as not knowing")
+
+	notRouted, err := json.Marshal(events.Cost{Currency: "USD"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(notRouted), "savings_usd")
+}

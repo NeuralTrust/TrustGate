@@ -30,10 +30,18 @@ func NewCallbackHandler(proxy appoauth.AuthProxy) *CallbackHandler {
 }
 
 func (h *CallbackHandler) Handle(c *fiber.Ctx) error {
+	state := c.Query("state")
+	// The binding is single-use: whatever happens next, the browser must start
+	// over to get another one.
+	bound := c.Cookies(stateCookieName(c))
+	clearStateCookie(c)
+	if err := requireStateBinding(bound, state); err != nil {
+		return writeOAuthError(c, err)
+	}
 	location, err := h.proxy.Callback(
 		c.UserContext(),
 		c.BaseURL(),
-		c.Query("state"),
+		state,
 		c.Query("code"),
 		c.Query("error"),
 		c.Query("error_description"),

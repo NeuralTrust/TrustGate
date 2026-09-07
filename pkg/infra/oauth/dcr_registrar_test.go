@@ -387,6 +387,10 @@ func TestRefreshAuth_MismatchReturnsErrNoRegisteredClient(t *testing.T) {
 		nil,
 		registrar,
 		appoauth.NewConnectAuditor(slog.New(slog.NewJSONHandler(io.Discard, nil))),
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	_, err = svc.RefreshAuth(context.Background(), gw, reg)

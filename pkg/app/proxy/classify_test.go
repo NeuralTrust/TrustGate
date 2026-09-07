@@ -73,6 +73,7 @@ func TestClassifyOutcome(t *testing.T) {
 			OutcomeTerminal,
 		},
 		{"invalid payload is terminal", nil, ErrInvalidRequestPayload, fallbackTriggers{}, OutcomeTerminal},
+		{"capability unsupported is terminal", nil, ErrCapabilityNotSupported, fallbackTriggers{}, OutcomeTerminal},
 		{"nil response no error", nil, nil, fallbackTriggers{}, OutcomeRetryable},
 		{"committed stream", committedStream, nil, fallbackTriggers{}, OutcomeSuccess},
 		{"2xx success", &ProviderResponse{StatusCode: 200}, nil, fallbackTriggers{}, OutcomeSuccess},

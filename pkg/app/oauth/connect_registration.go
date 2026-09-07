@@ -17,7 +17,9 @@ package oauth
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -28,7 +30,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return cfg, nil
+		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -38,7 +40,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return autoAuth(cfg, meta, client), nil
+	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -47,7 +49,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return cfg, nil
+		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -70,7 +72,51 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		logIssuerMismatch(client.Issuer, meta.Issuer, gatewayID.String(), cfg.Provider, key)
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return autoAuth(cfg, meta, client), nil
+	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
+}
+
+func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
+	if cfg == nil || shared == nil {
+		return cfg
+	}
+	code := ""
+	if reg != nil && reg.MCPTarget != nil {
+		code = strings.TrimSpace(reg.MCPTarget.Code)
+	}
+	if code == "" {
+		code = strings.TrimSpace(cfg.Provider)
+	}
+	creds, ok := shared.CredentialsFor(code)
+	if !ok {
+		return cfg
+	}
+	if id := strings.TrimSpace(cfg.ClientID); id != "" && id != creds.ClientID {
+		return cfg
+	}
+	out := *cfg
+	out.ClientID = creds.ClientID
+	out.ClientSecret = creds.ClientSecret
+	return &out
+}
+
+func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
+	if cfg == nil || cat == nil {
+		return cfg
+	}
+	code := ""
+	if reg != nil && reg.MCPTarget != nil {
+		code = strings.TrimSpace(reg.MCPTarget.Code)
+	}
+	if code == "" {
+		code = strings.TrimSpace(cfg.Provider)
+	}
+	entry, ok := cat.GetByCode(code)
+	if !ok || entry.OAuth == nil || len(entry.OAuth.Scopes) == 0 {
+		return cfg
+	}
+	out := *cfg
+	out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	return &out
 }
 
 func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {

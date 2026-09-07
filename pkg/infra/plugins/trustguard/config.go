@@ -29,11 +29,18 @@ const (
 	inspectResponse        = "response"
 	inspectRequestResponse = "request_response"
 	defaultInspect         = inspectRequestResponse
+
+	onErrorFailOpen   = "fail_open"
+	onErrorFailClosed = "fail_closed"
+	defaultOnError    = onErrorFailOpen
 )
 
 type Settings struct {
 	Inspect     string `mapstructure:"inspect"`
 	CollectorID string `mapstructure:"collector_id"`
+	// OnError controls transport / 5xx failure behaviour. Auth/config
+	// rejections (401/403) always fail closed regardless of this setting.
+	OnError string `mapstructure:"on_error"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -62,6 +69,9 @@ func (s *Settings) applyDefaults() {
 	if s.Inspect == "" {
 		s.Inspect = defaultInspect
 	}
+	if s.OnError == "" {
+		s.OnError = defaultOnError
+	}
 }
 
 func (s *Settings) validate() error {
@@ -70,6 +80,11 @@ func (s *Settings) validate() error {
 	default:
 		return fmt.Errorf("trustguard: inspect must be one of request, response, request_response")
 	}
+	switch s.OnError {
+	case onErrorFailOpen, onErrorFailClosed:
+	default:
+		return fmt.Errorf("trustguard: on_error must be one of fail_open, fail_closed")
+	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")
 	}
@@ -77,6 +92,10 @@ func (s *Settings) validate() error {
 		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
 	}
 	return nil
+}
+
+func (s Settings) failClosedOnTransport() bool {
+	return s.OnError == onErrorFailClosed
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {

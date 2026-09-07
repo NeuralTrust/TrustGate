@@ -24,11 +24,25 @@ import (
 
 type stubCatalog struct {
 	entries map[string]catalogdomain.MCPServer
+	shared  map[string]stubSharedOAuth
+}
+
+type stubSharedOAuth struct {
+	clientID     string
+	clientSecret string
 }
 
 func (s stubCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
 	e, ok := s.entries[code]
 	return e, ok
+}
+
+func (s stubCatalog) SharedOAuthCredentials(code string) (string, string, bool) {
+	if s.shared == nil {
+		return "", "", false
+	}
+	creds, ok := s.shared[code]
+	return creds.clientID, creds.clientSecret, ok
 }
 
 func TestCanonicalizeMCPAuthFromCatalog_ClientCredentials(t *testing.T) {
@@ -130,4 +144,97 @@ func TestCanonicalizeMCPAuthFromCatalog_SkipsNonCatalog(t *testing.T) {
 		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone},
 	}
 	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, stubCatalog{}))
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_ManualOAuthFillsEndpoints(t *testing.T) {
+	t.Parallel()
+	cat := gmailCatalog(nil)
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeForwarded, Provider: "com.google.workspace/gmail", Registration: domain.RegistrationManual},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Equal(t, "https://accounts.google.com/o/oauth2/v2/auth", target.Auth.AuthorizeURL)
+	require.Equal(t, "https://oauth2.googleapis.com/token", target.Auth.TokenURL)
+	require.Equal(t, []string{"https://www.googleapis.com/auth/gmail.readonly"}, target.Auth.Scopes)
+	require.Equal(t, "https://gmailmcp.googleapis.com/mcp/v1", target.Auth.Resource)
+	require.Empty(t, target.Auth.ClientID)
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_InjectsSharedOAuth(t *testing.T) {
+	t.Parallel()
+	cat := gmailCatalog(map[string]stubSharedOAuth{
+		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "nt-secret"},
+	})
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeForwarded, Registration: domain.RegistrationManual},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Equal(t, "nt-client", target.Auth.ClientID)
+	require.Equal(t, "nt-secret", target.Auth.ClientSecret)
+	require.Equal(t, "com.google.workspace/gmail", target.Auth.Provider)
+	require.NoError(t, target.Validate())
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_PreservesBYOClient(t *testing.T) {
+	t.Parallel()
+	cat := gmailCatalog(map[string]stubSharedOAuth{
+		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "nt-secret"},
+	})
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Registration: domain.RegistrationManual,
+			ClientID:     "customer-client",
+			ClientSecret: "customer-secret",
+		},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Equal(t, "customer-client", target.Auth.ClientID)
+	require.Equal(t, "customer-secret", target.Auth.ClientSecret)
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_RotatesMatchingPlatformClient(t *testing.T) {
+	t.Parallel()
+	cat := gmailCatalog(map[string]stubSharedOAuth{
+		"com.google.workspace/gmail": {clientID: "nt-client", clientSecret: "rotated-secret"},
+	})
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Registration: domain.RegistrationManual,
+			ClientID:     "nt-client",
+			ClientSecret: "stale-secret",
+		},
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Equal(t, "nt-client", target.Auth.ClientID)
+	require.Equal(t, "rotated-secret", target.Auth.ClientSecret)
+}
+
+func gmailCatalog(shared map[string]stubSharedOAuth) stubCatalog {
+	return stubCatalog{
+		entries: map[string]catalogdomain.MCPServer{
+			"com.google.workspace/gmail": {
+				Code: "com.google.workspace/gmail",
+				URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+				OAuth: &catalogdomain.MCPOAuth{
+					Required:     true,
+					Registration: "manual",
+					AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+					TokenURL:     "https://oauth2.googleapis.com/token",
+					Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+					Resource:     "https://gmailmcp.googleapis.com/mcp/v1",
+				},
+			},
+		},
+		shared: shared,
+	}
 }

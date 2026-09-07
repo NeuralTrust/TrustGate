@@ -34,7 +34,7 @@ func TestNormalizeModernResult_PreservesCreatedTask(t *testing.T) {
 		"pollIntervalMs": json.Number("1000"),
 	}
 
-	normalized, err := normalizeModernResult("tools/call", source, nil, nil)
+	normalized, err := normalizeModernResult("tools/call", source, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "task", normalized["resultType"])
 	require.Equal(t, json.Number("600000"), normalized["ttlMs"])
@@ -58,7 +58,7 @@ func TestNormalizeModernResult_TasksGetReportsComplete(t *testing.T) {
 	}
 	caps := map[string]any{"elicitation": map[string]any{}}
 
-	normalized, err := normalizeModernResult("tasks/get", source, nil, caps)
+	normalized, err := normalizeModernResult("tasks/get", source, nil, caps, nil)
 	require.NoError(t, err)
 	require.Equal(t, "complete", normalized["resultType"])
 	require.Equal(t, modernCacheTTLRead, normalized["ttlMs"])
@@ -75,7 +75,7 @@ func TestNormalizeModernResult_TaskResultTypeOnlyOnToolsCall(t *testing.T) {
 	t.Parallel()
 	source := map[string]any{"resultType": "task", "taskId": "u-123"}
 
-	normalized, err := normalizeModernResult("tools/list", source, nil, nil)
+	normalized, err := normalizeModernResult("tools/list", source, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "complete", normalized["resultType"])
 }

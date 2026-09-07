@@ -27,6 +27,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type CatalogModel struct {
@@ -44,6 +45,8 @@ type Data struct {
 	Roles         []roledomain.Role
 	Providers     []catalogdomain.Provider
 	CatalogModels []CatalogModel
+	StoreGrants   []storeaccessdomain.Grant
+	StorePolicies []storeaccessdomain.Policy
 }
 
 type Snapshot struct {
@@ -79,33 +82,38 @@ type Snapshot struct {
 	catalogByProviderSlug map[string]*catalogdomain.Model
 	catalogByProviderCode map[string][]*catalogdomain.Model
 	catalogAll            []*catalogdomain.Model
+
+	storeGrantsByGateway   map[ids.GatewayID][]*storeaccessdomain.Grant
+	storePoliciesByGateway map[ids.GatewayID][]*storeaccessdomain.Policy
 }
 
 func Build(data Data) *Snapshot {
 	s := &Snapshot{
-		data:                  data,
-		gatewaysByID:          make(map[ids.GatewayID]*gatewaydomain.Gateway, len(data.Gateways)),
-		gatewaysBySlug:        make(map[string]*gatewaydomain.Gateway, len(data.Gateways)),
-		gatewaysByDomain:      make(map[string]*gatewaydomain.Gateway),
-		consumersByID:         make(map[ids.ConsumerID]*consumerdomain.Consumer, len(data.Consumers)),
-		consumersByGateway:    make(map[ids.GatewayID][]*consumerdomain.Consumer),
-		consumersActiveSlug:   make(map[string]*consumerdomain.Consumer),
-		consumersByAuth:       make(map[ids.AuthID][]*consumerdomain.Consumer),
-		registriesByID:        make(map[ids.RegistryID]*registrydomain.Registry, len(data.Registries)),
-		registriesByGateway:   make(map[ids.GatewayID]map[ids.RegistryID]*registrydomain.Registry),
-		policiesByID:          make(map[ids.PolicyID]*policydomain.Policy, len(data.Policies)),
-		policiesByGateway:     make(map[ids.GatewayID]map[ids.PolicyID]*policydomain.Policy),
-		policiesOrdered:       make(map[ids.GatewayID][]*policydomain.Policy),
-		authsByID:             make(map[ids.AuthID]*authdomain.Auth, len(data.Auths)),
-		authsByGateway:        make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
-		authsByAPIKeyHash:     make(map[string]*authdomain.Auth),
-		authsEnabledGateway:   make(map[ids.GatewayID][]*authdomain.Auth),
-		rolesByID:             make(map[ids.RoleID]*roledomain.Role, len(data.Roles)),
-		rolesByGateway:        make(map[ids.GatewayID]map[ids.RoleID]*roledomain.Role),
-		rolesOrdered:          make(map[ids.GatewayID][]*roledomain.Role),
-		catalogByProviderSlug: make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
-		catalogByProviderCode: make(map[string][]*catalogdomain.Model),
-		catalogAll:            make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
+		data:                   data,
+		gatewaysByID:           make(map[ids.GatewayID]*gatewaydomain.Gateway, len(data.Gateways)),
+		gatewaysBySlug:         make(map[string]*gatewaydomain.Gateway, len(data.Gateways)),
+		gatewaysByDomain:       make(map[string]*gatewaydomain.Gateway),
+		consumersByID:          make(map[ids.ConsumerID]*consumerdomain.Consumer, len(data.Consumers)),
+		consumersByGateway:     make(map[ids.GatewayID][]*consumerdomain.Consumer),
+		consumersActiveSlug:    make(map[string]*consumerdomain.Consumer),
+		consumersByAuth:        make(map[ids.AuthID][]*consumerdomain.Consumer),
+		registriesByID:         make(map[ids.RegistryID]*registrydomain.Registry, len(data.Registries)),
+		registriesByGateway:    make(map[ids.GatewayID]map[ids.RegistryID]*registrydomain.Registry),
+		policiesByID:           make(map[ids.PolicyID]*policydomain.Policy, len(data.Policies)),
+		policiesByGateway:      make(map[ids.GatewayID]map[ids.PolicyID]*policydomain.Policy),
+		policiesOrdered:        make(map[ids.GatewayID][]*policydomain.Policy),
+		authsByID:              make(map[ids.AuthID]*authdomain.Auth, len(data.Auths)),
+		authsByGateway:         make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
+		authsByAPIKeyHash:      make(map[string]*authdomain.Auth),
+		authsEnabledGateway:    make(map[ids.GatewayID][]*authdomain.Auth),
+		rolesByID:              make(map[ids.RoleID]*roledomain.Role, len(data.Roles)),
+		rolesByGateway:         make(map[ids.GatewayID]map[ids.RoleID]*roledomain.Role),
+		rolesOrdered:           make(map[ids.GatewayID][]*roledomain.Role),
+		catalogByProviderSlug:  make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
+		catalogByProviderCode:  make(map[string][]*catalogdomain.Model),
+		catalogAll:             make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
+		storeGrantsByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.Grant),
+		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
 	}
 
 	s.buildGateways()
@@ -115,8 +123,32 @@ func Build(data Data) *Snapshot {
 	s.buildAuths()
 	s.buildRoles()
 	s.buildCatalog()
+	s.buildStoreGrants()
 
 	return s
+}
+
+func (s *Snapshot) buildStoreGrants() {
+	for i := range s.data.StoreGrants {
+		g := &s.data.StoreGrants[i]
+		s.storeGrantsByGateway[g.GatewayID] = append(s.storeGrantsByGateway[g.GatewayID], g)
+	}
+	for i := range s.data.StorePolicies {
+		p := &s.data.StorePolicies[i]
+		s.storePoliciesByGateway[p.GatewayID] = append(s.storePoliciesByGateway[p.GatewayID], p)
+	}
+}
+
+// StorePoliciesByGateway returns a gateway's per-principal Store access
+// policies in snapshot order (nil when it has none).
+func (s *Snapshot) StorePoliciesByGateway(gatewayID ids.GatewayID) []*storeaccessdomain.Policy {
+	return s.storePoliciesByGateway[gatewayID]
+}
+
+// StoreGrantsByGateway returns a gateway's MCP Store access grants in snapshot
+// order (nil when it has none).
+func (s *Snapshot) StoreGrantsByGateway(gatewayID ids.GatewayID) []*storeaccessdomain.Grant {
+	return s.storeGrantsByGateway[gatewayID]
 }
 
 func (s *Snapshot) buildGateways() {
@@ -351,6 +383,24 @@ func (s *Snapshot) RegistriesByIDs(gatewayID ids.GatewayID, registryIDs []ids.Re
 		}
 		seen[id] = struct{}{}
 		if r, ok := byID[id]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// RegistriesByGateway returns every registry attached to a gateway, in snapshot
+// order (the compiled read side for the Store installer/scoper's List). The
+// returned pointers alias the snapshot; callers that mutate must clone first.
+func (s *Snapshot) RegistriesByGateway(gatewayID ids.GatewayID) []*registrydomain.Registry {
+	if len(s.registriesByGateway[gatewayID]) == 0 {
+		return nil
+	}
+	byID := s.registriesByGateway[gatewayID]
+	out := make([]*registrydomain.Registry, 0, len(byID))
+	for i := range s.data.Registries {
+		r := &s.data.Registries[i]
+		if r.GatewayID == gatewayID {
 			out = append(out, r)
 		}
 	}

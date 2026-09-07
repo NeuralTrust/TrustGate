@@ -172,7 +172,7 @@ func TestSubscriptionPolicyDigestFiltersAppsListsBeforePlugins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digest tools: %v", err)
 	}
-	filteredTools := []Tool{validTool, plainTool}
+	filteredTools := []Tool{attributeTool(validTool, reg), attributeTool(plainTool, reg)}
 	encodedTools, _ := encodeSurface(filteredTools, func(tool Tool) string { return tool.Name })
 	pluginBody, _ := json.Marshal(map[string]any{"tools": filteredTools})
 	if toolsDigest != digestOf(encodedTools) || string(recorder.body) != string(pluginBody) {
@@ -216,7 +216,7 @@ func TestSubscriptionPolicyDigestDropsAppsWhenResourcesFail(t *testing.T) {
 
 	digest, err := policy.digest(context.Background(),
 		routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg), NotificationToolsListChanged)
-	encoded, _ := encodeSurface([]Tool{plain}, func(tool Tool) string { return tool.Name })
+	encoded, _ := encodeSurface([]Tool{attributeTool(plain, reg)}, func(tool Tool) string { return tool.Name })
 	if err != nil || digest != digestOf(encoded) {
 		t.Fatalf("digest = %q, err = %v", digest, err)
 	}
@@ -247,8 +247,9 @@ func TestSubscriptionPolicyLegacyConstructorsDisableAppsFiltering(t *testing.T) 
 			if err != nil {
 				t.Fatalf("digest tools: %v", err)
 			}
-			encoded, _ := encodeSurface([]Tool{invalid}, func(tool Tool) string { return tool.Name })
-			body, _ := json.Marshal(map[string]any{"tools": []Tool{invalid}})
+			attributed := []Tool{attributeTool(invalid, reg)}
+			encoded, _ := encodeSurface(attributed, func(tool Tool) string { return tool.Name })
+			body, _ := json.Marshal(map[string]any{"tools": attributed})
 			if digest != digestOf(encoded) || string(recorder.body) != string(body) {
 				t.Fatalf("legacy constructor filtered Apps metadata: digest=%q body=%s", digest, recorder.body)
 			}

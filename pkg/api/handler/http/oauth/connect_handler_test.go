@@ -32,9 +32,14 @@ type stubConnectService struct {
 	err         error
 	gotProvider string
 	gotISS      string
+	gotBaseURL  string
 }
 
 func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
+	return "t", nil
+}
+
+func (s *stubConnectService) CreateServerTicket(context.Context, ids.GatewayID, string, string, string, string) (string, error) {
 	return "t", nil
 }
 
@@ -54,12 +59,18 @@ func (s *stubConnectService) Page(context.Context, string) (*appoauth.ConnectPag
 	return s.page, s.err
 }
 
-func (s *stubConnectService) Start(_ context.Context, _, _, provider string) (string, error) {
+func (s *stubConnectService) Statuses(context.Context, ids.GatewayID, string, string) ([]appoauth.ProviderStatus, error) {
+	return nil, nil
+}
+
+func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider string) (string, error) {
+	s.gotBaseURL = baseURL
 	s.gotProvider = provider
 	return "https://github.com/login/oauth/authorize?x=1", nil
 }
 
-func (s *stubConnectService) Callback(_ context.Context, _, _, _, _, _, _, iss string) (string, error) {
+func (s *stubConnectService) Callback(_ context.Context, baseURL, _, _, _, _, _, iss string) (string, error) {
+	s.gotBaseURL = baseURL
 	s.gotISS = iss
 	return "t", nil
 }
@@ -79,7 +90,7 @@ func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
 		ConsumerPath: "/v1/mcp/dev",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "github-mcp"}},
-	}})
+	}}, nil, "")
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 
@@ -96,9 +107,39 @@ func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	}
 }
 
+func TestConnectPage_ScopedToOneServerRendersSingleCard(t *testing.T) {
+	t.Parallel()
+	// A ticket scoped to a catalog code (Code set) renders the focused
+	// single-server connect page, not the full provider grid.
+	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
+		ConsumerPath: "/dev",
+		Code:         "com.notion/mcp",
+		Providers: []appoauth.ProviderStatus{
+			{Provider: "com.notion/mcp", Code: "com.notion/mcp", Registry: "Notion"},
+			{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "Linear"},
+		},
+	}}, nil, "")
+	app := fiber.New()
+	app.Get("/+/connect", h.Page)
+
+	res, err := app.Test(httptest.NewRequest("GET", "/dev/connect?ticket=abc", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	s := string(body)
+	// Focused on Notion, with its connect button, and NOT showing Linear.
+	if !strings.Contains(s, "Connect your") || !strings.Contains(s, "/oauth/connect/com.notion/mcp?ticket=abc") {
+		t.Fatalf("single-server page missing focused connect button: %s", s)
+	}
+	if strings.Contains(s, "Linear") {
+		t.Fatalf("single-server page must not list other providers: %s", s)
+	}
+}
+
 func TestConnectPage_MissingTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{})
+	h := NewConnectHandler(&stubConnectService{}, nil, "")
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/v1/mcp/dev/connect", nil))
@@ -112,7 +153,7 @@ func TestConnectPage_MissingTicketIs401(t *testing.T) {
 
 func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound})
+	h := NewConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound}, nil, "")
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/x/connect?ticket=stale", nil))
@@ -126,7 +167,7 @@ func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 
 func TestConnectStart_RedirectsToProvider(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{})
+	h := NewConnectHandler(&stubConnectService{}, nil, "")
 	app := fiber.New()
 	app.Get(ConnectStartPath, h.Start)
 	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/github?ticket=abc", nil))
@@ -144,7 +185,7 @@ func TestConnectStart_RedirectsToProvider(t *testing.T) {
 func TestConnectStart_ProviderWithSlash(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub)
+	h := NewConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectStartPath, h.Start)
 	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/app.linear/mcp?ticket=abc", nil))
@@ -165,7 +206,7 @@ func TestConnectCallback_ForwardsISS(t *testing.T) {
 		ConsumerPath: "/v1/mcp/dev",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "github-mcp"}},
 	}}
-	h := NewConnectHandler(stub)
+	h := NewConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectCallbackPath, h.Callback)
 	res, err := app.Test(httptest.NewRequest("GET", "/oauth/callback/github?state=s&code=secret-code&iss=https://idp.example", nil))
@@ -177,5 +218,71 @@ func TestConnectCallback_ForwardsISS(t *testing.T) {
 	}
 	if stub.gotISS != "https://idp.example" {
 		t.Fatalf("forwarded iss = %q", stub.gotISS)
+	}
+}
+
+func TestConnectStart_UsesConfiguredPublicBaseURL(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{}
+	h := NewConnectHandler(stub, nil, "https://oauth.mcp.example.com/")
+	app := fiber.New()
+	app.Get(ConnectStartPath, h.Start)
+	req := httptest.NewRequest("GET", "/oauth/connect/com.google.workspace/calendar?ticket=abc", nil)
+	req.Host = "gw-tenant.mcp.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusFound {
+		t.Fatalf("status = %d, want 302", res.StatusCode)
+	}
+	if stub.gotBaseURL != "https://oauth.mcp.example.com" {
+		t.Fatalf("baseURL = %q, want fixed public base", stub.gotBaseURL)
+	}
+	if stub.gotProvider != "com.google.workspace/calendar" {
+		t.Fatalf("provider = %q", stub.gotProvider)
+	}
+}
+
+func TestConnectCallback_UsesConfiguredPublicBaseURL(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{page: &appoauth.ConnectPage{
+		ConsumerPath: "/tools/mcp",
+		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "g", Linked: true}},
+	}}
+	h := NewConnectHandler(stub, nil, "https://oauth.mcp.example.com")
+	app := fiber.New()
+	app.Get(ConnectCallbackPath, h.Callback)
+	req := httptest.NewRequest("GET", "/oauth/callback/github?state=s&code=c", nil)
+	req.Host = "gw-tenant.mcp.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if stub.gotBaseURL != "https://oauth.mcp.example.com" {
+		t.Fatalf("baseURL = %q, want fixed public base", stub.gotBaseURL)
+	}
+}
+
+func TestConnectStart_FallsBackToRequestBaseURL(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectStartPath, h.Start)
+	req := httptest.NewRequest("GET", "/oauth/connect/github?ticket=abc", nil)
+	req.Host = "gw-tenant.mcp.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusFound {
+		t.Fatalf("status = %d, want 302", res.StatusCode)
+	}
+	if stub.gotBaseURL != "http://gw-tenant.mcp.example.com" {
+		t.Fatalf("baseURL = %q, want request origin", stub.gotBaseURL)
 	}
 }

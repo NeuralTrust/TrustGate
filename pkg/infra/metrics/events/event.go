@@ -22,15 +22,20 @@ const (
 )
 
 type Event struct {
-	SchemaVersion int    `json:"schema_version"`
-	Kind          string `json:"kind"`
-	TraceID       string `json:"trace_id"`
-	GatewayID     string `json:"gateway_id"`
-	TenantID      string `json:"tenant_id,omitempty"`
+	SchemaVersion    int    `json:"schema_version"`
+	Kind             string `json:"kind"`
+	TraceID          string `json:"trace_id"`
+	GatewayID        string `json:"gateway_id"`
+	TenantID         string `json:"tenant_id,omitempty"`
+	PrincipalSubject string `json:"principal_subject,omitempty"`
+	PrincipalMethod  string `json:"principal_method,omitempty"`
+	PrincipalEmail   string `json:"principal_email,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`
 	EndTimestamp int64  `json:"end_timestamp"`
+
+	Retention *Retention `json:"retention,omitempty"`
 
 	Consumer  Consumer `json:"consumer"`
 	SessionID string   `json:"session_id,omitempty"`
@@ -53,6 +58,14 @@ type Event struct {
 	MCP *MCP `json:"mcp,omitempty"`
 }
 
+// Retention is when this trace stops being the storage layer's problem, derived
+// from the plan stamped on the gateway. Absent when the gateway carries no stamp:
+// the sink then applies its own fallback instead of being handed a guess.
+type Retention struct {
+	Plan      string `json:"plan,omitempty"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
 type MCP struct {
 	Method            string `json:"method"`
 	Operation         string `json:"operation,omitempty"`
@@ -73,6 +86,7 @@ type MCP struct {
 	ProtocolVersion   string `json:"protocol_version,omitempty"`
 	MRTROutcome       string `json:"mrtr_outcome,omitempty"`
 	MRTRRound         string `json:"mrtr_round,omitempty"`
+	AccountRef        string `json:"account_ref,omitempty"`
 }
 
 type Consumer struct {
@@ -114,18 +128,22 @@ type Response struct {
 }
 
 type Usage struct {
-	PromptTokens          int `json:"prompt_tokens"`
-	CompletionTokens      int `json:"completion_tokens"`
-	TotalTokens           int `json:"total_tokens"`
-	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
-	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
+	PromptTokens            int `json:"prompt_tokens"`
+	CompletionTokens        int `json:"completion_tokens"`
+	TotalTokens             int `json:"total_tokens"`
+	CachedInputTokens       int `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens   int `json:"cache_write_input_tokens,omitempty"`
+	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
+	ToolUseInputTokens      int `json:"tool_use_input_tokens,omitempty"`
+	ReasoningOutputTokens   int `json:"reasoning_output_tokens,omitempty"`
 }
 
 type Cost struct {
-	PromptUsd     DecimalFloat `json:"prompt_usd"`
-	CompletionUsd DecimalFloat `json:"completion_usd"`
-	TotalUsd      DecimalFloat `json:"total_usd"`
-	Currency      string       `json:"currency"`
+	PromptUsd     DecimalFloat  `json:"prompt_usd"`
+	CompletionUsd DecimalFloat  `json:"completion_usd"`
+	TotalUsd      DecimalFloat  `json:"total_usd"`
+	SavingsUsd    *DecimalFloat `json:"savings_usd,omitempty"`
+	Currency      string        `json:"currency"`
 }
 
 // Latency splits the request wall clock into the three stages that can be acted

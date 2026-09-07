@@ -25,10 +25,10 @@ import (
 // fakeRow feeds scanGateway without a real database connection so the column
 // order / entitlements unmarshal contract can be exercised as a unit test.
 type fakeRow struct {
-	id                                                     ids.GatewayID
-	slug, status, domainName                               string
-	metadata, telemetry, clientTLS, session, entitlements  []byte
-	createdAt, updatedAt                                   time.Time
+	id                                                    ids.GatewayID
+	slug, status, domainName                              string
+	metadata, telemetry, clientTLS, session, entitlements []byte
+	createdAt, updatedAt                                  time.Time
 }
 
 func (f *fakeRow) Scan(dest ...any) error {

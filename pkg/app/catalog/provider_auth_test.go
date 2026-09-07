@@ -171,3 +171,88 @@ func fieldDefault(fields []AuthField, key string) (any, bool) {
 	}
 	return nil, false
 }
+
+func TestProviderCapabilities_EmbeddingsProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderAzure,
+		providers.ProviderCohere,
+		providers.ProviderMistral,
+		providers.ProviderVertex,
+		providers.ProviderBedrock,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["embeddings"] {
+			t.Fatalf("%s capabilities missing embeddings: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["embeddings"] {
+		t.Fatal("anthropic must not advertise embeddings")
+	}
+}
+
+func TestProviderCapabilities_FilesProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderAzure,
+		providers.ProviderOpenRouter,
+		providers.ProviderXAI,
+		providers.ProviderMistral,
+		providers.ProviderAnthropic,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["files"] {
+			t.Fatalf("%s capabilities missing files: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderOpenAICompatible)["files"] {
+		t.Fatal("openai_compatible must not advertise files")
+	}
+}
+
+func TestProviderCapabilities_ImagesProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderAzure,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderOpenRouter,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["images"] {
+			t.Fatalf("%s capabilities missing images: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["images"] {
+		t.Fatal("anthropic must not advertise images")
+	}
+	if ProviderCapabilities(providers.ProviderGroq)["images"] {
+		t.Fatal("groq must not advertise images")
+	}
+}
+
+func TestProviderCapabilities_AudioProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderAzure,
+		providers.ProviderOpenRouter,
+		providers.ProviderGroq,
+		providers.ProviderMistral,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["audio_speech"] || !caps["audio_transcription"] {
+			t.Fatalf("%s capabilities missing audio: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["audio_speech"] {
+		t.Fatal("anthropic must not advertise audio_speech")
+	}
+	if ProviderCapabilities(providers.ProviderXAI)["audio_transcription"] {
+		t.Fatal("xai must not advertise audio_transcription")
+	}
+}

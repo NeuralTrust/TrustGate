@@ -36,8 +36,10 @@ type GatewayResponse struct {
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 	Entitlements    domain.Entitlements    `json:"entitlements"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	// StoreMode curates the MCP Store: "open" (default) or "curated".
+	StoreMode string    `json:"store_mode"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
@@ -66,6 +68,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,
 		Entitlements:    g.Entitlements,
+		StoreMode:       g.StoreMode(),
 		CreatedAt:       g.CreatedAt,
 		UpdatedAt:       g.UpdatedAt,
 	}

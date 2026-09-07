@@ -221,3 +221,67 @@ func TestCompletions_MissingModel(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
 }
+
+func TestIsTitanEmbedModel(t *testing.T) {
+	assert.True(t, isTitanEmbedModel("amazon.titan-embed-text-v1"))
+	assert.True(t, isTitanEmbedModel("amazon.titan-embed-text-v2:0"))
+	assert.True(t, isTitanEmbedModel("eu.amazon.titan-embed-text-v2:0"))
+	assert.False(t, isTitanEmbedModel("amazon.titan-text-express-v1"))
+	assert.False(t, isTitanEmbedModel("anthropic.claude-sonnet-4-20250514-v1:0"))
+}
+
+func TestEmbeddings_RejectsNonTitanEmbed(t *testing.T) {
+	c := NewBedrockClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{
+		Model: "amazon.titan-text-express-v1",
+	}, []byte(`{"inputText":"hi"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Titan embed")
+}
+
+func TestEmbeddings_RoundTripSingle(t *testing.T) {
+	var gotModel string
+	var gotBody map[string]any
+	c := &client{
+		invoke: func(_ context.Context, model string, body []byte) ([]byte, error) {
+			gotModel = model
+			require.NoError(t, json.Unmarshal(body, &gotBody))
+			return []byte(`{"embedding":[0.1,0.2],"inputTextTokenCount":2}`), nil
+		},
+	}
+
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Model: "eu.amazon.titan-embed-text-v2:0",
+	}, []byte(`{"inputText":"hello"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "eu.amazon.titan-embed-text-v2:0", gotModel)
+	assert.Equal(t, "hello", gotBody["inputText"])
+	assert.JSONEq(t, `{"embedding":[0.1,0.2],"inputTextTokenCount":2}`, string(resp))
+}
+
+func TestEmbeddings_RoundTripBatch(t *testing.T) {
+	var calls int
+	c := &client{
+		invoke: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+			calls++
+			var req titanEmbedInvoke
+			require.NoError(t, json.Unmarshal(body, &req))
+			assert.NotEmpty(t, req.InputText)
+			return []byte(`{"embedding":[0.1],"inputTextTokenCount":1}`), nil
+		},
+	}
+
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Model: "amazon.titan-embed-text-v1",
+	}, []byte(`{"inputTexts":["a","b"]}`))
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.JSONEq(t, `{"embeddings":[[0.1],[0.1]],"inputTextTokenCount":2}`, string(resp))
+}
+
+func TestEmbeddings_MissingModel(t *testing.T) {
+	c := NewBedrockClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"inputText":"hi"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
+}

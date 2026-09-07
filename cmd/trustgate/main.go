@@ -48,6 +48,7 @@ import (
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -163,6 +164,7 @@ type adminParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	OpsSDK         *o11y.SDK
 }
 
 type proxyParam struct {
@@ -172,6 +174,7 @@ type proxyParam struct {
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
+	OpsSDK       *o11y.SDK
 }
 
 type mcpParam struct {
@@ -181,6 +184,7 @@ type mcpParam struct {
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
+	OpsSDK       *o11y.SDK
 }
 
 type allParam struct {
@@ -191,10 +195,12 @@ type allParam struct {
 	Conn           *database.Connection
 	Dispatcher     *appsnapshot.Dispatcher
 	ConfigSyncGRPC *configsyncgrpc.Server
+	OpsSDK         *o11y.SDK
 }
 
 func runAdmin(p adminParam, logger *slog.Logger) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopDispatcher()
 	runServers(logger,
@@ -205,6 +211,7 @@ func runAdmin(p adminParam, logger *slog.Logger) {
 
 func runMCP(p mcpParam, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
@@ -213,6 +220,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 
 func runProxy(p proxyParam, logger *slog.Logger) {
 	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
@@ -221,6 +229,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 
 func runAll(p allParam, logger *slog.Logger) {
 	stopDispatcher := startDispatcher(p.Dispatcher, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()
@@ -287,6 +296,16 @@ func startConfigSyncWorker(
 			}
 		}
 		wg.Wait()
+	}
+}
+
+// flushOpsTelemetry drains the operational batch processors before exit. The last
+// batch before a rolling restart is the one an operator is most likely reading.
+func flushOpsTelemetry(sdk *o11y.SDK, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sdk.Shutdown(ctx); err != nil {
+		logger.Warn("operational telemetry shutdown failed", slog.String("error", err.Error()))
 	}
 }
 

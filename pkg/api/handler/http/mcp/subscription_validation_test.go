@@ -190,12 +190,11 @@ func newSubscriptionsAppWithTrace(
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandlerWithSubscriptions(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(spies.composer, appmcp.NewPluginRunner(spies.executor, discardLogger()), spies.limiter),
 		scoper,
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{},
-		subs,
+		nil,
+		mcphttp.WithSubscriptions(subs),
 	)
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
@@ -556,8 +555,12 @@ func TestHandler_ServerDiscover_AdvertisesListChanged(t *testing.T) {
 	}
 }
 
-// A legacy initialize must stay exactly as it was: the lease is modern-only, so
-// the legacy advertisement neither gains listChanged nor learns about subscribe.
+// A legacy initialize must stay exactly as it was: enabling the lease changes
+// nothing it advertises. tools.listChanged is declared because the legacy era
+// has always backed it with the SSE stream served on GET (see stream_handler.go)
+// — Claude drops notifications/tools/list_changed from a server that did not
+// declare the capability — and that is a different mechanism from the modern
+// lease, which is why resources.subscribe stays false and no lease is claimed.
 func TestHandler_LegacyInitialize_NeverAdvertisesListChanged(t *testing.T) {
 	t.Parallel()
 	app, spies := newSubscriptionsApp(t, enabledSubscriptions(t))
@@ -570,7 +573,7 @@ func TestHandler_LegacyInitialize_NeverAdvertisesListChanged(t *testing.T) {
 
 	require.Equal(t, fiber.StatusOK, status)
 	require.Equal(t, map[string]any{
-		"tools":     map[string]any{"listChanged": false},
+		"tools":     map[string]any{"listChanged": true},
 		"resources": map[string]any{"subscribe": false, "listChanged": false},
 		"prompts":   map[string]any{"listChanged": false},
 	}, mrtrResult(t, body)["capabilities"])

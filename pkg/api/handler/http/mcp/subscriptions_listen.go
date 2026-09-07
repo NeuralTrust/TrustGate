@@ -631,6 +631,7 @@ func (h *Handler) newStreamSpec(
 		subscriptionsListenResult(req.ID, honoured),
 		rc,
 		appmcp.ClientCapabilitiesFromContext(c.UserContext()),
+		h.connectedProviders(c, rc),
 	)
 	if err != nil {
 		return streamSpec{}, err

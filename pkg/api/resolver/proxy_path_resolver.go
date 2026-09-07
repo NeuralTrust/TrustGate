@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -32,6 +33,8 @@ const (
 	RouteCohereChat      = "/v2/chat"
 	RouteEmbeddings      = "/v1/embeddings"
 	RouteRerank          = "/v1/rerank"
+	RouteFiles           = "/v1/files"
+	RouteModels          = "/v1/models"
 )
 
 const pathSeparator = "/"
@@ -41,9 +44,14 @@ var ErrUnknownProxyPath = errors.New("no fixed proxy route matches the request p
 type ProxyCapability string
 
 const (
-	CapabilityChat       ProxyCapability = "chat"
-	CapabilityEmbeddings ProxyCapability = "embeddings"
-	CapabilityRerank     ProxyCapability = "rerank"
+	CapabilityChat               ProxyCapability = "chat"
+	CapabilityEmbeddings         ProxyCapability = "embeddings"
+	CapabilityRerank             ProxyCapability = "rerank"
+	CapabilityFiles              ProxyCapability = "files"
+	CapabilityModels             ProxyCapability = "models"
+	CapabilityImages             ProxyCapability = "images"
+	CapabilityAudioSpeech        ProxyCapability = "audio_speech"
+	CapabilityAudioTranscription ProxyCapability = "audio_transcription"
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -93,8 +101,44 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	case RouteRerank:
 		return adapter.FormatCohereRerank, CapabilityRerank, nil
 	}
+	if providers.IsFilesPath(rest) {
+		return adapter.FormatOpenAIFiles, CapabilityFiles, nil
+	}
+	if providers.IsImagesPath(rest) {
+		return adapter.FormatOpenAIImages, CapabilityImages, nil
+	}
+	if providers.IsAudioSpeechPath(rest) {
+		return adapter.FormatOpenAIAudio, CapabilityAudioSpeech, nil
+	}
+	if providers.IsAudioTranscriptionPath(rest) {
+		return adapter.FormatOpenAIAudio, CapabilityAudioTranscription, nil
+	}
+	if isModelsPath(rest) {
+		return adapter.FormatOpenAI, CapabilityModels, nil
+	}
 	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
 		return adapter.FormatGemini, CapabilityChat, nil
 	}
 	return "", "", ErrUnknownProxyPath
+}
+
+func isModelsPath(rest string) bool {
+	if rest == RouteModels {
+		return true
+	}
+	if !strings.HasPrefix(rest, RouteModels+pathSeparator) {
+		return false
+	}
+	id := strings.TrimPrefix(rest, RouteModels+pathSeparator)
+	return id != "" && !strings.Contains(id, pathSeparator)
+}
+
+func ModelsIDFromRest(rest string) string {
+	if rest == RouteModels {
+		return ""
+	}
+	if !isModelsPath(rest) {
+		return ""
+	}
+	return strings.TrimPrefix(rest, RouteModels+pathSeparator)
 }

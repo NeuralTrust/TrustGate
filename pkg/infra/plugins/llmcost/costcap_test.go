@@ -125,7 +125,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dec := Decide(context.Background(), nil, tt.pricing, tt.costCap, "openai", tt.model)
+			dec := Decide(context.Background(), nil, tt.pricing, nil, tt.costCap, "openai", tt.model)
 			assert.Equal(t, tt.wantKind, dec.Kind)
 			assert.Equal(t, tt.wantUnknown, dec.Unknown)
 			assert.Equal(t, tt.model, dec.Model)

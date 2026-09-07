@@ -87,6 +87,7 @@ type VertexOptions struct {
 	Project  string `mapstructure:"project"`
 	Location string `mapstructure:"location"`
 	Version  string `mapstructure:"version"`
+	BaseURL  string `mapstructure:"base_url"`
 }
 
 func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
@@ -112,11 +113,98 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 		opts.Version = vertexDefaultAPIVersion
 	}
 
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return VertexOptions{}, fmt.Errorf("vertex: %w", err)
+		}
+	}
+
 	return opts, nil
 }
 
 type CohereOptions struct {
 	BaseURL string `mapstructure:"base_url"`
+}
+
+type MistralOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+type AnthropicOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+func DecodeAnthropicOptions(options map[string]any) (AnthropicOptions, error) {
+	var opts AnthropicOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return AnthropicOptions{}, fmt.Errorf("anthropic: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return AnthropicOptions{}, fmt.Errorf("anthropic: %w", err)
+		}
+	}
+	return opts, nil
+}
+
+type GroqOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+type OpenRouterOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+func DecodeGroqOptions(options map[string]any) (GroqOptions, error) {
+	var opts GroqOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return GroqOptions{}, fmt.Errorf("groq: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return GroqOptions{}, fmt.Errorf("groq: %w", err)
+		}
+	}
+	return opts, nil
+}
+
+func DecodeOpenRouterOptions(options map[string]any) (OpenRouterOptions, error) {
+	var opts OpenRouterOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return OpenRouterOptions{}, fmt.Errorf("openrouter: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return OpenRouterOptions{}, fmt.Errorf("openrouter: %w", err)
+		}
+	}
+	return opts, nil
+}
+
+func DecodeMistralOptions(options map[string]any) (MistralOptions, error) {
+	var opts MistralOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return MistralOptions{}, fmt.Errorf("mistral: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return MistralOptions{}, fmt.Errorf("mistral: %w", err)
+		}
+	}
+	return opts, nil
 }
 
 func DecodeCohereOptions(options map[string]any) (CohereOptions, error) {

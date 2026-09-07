@@ -90,6 +90,13 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 		if m == nil || m.recorder == nil || !m.recorder.Enabled() {
 			return c.Next()
 		}
+		// The route classification is bounded and depends only on the request
+		// path, so it can name the span before the handler runs.
+		route := classifyRoute(m.plane, c.Path())
+		method := boundedMethod(c.Method())
+		ctx, span := m.recorder.StartRequestSpan(c.UserContext(), method+" "+string(route), route)
+		c.SetUserContext(ctx)
+
 		start := time.Now()
 		claim := &opsStreamClaim{
 			recorder: m.recorder,
@@ -112,19 +119,20 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 				status = fiberErr.Code
 			}
 		}
-		route := classifyRoute(m.plane, c.Path())
 		outcome := classifyOutcome(route, status)
 		if marked, ok := c.Locals(opsOutcomeKey).(o11y.Outcome); ok {
 			outcome = marked
 		}
-		m.recorder.RecordRequest(c.UserContext(), o11y.Request{
+		request := o11y.Request{
 			Plane:       m.plane,
 			Route:       route,
-			Method:      boundedMethod(c.Method()),
+			Method:      method,
 			StatusClass: statusClass(status),
 			Outcome:     outcome,
 			Duration:    time.Since(start),
-		})
+		}
+		m.recorder.RecordRequest(c.UserContext(), request)
+		span.Finish(o11y.SpanOutcome{Request: request, TraceID: c.GetRespHeader(HeaderTraceID)})
 		return err
 	}
 }

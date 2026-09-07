@@ -23,8 +23,8 @@ type CanonicalEmbeddingRequest struct {
 }
 
 type CanonicalEmbeddingResponse struct {
-	Model      string       `json:"model,omitempty"`
-	Embeddings [][]float64  `json:"embeddings,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Embeddings [][]float64     `json:"embeddings,omitempty"`
 	Usage      *CanonicalUsage `json:"usage,omitempty"`
 }
 
@@ -136,15 +136,15 @@ func (a *OpenAIEmbeddingsAdapter) EncodeStreamChunk(*CanonicalStreamChunk) ([][]
 type CohereEmbedAdapter struct{}
 
 type cohereEmbedRequest struct {
-	Model           string   `json:"model"`
-	Texts           []string `json:"texts"`
-	InputType       string   `json:"input_type"`
-	EmbeddingTypes  []string `json:"embedding_types,omitempty"`
+	Model          string   `json:"model"`
+	Texts          []string `json:"texts"`
+	InputType      string   `json:"input_type"`
+	EmbeddingTypes []string `json:"embedding_types,omitempty"`
 }
 
 type cohereEmbedResponse struct {
-	ID         string        `json:"id,omitempty"`
-	Embeddings [][]float64   `json:"embeddings"`
+	ID         string      `json:"id,omitempty"`
+	Embeddings [][]float64 `json:"embeddings"`
 }
 
 func (a *CohereEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {

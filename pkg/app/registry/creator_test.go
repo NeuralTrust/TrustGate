@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -50,6 +51,12 @@ func validCreateInput(gwID ids.GatewayID, name string) appregistry.CreateInput {
 	}
 }
 
+type compilerFunc func(context.Context, appopenapi.Source) (*appopenapi.Document, error)
+
+func (f compilerFunc) Compile(ctx context.Context, source appopenapi.Source) (*appopenapi.Document, error) {
+	return f(ctx, source)
+}
+
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -74,6 +81,47 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Registry).ID != b.ID {
 		t.Fatal("cached backend ID mismatch")
+	}
+}
+
+func TestCreator_Create_ValidatesOpenAPIAndPersistsResolvedBaseURL(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(registry *domain.Registry) bool {
+			return registry.IsMCP() &&
+				registry.MCPTarget.Source == domain.MCPSourceOpenAPI &&
+				registry.MCPTarget.URL == "https://api.example.com/v1"
+		})).
+		Return(nil)
+	compiler := compilerFunc(func(_ context.Context, source appopenapi.Source) (*appopenapi.Document, error) {
+		if source.SpecURL != "https://api.example.com/openapi.json" {
+			t.Fatalf("SpecURL = %q", source.SpecURL)
+		}
+		return &appopenapi.Document{
+			BaseURL: "https://api.example.com/v1",
+			Operations: []appopenapi.Operation{{
+				Name: "listThings",
+			}},
+		}, nil
+	})
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil, compiler)
+
+	registry, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: gatewayID,
+		Name:      "example-api",
+		Type:      domain.TypeMCP,
+		MCPTarget: &domain.MCPTarget{
+			Source:  domain.MCPSourceOpenAPI,
+			OpenAPI: &domain.OpenAPITarget{SpecURL: "https://api.example.com/openapi.json"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if registry.MCPTarget.URL != "https://api.example.com/v1" {
+		t.Fatalf("URL = %q", registry.MCPTarget.URL)
 	}
 }
 

@@ -47,7 +47,7 @@ func setupEMAProxy(t *testing.T, mode string, stub appauth.OIDCVerifier, store *
 		t.Fatalf("save client: %v", err)
 	}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{auth}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), nil, stub)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), nil, WithIdPTokenVerifier(stub))
 	return proxy, store, auth
 }
 
@@ -139,6 +139,8 @@ func TestEMARejectsAuthorizeKeepsRefresh(t *testing.T) {
 		GatewayID: auth.GatewayID.String(),
 		AuthID:    auth.ID.String(),
 		Audiences: []string{"api://gw"},
+		LoginAt:   time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}

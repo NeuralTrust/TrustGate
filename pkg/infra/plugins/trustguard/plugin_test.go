@@ -416,6 +416,124 @@ func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
 	}
 }
 
+func TestExecuteForbiddenFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusForbidden}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on 403, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusBadGateway)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.FailedClosed || extras.Decision != decisionFailedClosed || extras.FailureReason != failureReasonUnauthorized {
+		t.Fatalf("extras = %+v, want failed_closed unauthorized", extras)
+	}
+}
+
+func TestExecuteForbiddenFailsClosedEvenWithFailOpenSetting(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusForbidden}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	set := settings("")
+	set["on_error"] = onErrorFailOpen
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, set, requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("auth rejection must fail closed even when on_error=fail_open, got %v", err)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+}
+
+func TestExecuteTransportErrorFailClosed(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result when on_error=fail_closed, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusBadGateway || pe.Type != typeGuardError {
+		t.Fatalf("plugin error = %+v, want 502 %s", pe, typeGuardError)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.FailedClosed || extras.FailureReason != failureReasonTransport {
+		t.Fatalf("extras = %+v, want failed_closed transport", extras)
+	}
+}
+
+func TestExecutePersistent401FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var guardHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case tokenPath:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
+		case evaluatePath:
+			atomic.AddInt32(&guardHits, 1)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("persistent 401 must fail closed, got %v", err)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+	if got := atomic.LoadInt32(&guardHits); got != 2 {
+		t.Fatalf("guard hits = %d, want 2 (original + refresh retry)", got)
+	}
+}
+
 func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	t.Parallel()
 
@@ -489,7 +607,7 @@ func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 func TestExecuteAllowedRecordsAllowedSpanDecision(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-allowed"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -575,7 +693,7 @@ func TestExecuteStreamingResponsePassThrough(t *testing.T) {
 func TestExecutePostResponseStreamingInspects(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-stream"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -604,7 +722,7 @@ func TestExecutePostResponseStreamingInspects(t *testing.T) {
 func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream-rich"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-stream-rich"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -765,7 +883,7 @@ func TestExecuteProtocolFromConsumerType(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 			srv := newServer(t, f)
 			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -805,7 +923,7 @@ func TestExecutePropagatesGatewayTraceID(t *testing.T) {
 	t.Parallel()
 
 	const wantTraceID = "gate-trace-xyz789"
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -823,7 +941,7 @@ func TestExecutePropagatesGatewayTraceID(t *testing.T) {
 func TestExecuteOmitsTraceIDWithoutRequestTrace(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -839,7 +957,7 @@ func TestExecuteOmitsTraceIDWithoutRequestTrace(t *testing.T) {
 func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -888,12 +1006,42 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
+	if got.Attributes.User != nil {
+		t.Fatalf("attributes.user = %+v, want nil without a principal", got.Attributes.User)
+	}
+}
+
+func TestExecuteSendsPrincipalOnAttributesUser(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	rt := trace.New("trace-user", trace.Metadata{})
+	rt.SetPrincipalIdentity("alice", "jwt", "ada@example.com")
+	ctx := trace.NewContext(context.Background(), rt)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	if _, err := p.Execute(ctx, in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := f.captured().Attributes.User
+	if got == nil {
+		t.Fatal("attributes.user is nil")
+	}
+	if got.ID != "alice" {
+		t.Fatalf("user.id = %q, want alice", got.ID)
+	}
+	if got.Email != "ada@example.com" {
+		t.Fatalf("user.email = %q, want ada@example.com", got.Email)
+	}
 }
 
 func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -926,7 +1074,7 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 			srv := newServer(t, f)
 			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -968,7 +1116,7 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(GuardResponse{Status: "allowed"})
+			_ = json.NewEncoder(w).Encode(GuardResponse{Status: statusAllow})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1240,7 +1388,7 @@ func TestExecuteMCPTransformObservePassesThrough(t *testing.T) {
 func TestExecutePreRequestSendsOpenAIToolMessages(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1575,7 +1723,7 @@ func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{responseFor: map[string]GuardResponse{
-		directionInput:  {Status: "allowed"},
+		directionInput:  {Status: statusAllow},
 		directionOutput: {Status: statusBlock, TraceID: "trace-out"},
 	}}
 	srv := newServer(t, f)

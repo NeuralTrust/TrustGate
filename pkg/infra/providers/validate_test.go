@@ -53,6 +53,8 @@ func TestValidateProviderOptions(t *testing.T) {
 		{name: "vertex missing location", provider: ProviderVertex, options: map[string]any{"project": "p"}, errContains: "location"},
 		{name: "vertex nil options", provider: ProviderVertex, options: nil, errContains: "project"},
 		{name: "vertex project wrong type", provider: ProviderVertex, options: map[string]any{"project": 123, "location": "l"}, errContains: "vertex"},
+		{name: "vertex embeddings base_url", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "us-central1", "base_url": "https://host/v1"}},
+		{name: "vertex invalid base_url", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "us-central1", "base_url": "host/v1"}, errContains: "base_url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

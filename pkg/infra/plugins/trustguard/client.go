@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 )
 
 const (
@@ -31,6 +33,11 @@ const (
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
 	maxResponseBytes       = 1 << 20
+
+	// peerService must match TrustGuard's own service.name, and evaluateSpanName
+	// stays a bounded label rather than the request target.
+	peerService      = "trustguard"
+	evaluateSpanName = "trustguard.evaluate"
 )
 
 var errUnauthorized = errors.New("trustguard: unauthorized")
@@ -62,12 +69,29 @@ func (e *entitlementsUnavailableError) Error() string {
 	return "trustguard: rate limit entitlements unavailable"
 }
 
+// authRejectedError is returned when TrustGuard deliberately refuses the
+// evaluate call (403, or 401 after token refresh). Must not fail-open: the
+// guard is reachable and the plugin is misconfigured or unauthorized.
+type authRejectedError struct {
+	status int
+}
+
+func (e *authRejectedError) Error() string {
+	if e == nil {
+		return "trustguard: unauthorized"
+	}
+	return fmt.Sprintf("trustguard: unauthorized status %d", e.status)
+}
+
 type client struct {
 	http *http.Client
 }
 
 func newClient(timeout time.Duration) *client {
-	return &client{http: &http.Client{Timeout: timeout}}
+	return &client{http: &http.Client{
+		Timeout:   timeout,
+		Transport: o11y.InternalTransport(peerService, evaluateSpanName),
+	}}
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
@@ -102,6 +126,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	}
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
+	}
+	if res.StatusCode == http.StatusForbidden {
+		return nil, &authRejectedError{status: http.StatusForbidden}
 	}
 	if res.StatusCode == http.StatusTooManyRequests {
 		return nil, &rateLimitedError{

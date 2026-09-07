@@ -54,8 +54,67 @@ func (g *Gateway) TenantID() string {
 	return g.Metadata[MetadataTenantIDKey]
 }
 
+// MetadataStoreModeKey holds the MCP Store curation mode for the gateway.
+const MetadataStoreModeKey = "store_mode"
+
+// Store curation modes. These are the three access scopes an admin sets for the
+// gateway's MCP Store (surfaced in the Access → Users "default access" control):
+// All, Selected and None.
+const (
+	// StoreModeOpen ("All"): the whole catalog is browsable; servers not on the
+	// shelf can be requested. This is the default.
+	StoreModeOpen = "open"
+	// StoreModeCurated ("Selected"): only shelf (store.available) servers are shown.
+	StoreModeCurated = "curated"
+	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
+	// and self-service install is disabled. Per-group/per-user grants on a registry
+	// are a separate, additive layer and are unaffected.
+	StoreModeNone = "none"
+)
+
+// StoreMode returns the gateway's Store curation mode as stamped by its admin,
+// defaulting to open. Governance is available on every plan: a fresh gateway
+// starts open with no policies (zero-friction default), and any tier may narrow
+// it to curated or none once its admin configures Access.
+func (g *Gateway) StoreMode() string {
+	if g == nil || g.Metadata == nil {
+		return StoreModeOpen
+	}
+	switch g.Metadata[MetadataStoreModeKey] {
+	case StoreModeCurated:
+		return StoreModeCurated
+	case StoreModeNone:
+		return StoreModeNone
+	default:
+		return StoreModeOpen
+	}
+}
+
+// WithStoreMode stamps the Store curation mode into gateway metadata. An
+// unrecognised mode falls back to open.
+func WithStoreMode(metadata map[string]string, mode string) map[string]string {
+	if mode != StoreModeCurated && mode != StoreModeNone {
+		mode = StoreModeOpen
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataStoreModeKey] = mode
+	return metadata
+}
+
+// RetentionWindow is the stamped trace-retention window for this gateway, and
+// whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
+// runs on requests where the gateway never resolved.
+func (g *Gateway) RetentionWindow() (time.Duration, bool) {
+	if g == nil {
+		return 0, false
+	}
+	return g.Entitlements.ResolveRetention()
+}
+
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataStoreModeKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {

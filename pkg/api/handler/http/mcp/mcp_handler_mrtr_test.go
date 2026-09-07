@@ -181,10 +181,11 @@ func newMRTRApp(
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandlerWithMRTR(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		mcphttp.MRTRSupport{Signer: signer, Recorder: recorder},
+		nil,
+		mcphttp.WithMRTR(mcphttp.MRTRSupport{Signer: signer, Recorder: recorder}),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app

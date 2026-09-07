@@ -24,6 +24,8 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -46,6 +48,9 @@ type RPCGateway struct {
 	composer             appmcp.Composer
 	plugins              *appmcp.PluginRunner
 	limiter              ratelimitapp.Checker
+	connections          appmcp.ConnectionTool
+	store                appmcp.StoreTool
+	storeScoper          appstore.Scoper
 	appsListPolicy       appmcp.AppsListPolicy
 	appsReadPolicy       appmcp.AppsReadPolicy
 	appsRecorder         AppsRecorder
@@ -140,9 +145,78 @@ func validateContinuationSize(inputResponses json.RawMessage, requestState strin
 	return nil
 }
 
+// NewRPCGatewayWithConnections wires the optional TrustGate connection-management tool.
+func NewRPCGatewayWithConnections(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	connections appmcp.ConnectionTool,
+) *RPCGateway {
+	gateway := NewRPCGateway(composer, plugins, limiter)
+	gateway.connections = connections
+	return gateway
+}
+
+// NewRPCGatewayWithMetaTools wires both the connection-management tool and the
+// MCP Store meta-tools (search / install / …).
+func NewRPCGatewayWithMetaTools(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	connections appmcp.ConnectionTool,
+	store appmcp.StoreTool,
+) *RPCGateway {
+	gateway := NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
+	gateway.store = store
+	return gateway
+}
+
+// WithAppsPolicies attaches the secure-Apps list and read policies together
+// with their recorder, so a gateway built through the meta-tools constructor
+// enforces Apps exactly as NewRPCGatewayWithAppsPolicies does. Returns the
+// gateway for chaining.
+func (g *RPCGateway) WithAppsPolicies(
+	list appmcp.AppsListPolicy,
+	read appmcp.AppsReadPolicy,
+	recorder AppsRecorder,
+) *RPCGateway {
+	g.appsListPolicy = list
+	g.appsReadPolicy = read
+	g.appsRecorder = recorder
+	return g
+}
+
+// WithMaxContinuationBytes caps the mediated continuation payload a tools/call
+// may carry (inputResponses plus requestState). A non-positive value keeps
+// DefaultMaxContinuationBytes. Returns the gateway for chaining.
+func (g *RPCGateway) WithMaxContinuationBytes(maxContinuationBytes int) *RPCGateway {
+	if maxContinuationBytes > 0 {
+		g.maxContinuationBytes = maxContinuationBytes
+	}
+	return g
+}
+
+// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
+// principal's installed servers. Returns the gateway for chaining.
+func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
+	g.storeScoper = scoper
+	return g
+}
+
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+	return g.DispatchWithBaseURL(ctx, rc, "", method, params)
+}
+
+// DispatchWithBaseURL dispatches an MCP request with the public origin used for user-facing links.
+func (g *RPCGateway) DispatchWithBaseURL(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL,
+	method string,
+	params json.RawMessage,
+) (any, error) {
 	span, ctx := g.startSpan(ctx, method, params)
-	result, err := g.dispatch(ctx, rc, method, params)
+	result, err := g.dispatch(ctx, rc, baseURL, method, params)
 	g.finishSpan(span, err)
 	return result, err
 }
@@ -213,6 +287,8 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
 		span.SetMCPStatus(http.StatusNotFound, 0)
+	case errors.Is(err, ErrMethodNotFound):
+		span.SetMCPStatus(http.StatusNotFound, codeMethodNotFound)
 	default:
 		span.SetMCPStatus(http.StatusBadGateway, 0)
 	}
@@ -222,6 +298,8 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 // tool/prompt/resource identifiers from the JSON-RPC method and params.
 func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, prompt, resourceURI string) {
 	switch method {
+	case "server/discover":
+		return "discovery", "", "", ""
 	case "tools/list":
 		return "discovery", "", "", ""
 	case "tools/call":
@@ -284,15 +362,51 @@ func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.Routabl
 	return err
 }
 
-func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+func (g *RPCGateway) dispatch(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL,
+	method string,
+	params json.RawMessage,
+) (any, error) {
+	// Scope the Store to the caller's installed servers. The scoper no-ops for
+	// any non-Store consumer; on a transient error we proceed with the meta-tools
+	// only rather than failing the request.
+	if g.storeScoper != nil {
+		if scoped, err := g.storeScoper.Scope(ctx, rc); err == nil {
+			rc = scoped
+		}
+	}
 	switch method {
 	case "tools/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
+		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
-			return nil, err
+			// The gateway's own tools — the Store meta-tools and the per-provider
+			// connect tools appended below — are exactly how a user installs a
+			// server or connects an account. An upstream problem must never hide
+			// them, so these list-time errors degrade to an empty upstream list
+			// rather than failing the whole listing:
+			//   - the synthetic Store consumer carries no registries of its own
+			//     until servers are installed (ErrNoMCPRegistries), and its installed
+			//     servers may be unreachable — either way its meta-tools still list;
+			//   - any consumer whose bound upstreams are all still pending the user's
+			//     connection (ConsentRequiredError) must still be shown the connect
+			//     tools; a tool call, not the listing, is where consent is reported.
+			var consentErr *appmcp.ConsentRequiredError
+			switch {
+			case isStore && errors.Is(err, appmcp.ErrNoMCPRegistries):
+				tools = nil
+			case isStore && errors.Is(err, appmcp.ErrUpstreamUnavailable):
+				tools = nil
+			case errors.As(err, &consentErr):
+				tools = nil
+			default:
+				return nil, err
+			}
 		}
 		before := len(tools)
 		tools, err = g.filterAppsTools(ctx, rc, tools)
@@ -305,6 +419,12 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := g.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return nil, err
+		}
+		if g.connections != nil && connectionToolPermitted(rc) {
+			tools = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
+		}
+		if g.store != nil && isStore {
+			tools = appendGatewayTools(tools, g.store.Definitions(ctx, rc))
 		}
 		return map[string]any{"tools": tools}, nil
 	case "tools/call":
@@ -324,6 +444,18 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		// composer's toolkit check. A continuation is never a shortcut past them.
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
+		}
+		if g.connections != nil && g.connections.Handles(p.Name) {
+			if !connectionToolPermitted(rc) {
+				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
+			}
+			return g.connections.Call(ctx, rc, baseURL, p.Name)
+		}
+		if g.store != nil && g.store.Handles(p.Name) {
+			if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
+				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
+			}
+			return g.store.Call(ctx, rc, baseURL, p.Name, p.Arguments)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments, p.InputResponses)
 		if err != nil {
@@ -524,4 +656,37 @@ func (g *RPCGateway) recordApps(ctx context.Context, operation, outcome string, 
 	if g.appsRecorder != nil && count > 0 {
 		g.appsRecorder.Record(ctx, operation, outcome, int64(count))
 	}
+}
+
+func appendGatewayTools(tools []appmcp.Tool, gatewayTools []appmcp.Tool) []appmcp.Tool {
+	for _, gatewayTool := range gatewayTools {
+		tools = appendGatewayTool(tools, gatewayTool)
+	}
+	return tools
+}
+
+func appendGatewayTool(tools []appmcp.Tool, gatewayTool appmcp.Tool) []appmcp.Tool {
+	for i := range tools {
+		if tools[i].Name == gatewayTool.Name {
+			tools[i] = gatewayTool
+			return tools
+		}
+	}
+	return append(tools, gatewayTool)
+}
+
+func connectionToolPermitted(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	toolkit := rc.Consumer.Toolkit()
+	if toolkit == nil {
+		return true
+	}
+	for _, entry := range toolkit {
+		if entry.Tool != "" {
+			return true
+		}
+	}
+	return false
 }

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -35,8 +36,11 @@ import (
 	ratelimitmocks "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit/mocks"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	vaultmocks "github.com/NeuralTrust/TrustGate/pkg/domain/vault/mocks"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -66,6 +70,7 @@ func newAppWithoutConsumers(t *testing.T) *fiber.App {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
@@ -109,7 +114,7 @@ func newAppWithGateway(t *testing.T, gateway *mcphttp.RPCGateway, consumerType c
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(gateway, appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(gateway, appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	app.Delete(mcpPath, handler.MethodNotAllowed)
@@ -140,13 +145,11 @@ func newAppWithRegistries(t *testing.T, apps appmcp.AppsMediator, registries ...
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandlerWithApps(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{},
-		mcphttp.SubscriptionsSupport{},
-		apps,
+		nil,
+		mcphttp.WithApps(apps),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
@@ -266,12 +269,52 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
 	app.Post(mcpPath, handler.Handle)
 
 	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
 	if status != fiber.StatusOK {
 		t.Fatalf("status = %d, want 200 (default IdP must be accepted for a consumer with no attached auth)", status)
+	}
+}
+
+func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
+	t.Parallel()
+	// The MCP Store is not in the gateway's persisted consumer data; the handler
+	// synthesises it from the reserved /store/mcp path and serves it, so the
+	// fixed catalog URL initializes on any gateway.
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	data := appconsumer.NewData(gwID, nil)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (the synthetic Store must initialize at its fixed URL)", res.StatusCode)
 	}
 }
 
@@ -285,6 +328,26 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	result := body["result"].(map[string]any)
 	if result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("protocolVersion = %v, want echo of requested", result["protocolVersion"])
+	}
+	// The gateway steers the agent to route through TrustGate rather than wiring
+	// upstream MCP servers directly into the client.
+	instructions, _ := result["instructions"].(string)
+	if !strings.Contains(instructions, "TrustGate") || !strings.Contains(instructions, "bypass") {
+		t.Fatalf("initialize must carry governance instructions, got %q", instructions)
+	}
+}
+
+// Claude drops notifications/tools/list_changed from a server that did not
+// declare the capability, so advertising it is what makes the push stream
+// usable at all.
+func TestHandler_Initialize_AdvertisesToolListChanged(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	capabilities := body["result"].(map[string]any)["capabilities"].(map[string]any)
+	tools := capabilities["tools"].(map[string]any)
+	if tools["listChanged"] != true {
+		t.Fatalf("tools.listChanged = %v, want true", tools["listChanged"])
 	}
 }
 
@@ -486,6 +549,189 @@ func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
 	}
 }
 
+// Federation skips upstreams pending consent, so connecting an account on the
+// connect page adds tools without changing any registry. The reported version
+// has to move with the caller's credentials too, or Claude keeps replaying the
+// tool list it cached against the previous version.
+func TestHandler_Initialize_VersionTracksConnectedAccounts(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	linear, err := registrydomain.NewMCPRegistry(gwID, "linear", "", &registrydomain.MCPTarget{
+		URL: "https://linear.example.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "linear",
+			ClientID:     "cid",
+			AuthorizeURL: "https://linear.example.com/authorize",
+			TokenURL:     "https://linear.example.com/token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	linkedAt := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+
+	versionWith := func(creds []*vaultdomain.Credential) string {
+		vault := vaultmocks.NewRepository(t)
+		vault.EXPECT().ListByPrincipal(mock.Anything, gwID, "alice").Return(creds, nil)
+		app := newAppWithVault(t, gwID, linear, vault)
+		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+		return body["result"].(map[string]any)["serverInfo"].(map[string]any)["version"].(string)
+	}
+
+	pending := versionWith(nil)
+	linked := versionWith([]*vaultdomain.Credential{{Provider: "linear", UpdatedAt: linkedAt}})
+	reconnected := versionWith([]*vaultdomain.Credential{{Provider: "linear", UpdatedAt: linkedAt.Add(time.Hour)}})
+	unrelated := versionWith([]*vaultdomain.Credential{{Provider: "notion", UpdatedAt: linkedAt}})
+
+	if linked == pending {
+		t.Fatalf("version %q did not change after connecting the provider", linked)
+	}
+	if reconnected == linked {
+		t.Fatalf("version %q did not change after reconnecting the provider", reconnected)
+	}
+	if unrelated != pending {
+		t.Fatalf("version changed for a provider this consumer does not federate: %q vs %q", unrelated, pending)
+	}
+}
+
+// newAppWithVault builds an MCP consumer bound to one registry and authenticated
+// as a fixed principal, so a test can observe how the caller's stored
+// credentials reach the initialize response.
+func newAppWithVault(
+	t *testing.T,
+	gwID ids.GatewayID,
+	registry *registrydomain.Registry,
+	vault vaultdomain.Repository,
+) *fiber.App {
+	t.Helper()
+	authID := ids.New[ids.AuthKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: cons, Registries: []*registrydomain.Registry{registry}},
+	})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{
+			Subject: "alice",
+			Method:  identity.MethodJWT,
+		})
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		vault,
+	)
+	app.Post(mcpPath, handler.Handle)
+	return app
+}
+
+func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	status, body := rpcCallWithHeaders(t, app, `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "server/discover",
+		"params": {
+			"_meta": {
+				"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+				"io.modelcontextprotocol/clientInfo": {"name": "Anthropic/ClaudeAI", "version": "1.0.0"},
+				"io.modelcontextprotocol/clientCapabilities": {
+					"extensions": {
+						"io.modelcontextprotocol/ui": {
+							"mimeTypes": ["text/html;profile=mcp-app"]
+						}
+					}
+				}
+			}
+		}
+	}`, modernHeadersFor("server/discover"))
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if _, ok := body["error"]; ok {
+		t.Fatalf("unexpected JSON-RPC error: %v", body["error"])
+	}
+	result := body["result"].(map[string]any)
+	if result["resultType"] != "complete" {
+		t.Fatalf("resultType = %v, want complete", result["resultType"])
+	}
+	// The modern era negotiates the modern revision end to end, so discovery
+	// advertises it: a client that probed with 2026-07-28 and reached this
+	// branch is served under that revision's rules.
+	versions, _ := result["supportedVersions"].([]any)
+	if len(versions) == 0 || versions[0] != "2026-07-28" {
+		t.Fatalf("supportedVersions = %v, want the modern revision first", versions)
+	}
+	capabilities := result["capabilities"].(map[string]any)
+	for _, kind := range []string{"tools", "prompts", "resources"} {
+		if _, ok := capabilities[kind]; !ok {
+			t.Fatalf("capabilities missing %s: %v", kind, capabilities)
+		}
+	}
+}
+
+// A legacy-era client must be told only what it can actually negotiate:
+// advertising the modern revision to a client that keeps applying legacy rules
+// downgraded it silently and made it reject every tools/call result as
+// malformed.
+func TestHandler_ServerDiscover_LegacyEraHidesTheModernRevision(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if _, ok := body["error"]; ok {
+		t.Fatalf("unexpected JSON-RPC error: %v", body["error"])
+	}
+	result := body["result"].(map[string]any)
+	if result["resultType"] != "complete" {
+		t.Fatalf("resultType = %v, want complete", result["resultType"])
+	}
+	versions, _ := result["supportedVersions"].([]any)
+	if len(versions) == 0 || versions[0] != "2025-06-18" {
+		t.Fatalf("supportedVersions = %v, want the negotiable legacy revision first", versions)
+	}
+	for _, version := range versions {
+		if version == "2026-07-28" {
+			t.Fatalf("the legacy era must not advertise the modern revision: %v", versions)
+		}
+	}
+}
+
+// The era boundary is a contract, not a hint: a request carrying the modern
+// revision in its metadata but no matching header is a protocol violation, not
+// a request to be served under a guessed era.
+func TestHandler_ServerDiscover_ModernMetadataWithoutHeaderIsRejected(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{`+
+			`"io.modelcontextprotocol/protocolVersion":"2026-07-28",`+
+			`"io.modelcontextprotocol/clientCapabilities":{}}}}`)
+	if status != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if code := body["error"].(map[string]any)["code"].(float64); code != -32020 {
+		t.Fatalf("code = %v, want -32020 header mismatch", code)
+	}
+}
+
 func TestHandler_UnknownMethod_MapsToMethodNotFound(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
@@ -639,6 +885,7 @@ func TestHandler_LegacyInvalidRequestPreservesRoleScopePrecedence(t *testing.T) 
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		roleScoper,
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 	status, _ := rpcCall(t, app, `{}`)
@@ -678,6 +925,7 @@ func TestHandler_UnknownModernNotificationSkipsDownstreamEffects(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
 		roleScoper,
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 
@@ -740,6 +988,7 @@ func TestHandler_ModernServerDiscoverNotificationSkipsDownstreamEffects(t *testi
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
 		roleScoper,
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 
@@ -823,6 +1072,7 @@ func TestHandler_ModernMethodFilteringPrecedesConsumerLookup(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 	body := `{"jsonrpc":"2.0","id":8,"method":"tools/subscribe","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
@@ -873,6 +1123,7 @@ func TestHandler_ModernServerDiscoverUsesScopedLocalView(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
 		roleScoper,
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 
@@ -1140,6 +1391,7 @@ func TestHandler_ModernValidationPrecedesDownstream(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
 		roleScoper,
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 
@@ -1175,6 +1427,7 @@ func TestHandler_ModernValidationPrecedesConsumerLookup(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
 	body := `{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
@@ -1334,5 +1587,112 @@ func TestHandler_ServerDiscover_ParsesMCPApps(t *testing.T) {
 				"mimeTypes": []any{appmcp.MCPAppsHTMLMIMEType},
 			}}, capabilities["extensions"])
 		})
+	}
+}
+
+func TestHandler_StampsJWTEmailOnTrace(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: cons}})
+	rt := trace.New("trace-id", trace.Metadata{})
+	principal := &identity.Principal{
+		Subject: "user-1",
+		Method:  identity.MethodJWT,
+		Claims:  map[string]any{"email": "ada@example.com"},
+	}
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = identity.WithPrincipal(ctx, principal)
+		ctx = trace.NewContext(ctx, rt)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
+	)
+	app.Post(mcpPath, handler.Handle)
+
+	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	meta := rt.Metadata()
+	if meta.PrincipalSubject != "user-1" {
+		t.Fatalf("subject = %q, want user-1", meta.PrincipalSubject)
+	}
+	if meta.PrincipalMethod != string(identity.MethodJWT) {
+		t.Fatalf("method = %q, want jwt", meta.PrincipalMethod)
+	}
+	if meta.PrincipalEmail != "ada@example.com" {
+		t.Fatalf("email = %q, want ada@example.com", meta.PrincipalEmail)
+	}
+}
+
+func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: cons}})
+	rt := trace.New("trace-id", trace.Metadata{})
+	principal := &identity.Principal{Subject: "dogfood-key", Method: identity.MethodAPIKey}
+	vault := vaultmocks.NewRepository(t)
+	vault.EXPECT().
+		ListByPrincipal(mock.Anything, gwID, "dogfood-key").
+		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil).
+		Once()
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = identity.WithPrincipal(ctx, principal)
+		ctx = trace.NewContext(ctx, rt)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		vault,
+	)
+	app.Post(mcpPath, handler.Handle)
+
+	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	meta := rt.Metadata()
+	if meta.PrincipalSubject != "dogfood-key" {
+		t.Fatalf("subject = %q, want dogfood-key", meta.PrincipalSubject)
+	}
+	if meta.PrincipalMethod != string(identity.MethodAPIKey) {
+		t.Fatalf("method = %q, want api_key", meta.PrincipalMethod)
+	}
+	if meta.PrincipalEmail != "ada@gmail.com" {
+		t.Fatalf("email = %q, want ada@gmail.com", meta.PrincipalEmail)
 	}
 }

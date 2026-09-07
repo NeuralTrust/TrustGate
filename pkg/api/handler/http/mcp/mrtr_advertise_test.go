@@ -87,11 +87,11 @@ func TestServerDiscoveryAdvertisesInputRequests(t *testing.T) {
 	t.Parallel()
 	rc := mrtrRoutable(mrtrRegistry(t, registrydomain.MCPProtocolModeModern))
 
-	advertised := serverDiscoveryResult(rc, true)["capabilities"].(map[string]any)
+	advertised := serverDiscoveryResultWith(rc, true, false, false)["capabilities"].(map[string]any)
 	require.Equal(t, map[string]any{"inputRequests": map[string]any{}}, advertised["tools"])
 	require.Empty(t, advertised["prompts"])
 	require.Empty(t, advertised["resources"])
 
-	hidden := serverDiscoveryResult(rc, false)["capabilities"].(map[string]any)
+	hidden := serverDiscoveryResultWith(rc, false, false, false)["capabilities"].(map[string]any)
 	require.Empty(t, hidden["tools"])
 }
