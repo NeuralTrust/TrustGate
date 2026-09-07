@@ -16,7 +16,6 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -27,36 +26,32 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// errDataPlaneAdminUnsupported guards the admin-only read methods of the
-// installation repository. The data plane's Store surface only ever installs,
-// uninstalls, finds and lists-by-principal; the admin queues (list-by-code,
-// list-pending) run on the control plane against the DB directly and are never
-// invoked here. Failing loudly beats a silent empty result if that ever changes.
-var errDataPlaneAdminUnsupported = errors.New(
-	"installations: admin queries are not served over the data-plane channel")
-
-// InstallationsClient is the data-plane end of the StoreInstallations channel. It
-// implements installationdomain.Repository by delegating the durable read/write
-// to the control plane over the same egress-only gRPC connection the config-sync
-// client already holds, so the DB-less data plane can persist Store installs.
 type InstallationsClient struct {
 	cli snapshotpb.StoreInstallationsClient
+	ops installationOperationsClient
 }
 
-// NewInstallationsClient builds the repository over an existing gRPC connection
-// (the config-sync dial), so no second connection or dial is opened.
 func NewInstallationsClient(conn *grpc.ClientConn) *InstallationsClient {
-	return &InstallationsClient{cli: snapshotpb.NewStoreInstallationsClient(conn)}
+	return &InstallationsClient{
+		cli: snapshotpb.NewStoreInstallationsClient(conn),
+		ops: installationOperationsClient{cc: conn},
+	}
 }
 
 var _ installationdomain.Repository = (*InstallationsClient)(nil)
 
 func (c *InstallationsClient) Upsert(ctx context.Context, in *installationdomain.Installation) error {
-	if _, err := c.cli.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{
+	resp, err := c.ops.upsertCanonical(ctx, &snapshotpb.UpsertInstallationRequest{
 		Installation: installationToProto(in),
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("installations: upsert: %w", err)
 	}
+	canonical, err := installationFromProto(resp.GetInstallation())
+	if err != nil {
+		return fmt.Errorf("installations: upsert response: %w", err)
+	}
+	*in = *canonical
 	return nil
 }
 
@@ -98,44 +93,44 @@ func (c *InstallationsClient) ListByPrincipal(
 	return installationsFromProto(resp.GetInstallations())
 }
 
-// FindByID returns one instance by id. The data-plane channel has no by-id RPC,
-// so it filters the principal's list — cheap (installs per principal are few).
 func (c *InstallationsClient) FindByID(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	id ids.InstallationID,
 ) (*installationdomain.Installation, error) {
-	list, err := c.ListByPrincipal(ctx, gatewayID, principalSub)
+	resp, err := c.ops.findByID(ctx, &snapshotpb.Installation{
+		Id:           id.String(),
+		GatewayId:    gatewayID.String(),
+		PrincipalSub: principalSub,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("installations: find by id: %w", err)
 	}
-	for _, in := range list {
-		if in.ID == id {
-			return in, nil
-		}
+	if !resp.GetFound() {
+		return nil, installationdomain.ErrNotFound
 	}
-	return nil, installationdomain.ErrNotFound
+	out, err := installationFromProto(resp.GetInstallation())
+	if err != nil {
+		return nil, fmt.Errorf("installations: find by id: %w", err)
+	}
+	return out, nil
 }
 
-// ListByPrincipalAndCode filters the principal's installs by catalog code, again
-// client-side since the channel exposes only the by-principal list RPC.
 func (c *InstallationsClient) ListByPrincipalAndCode(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
 ) ([]*installationdomain.Installation, error) {
-	list, err := c.ListByPrincipal(ctx, gatewayID, principalSub)
+	resp, err := c.ops.listByPrincipalAndCode(ctx, &snapshotpb.FindInstallationRequest{
+		GatewayId:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		CatalogCode:  catalogCode,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("installations: list by principal and code: %w", err)
 	}
-	out := make([]*installationdomain.Installation, 0, len(list))
-	for _, in := range list {
-		if in.CatalogCode == catalogCode {
-			out = append(out, in)
-		}
-	}
-	return out, nil
+	return installationsFromProto(resp.GetInstallations())
 }
 
 func (c *InstallationsClient) Delete(
@@ -157,24 +152,24 @@ func (c *InstallationsClient) Delete(
 	return nil
 }
 
-// DeleteByID revokes one instance by id. The data-plane channel has no by-id
-// delete RPC, so it revokes the instance in place (Upsert with StatusRevoked):
-// IsActive() then drops it from the Store surface, the row is retained for
-// audit (the documented purpose of StatusRevoked), and a later re-install of the
-// same config reactivates it. The control plane's DB repository implements
-// DeleteByID as the same soft revoke, so both planes behave identically.
 func (c *InstallationsClient) DeleteByID(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub string,
 	id ids.InstallationID,
 ) error {
-	in, err := c.FindByID(ctx, gatewayID, principalSub, id)
+	_, err := c.ops.deleteByID(ctx, &snapshotpb.Installation{
+		Id:           id.String(),
+		GatewayId:    gatewayID.String(),
+		PrincipalSub: principalSub,
+	})
 	if err != nil {
-		return err
+		if status.Code(err) == codes.NotFound {
+			return installationdomain.ErrNotFound
+		}
+		return fmt.Errorf("installations: delete by id: %w", err)
 	}
-	in.Status = installationdomain.StatusRevoked
-	return c.Upsert(ctx, in)
+	return nil
 }
 
 // Ensure asks the control plane to materialise the shared registry for a catalog
@@ -195,18 +190,29 @@ func (c *InstallationsClient) Ensure(
 	return nil
 }
 
-// ListByCatalogCode is an admin read served only on the control plane.
 func (c *InstallationsClient) ListByCatalogCode(
-	context.Context, ids.GatewayID, string,
+	ctx context.Context, gatewayID ids.GatewayID, catalogCode string,
 ) ([]*installationdomain.Installation, error) {
-	return nil, errDataPlaneAdminUnsupported
+	resp, err := c.ops.listByCatalogCode(ctx, &snapshotpb.FindInstallationRequest{
+		GatewayId:   gatewayID.String(),
+		CatalogCode: catalogCode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("installations: list by catalog code: %w", err)
+	}
+	return installationsFromProto(resp.GetInstallations())
 }
 
-// ListPendingByGateway is an admin read served only on the control plane.
 func (c *InstallationsClient) ListPendingByGateway(
-	context.Context, ids.GatewayID,
+	ctx context.Context, gatewayID ids.GatewayID,
 ) ([]*installationdomain.Installation, error) {
-	return nil, errDataPlaneAdminUnsupported
+	resp, err := c.ops.listPendingByGateway(ctx, &snapshotpb.ListByPrincipalRequest{
+		GatewayId: gatewayID.String(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("installations: list pending by gateway: %w", err)
+	}
+	return installationsFromProto(resp.GetInstallations())
 }
 
 func installationsFromProto(

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -156,7 +157,7 @@ func TestExchangeCodeSessionModeCarriesOrgAndGroups(t *testing.T) {
 	if claims["org"] != "team-a" {
 		t.Fatalf("session token must carry org, got %v", claims["org"])
 	}
-	gotGroups := stringSliceClaim(claims["groups"])
+	gotGroups := identity.GroupsFromClaim(claims["groups"])
 	if !reflect.DeepEqual(gotGroups, []string{"Eng", "Admins"}) {
 		t.Fatalf("session token must carry groups, got %v", claims["groups"])
 	}
@@ -204,7 +205,7 @@ func TestRefreshSessionPreservesOrgAndGroups(t *testing.T) {
 	if claims["org"] != "team-a" {
 		t.Fatalf("refreshed token must re-stamp org, got %v", claims["org"])
 	}
-	if got := stringSliceClaim(claims["groups"]); !reflect.DeepEqual(got, []string{"Eng"}) {
+	if got := identity.GroupsFromClaim(claims["groups"]); !reflect.DeepEqual(got, []string{"Eng"}) {
 		t.Fatalf("refreshed token must re-stamp groups, got %v", claims["groups"])
 	}
 

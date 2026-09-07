@@ -370,57 +370,36 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	}
 
 	byGateway := make(map[ids.GatewayID]*readmodel.Data)
-	bucket := func(id ids.GatewayID) *readmodel.Data {
-		d, ok := byGateway[id]
-		if !ok {
-			d = &readmodel.Data{}
-			byGateway[id] = d
-		}
-		return d
-	}
-	for _, x := range consumers {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Consumers = append(b.Consumers, *x)
-		}
-	}
-	for _, x := range registries {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Registries = append(b.Registries, *x)
-		}
-	}
-	for _, x := range policies {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Policies = append(b.Policies, *x)
-		}
-	}
-	for _, x := range auths {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Auths = append(b.Auths, *x)
-		}
-	}
-	for _, x := range roles {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Roles = append(b.Roles, *x)
-		}
-	}
-	for _, x := range grants {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.StoreGrants = append(b.StoreGrants, *x)
-		}
-	}
-	for _, x := range storePolicies {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.StorePolicies = append(b.StorePolicies, *x)
-		}
-	}
+	groupByGateway(byGateway, consumers, func(x *consumerdomain.Consumer) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x consumerdomain.Consumer) { data.Consumers = append(data.Consumers, x) })
+	groupByGateway(byGateway, registries, func(x *registrydomain.Registry) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x registrydomain.Registry) { data.Registries = append(data.Registries, x) })
+	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) { data.Policies = append(data.Policies, x) })
+	groupByGateway(byGateway, auths, func(x *authdomain.Auth) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x authdomain.Auth) { data.Auths = append(data.Auths, x) })
+	groupByGateway(byGateway, roles, func(x *roledomain.Role) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x roledomain.Role) { data.Roles = append(data.Roles, x) })
+	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
+	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
+		data.StorePolicies = append(data.StorePolicies, x)
+	})
 	return byGateway, nil
+}
+
+func groupByGateway[T any](
+	buckets map[ids.GatewayID]*readmodel.Data,
+	items []*T,
+	gatewayID func(*T) ids.GatewayID,
+	appendItem func(*readmodel.Data, T),
+) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		id := gatewayID(item)
+		bucket, ok := buckets[id]
+		if !ok {
+			bucket = &readmodel.Data{}
+			buckets[id] = bucket
+		}
+		appendItem(bucket, *item)
+	}
 }
 
 // listAll pages one entity table to exhaustion via fetch(page).

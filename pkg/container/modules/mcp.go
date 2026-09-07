@@ -176,11 +176,8 @@ type mcpHandlerParams struct {
 }
 
 func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
-	var opts []mcphttp.HandlerOption
-	if p.Installs != nil {
-		opts = append(opts, mcphttp.WithInstallations(p.Installs))
-	}
-	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, p.Vault, opts...)
+	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs)
+	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, surface)
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the

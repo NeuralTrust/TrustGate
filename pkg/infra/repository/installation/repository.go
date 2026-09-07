@@ -49,40 +49,48 @@ func NewRepository(conn *database.Connection) *Repository {
 }
 
 func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error {
-	if in == nil {
-		return errors.New("installation repository: nil installation")
+	if err := in.Validate(); err != nil {
+		return err
 	}
 	configJSON, err := marshalConfig(in.Config)
 	if err != nil {
 		return fmt.Errorf("installation repository: marshal config: %w", err)
 	}
-	// Keyed by id: a principal may hold several instances of one catalog code, so
-	// the old (gateway, principal, code) conflict target no longer identifies a
-	// row. A fresh install mints a new id (a new instance); re-touching an
-	// existing instance carries its id and updates in place.
-	// The decision columns are only ever written by the approver; a write that
-	// carries no decision (a data-plane install touching its row) keeps the one
-	// already recorded rather than blanking the history.
+	var (
+		decision  string
+		decidedAt *time.Time
+	)
 	const query = `
 		INSERT INTO store_installations
 			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
 			 decision, decided_by, decided_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		ON CONFLICT (id) DO UPDATE
+		ON CONFLICT (
+			gateway_id,
+			principal_sub,
+			catalog_code,
+			COALESCE(registry_id, '00000000-0000-0000-0000-000000000000'::uuid),
+			COALESCE(config, '{}'::jsonb)
+		) DO UPDATE
 			SET status       = EXCLUDED.status,
 			    installed_by = EXCLUDED.installed_by,
-			    config       = EXCLUDED.config,
-			    registry_id  = EXCLUDED.registry_id,
 			    decision     = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decision ELSE store_installations.decision END,
 			    decided_by   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_by ELSE store_installations.decided_by END,
 			    decided_at   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_at ELSE store_installations.decided_at END,
-			    updated_at   = EXCLUDED.updated_at`
-	if _, err := r.conn.Pool.Exec(ctx, query,
+			    updated_at   = EXCLUDED.updated_at
+		RETURNING id, decision, decided_by, decided_at, created_at, updated_at`
+	if err := r.conn.Pool.QueryRow(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
 		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID),
 		string(in.Decision), in.DecidedBy, nullableTime(in.DecidedAt), in.CreatedAt, in.UpdatedAt,
-	); err != nil {
+	).Scan(&in.ID, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
 		return mapPgError(err)
+	}
+	in.Decision = domain.Decision(decision)
+	if decidedAt != nil {
+		in.DecidedAt = *decidedAt
+	} else {
+		in.DecidedAt = time.Time{}
 	}
 	return nil
 }

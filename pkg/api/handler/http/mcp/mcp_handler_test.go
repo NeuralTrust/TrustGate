@@ -473,7 +473,7 @@ func newAppWithVault(
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
@@ -680,7 +680,7 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 

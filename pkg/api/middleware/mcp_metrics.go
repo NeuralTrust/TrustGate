@@ -59,12 +59,11 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 
-		req := m.buildRequestContext(c, gatewayID)
-
 		defer func() {
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
+			req := m.buildRequestContext(c, gatewayID)
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
