@@ -98,6 +98,13 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.JWKSPath, r.jwksHandler.Handle)
 
 	app.Get(oauthhttp.BrandAssetPath, oauthhttp.ServeBrandAsset)
+	// Starting an upstream OAuth flow has side effects (a fresh state + an
+	// authorize request the IdP records against the browser session), so the
+	// connect page submits it as a POST: a GET link is fair game for browser
+	// prefetching, and a prefetched start followed by the real click gives the
+	// IdP two pending approvals — Linear then rejects the first callback with
+	// "Invalid approval". GET stays for clients that already deep-link into it.
+	app.Post(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)

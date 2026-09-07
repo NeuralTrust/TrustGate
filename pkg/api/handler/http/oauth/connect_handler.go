@@ -67,6 +67,8 @@ func (h *ConnectHandler) Start(c *fiber.Ctx) error {
 	if err != nil {
 		return h.pageError(c, err)
 	}
+	// Never cache or prefetch the start: each one mints a new state upstream.
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	return c.Redirect(location, fiber.StatusFound)
 }
 
