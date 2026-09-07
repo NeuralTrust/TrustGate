@@ -87,6 +87,7 @@ Relevant env (see `.env.example`):
 | `MCP_BASE_DOMAIN` | MCP host suffix (`{slug}.<domain>`) |
 | `GATEWAY_BASE_DOMAIN` | Proxy host suffix (separate from MCP) |
 | `MCP_OAUTH_PUBLIC_BASE_URL` | Optional fixed origin for upstream connect `redirect_uri` (cloud shared OAuth apps) |
+| `MCP_OAUTH_CLIENT_NAME` | `client_name` sent in upstream dynamic client registration; one per environment (default `TrustGate MCP Gateway`) |
 | `STS_SIGNING_KEY` | RSA PEM for MCP session / JWKS (required in prod; ephemeral OK in local non-prod) |
 
 Mint an Admin token the same way as the README “Admin token” section
