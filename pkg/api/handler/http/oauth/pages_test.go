@@ -267,6 +267,7 @@ func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
 				Registry:   "linear-mcp",
 				Linked:     true,
 				AccountRef: "someone@example.com",
+				Scopes:     []string{"read"},
 			}},
 		}, "tk", "", mustMCPCatalog(t))
 	})
@@ -286,32 +287,45 @@ func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
 
 func TestAccessSummary(t *testing.T) {
 	t.Parallel()
-	// Scopes are the authorization truth, so they win over the tool preview.
-	label, items, more := accessSummary(domaincatalog.MCPServer{
-		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read", "write"}},
+	catalogued := domaincatalog.MCPServer{
+		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"declared.a", "declared.b"}},
 		Tools: []domaincatalog.MCPTool{{Name: "search"}},
-	}, false)
-	if label != "Access requested" || len(items) != 2 || items[0] != "read" || more != 0 {
-		t.Fatalf("scopes must win: %q %v %d", label, items, more)
-	}
-	if label, _, _ := accessSummary(domaincatalog.MCPServer{
-		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read"}},
-	}, true); label != "Access granted" {
-		t.Fatalf("a linked server reads as granted, got %q", label)
 	}
 
-	// Without scopes the advertised tools stand in, capped with a remainder.
+	// Before linking there is no grant, so the catalog's declaration stands in
+	// and is labelled as a request.
+	label, items, more := accessSummary(catalogued, nil, false)
+	if label != "Access requested" || len(items) != 2 || items[0] != "declared.a" || more != 0 {
+		t.Fatalf("unlinked must show the declared scopes: %q %v %d", label, items, more)
+	}
+
+	// Once linked, only what the upstream actually granted may be shown — the
+	// catalog's declaration must never be relabelled as granted.
+	label, items, _ = accessSummary(catalogued, []string{"granted.a"}, true)
+	if label != "Access granted" || len(items) != 1 || items[0] != "granted.a" {
+		t.Fatalf("linked must show the granted scopes: %q %v", label, items)
+	}
+
+	// A provider whose token response omitted "scope" leaves nothing granted to
+	// report, so the card falls back to the tool preview rather than passing the
+	// declaration off as a grant.
+	label, items, _ = accessSummary(catalogued, nil, true)
+	if label != "Tools the agent can call" || len(items) != 1 || items[0] != "search" {
+		t.Fatalf("linked with no recorded grant must not claim one: %q %v", label, items)
+	}
+
+	// The tool fallback caps and counts the remainder, skipping blank names.
 	tools := make([]domaincatalog.MCPTool, 0, 7)
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", ""} {
 		tools = append(tools, domaincatalog.MCPTool{Name: n})
 	}
-	label, items, more = accessSummary(domaincatalog.MCPServer{Tools: tools}, false)
+	label, items, more = accessSummary(domaincatalog.MCPServer{Tools: tools}, nil, false)
 	if label != "Tools the agent can call" || len(items) != maxAccessItems || more != 2 {
 		t.Fatalf("tool fallback must cap and count the rest: %q %v %d", label, items, more)
 	}
 
 	// A server the catalog knows nothing about renders no access block at all.
-	if label, items, more := accessSummary(domaincatalog.MCPServer{}, false); label != "" || items != nil || more != 0 {
+	if label, items, more := accessSummary(domaincatalog.MCPServer{}, nil, false); label != "" || items != nil || more != 0 {
 		t.Fatalf("an empty entry must produce no access block: %q %v %d", label, items, more)
 	}
 }
