@@ -183,7 +183,7 @@ jobs:
         run: bash .github/scripts/next-metrics-version.test.sh
 
   security:
-    uses: NeuralTrust/workflows/.github/workflows/sast.yml@codex/shared-govulncheck
+    uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
     with:
       gitleaks_enabled: true
       gosec_enabled: true
