@@ -27,7 +27,6 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -94,9 +93,6 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if msg.Roles, err = encodeJSON(data.Roles, "role", func(_ int, blob []byte) *snapshotpb.Role { return &snapshotpb.Role{Json: blob} }); err != nil {
-		return nil, err
-	}
 	if msg.Providers, err = encodeJSON(data.Providers, "provider", func(_ int, blob []byte) *snapshotpb.Provider { return &snapshotpb.Provider{Json: blob} }); err != nil {
 		return nil, err
 	}
@@ -155,9 +151,6 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		return readmodel.Data{}, err
 	}
 	if data.Auths, err = decodeJSON[*snapshotpb.Auth, authdomain.Auth](msg.GetAuths(), "auth", func(m *snapshotpb.Auth) []byte { return m.GetJson() }, func(m *snapshotpb.Auth, a *authdomain.Auth) { a.KeyHash = m.GetKeyHash() }); err != nil {
-		return readmodel.Data{}, err
-	}
-	if data.Roles, err = decodeJSON[*snapshotpb.Role, roledomain.Role](msg.GetRoles(), "role", func(m *snapshotpb.Role) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
 	if data.Providers, err = decodeJSON[*snapshotpb.Provider, catalogdomain.Provider](msg.GetProviders(), "provider", func(m *snapshotpb.Provider) []byte { return m.GetJson() }, nil); err != nil {

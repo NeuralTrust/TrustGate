@@ -31,7 +31,6 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
@@ -52,7 +51,6 @@ type compilerReaders struct {
 	Registries registrydomain.Repository
 	Policies   policydomain.Repository
 	Auths      authdomain.Repository
-	Roles      roledomain.Repository
 	Catalog    catalogdomain.Repository
 	// Grants and Policies put the MCP Store access grants and per-principal
 	// levels into every snapshot.
@@ -70,7 +68,7 @@ type compilerReaders struct {
 // control/run run funcs; nothing here resolves on the data plane graph.
 func ControlConfigSync(c *container.Container) error {
 	if err := c.Provide(func(r compilerReaders, logger *slog.Logger) *appsnapshot.Compiler {
-		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Roles, r.Catalog, logger,
+		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
 			appsnapshot.WithStoreGrants(r.Grants), appsnapshot.WithStorePolicies(r.StorePolicies))
 	}); err != nil {
 		return err

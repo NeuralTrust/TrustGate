@@ -17,7 +17,6 @@ package auth_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -60,33 +59,6 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	if _, ok := mgr.GetTTLMap(cache.AuthTTLName).Get(id.String()); ok {
 		t.Fatal("expected cache entry to be evicted")
 	}
-}
-
-func TestDeleter_Delete_BlockedWhenSoleIdPOfRoleBased(t *testing.T) {
-	t.Parallel()
-	repo := repomocks.NewRepository(t)
-	id := ids.New[ids.AuthKind]()
-	gwID := ids.New[ids.GatewayKind]()
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: gwID}, nil).Once()
-
-	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		Slug:        "role-cons",
-		RoutingMode: consumerdomain.RoutingModeRoleBased,
-	}}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-
-	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	err := deleter.Delete(context.Background(), gwID, id)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict when deleting the sole identity provider of a role_based consumer", err)
-	}
-	if !strings.Contains(err.Error(), "before deleting") {
-		t.Fatalf("err = %v, want the message to reference deleting", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_BlockedWhenSoleUsableIdPOfMCP(t *testing.T) {

@@ -57,12 +57,11 @@ func IsStoreSlug(slug string) bool {
 // default identity provider (platform login), like an inline no-auth consumer.
 func BuildStoreConsumer(gatewayID ids.GatewayID) *Consumer {
 	return &Consumer{
-		ID:          StoreConsumerID(),
-		GatewayID:   gatewayID,
-		Name:        StoreConsumerName,
-		Type:        TypeMCP,
-		Slug:        StoreSlug,
-		RoutingMode: RoutingModeInline,
-		Active:      true,
+		ID:        StoreConsumerID(),
+		GatewayID: gatewayID,
+		Name:      StoreConsumerName,
+		Type:      TypeMCP,
+		Slug:      StoreSlug,
+		Active:    true,
 	}
 }

@@ -77,23 +77,17 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	roleIDs, err := req.ToRoleIDs()
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
 		Name:            req.Name,
 		Type:            req.ToType(),
-		RoutingMode:     req.ToRoutingMode(),
 		LBConfig:        lbConfig,
 		Headers:         req.Headers,
 		Active:          req.Active,
 		Fallback:        fallback,
 		RegistryIDs:     registryIDs,
 		RegistryWeights: registryWeights,
-		RoleIDs:         roleIDs,
 		ModelPolicies:   modelPolicies,
 		MCP:             mcp,
 	})

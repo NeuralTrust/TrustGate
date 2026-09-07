@@ -88,35 +88,18 @@ func authStubWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Met
 // is valid for the gateway but NOT attached to the consumer that matches the
 // path, so the handler must reject the request with 403.
 func authStubForbidden(gatewayID ids.GatewayID, slug string) fiber.Handler {
+	return authStubForbiddenWithMethod(gatewayID, slug, appauth.MethodAPIKey)
+}
+
+func authStubForbiddenWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Method) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
+		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	}
-}
-
-func authStubRoleBased(gatewayID ids.GatewayID, slug string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
-	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     consumerRoles,
-		}},
-	})
-	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodOIDC, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
 		return c.Next()
@@ -212,54 +195,15 @@ func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
+func TestHandle_OIDCAttachedAuthSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gwID,
-			Slug:        consumerSlug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{roleID},
-		}},
-	})
 	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		authID := ids.New[ids.AuthKind]()
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gwID, AuthID: authID}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gwID)
-		ctx = appconsumer.WithAuthID(ctx, authID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	})
-	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/*", handler.Handle)
-
-	resp, err := app.Test(newProxyRequest())
-	if err != nil {
-		t.Fatalf("app.Test: %v", err)
-	}
-	if resp.StatusCode != fiber.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
-	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	app := fiber.New()
-	app.Use(authStubRoleBased(gwID, consumerSlug, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
+	app.Use(authStubWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Consumer.Consumer.RoutingMode == domainconsumer.RoutingModeRoleBased
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
 		})).
 		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
 		Once()
@@ -274,22 +218,19 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 }
 
 // authStubPlayground mimics the auth middleware after the playground identity
-// resolver validated a server-minted playground token: MethodPlayground, no
-// AuthID, and the consumer's own roles as effective roles.
-func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domainconsumer.RoutingMode) fiber.Handler {
-	roleIDs := []ids.RoleID{ids.New[ids.RoleKind]()}
+// resolver validated a server-minted playground token: MethodPlayground and no
+// AuthID.
+func authStubPlayground(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: routingMode,
-			RoleIDs:     roleIDs,
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gatewayID,
+			Slug:      slug,
+			Active:    true,
 		}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user", RoleIDs: roleIDs}
+		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user"}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
@@ -299,35 +240,24 @@ func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domain
 }
 
 func TestHandle_PlaygroundSucceeds(t *testing.T) {
-	tests := []struct {
-		name        string
-		routingMode domainconsumer.RoutingMode
-	}{
-		{name: "inline consumer", routingMode: domainconsumer.RoutingModeInline},
-		{name: "role-based consumer", routingMode: domainconsumer.RoutingModeRoleBased},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fwd := proxymocks.NewForwarder(t)
-			app := fiber.New()
-			app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug, tt.routingMode))
-			handler := proxyhttp.NewForwardedHandler(fwd)
-			app.All("/*", handler.Handle)
-			fwd.EXPECT().
-				Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-					return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
-				})).
-				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
-				Once()
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
 
-			resp, err := app.Test(newProxyRequest())
-			if err != nil {
-				t.Fatalf("app.Test: %v", err)
-			}
-			if resp.StatusCode != fiber.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-		})
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -353,10 +283,10 @@ func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_IDPLacksRole(t *testing.T) {
+func TestHandle_Forbidden_OIDCAuthNotAttached(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
+	app.Use(authStubForbiddenWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 

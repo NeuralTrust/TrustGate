@@ -30,7 +30,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 func mustGatewayID(t *testing.T, s string) ids.GatewayID {
@@ -174,33 +173,6 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	return items, len(items), nil
 }
 
-type fakeRoles struct {
-	byGateway map[string][]*roledomain.Role
-	err       error
-}
-
-func (f fakeRoles) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.byGateway[gatewayID.String()], nil
-}
-
-func (f fakeRoles) List(_ context.Context, filter roledomain.ListFilter) ([]*roledomain.Role, int, error) {
-	if f.err != nil {
-		return nil, 0, f.err
-	}
-	if filter.Page.Number > 1 {
-		return nil, 0, nil
-	}
-	if filter.GatewayID != (ids.GatewayID{}) {
-		items := f.byGateway[filter.GatewayID.String()]
-		return items, len(items), nil
-	}
-	items := flattenByGateway(f.byGateway)
-	return items, len(items), nil
-}
-
 // flattenByGateway mirrors the SQL repos' zero-GatewayID List semantics for
 // the fakes: all gateways' rows in one deterministic (key-sorted) list.
 func flattenByGateway[T any](byGateway map[string][]T) []T {
@@ -264,7 +236,6 @@ func TestCompilerDeterministicSortedData(t *testing.T) {
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		catalog,
 		nil,
 	)
@@ -307,7 +278,6 @@ func TestCompilerStableAcrossRuns(t *testing.T) {
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -333,7 +303,6 @@ func TestCompilerToleratesNotFound(t *testing.T) {
 		fakeRegistries{err: commonerrors.ErrNotFound},
 		fakePolicies{err: commonerrors.ErrNotFound},
 		fakeAuths{err: commonerrors.ErrNotFound},
-		fakeRoles{err: commonerrors.ErrNotFound},
 		fakeCatalog{err: commonerrors.ErrNotFound},
 		nil,
 	)
@@ -357,7 +326,6 @@ func TestCompilerGatewaysNotFoundYieldsEmpty(t *testing.T) {
 		fakeRegistries{},
 		fakePolicies{},
 		fakeAuths{},
-		fakeRoles{},
 		fakeCatalog{},
 		nil,
 	)
@@ -385,7 +353,6 @@ func TestCompilerSkipsGatewayWithCorruptData(t *testing.T) {
 		}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -416,7 +383,6 @@ func TestCompilerFailsWhenAllGatewaysCorrupt(t *testing.T) {
 		}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)
@@ -438,7 +404,6 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 		fakeRegistries{errByGateway: map[string]error{gwA.String(): boom}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)

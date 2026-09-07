@@ -25,7 +25,6 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
-	rolemocks "github.com/NeuralTrust/TrustGate/pkg/domain/role/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
@@ -52,7 +51,7 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 		Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -70,7 +69,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -93,7 +92,7 @@ func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	if _, err := creator.Create(context.Background(), newSignalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)

@@ -28,13 +28,11 @@ import (
 type CreateConsumerRequest struct {
 	Name          string                   `json:"name"`
 	Type          string                   `json:"type,omitempty"`
-	RoutingMode   string                   `json:"routing_mode,omitempty"`
 	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
 	Headers       map[string]string        `json:"headers,omitempty"`
 	Active        *bool                    `json:"active,omitempty"`
 	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
 	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
-	Roles         []string                 `json:"roles,omitempty"`
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      string                   `json:"fail_mode,omitempty"`
@@ -225,10 +223,6 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
-func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
-	return domain.NewRoutingMode(r.RoutingMode)
-}
-
 func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
 	return r.LBConfig.ToDomain()
 }
@@ -325,13 +319,6 @@ func normalizeBindingWeight(weight *int) (int, error) {
 		)
 	}
 	return *weight, nil
-}
-
-func (r CreateConsumerRequest) ToRoleIDs() ([]ids.RoleID, error) {
-	if len(r.Roles) == 0 {
-		return nil, nil
-	}
-	return parseUUIDList[ids.RoleKind](r.Roles, "roles")
 }
 
 func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {

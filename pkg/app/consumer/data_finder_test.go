@@ -41,7 +41,6 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 		Name:        "c",
 		Type:        domain.TypeLLM,
 		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 		AuthIDs:     authIDs,
@@ -97,7 +96,7 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, nil, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -161,12 +160,11 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -199,7 +197,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -226,12 +224,11 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	fbEnabled, fbDisabled := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -263,7 +260,7 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -298,7 +295,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -325,7 +322,7 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)

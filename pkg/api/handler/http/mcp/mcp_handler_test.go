@@ -29,7 +29,6 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -81,7 +80,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), nil)
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app
@@ -115,7 +114,6 @@ func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) 
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -167,7 +165,7 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), nil)
 	app.Post(mcpPath, handler.Handle)
 
 	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
@@ -195,7 +193,6 @@ func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(storePath, handler.Handle)
@@ -472,7 +469,6 @@ func newAppWithVault(
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -625,7 +621,6 @@ func TestHandler_StampsJWTEmailOnTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -679,7 +674,6 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)

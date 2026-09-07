@@ -25,7 +25,6 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -33,14 +32,12 @@ type CreateInput struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
-	RoutingMode     domain.RoutingMode
 	LBConfig        *domain.LBConfig
 	Headers         map[string]string
 	Active          *bool
 	Fallback        *domain.Fallback
 	RegistryIDs     []ids.RegistryID
 	RegistryWeights map[ids.RegistryID]int
-	RoleIDs         []ids.RoleID
 	ModelPolicies   domain.ModelPolicies
 	MCP             *domain.MCPPolicy
 }
@@ -55,7 +52,6 @@ var _ Creator = (*creator)(nil)
 type creator struct {
 	repo         domain.Writer
 	registryRepo registrydomain.Repository
-	roleRepo     roledomain.Repository
 	memoryCache  *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
@@ -65,7 +61,6 @@ type creator struct {
 func NewCreator(
 	repo domain.Writer,
 	registryRepo registrydomain.Repository,
-	roleRepo roledomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -74,7 +69,6 @@ func NewCreator(
 	return &creator{
 		repo:         repo,
 		registryRepo: registryRepo,
-		roleRepo:     roleRepo,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:    publisher,
 		logger:       logger,
@@ -89,14 +83,12 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
 		Type:            in.Type,
-		RoutingMode:     in.RoutingMode,
 		LBConfig:        in.LBConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
 		Fallback:        in.Fallback,
 		RegistryIDs:     in.RegistryIDs,
 		RegistryWeights: in.RegistryWeights,
-		RoleIDs:         in.RoleIDs,
 		ModelPolicies:   in.ModelPolicies,
 		MCP:             in.MCP,
 	})
@@ -107,9 +99,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		return nil, err
 	}
 	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
-		return nil, err
-	}
-	if err := c.ensureRolesInGateway(ctx, in.GatewayID, in.RoleIDs); err != nil {
 		return nil, err
 	}
 	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
@@ -152,20 +141,6 @@ func ensureRegistriesInGateway(
 	}
 	if len(found) != len(registryIDs) {
 		return fmt.Errorf("%w: one or more registries do not belong to the gateway", registrydomain.ErrInvalidRegistryID)
-	}
-	return nil
-}
-
-func (c *creator) ensureRolesInGateway(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) error {
-	if len(roleIDs) == 0 {
-		return nil
-	}
-	found, err := c.roleRepo.FindByIDs(ctx, gatewayID, roleIDs)
-	if err != nil {
-		return err
-	}
-	if len(found) != len(roleIDs) {
-		return fmt.Errorf("%w: one or more roles do not belong to the gateway", roledomain.ErrInvalidRoleID)
 	}
 	return nil
 }

@@ -85,20 +85,18 @@ const (
 )
 
 type Handler struct {
-	gateway    *RPCGateway
-	roleScoper appmcp.RoleScoper
-	surface    appmcp.SurfaceWatcher
-	timings    streamTimings
+	gateway *RPCGateway
+	surface appmcp.SurfaceWatcher
+	timings streamTimings
 }
 
 type HandlerOption func(*Handler)
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
+func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{
-		gateway:    gateway,
-		roleScoper: roleScoper,
-		surface:    surface,
-		timings:    defaultStreamTimings,
+		gateway: gateway,
+		surface: surface,
+		timings: defaultStreamTimings,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -133,11 +131,6 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
-	if err != nil {
-		skipMetrics(c)
-		return err
-	}
-	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
 		skipMetrics(c)
 		return err
@@ -449,24 +442,6 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return id
-}
-
-func (h *Handler) scopeByRoles(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
-	if rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
-		return rc, nil
-	}
-	data, ok := appconsumer.DataFromContext(c.UserContext())
-	if !ok || data == nil {
-		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
-	}
-	scoped, err := h.roleScoper.Scope(c.UserContext(), rc, data)
-	if err != nil {
-		if errors.Is(err, appmcp.ErrNoRoleAccess) {
-			return nil, fiber.NewError(fiber.StatusForbidden, err.Error())
-		}
-		return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	return scoped, nil
 }
 
 func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {

@@ -25,7 +25,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,20 +148,6 @@ func TestPolicyOrderingByPriority(t *testing.T) {
 
 	other := ids.New[ids.GatewayKind]()
 	assert.Empty(t, snap.PoliciesByIDs(other, []ids.PolicyID{p1.ID}), "cross-gateway scope denies")
-}
-
-func TestRoleOrderingAndScope(t *testing.T) {
-	t.Parallel()
-	gw := ids.New[ids.GatewayKind]()
-	r1 := roledomain.Role{ID: ids.New[ids.RoleKind](), GatewayID: gw, Name: "a", CreatedAt: baseTime}
-	r2 := roledomain.Role{ID: ids.New[ids.RoleKind](), GatewayID: gw, Name: "b", CreatedAt: baseTime.Add(time.Hour)}
-
-	snap := readmodel.Build(readmodel.Data{Roles: []roledomain.Role{r1, r2}})
-
-	ordered := snap.RolesByGateway(gw)
-	require.Len(t, ordered, 2)
-	assert.Equal(t, r2.ID, ordered[0].ID, "created_at DESC ordering")
-	assert.Equal(t, r1.ID, ordered[1].ID)
 }
 
 func TestRegistryIndexesPreserveGatewayOrderAndCatalogScope(t *testing.T) {

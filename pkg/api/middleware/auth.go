@@ -23,9 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -36,7 +34,6 @@ type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
-	roleResolver    approle.OIDCResolver
 	logger          *slog.Logger
 }
 
@@ -44,14 +41,12 @@ func NewAuthMiddleware(
 	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
-	roleResolver approle.OIDCResolver,
 	logger *slog.Logger,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
-		roleResolver:    roleResolver,
 		logger:          logger,
 	}
 }
@@ -92,29 +87,6 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		authCtx.GatewayID = gw.ID
 		authCtx.GatewaySlug = gw.Slug
 		authCtx.ConsumerID = rc.Consumer.ID
-		if authCtx.Method == appauth.MethodOIDC {
-			if m.roleResolver == nil {
-				return internalError(c, "failed to resolve idp roles")
-			}
-			roleIDs, err := m.roleResolver.ResolveOIDCRoles(c.UserContext(), data.Roles, authCtx.Claims)
-			if err != nil {
-				m.debug(c).Debug("idp role resolution error",
-					slog.String("principal_ref", logref.Opaque(authCtx.Subject)),
-					slog.String("error", err.Error()))
-				return invalidAuthRequest(c, err)
-			}
-			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
-			m.debug(c).Debug("idp roles resolved",
-				slog.String("principal_ref", logref.Opaque(authCtx.Subject)),
-				slog.Int("gateway_roles_resolved", len(roleIDs)),
-				slog.Int("consumer_roles_assigned", len(rc.Consumer.RoleIDs)),
-				slog.Int("effective_roles", len(authCtx.RoleIDs)))
-			if len(authCtx.RoleIDs) == 0 {
-				m.debug(c).Debug("oidc authorization denied: no matching role between token claims and consumer assignment",
-					slog.String("principal_ref", logref.Opaque(authCtx.Subject)))
-				return forbidden(c, resolver.ErrForbidden)
-			}
-		}
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
@@ -228,18 +200,4 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 		}
 	}
 	return false
-}
-
-func intersectRoleIDs(resolved, assigned []ids.RoleID) []ids.RoleID {
-	assignedSet := make(map[ids.RoleID]struct{}, len(assigned))
-	for _, id := range assigned {
-		assignedSet[id] = struct{}{}
-	}
-	out := make([]ids.RoleID, 0, len(resolved))
-	for _, id := range resolved {
-		if _, ok := assignedSet[id]; ok {
-			out = append(out, id)
-		}
-	}
-	return out
 }

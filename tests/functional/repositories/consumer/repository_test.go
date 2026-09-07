@@ -15,7 +15,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
@@ -23,7 +22,6 @@ import (
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
-	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,11 +34,10 @@ func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 }
 
 type fixture struct {
-	repo  *repo.Repository
-	gw    *gatewayrepo.Repository
-	be    *registryrepo.Repository
-	roles *rolerepo.Repository
-	conn  *database.Connection
+	repo *repo.Repository
+	gw   *gatewayrepo.Repository
+	be   *registryrepo.Repository
+	conn *database.Connection
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -75,17 +72,16 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_role, consumer_registry, consumers, roles, registries, gateways CASCADE")
+			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	appender := outboxrepo.NewRepository(conn)
 	return fixture{
-		repo:  repo.NewRepository(conn, appender),
-		gw:    gatewayrepo.NewRepository(conn, appender),
-		be:    newRegistryRepo(conn),
-		roles: rolerepo.NewRepository(conn, appender),
-		conn:  conn,
+		repo: repo.NewRepository(conn, appender),
+		gw:   gatewayrepo.NewRepository(conn, appender),
+		be:   newRegistryRepo(conn),
+		conn: conn,
 	}
 }
 
@@ -114,21 +110,6 @@ func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID,
 		t.Fatalf("backend Save: %v", err)
 	}
 	return b.ID
-}
-
-func seedRole(t *testing.T, roles *rolerepo.Repository, gwID ids.GatewayID, name string) ids.RoleID {
-	t.Helper()
-	role, err := roledomain.New(roledomain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-	})
-	if err != nil {
-		t.Fatalf("role domain.New: %v", err)
-	}
-	if err := roles.Save(context.Background(), role); err != nil {
-		t.Fatalf("role Save: %v", err)
-	}
-	return role.ID
 }
 
 func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
@@ -191,9 +172,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Slug != c.Slug {
 		t.Fatalf("Slug = %q, want %q", got.Slug, c.Slug)
 	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
-	}
 }
 
 func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
@@ -221,57 +199,6 @@ func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
 		if got.RegistryIDs[i] != want[i] {
 			t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
 		}
-	}
-}
-
-// TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries pins the write
-// order the routing-mode DB guard imposes: the consumers row has to leave
-// role_based before any registry link can be inserted.
-func TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "rb-to-inline")
-	beID := seedRegistry(t, f.be, gwID, "rb-to-inline-be")
-	roleID := seedRole(t, f.roles, gwID, "rb-to-inline-role")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "rb-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	c.RoutingMode = domain.RoutingModeInline
-	c.RoleIDs = nil
-	c.RegistryIDs = []ids.RegistryID{beID}
-	c.RegistryWeights = map[ids.RegistryID]int{beID: 40}
-	bindings := &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
-	if err := f.repo.Update(ctx, c, bindings); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
-	}
-	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
-		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
-	}
-	if got.WeightFor(beID) != 40 {
-		t.Fatalf("WeightFor(%s) = %d, want 40", beID, got.WeightFor(beID))
-	}
-	if len(got.RoleIDs) != 0 {
-		t.Fatalf("RoleIDs = %v, want none", got.RoleIDs)
 	}
 }
 
@@ -761,35 +688,6 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].Name != "anthropic-prod" {
 		t.Fatalf("List(name) returned %+v", items)
-	}
-}
-
-func TestRepository_Save_PersistsRoleBindings(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "pool-roles")
-	roleID := seedRole(t, f.roles, gwID, "role-bind")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "role-based-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != roleID {
-		t.Fatalf("RoleIDs = %v, want [%s]", got.RoleIDs, roleID)
 	}
 }
 
