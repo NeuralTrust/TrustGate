@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 type ModelPolicy struct {
@@ -68,16 +69,21 @@ func (p ModelPolicy) validate(backendID ids.RegistryID) error {
 	}
 	seen := make(map[string]struct{}, len(p.Allowed))
 	for _, model := range p.Allowed {
-		if model == "" {
-			return fmt.Errorf("%w: empty model in allow-list for backend %s", ErrInvalidModelPolicy, backendID)
+		if err := modelmatch.ValidateEntry(model); err != nil {
+			return fmt.Errorf("%w: %w for backend %s", ErrInvalidModelPolicy, err, backendID)
 		}
 		if _, dup := seen[model]; dup {
 			return fmt.Errorf("%w: duplicate model %q for backend %s", ErrInvalidModelPolicy, model, backendID)
 		}
 		seen[model] = struct{}{}
 	}
+	if p.Default != "" {
+		if err := modelmatch.RequireConcrete("default model", p.Default); err != nil {
+			return fmt.Errorf("%w: %w for backend %s", ErrInvalidModelPolicy, err, backendID)
+		}
+	}
 	if p.Default != "" && len(p.Allowed) > 0 {
-		if _, ok := seen[p.Default]; !ok {
+		if _, ok := modelmatch.MatchAny(p.Default, p.Allowed); !ok {
 			return fmt.Errorf("%w: default model %q not in allow-list for backend %s", ErrInvalidModelPolicy, p.Default, backendID)
 		}
 	}
