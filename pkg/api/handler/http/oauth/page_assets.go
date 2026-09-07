@@ -27,7 +27,7 @@ const pageCSS = `
   --badge-green:#00fe18;--badge-red:#ff3948;--danger-solid:#ff3948;--danger-hover:#ff5b67;
   --danger-active:#b32832;--danger-subtle:#350d1a;
   --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;
-  --bg-inverse:#fcfcfc;
+  --bg-inverse:#fcfcfc;--fg-success:#30a46c;
   --font-sans:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .24);
@@ -176,78 +176,133 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 .connect-form .btn{align-self:flex-start}
 
 /* ── Focused card pages: dotted canvas, full-bleed hero, footer CTA ── */
+/* The canvas is a faint dot field with a brand-tinted pool of light behind the
+   card, so the card reads as lit rather than pasted on flat black. */
 body.dotted{
   background-color:var(--bg-canvas);
-  background-image:radial-gradient(rgb(255 255 255 / .05) 1px,transparent 1px);
-  background-size:22px 22px;background-position:-11px -11px;
+  background-image:
+    radial-gradient(rgb(255 255 255 / .03) 1px,transparent 1px),
+    radial-gradient(46% 42% at 50% 44%,rgb(144 83 255 / .05) 0%,transparent 72%);
+  background-size:24px 24px,100% 100%;
+  background-position:-12px -12px,0 0;
+  background-attachment:fixed,fixed;
 }
 .card.flush{
-  max-width:440px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
-  background:var(--bg-muted);
+  max-width:428px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
+  background:var(--bg-muted);border-color:var(--stroke);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .06),
+    0 1px 2px rgb(0 0 0 / .5),
+    0 28px 56px -20px rgb(0 0 0 / .72);
 }
 .card-hero{
-  position:relative;display:flex;align-items:center;justify-content:center;height:148px;
-  border-bottom:1px solid var(--stroke);
+  position:relative;display:flex;align-items:center;justify-content:center;height:124px;
   background:
-    radial-gradient(42% 60% at 50% 40%,rgb(144 83 255 / .30) 0%,transparent 100%),
-    radial-gradient(95% 115% at 50% 6%,rgb(156 41 255 / .26) 0%,rgb(4 175 255 / .12) 55%,transparent 82%),
-    var(--bg-surface-hover);
+    radial-gradient(54% 78% at 50% 46%,rgb(144 83 255 / .20) 0%,rgb(144 83 255 / .05) 54%,transparent 78%),
+    var(--bg-muted);
 }
-.pair{position:relative;display:flex;align-items:center;gap:20px}
-.pair::before{
-  content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:172px;height:1px;
-  background:linear-gradient(90deg,transparent 8%,var(--brand-focus) 50%,transparent 92%);
-  box-shadow:0 0 14px 1px rgb(144 83 255 / .6);
+.card-hero::after,.card-foot::before{
+  content:"";position:absolute;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--stroke) 14%,var(--stroke) 86%,transparent);
+}
+.card-hero::after{bottom:0}
+.card-foot::before{top:0}
+/* gap:0 plus an explicit connector element keeps the line inside the pair —
+   a wider absolutely-positioned rule would overhang both marks. */
+.pair{position:relative;display:flex;align-items:center;gap:0}
+.pair .link{
+  width:24px;height:1px;flex:none;
+  background:linear-gradient(90deg,rgb(191 155 255 / .3),var(--brand-focus),rgb(191 155 255 / .3));
+  box-shadow:0 0 5px rgb(144 83 255 / .45);
 }
 .mark-tile{
-  position:relative;z-index:1;width:60px;height:60px;flex:none;overflow:hidden;
+  position:relative;width:56px;height:56px;flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
-  border-radius:14px;background:var(--bg-inverse);border:1px solid rgb(255 255 255 / .08);
-  box-shadow:0 8px 20px -8px rgb(0 0 0 / .75);
+  border-radius:16px;background:var(--bg-inverse);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / .06),
+    0 2px 4px rgb(0 0 0 / .28),
+    0 14px 26px -10px rgb(0 0 0 / .7);
 }
-.mark-tile img{width:34px;height:34px;object-fit:contain;display:block}
-.mark-tile.nt{background:var(--bg-canvas);border-color:transparent}
+.mark-tile img{width:32px;height:32px;object-fit:contain;display:block}
+.mark-tile.nt{
+  background:var(--bg-canvas);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / .08),
+    0 2px 4px rgb(0 0 0 / .28),
+    0 14px 26px -10px rgb(0 0 0 / .7);
+}
 .mark-tile.nt svg{width:100%;height:100%;display:block}
-.card-body{
-  display:flex;flex-direction:column;justify-content:center;
-  min-height:172px;padding:28px 28px 24px;text-align:center;
+.card-body{padding:32px 34px 30px;text-align:center}
+h1.title{
+  font-size:1.25rem;line-height:1.625rem;font-weight:600;letter-spacing:-.02em;
+  margin:0 0 12px;text-wrap:balance;
 }
-h1.title{font-size:1.5rem;line-height:2rem;font-weight:600;letter-spacing:-.4px;margin:0 0 10px}
-p.lede{margin:0 auto;max-width:38ch;color:var(--fg-muted);font-size:.875rem;line-height:1.375rem}
+p.lede{
+  margin:0 auto;max-width:38ch;color:var(--fg-muted);
+  font-size:.875rem;line-height:1.5rem;letter-spacing:-.002em;text-wrap:pretty;
+}
 .card-body .flash{margin:20px 0 0;text-align:left}
-.status{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:20px}
+.account{
+  display:inline-flex;align-items:center;gap:7px;margin-top:20px;padding:6px 12px;
+  background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-full);
+  color:var(--fg-secondary);font-size:.8125rem;line-height:1.125rem;
+}
+.account svg{flex:none;color:var(--fg-success)}
+.account.danger svg{color:var(--fg-danger)}
 .card-foot{
-  display:flex;flex-direction:column;gap:12px;align-items:stretch;
-  padding:16px 28px 20px;border-top:1px solid var(--stroke);background:var(--bg-muted);
+  position:relative;display:flex;flex-direction:column;gap:8px;align-items:stretch;
+  padding:20px 34px 22px;background:var(--bg-muted);
 }
 .card-foot form{display:flex;width:100%}
-a.btn.block,button.btn.block{width:100%;height:40px}
+a.btn.block,button.btn.block{
+  width:100%;height:44px;border-radius:10px;font-weight:500;letter-spacing:-.006em;
+}
+/* A hairline top light and a brand-tinted lift keep the full-width CTA from
+   reading as a flat slab; the fill itself stays the brand token. */
+a.btn.primary.block,button.btn.primary.block{
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .14),
+    0 1px 2px rgb(0 0 0 / .35);
+}
+a.btn.primary.block:hover,button.btn.primary.block:hover{
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .18),
+    0 1px 2px rgb(0 0 0 / .35);
+}
+a.btn.primary.block:active,button.btn.primary.block:active{
+  box-shadow:inset 0 1px 2px rgb(0 0 0 / .25);
+}
 a.btn.ghost,button.btn.ghost{
   background:transparent;color:var(--fg-muted);font-weight:400;
   text-decoration:underline;text-underline-offset:2px;
 }
 a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
 .card-foot .btn.ghost,.card-foot .btn.ghost-danger{
-  height:28px;font-weight:400;font-size:.8125rem;text-decoration:none;
+  height:30px;font-weight:400;font-size:.8125rem;text-decoration:none;
 }
 .card-foot .btn.ghost:hover,.card-foot .btn.ghost-danger:hover{
   text-decoration:underline;text-underline-offset:2px;
 }
 .card-foot .btn.ghost-danger{color:var(--fg-danger)}
 .secured{
-  display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px;
-  color:var(--fg-disabled);font-size:.75rem;line-height:1rem;
+  display:flex;align-items:center;justify-content:center;gap:7px;
+  margin-top:6px;color:var(--fg-disabled);
+  font-size:.75rem;line-height:1rem;letter-spacing:.004em;
 }
-.secured .mark{width:14px;height:14px;border-radius:4px;overflow:hidden;flex:none;display:block}
-.secured .mark svg{width:100%;height:100%;display:block}
+/* The mark goes monochrome here: the gradient tile turns to mud below ~20px. */
+.secured svg{display:block;flex:none;opacity:.85}
 `
 
 const brandMark = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g clip-path="url(#ntClip)"><path fill="url(#ntGrad)" d="M32 0H0v32h32z"/><path fill="#fff" d="M18.092 20.06a.67.67 0 0 1-.55.3.7.7 0 0 1-.565-.286l-2.704-3.814-1.45 2.103 2.197 3.098a3.08 3.08 0 0 0 2.51 1.297h.038a3.06 3.06 0 0 0 2.502-1.342l8.02-11.477h-2.926z"/><path fill="#fff" d="M14.292 11.518a.63.63 0 0 1 .552.286l2.652 3.74 1.449-2.103-2.145-3.024a3.08 3.08 0 0 0-2.509-1.297h-.039a3.06 3.06 0 0 0-2.506 1.35L3.925 21.85l-.085.123h2.91l6.98-10.155a.68.68 0 0 1 .562-.3"/></g><defs><linearGradient id="ntGrad" x1="30.667" x2="6.667" y1="0" y2="32" gradientUnits="userSpaceOnUse"><stop stop-color="#03AFFF"/><stop offset="1" stop-color="#9B29FF"/></linearGradient><clipPath id="ntClip"><path fill="#fff" d="M0 0h32v32H0z"/></clipPath></defs></svg>`
 
+const brandGlyph = `<svg width="17" height="10" viewBox="3 8 27 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M18.092 20.06a.67.67 0 0 1-.55.3.7.7 0 0 1-.565-.286l-2.704-3.814-1.45 2.103 2.197 3.098a3.08 3.08 0 0 0 2.51 1.297h.038a3.06 3.06 0 0 0 2.502-1.342l8.02-11.477h-2.926z"/><path d="M14.292 11.518a.63.63 0 0 1 .552.286l2.652 3.74 1.449-2.103-2.145-3.024a3.08 3.08 0 0 0-2.509-1.297h-.039a3.06 3.06 0 0 0-2.506 1.35L3.925 21.85l-.085.123h2.91l6.98-10.155a.68.68 0 0 1 .562-.3"/></svg>`
+
 const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
 
-const securedByFooter = `<div class="secured">Secured by <span class="mark">` + brandMark + `</span>NeuralTrust TrustGate</div>`
+const securedByFooter = `<div class="secured">` + brandGlyph + `Secured by NeuralTrust TrustGate</div>`
+
+const alertGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
 
 const badgeCheck = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
 
@@ -339,7 +394,8 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 <div class="card-hero">
   <div class="pair">
     <div class="mark-tile nt">` + brandMark + `</div>
-    <div class="mark-tile"><img src="{{.LogoURL}}" alt="" width="34" height="34" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+    <span class="link" aria-hidden="true"></span>
+    <div class="mark-tile"><img src="{{.LogoURL}}" alt="" width="32" height="32" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
   </div>
 </div>
 <div class="card-body">
@@ -348,20 +404,17 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
 {{else if .Linked}}
   <h1 class="title">{{.ServerName}} is connected</h1>
-  <p class="lede">TrustGate uses this connection whenever your agent calls {{.ServerName}}. Credentials stay encrypted in the gateway vault and are never exposed to the agent.</p>
+  <p class="lede">TrustGate uses this connection whenever your agent calls {{.ServerName}}. Credentials never reach the agent.</p>
 {{else if .NeedsReconnect}}
   <h1 class="title">Reconnect your {{.ServerName}} account</h1>
-  <p class="lede">{{.ServerName}} expired or revoked the stored credentials. Sign in again to restore access &mdash; nothing is ever exposed to the agent.</p>
+  <p class="lede">{{.ServerName}} expired or revoked the stored credentials. Sign in again to restore access.</p>
 {{else}}
   <h1 class="title">Connect your {{.ServerName}} account</h1>
-  <p class="lede">TrustGate connects to {{.ServerName}} on your behalf. Credentials stay encrypted in the gateway vault and are never exposed to the agent.</p>
+  <p class="lede">TrustGate connects to {{.ServerName}} on your behalf. Credentials are encrypted in the gateway vault and never reach the agent.</p>
 {{end}}
 {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-{{if .Found}}{{if .NeedsReconnect}}<div class="status"><span class="badge red">Access expired</span></div>
-{{else if .Linked}}<div class="status">
-  <span class="badge green">` + badgeCheck + `Connected</span>
-  {{if .AccountRef}}<span class="reg">{{.AccountRef}}</span>{{end}}
-</div>{{end}}{{end}}
+{{if .Found}}{{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
+{{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}{{end}}
 </div>
 <div class="card-foot">
 {{if .Found}}
