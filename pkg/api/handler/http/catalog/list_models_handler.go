@@ -23,17 +23,15 @@ import (
 )
 
 type ListModelsHandler struct {
-	service    appcatalog.Service
-	serverless appcatalog.ServerlessFilter
-	live       appcatalog.LiveAvailabilityFilter
+	service      appcatalog.Service
+	availability appcatalog.RegistryAvailability
 }
 
 func NewListModelsHandler(
 	service appcatalog.Service,
-	serverless appcatalog.ServerlessFilter,
-	live appcatalog.LiveAvailabilityFilter,
+	availability appcatalog.RegistryAvailability,
 ) *ListModelsHandler {
-	return &ListModelsHandler{service: service, serverless: serverless, live: live}
+	return &ListModelsHandler{service: service, availability: availability}
 }
 
 // Handle godoc
@@ -61,18 +59,12 @@ func (h *ListModelsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, gatewayErr := ids.Parse[ids.GatewayKind](c.Query("gateway_id"))
 	registryID, registryErr := ids.Parse[ids.RegistryKind](c.Query("registry_id"))
 	if gatewayErr == nil && registryErr == nil {
-		in := appcatalog.ServerlessFilterInput{
+		models = h.availability.Narrow(c.UserContext(), appcatalog.ServerlessFilterInput{
 			ProviderCode: providerCode,
 			GatewayID:    gatewayID,
 			RegistryID:   registryID,
 			Models:       models,
-		}
-		// Bedrock narrows through the AWS control plane; every other provider
-		// narrows through its authenticated models endpoint. Each filter no-ops
-		// on providers it does not own.
-		models = h.serverless.Filter(c.UserContext(), in)
-		in.Models = models
-		models = h.live.Filter(c.UserContext(), in)
+		})
 	}
 
 	out := make([]response.ModelResponse, 0, len(models))
