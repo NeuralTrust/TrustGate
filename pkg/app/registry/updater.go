@@ -162,6 +162,9 @@ func applyMCPTargetUpdate(
 		if strings.TrimSpace(incoming.Code) == "" {
 			incoming.Code = prev.Code
 		}
+		// Origin is gateway-owned: an admin renaming or re-authing the default
+		// instance keeps it recognisable as the one the gateway materialised.
+		incoming.Origin = prev.Origin
 		if incoming.OpenAPI == nil && !sourceChanged {
 			incoming.OpenAPI = prev.OpenAPI
 		}

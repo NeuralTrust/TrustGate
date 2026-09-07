@@ -63,6 +63,14 @@ func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
 	return g
 }
 
+// StoreScoper exposes the dispatcher's Store scoper (nil when not wired).
+func (g *RPCGateway) StoreScoper() appstore.Scoper {
+	if g == nil || g.dispatcher == nil {
+		return nil
+	}
+	return g.dispatcher.StoreScoper()
+}
+
 func (g *RPCGateway) Dispatch(ctx context.Context, consumer *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	return g.DispatchWithBaseURL(ctx, consumer, "", method, params)
 }

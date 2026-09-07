@@ -52,7 +52,9 @@ func catalogRegistry(entry catalogdomain.MCPServer, gatewayID ids.GatewayID) (*r
 
 // catalogMCPTarget builds the shared mcp_target for a catalog entry: URL (or its
 // template), transport, auth mode, and an available Store shelf. Secrets and
-// per-user URL variable values are never in the catalog, so they stay empty.
+// per-user URL variable values are never in the catalog, so they stay empty. The
+// target is stamped MCPOriginStore so the admin UI can tell this gateway-made
+// default instance from one an operator configured by hand.
 func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 	transport := registrydomain.MCPTransport(strings.TrimSpace(entry.Transport))
 	if transport == "" {
@@ -60,6 +62,7 @@ func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 	}
 	target := &registrydomain.MCPTarget{
 		Code:         entry.Code,
+		Origin:       registrydomain.MCPOriginStore,
 		Source:       registrydomain.MCPSourceRemote,
 		URL:          entry.URL,
 		Transport:    transport,

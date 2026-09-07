@@ -101,6 +101,23 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	// The admin's "put this built-in on the shelf" path (consumer binding,
+	// registry panel): same ensurer as a self-service install, so the registry
+	// it creates is the one a user's first install would have produced.
+	if err := c.Provide(func(
+		catalog appcatalog.MCPServerCatalog,
+		registries registrydomain.Repository,
+		ensurer appstore.RegistryEnsurer,
+	) (appstore.CatalogMaterializer, error) {
+		return appstore.NewCatalogMaterializer(catalog, registries, ensurer)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(m appstore.CatalogMaterializer) *storehttp.MaterializeHandler {
+		return storehttp.NewMaterializeHandler(m)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(provideStoreRequestsHandler); err != nil {
 		return err
 	}
