@@ -22,6 +22,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	domaincatalog "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -166,9 +167,9 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	for _, want := range []string{
 		`family=Inter`,
 		`font-family:var(--font-sans)`,
-		`--bg-canvas:#03020f`,
+		`--bg-canvas:#f6f6f9`,
 		`--brand:#9053ff`,
-		`--badge-green:#00fe18`,
+		`--badge-green:#00b211`,
 		`font-size:1.125rem;line-height:1.75rem`,
 		`class="btn secondary"`,
 		`class="btn primary"`,
@@ -180,6 +181,42 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("connect page must use app DS token %q", want)
+		}
+	}
+}
+
+func TestPages_AreLightOnly(t *testing.T) {
+	t.Parallel()
+	// These are standalone hosted pages, not app surfaces: one light palette,
+	// no dark ramp and no forced theme class from the app shell.
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp"},
+			},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	for _, want := range []string{
+		`color-scheme:light`,
+		`--bg-canvas:#f6f6f9`,
+		`--card-bg:#fff`,
+		`--fg-title:#1a1d21`,
+		`--brand:#9053ff`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page must use the light palette, missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`prefers-color-scheme`,
+		`color-scheme:dark`,
+		`#03020f`,
+		`class="dark"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("page must carry no dark palette, found %q", unwanted)
 		}
 	}
 }
@@ -204,6 +241,10 @@ func TestSingleConnectPage_UsesFocusedCardChrome(t *testing.T) {
 		`class="mark-tile nt"`,
 		`class="card-body"`,
 		`<h1 class="title">Connect your Linear account</h1>`,
+		`Issues, projects, cycles, and teams in Linear.`,
+		`class="eyebrow">Access requested<`,
+		`class="chip">read<`,
+		`class="note"`,
 		`class="card-foot"`,
 		`class="btn primary block"`,
 		`class="secured"`,
@@ -237,6 +278,41 @@ func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
 	}
 	if !strings.Contains(body, `/oauth/disconnect/app.linear/mcp?ticket=tk`) {
 		t.Fatalf("connected page must offer disconnect, body:\n%s", body)
+	}
+	if !strings.Contains(body, `class="eyebrow">Access granted<`) {
+		t.Fatalf("connected page must label the access list as granted, body:\n%s", body)
+	}
+}
+
+func TestAccessSummary(t *testing.T) {
+	t.Parallel()
+	// Scopes are the authorization truth, so they win over the tool preview.
+	label, items, more := accessSummary(domaincatalog.MCPServer{
+		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read", "write"}},
+		Tools: []domaincatalog.MCPTool{{Name: "search"}},
+	}, false)
+	if label != "Access requested" || len(items) != 2 || items[0] != "read" || more != 0 {
+		t.Fatalf("scopes must win: %q %v %d", label, items, more)
+	}
+	if label, _, _ := accessSummary(domaincatalog.MCPServer{
+		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read"}},
+	}, true); label != "Access granted" {
+		t.Fatalf("a linked server reads as granted, got %q", label)
+	}
+
+	// Without scopes the advertised tools stand in, capped with a remainder.
+	tools := make([]domaincatalog.MCPTool, 0, 7)
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", ""} {
+		tools = append(tools, domaincatalog.MCPTool{Name: n})
+	}
+	label, items, more = accessSummary(domaincatalog.MCPServer{Tools: tools}, false)
+	if label != "Tools the agent can call" || len(items) != maxAccessItems || more != 2 {
+		t.Fatalf("tool fallback must cap and count the rest: %q %v %d", label, items, more)
+	}
+
+	// A server the catalog knows nothing about renders no access block at all.
+	if label, items, more := accessSummary(domaincatalog.MCPServer{}, false); label != "" || items != nil || more != 0 {
+		t.Fatalf("an empty entry must produce no access block: %q %v %d", label, items, more)
 	}
 }
 
