@@ -117,6 +117,14 @@ const rejectedCredentialRefreshCooldown = 30 * time.Second
 // Backstop for a provider that answered invalid_grant spuriously.
 const deadGrantRetryInterval = 15 * time.Minute
 
+const credentialPersistTimeout = 5 * time.Second
+
+const refreshLockReleaseTimeout = 2 * time.Second
+
+type credentialRefreshLocker interface {
+	AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+}
+
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
 	if cfg == nil {
@@ -241,6 +249,11 @@ func (r *credentialResolver) refreshCredential(
 ) (*vaultdomain.Credential, error) {
 	key := gatewayID.String() + "|" + subject + "|" + provider
 	v, err, _ := r.refresh.Do(key, func() (any, error) {
+		unlock, err := r.acquireRefreshLock(ctx, gatewayID, subject, provider)
+		if err != nil {
+			return nil, err
+		}
+		defer r.releaseRefreshLock(ctx, unlock, gatewayID, subject, provider)
 		cred, err := r.vault.Find(ctx, gatewayID, subject, provider)
 		if err != nil {
 			return nil, err
@@ -300,7 +313,10 @@ func (r *credentialResolver) refreshCredential(
 			cred.RefreshToken = fresh.RefreshToken
 		}
 		cred.ExpiresAt = fresh.ExpiresAt
-		if err := r.vault.Upsert(ctx, cred); err != nil {
+		persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), credentialPersistTimeout)
+		err = r.vault.Upsert(persistCtx, cred)
+		cancelPersist()
+		if err != nil {
 			r.logger.Error("mcp credentials: failed to persist refreshed credential",
 				"provider", provider, "subject", subject, "gateway_id", gatewayID.String(),
 				"from", grantFingerprint(previousRefreshToken), "to", grantFingerprint(cred.RefreshToken),
@@ -359,6 +375,32 @@ func (r *credentialResolver) refreshCredential(
 		return nil, errors.New("mcp credentials: unexpected singleflight result type")
 	}
 	return cred, nil
+}
+
+func (r *credentialResolver) acquireRefreshLock(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	subject, provider string,
+) (func(context.Context) error, error) {
+	locker, ok := r.vault.(credentialRefreshLocker)
+	if !ok {
+		return func(context.Context) error { return nil }, nil
+	}
+	return locker.AcquireRefreshLock(ctx, gatewayID, subject, provider)
+}
+
+func (r *credentialResolver) releaseRefreshLock(
+	ctx context.Context,
+	unlock func(context.Context) error,
+	gatewayID ids.GatewayID,
+	subject, provider string,
+) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshLockReleaseTimeout)
+	defer cancel()
+	if err := unlock(releaseCtx); err != nil {
+		r.logger.Error("mcp credentials: failed to release refresh lock",
+			"provider", provider, "subject", subject, "gateway_id", gatewayID.String(), "error", err)
+	}
 }
 
 func (r *credentialResolver) grantIsDead(key, refreshToken string) bool {
