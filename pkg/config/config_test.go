@@ -33,8 +33,10 @@ func minimumEnv(t *testing.T) {
 	t.Setenv("DB_USER", "u")
 	t.Setenv("DB_NAME", "n")
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 }
+
+func testSecretKey() string { return strings.Repeat("s", serverSecretKeyMinLen) }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	minimumEnv(t)
@@ -737,30 +739,18 @@ func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_KafkaBrokersAllBlankFailsValidation(t *testing.T) {
-	minimumEnv(t)
-	t.Setenv("KAFKA_BROKERS", " , , ")
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Fatal("expected validation error for blank KAFKA_BROKERS")
-	}
-	if !stderrors.Is(err, errors.ErrInvalidConfig) {
-		t.Errorf("error %v is not ErrInvalidConfig", err)
-	}
-}
-
 func valid() *Config {
 	return &Config{
+		Server:   validServer(),
 		Database: DatabaseConfig{Host: "db", User: "u", Name: "n"},
 		Redis:    RedisConfig{Host: "r"},
-		Kafka:    KafkaConfig{Brokers: []string{"k:9092"}},
 	}
 }
 
 func validServer() ServerConfig {
 	return ServerConfig{
 		GatewayBaseDomain: "gw.example",
+		SecretKey:         testSecretKey(),
 	}
 }
 
@@ -802,7 +792,7 @@ func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 		{"DB_USER", func(c *Config) { c.Database.User = "" }},
 		{"DB_NAME", func(c *Config) { c.Database.Name = "" }},
 		{"REDIS_HOST", func(c *Config) { c.Redis.Host = "" }},
-		{"KAFKA_BROKERS", func(c *Config) { c.Kafka.Brokers = nil }},
+		{"SERVER_SECRET_KEY", func(c *Config) { c.Server.SecretKey = "" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -822,6 +812,36 @@ func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 func TestValidate_PostgresGraphStillValidates(t *testing.T) {
 	if err := postgresValid().Validate(); err != nil {
 		t.Fatalf("postgres graph should validate: %v", err)
+	}
+}
+
+func TestValidate_ServerSecretKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		appEnv  string
+		secret  string
+		wantErr bool
+	}{
+		{name: "dev rejects empty", appEnv: "dev", wantErr: true},
+		{name: "dev rejects short", appEnv: "dev", secret: strings.Repeat("s", serverSecretKeyMinLen-1), wantErr: true},
+		{name: "dev accepts minimum length", appEnv: "dev", secret: testSecretKey()},
+		{name: "staging rejects empty", appEnv: "staging", wantErr: true},
+		{name: "prod resolves the secret from Redis", appEnv: "prod"},
+		{name: "production is normalized", appEnv: " PRODUCTION "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := postgresValid()
+			cfg.AppEnv = tc.appEnv
+			cfg.Server.SecretKey = tc.secret
+			err := cfg.Validate()
+			if tc.wantErr && !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Fatalf("expected ErrInvalidConfig, got %v", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
 	}
 }
 
@@ -893,13 +913,12 @@ func TestValidate_DBLessAcceptsValid32ByteKey(t *testing.T) {
 	}
 }
 
-func TestValidate_DBLessStillRequiresRedisAndKafka(t *testing.T) {
+func TestValidate_DBLessStillRequiresRedis(t *testing.T) {
 	tests := []struct {
 		name string
 		mut  func(c *Config)
 	}{
 		{"REDIS_HOST", func(c *Config) { c.Redis.Host = "" }},
-		{"KAFKA_BROKERS", func(c *Config) { c.Kafka.Brokers = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -949,7 +968,7 @@ func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
 
 func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
 	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
@@ -975,7 +994,7 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 
 func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
-	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("SERVER_SECRET_KEY", testSecretKey())
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
