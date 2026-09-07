@@ -26,7 +26,8 @@ const pageCSS = `
   --stroke:#272730;--brand:#9053ff;--brand-hover:#a370ff;--brand-active:#653ab3;--brand-focus:#bf9bff;
   --badge-green:#00fe18;--badge-red:#ff3948;--danger-solid:#ff3948;--danger-hover:#ff5b67;
   --danger-active:#b32832;--danger-subtle:#350d1a;
-  --radius-sm:6px;--radius-md:8px;--radius-full:9999px;
+  --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;
+  --bg-inverse:#fcfcfc;
   --font-sans:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .24);
@@ -44,7 +45,7 @@ body.store{display:block;align-items:stretch}
 .shell{width:100%;max-width:1100px;margin:0 auto;padding:32px 24px 40px}
 .card{
   width:100%;max-width:560px;margin:40px 16px;padding:24px;
-  background:var(--bg-muted);border:1px solid var(--stroke);border-radius:var(--radius-md);
+  background:var(--bg-muted);border:1px solid var(--stroke);border-radius:var(--radius-lg);
   box-shadow:var(--shadow-overlay);
 }
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px}
@@ -129,6 +130,8 @@ button.btn.ghost-danger{
 }
 button.btn.ghost-danger:hover{color:var(--danger-hover)}
 button.btn.ghost-danger:active{color:var(--danger-active)}
+.tile-foot .btn.ghost-danger{color:var(--fg-danger);text-decoration:none}
+.tile-foot .btn.ghost-danger:hover{text-decoration:underline;text-underline-offset:2px}
 .resume{
   margin-top:20px;padding:12px 16px;border:1px solid var(--stroke);border-radius:var(--radius-md);
   background:var(--bg-muted);box-shadow:var(--shadow-overlay);
@@ -171,11 +174,80 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 }
 .connect-form{display:flex;flex-direction:column;gap:16px}
 .connect-form .btn{align-self:flex-start}
+
+/* ── Focused card pages: dotted canvas, full-bleed hero, footer CTA ── */
+body.dotted{
+  background-color:var(--bg-canvas);
+  background-image:radial-gradient(rgb(255 255 255 / .05) 1px,transparent 1px);
+  background-size:22px 22px;background-position:-11px -11px;
+}
+.card.flush{
+  max-width:440px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
+  background:var(--bg-muted);
+}
+.card-hero{
+  position:relative;display:flex;align-items:center;justify-content:center;height:148px;
+  border-bottom:1px solid var(--stroke);
+  background:
+    radial-gradient(42% 60% at 50% 40%,rgb(144 83 255 / .30) 0%,transparent 100%),
+    radial-gradient(95% 115% at 50% 6%,rgb(156 41 255 / .26) 0%,rgb(4 175 255 / .12) 55%,transparent 82%),
+    var(--bg-surface-hover);
+}
+.pair{position:relative;display:flex;align-items:center;gap:20px}
+.pair::before{
+  content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:172px;height:1px;
+  background:linear-gradient(90deg,transparent 8%,var(--brand-focus) 50%,transparent 92%);
+  box-shadow:0 0 14px 1px rgb(144 83 255 / .6);
+}
+.mark-tile{
+  position:relative;z-index:1;width:60px;height:60px;flex:none;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:14px;background:var(--bg-inverse);border:1px solid rgb(255 255 255 / .08);
+  box-shadow:0 8px 20px -8px rgb(0 0 0 / .75);
+}
+.mark-tile img{width:34px;height:34px;object-fit:contain;display:block}
+.mark-tile.nt{background:var(--bg-canvas);border-color:transparent}
+.mark-tile.nt svg{width:100%;height:100%;display:block}
+.card-body{
+  display:flex;flex-direction:column;justify-content:center;
+  min-height:172px;padding:28px 28px 24px;text-align:center;
+}
+h1.title{font-size:1.5rem;line-height:2rem;font-weight:600;letter-spacing:-.4px;margin:0 0 10px}
+p.lede{margin:0 auto;max-width:38ch;color:var(--fg-muted);font-size:.875rem;line-height:1.375rem}
+.card-body .flash{margin:20px 0 0;text-align:left}
+.status{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:20px}
+.card-foot{
+  display:flex;flex-direction:column;gap:12px;align-items:stretch;
+  padding:16px 28px 20px;border-top:1px solid var(--stroke);background:var(--bg-muted);
+}
+.card-foot form{display:flex;width:100%}
+a.btn.block,button.btn.block{width:100%;height:40px}
+a.btn.ghost,button.btn.ghost{
+  background:transparent;color:var(--fg-muted);font-weight:400;
+  text-decoration:underline;text-underline-offset:2px;
+}
+a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
+.card-foot .btn.ghost,.card-foot .btn.ghost-danger{
+  height:28px;font-weight:400;font-size:.8125rem;text-decoration:none;
+}
+.card-foot .btn.ghost:hover,.card-foot .btn.ghost-danger:hover{
+  text-decoration:underline;text-underline-offset:2px;
+}
+.card-foot .btn.ghost-danger{color:var(--fg-danger)}
+.secured{
+  display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px;
+  color:var(--fg-disabled);font-size:.75rem;line-height:1rem;
+}
+.secured .mark{width:14px;height:14px;border-radius:4px;overflow:hidden;flex:none;display:block}
+.secured .mark svg{width:100%;height:100%;display:block}
 `
 
 const brandMark = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g clip-path="url(#ntClip)"><path fill="url(#ntGrad)" d="M32 0H0v32h32z"/><path fill="#fff" d="M18.092 20.06a.67.67 0 0 1-.55.3.7.7 0 0 1-.565-.286l-2.704-3.814-1.45 2.103 2.197 3.098a3.08 3.08 0 0 0 2.51 1.297h.038a3.06 3.06 0 0 0 2.502-1.342l8.02-11.477h-2.926z"/><path fill="#fff" d="M14.292 11.518a.63.63 0 0 1 .552.286l2.652 3.74 1.449-2.103-2.145-3.024a3.08 3.08 0 0 0-2.509-1.297h-.039a3.06 3.06 0 0 0-2.506 1.35L3.925 21.85l-.085.123h2.91l6.98-10.155a.68.68 0 0 1 .562-.3"/></g><defs><linearGradient id="ntGrad" x1="30.667" x2="6.667" y1="0" y2="32" gradientUnits="userSpaceOnUse"><stop stop-color="#03AFFF"/><stop offset="1" stop-color="#9B29FF"/></linearGradient><clipPath id="ntClip"><path fill="#fff" d="M0 0h32v32H0z"/></clipPath></defs></svg>`
 
 const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
+
+const securedByFooter = `<div class="secured">Secured by <span class="mark">` + brandMark + `</span>NeuralTrust TrustGate</div>`
 
 const badgeCheck = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
 
@@ -183,7 +255,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect accounts - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
-<body class="store"><div class="shell">` + brandHeader + `
+<body class="store dotted"><div class="shell">` + brandHeader + `
 <h1>Connect your accounts</h1>
 <p class="sub">Choose which MCP servers virtual MCP <code>{{.ConsumerPath}}</code> may use. Connect only the ones you need — tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
 {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
@@ -246,7 +318,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Configure {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
-<body><div class="card">` + brandHeader + `
+<body class="dotted"><div class="card">` + brandHeader + `
 <h1>Configure {{.ServerName}}</h1>
 <p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>
 {{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>Saved. You can return to your application.</div></div>{{end}}
@@ -262,47 +334,59 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
-<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `
-.duo{display:flex;align-items:center;justify-content:center;gap:14px;margin:8px 0 20px}
-.duo .logo{width:64px;height:64px;background:var(--bg-surface-hover)}
-.duo .arrow{color:var(--fg-disabled);flex:none}
-.single-actions{display:flex;flex-direction:column;gap:12px;align-items:center;margin-top:4px}
-.single-actions .btn{min-width:220px;height:40px}
-.single-actions form{width:100%;display:flex;justify-content:center}
-</style></head>
-<body><div class="card center">` + brandHeader + `
-<div class="duo">
-  <div class="logo"><img src="/oauth/brands/mcp.svg" alt="" width="40" height="40"></div>
-  <svg class="arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
-  <div class="logo"><img src="{{.LogoURL}}" alt="" width="44" height="44" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
+<body class="dotted"><div class="card flush">
+<div class="card-hero">
+  <div class="pair">
+    <div class="mark-tile nt">` + brandMark + `</div>
+    <div class="mark-tile"><img src="{{.LogoURL}}" alt="" width="34" height="34" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+  </div>
 </div>
-<h1>Connect your {{.ServerName}} account</h1>
-{{if .Found}}
-<p class="sub">TrustGate will connect to {{.ServerName}} on your behalf. Your credentials are stored encrypted in the gateway vault and are never exposed to the agent.</p>
-{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-<div class="single-actions">
-  {{if .NeedsReconnect}}
-    <span class="badge red">Expired</span>
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary" type="submit">Reconnect {{.ServerName}}</button></form>
-  {{else if .Linked}}
-    <span class="badge green">` + badgeCheck + `Connected{{if .AccountRef}} — {{.AccountRef}}{{end}}</span>
-    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn ghost-danger" type="submit">Disconnect</button></form>
-  {{else}}
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary" type="submit">Connect {{.ServerName}}</button></form>
-  {{end}}
-  {{if .ResumeURL}}<a class="btn secondary" href="{{.ResumeURL}}">Return to your app</a>{{end}}
-</div>
+<div class="card-body">
+{{if not .Found}}
+  <h1 class="title">Connect your {{.ServerName}} account</h1>
+  <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
+{{else if .Linked}}
+  <h1 class="title">{{.ServerName}} is connected</h1>
+  <p class="lede">TrustGate uses this connection whenever your agent calls {{.ServerName}}. Credentials stay encrypted in the gateway vault and are never exposed to the agent.</p>
+{{else if .NeedsReconnect}}
+  <h1 class="title">Reconnect your {{.ServerName}} account</h1>
+  <p class="lede">{{.ServerName}} expired or revoked the stored credentials. Sign in again to restore access &mdash; nothing is ever exposed to the agent.</p>
 {{else}}
-<p class="sub">This server does not need an account connection, or it is not available on this virtual MCP.</p>
-{{if .ResumeURL}}<div class="single-actions"><a class="btn secondary" href="{{.ResumeURL}}">Return to your app</a></div>{{end}}
+  <h1 class="title">Connect your {{.ServerName}} account</h1>
+  <p class="lede">TrustGate connects to {{.ServerName}} on your behalf. Credentials stay encrypted in the gateway vault and are never exposed to the agent.</p>
 {{end}}
+{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
+{{if .Found}}{{if .NeedsReconnect}}<div class="status"><span class="badge red">Access expired</span></div>
+{{else if .Linked}}<div class="status">
+  <span class="badge green">` + badgeCheck + `Connected</span>
+  {{if .AccountRef}}<span class="reg">{{.AccountRef}}</span>{{end}}
+</div>{{end}}{{end}}
+</div>
+<div class="card-foot">
+{{if .Found}}
+  {{if .NeedsReconnect}}
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary block" type="submit">Reconnect {{.ServerName}}</button></form>
+    {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+  {{else if .Linked}}
+    {{if .ResumeURL}}<a class="btn primary block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn ghost-danger block" type="submit">Disconnect {{.ServerName}}</button></form>
+  {{else}}
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary block" type="submit">Connect account</button></form>
+    {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+  {{end}}
+{{else if .ResumeURL}}
+  <a class="btn secondary block" href="{{.ResumeURL}}">Return to your app</a>
+{{end}}
+` + securedByFooter + `
+</div>
 </div></body></html>`))
 
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect API key - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
-<body><div class="card">` + brandHeader + `
+<body class="dotted"><div class="card">` + brandHeader + `
 <h1>Connect with an API key</h1>
 <p class="sub">Enter the API key for this virtual MCP. The key is used only to authorize this connection.</p>
 <form class="connect-form" method="post" action="{{.FormAction}}">
@@ -322,7 +406,7 @@ var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype h
 .card.show{display:block;animation:fade-in .25s ease}
 @keyframes fade-in{from{opacity:0}to{opacity:1}}
 </style></head>
-<body><div class="card center" id="fallback">` + brandHeader + `
+<body class="dotted"><div class="card center" id="fallback">` + brandHeader + `
 <div class="check"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
 <h1>Authentication complete</h1>
 <p class="sub">Still here? Choose <em>Open {{.AppName}}</em> in your browser&rsquo;s dialog, or use the button below, then close this tab.</p>
