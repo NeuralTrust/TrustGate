@@ -39,30 +39,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type stubAvailability struct {
+type stubListing struct {
 	verdicts map[string]appcatalog.Verdict
 }
 
-func (s stubAvailability) Serves(_ context.Context, providerCode, model string) appcatalog.Verdict {
+func (s stubListing) Lists(_ context.Context, providerCode, model string) appcatalog.Verdict {
 	if verdict, ok := s.verdicts[providerCode+":"+model]; ok {
 		return verdict
 	}
 	return appcatalog.VerdictUnknown
 }
 
-func (s stubAvailability) InvalidateCache() {}
+func (s stubListing) InvalidateCache() {}
 
 func newSequentialForwarder(
 	t *testing.T,
 	invoker appproxy.ProviderInvoker,
-	availability appcatalog.ModelAvailability,
+	listing appcatalog.ModelListing,
 ) appproxy.Forwarder {
 	t.Helper()
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil,
-		approuting.NewResolver(), availability, nil, nil, newTestLogger(),
+		approuting.NewResolver(), listing, nil, nil, newTestLogger(),
 	)
 }
 
@@ -103,12 +103,12 @@ func TestForward_SequentialChain_UnqualifiedModelPicksTheRegistryThatServesIt(t 
 	vertex := backendFor(gatewayID, "vertex")
 	rc := routableConsumerWith(gatewayID, bedrock, openai, vertex)
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
 		"bedrock:gemini-3-flash-preview": appcatalog.VerdictAbsent,
 		"openai:gemini-3-flash-preview":  appcatalog.VerdictAbsent,
-		"vertex:gemini-3-flash-preview":  appcatalog.VerdictServes,
+		"vertex:gemini-3-flash-preview":  appcatalog.VerdictListed,
 		"bedrock:gpt-4.1":                appcatalog.VerdictAbsent,
-		"openai:gpt-4.1":                 appcatalog.VerdictServes,
+		"openai:gpt-4.1":                 appcatalog.VerdictListed,
 		"vertex:gpt-4.1":                 appcatalog.VerdictAbsent,
 	}}
 
@@ -123,7 +123,7 @@ func TestForward_SequentialChain_UnqualifiedModelPicksTheRegistryThatServesIt(t 
 			invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
 				return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 			})
-			fwd := newSequentialForwarder(t, invoker, availability)
+			fwd := newSequentialForwarder(t, invoker, listing)
 
 			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 				GatewayID: gatewayID,
@@ -145,9 +145,9 @@ func TestForward_SequentialChain_ProbesUnknownProvidersInConfiguredOrder(t *test
 	vertex := backendFor(gatewayID, "vertex")
 	rc := routableConsumerWith(gatewayID, selfhosted, vertex)
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
 		"openai_compatible:gemini-3-flash-preview": appcatalog.VerdictUnknown,
-		"vertex:gemini-3-flash-preview":            appcatalog.VerdictServes,
+		"vertex:gemini-3-flash-preview":            appcatalog.VerdictListed,
 	}}
 
 	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
@@ -156,7 +156,7 @@ func TestForward_SequentialChain_ProbesUnknownProvidersInConfiguredOrder(t *test
 		}
 		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, availability)
+	fwd := newSequentialForwarder(t, invoker, listing)
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -179,7 +179,7 @@ func TestForward_SequentialChain_NoRegistryServesTheModel(t *testing.T) {
 	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
 		return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, stubAvailability{})
+	fwd := newSequentialForwarder(t, invoker, stubListing{})
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -202,7 +202,7 @@ func TestForward_SequentialChain_CatalogNeverIsTheSoleReasonToFail(t *testing.T)
 	vertex := backendFor(gatewayID, "vertex")
 	rc := routableConsumerWith(gatewayID, openai, vertex)
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
 		"openai:gpt-6-just-released": appcatalog.VerdictAbsent,
 		"vertex:gpt-6-just-released": appcatalog.VerdictAbsent,
 	}}
@@ -213,7 +213,7 @@ func TestForward_SequentialChain_CatalogNeverIsTheSoleReasonToFail(t *testing.T)
 		}
 		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, availability)
+	fwd := newSequentialForwarder(t, invoker, listing)
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -236,7 +236,7 @@ func TestForward_SequentialChain_QualifiedModelStaysPinned(t *testing.T) {
 	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
 		return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, stubAvailability{})
+	fwd := newSequentialForwarder(t, invoker, stubListing{})
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -258,14 +258,14 @@ func TestForward_SequentialChain_ExplicitAllowListStillDenies(t *testing.T) {
 		openai.ID: {Allowed: []string{"gpt-4o-mini"}},
 	}
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
-		"openai:gpt-4.1": appcatalog.VerdictServes,
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
+		"openai:gpt-4.1": appcatalog.VerdictListed,
 	}}
 
 	invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
 		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, availability)
+	fwd := newSequentialForwarder(t, invoker, listing)
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -285,8 +285,8 @@ func TestForward_SequentialChain_UnqualifiedModelDoesNotLoadBalance(t *testing.T
 	other := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai, other)
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
-		"openai:gpt-4.1": appcatalog.VerdictServes,
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
+		"openai:gpt-4.1": appcatalog.VerdictListed,
 	}}
 
 	invoked := make([]ids.RegistryID, 0, 4)
@@ -302,7 +302,7 @@ func TestForward_SequentialChain_UnqualifiedModelDoesNotLoadBalance(t *testing.T
 			return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 		}).
 		Times(4)
-	fwd := newSequentialForwarder(t, invoker, availability)
+	fwd := newSequentialForwarder(t, invoker, listing)
 
 	for i := 0; i < 4; i++ {
 		_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
@@ -361,7 +361,7 @@ func TestForward_SequentialChain_FallbackBudgetDoesNotTruncateRegistrySelection(
 		}
 		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, stubAvailability{})
+	fwd := newSequentialForwarder(t, invoker, stubListing{})
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -383,7 +383,7 @@ func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(
 	invoker, _ := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
 		return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, stubAvailability{})
+	fwd := newSequentialForwarder(t, invoker, stubListing{})
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
@@ -398,7 +398,7 @@ func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(
 }
 
 func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *testing.T) {
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
 		"openai:gpt-5": appcatalog.VerdictAbsent,
 	}}
 
@@ -413,7 +413,7 @@ func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *te
 		invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
 			return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 		})
-		fwd := newSequentialForwarder(t, invoker, availability)
+		fwd := newSequentialForwarder(t, invoker, listing)
 
 		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 			GatewayID: gatewayID,
@@ -441,7 +441,7 @@ func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *te
 		invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
 			return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 		})
-		fwd := newSequentialForwarder(t, invoker, availability)
+		fwd := newSequentialForwarder(t, invoker, listing)
 
 		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 			GatewayID: gatewayID,
@@ -480,15 +480,15 @@ func TestForward_SequentialChain_RoleBasedConsumerSkipsRegistriesThatCannotServe
 		vertex.ID: vertex,
 	})
 
-	availability := stubAvailability{verdicts: map[string]appcatalog.Verdict{
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
 		"openai:gemini-3-flash-preview": appcatalog.VerdictAbsent,
-		"vertex:gemini-3-flash-preview": appcatalog.VerdictServes,
+		"vertex:gemini-3-flash-preview": appcatalog.VerdictListed,
 	}}
 
 	invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
 		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
 	})
-	fwd := newSequentialForwarder(t, invoker, availability)
+	fwd := newSequentialForwarder(t, invoker, listing)
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,

@@ -87,17 +87,17 @@ func (f *forwarder) resolveRouting(
 		return intent, nil, ErrNoBackendsInPool
 	}
 	if intent.IsShortModel() {
-		candidates = f.filterCandidatesByAvailability(ctx, candidates, intent.Model)
+		candidates = f.filterCandidatesByProviderListing(ctx, candidates, intent.Model)
 	}
 	return intent, candidates, nil
 }
 
-func (f *forwarder) filterCandidatesByAvailability(
+func (f *forwarder) filterCandidatesByProviderListing(
 	ctx context.Context,
 	candidates *routingdomain.CandidateSet,
 	model string,
 ) *routingdomain.CandidateSet {
-	if f.availability == nil {
+	if f.listing == nil {
 		return candidates
 	}
 	served := candidates.Filter(func(c routingdomain.Candidate) bool {
@@ -107,7 +107,7 @@ func (f *forwarder) filterCandidatesByAvailability(
 		if !c.DefersModelChoice() {
 			return true
 		}
-		if f.availability.Serves(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
+		if f.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
 			return true
 		}
 		f.logSkippedRegistry(c.Registry, model)

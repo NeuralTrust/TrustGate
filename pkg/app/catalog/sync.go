@@ -152,12 +152,12 @@ type Syncer interface {
 var _ Syncer = (*syncer)(nil)
 
 type syncer struct {
-	repo         domain.Repository
-	client       *modelsdev.Client
-	logger       *slog.Logger
-	signaler     configsyncport.SnapshotSignaler
-	pricing      PricingResolver
-	availability ModelAvailability
+	repo     domain.Repository
+	client   *modelsdev.Client
+	logger   *slog.Logger
+	signaler configsyncport.SnapshotSignaler
+	pricing  PricingResolver
+	listing  ModelListing
 }
 
 func NewSyncer(
@@ -166,15 +166,15 @@ func NewSyncer(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	pricing PricingResolver,
-	availability ModelAvailability,
+	listing ModelListing,
 ) Syncer {
 	return &syncer{
-		repo:         repo,
-		client:       client,
-		logger:       logger,
-		signaler:     signaler,
-		pricing:      pricing,
-		availability: availability,
+		repo:     repo,
+		client:   client,
+		logger:   logger,
+		signaler: signaler,
+		pricing:  pricing,
+		listing:  listing,
 	}
 }
 
@@ -245,8 +245,8 @@ func (s *syncer) Sync(ctx context.Context) error {
 	if s.pricing != nil {
 		s.pricing.InvalidateCache()
 	}
-	if s.availability != nil {
-		s.availability.InvalidateCache()
+	if s.listing != nil {
+		s.listing.InvalidateCache()
 	}
 	if s.signaler != nil {
 		s.signaler.Signal(ctx)
