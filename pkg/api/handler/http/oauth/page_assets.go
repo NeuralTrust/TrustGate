@@ -19,33 +19,57 @@ import "html/template"
 const pageFonts = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">`
 
 const pageCSS = `
+/* Single light palette, tracking the v2 DS light ramp (Radix slate, green-11,
+   red-11) with brand purple unchanged. Two line weights on purpose: --stroke
+   for a card's own edge and controls, --hairline (lighter) for seams drawn
+   inside a card. */
 :root{
-  --bg-canvas:#03020f;--bg-default:#03020f;--bg-muted:#1a1a28;--bg-surface-hover:#11101d;
-  --fg-default:#fcfcfc;--fg-secondary:#c4c2ca;--fg-muted:#999;--fg-disabled:#888;
-  --fg-on-brand:#fff;--fg-danger:#ff5b67;--fg-brand:#9053ff;
-  --stroke:#272730;--brand:#9053ff;--brand-hover:#a370ff;--brand-active:#653ab3;--brand-focus:#bf9bff;
-  --badge-green:#00fe18;--badge-red:#ff3948;--danger-solid:#ff3948;--danger-hover:#ff5b67;
-  --danger-active:#b32832;--danger-subtle:#350d1a;
+  color-scheme:light;
+  --bg-canvas:#f6f6f9;--bg-default:#fff;--card-bg:#fff;
+  --bg-surface-hover:#f4f4f7;--bg-muted:#ececf0;--bg-inverse:#fff;
+  --tile-bg:#fff;--tile-bg-hover:#f7f7f9;
+  --stroke:#e6e6ec;--hairline:#eeeef2;--dot:rgb(28 32 36 / .055);
+  --fg-title:#1a1d21;--fg-default:#3f434a;--fg-secondary:#52565f;
+  --fg-muted:#5f636b;--fg-disabled:#8b8d98;
+  --fg-on-brand:#fff;--fg-danger:#ce2c31;--fg-brand:#9053ff;--fg-success:#218358;
+  --badge-green:#00b211;--badge-green-bg:rgb(0 178 17 / .12);
+  --badge-red:#ce2c31;--badge-red-bg:rgb(229 72 77 / .1);
+  --danger-solid:#ce2c31;--danger-hover:#e5484d;--danger-active:#b32832;
+  --danger-subtle:#fff1f1;--danger-border:rgb(229 72 77 / .22);
+  --canvas-pool:rgb(156 41 255 / .06);
+  --hero-wash:
+    linear-gradient(180deg,rgb(255 255 255 / 0) 38%,rgb(255 255 255 / .72) 84%,#fff 100%),
+    radial-gradient(48% 78% at 50% 42%,rgb(156 41 255 / .16) 0%,rgb(156 41 255 / .04) 56%,transparent 80%),
+    linear-gradient(102deg,rgb(156 41 255 / .12) 0%,rgb(122 96 255 / .06) 46%,rgb(4 175 255 / .10) 100%);
+  --link-line:linear-gradient(90deg,rgb(101 58 179 / .28),rgb(101 58 179 / .8),rgb(101 58 179 / .28));
+  --link-glow:none;
+  --shadow-card:0 0 0 1px rgb(16 18 27 / .05),0 1px 2px rgb(16 18 27 / .04),0 14px 32px -14px rgb(16 18 27 / .16);
+  --shadow-tile:0 1px 2px rgb(16 18 27 / .1),0 8px 16px -8px rgb(16 18 27 / .22);
+  --tile-ring:inset 0 0 0 1px rgb(16 18 27 / .06);
+  --shadow-cta:inset 0 1px 0 rgb(255 255 255 / .16),0 1px 2px rgb(16 18 27 / .14);
+  --shadow-cta-hover:inset 0 1px 0 rgb(255 255 255 / .2),0 2px 6px rgb(16 18 27 / .16);
+  --shadow-cta-active:inset 0 1px 2px rgb(16 18 27 / .22);
+  --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .1);
+  --shadow-overlay:0 12px 28px -12px rgb(16 18 27 / .12);
+
+  --brand:#9053ff;--brand-hover:#a370ff;--brand-active:#653ab3;--brand-focus:#bf9bff;
   --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;
-  --bg-inverse:#fcfcfc;--fg-success:#30a46c;
   --font-sans:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .24);
-  --shadow-overlay:0 16px 32px -8px rgb(0 0 0 / .55);
   --duration-fast:100ms;
 }
 *{box-sizing:border-box}
-html{color-scheme:dark}
 body{
   margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:var(--bg-canvas);color:var(--fg-default);font-family:var(--font-sans);
+  font-optical-sizing:auto;text-rendering:optimizeLegibility;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 body.store{display:block;align-items:stretch}
 .shell{width:100%;max-width:1100px;margin:0 auto;padding:32px 24px 40px}
 .card{
   width:100%;max-width:560px;margin:40px 16px;padding:24px;
-  background:var(--bg-muted);border:1px solid var(--stroke);border-radius:var(--radius-lg);
+  background:var(--card-bg);border:1px solid var(--stroke);border-radius:var(--radius-lg);
   box-shadow:var(--shadow-overlay);
 }
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px}
@@ -56,7 +80,7 @@ body.store{display:block;align-items:stretch}
 .brand .mark svg{width:100%;height:100%;display:block}
 .brand .name{font-size:.875rem;line-height:1rem;font-weight:600;color:var(--fg-default)}
 .brand .product{font-size:.875rem;line-height:1rem;color:var(--fg-disabled)}
-h1{font-size:1.125rem;line-height:1.75rem;font-weight:600;margin:0 0 8px}
+h1{font-size:1.125rem;line-height:1.75rem;font-weight:600;margin:0 0 8px;color:var(--fg-title)}
 p.sub{color:var(--fg-muted);margin:0 0 24px;font-size:.875rem;line-height:1.25rem;font-weight:400}
 code{
   font-family:var(--font-mono);font-size:.75rem;line-height:1rem;font-weight:400;
@@ -65,7 +89,7 @@ code{
 }
 .flash{
   display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;
-  background:var(--danger-subtle);color:var(--fg-danger);border:1px solid rgb(255 91 103 / .2);
+  background:var(--danger-subtle);color:var(--fg-danger);border:1px solid var(--danger-border);
   border-radius:var(--radius-md);font-size:.875rem;line-height:1rem;
 }
 .flash svg{flex:none}
@@ -76,17 +100,17 @@ code{
 .tile{display:flex;flex-direction:column;min-width:0}
 .tile-body{
   flex:1;display:flex;flex-direction:column;gap:12px;min-height:194px;padding:12px;
-  background:var(--bg-surface-hover);border:1px solid var(--stroke);
+  background:var(--tile-bg);border:1px solid var(--stroke);
   border-radius:var(--radius-md) var(--radius-md) 0 0;margin-bottom:-1px;
   transition:background var(--duration-fast);
 }
 .tile-foot{
   display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;
-  background:var(--bg-surface-hover);border:1px solid var(--stroke);
+  background:var(--tile-bg);border:1px solid var(--stroke);
   border-radius:0 0 var(--radius-md) var(--radius-md);
   transition:background var(--duration-fast);
 }
-.tile:hover .tile-body,.tile:hover .tile-foot{background:var(--bg-muted)}
+.tile:hover .tile-body,.tile:hover .tile-foot{background:var(--tile-bg-hover)}
 .logo{
   width:60px;height:60px;border-radius:var(--radius-md);flex:none;
   display:flex;align-items:center;justify-content:center;background:var(--stroke);
@@ -103,8 +127,8 @@ code{
   font-size:.75rem;line-height:1rem;font-weight:400;white-space:nowrap;
 }
 .badge svg{flex:none}
-.badge.green{color:var(--badge-green);background:rgb(0 254 24 / .2)}
-.badge.red{color:var(--badge-red);background:rgb(255 57 72 / .2)}
+.badge.green{color:var(--badge-green);background:var(--badge-green-bg)}
+.badge.red{color:var(--badge-red);background:var(--badge-red-bg)}
 a.btn,button.btn{
   box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;
   height:32px;padding:0 12px;border-radius:var(--radius-md);
@@ -134,7 +158,7 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 .tile-foot .btn.ghost-danger:hover{text-decoration:underline;text-underline-offset:2px}
 .resume{
   margin-top:20px;padding:12px 16px;border:1px solid var(--stroke);border-radius:var(--radius-md);
-  background:var(--bg-muted);box-shadow:var(--shadow-overlay);
+  background:var(--card-bg);box-shadow:var(--shadow-overlay);
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   position:sticky;bottom:16px;
 }
@@ -148,7 +172,7 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 .check{
   width:48px;height:48px;border-radius:var(--radius-full);margin:24px auto 0;
   display:flex;align-items:center;justify-content:center;
-  color:var(--badge-green);background:rgb(0 254 24 / .2);
+  color:var(--badge-green);background:var(--badge-green-bg);
 }
 .hint{color:var(--fg-disabled);font-size:.75rem;line-height:1rem;margin-top:16px}
 .hint a{color:var(--fg-muted);text-decoration:underline;text-underline-offset:2px}
@@ -180,114 +204,113 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
    card, so the card reads as lit rather than pasted on flat black. */
 body.dotted{
   background-color:var(--bg-canvas);
+  background-image:radial-gradient(var(--dot) 1px,transparent 1px);
+  background-size:26px 26px;background-position:-13px -13px;background-attachment:fixed;
+}
+body.dotted:not(.store){
   background-image:
-    radial-gradient(rgb(255 255 255 / .03) 1px,transparent 1px),
-    radial-gradient(46% 42% at 50% 44%,rgb(144 83 255 / .05) 0%,transparent 72%);
-  background-size:24px 24px,100% 100%;
-  background-position:-12px -12px,0 0;
+    radial-gradient(var(--dot) 1px,transparent 1px),
+    radial-gradient(46% 42% at 50% 44%,var(--canvas-pool) 0%,transparent 72%);
+  background-size:26px 26px,100% 100%;
+  background-position:-13px -13px,0 0;
   background-attachment:fixed,fixed;
 }
 .card.flush{
-  max-width:428px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
-  background:var(--bg-muted);border-color:var(--stroke);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .06),
-    0 1px 2px rgb(0 0 0 / .5),
-    0 28px 56px -20px rgb(0 0 0 / .72);
+  max-width:420px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
+  background:var(--card-bg);border-color:transparent;box-shadow:var(--shadow-card);
 }
 .card-hero{
-  position:relative;display:flex;align-items:center;justify-content:center;height:124px;
-  background:
-    radial-gradient(54% 78% at 50% 46%,rgb(144 83 255 / .20) 0%,rgb(144 83 255 / .05) 54%,transparent 78%),
-    var(--bg-muted);
+  display:flex;align-items:center;justify-content:center;height:112px;
+  background:var(--hero-wash),var(--card-bg);
 }
-.card-hero::after,.card-foot::before{
-  content:"";position:absolute;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--stroke) 14%,var(--stroke) 86%,transparent);
+.card-foot::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--hairline) 12%,var(--hairline) 88%,transparent);
 }
-.card-hero::after{bottom:0}
-.card-foot::before{top:0}
 /* gap:0 plus an explicit connector element keeps the line inside the pair —
    a wider absolutely-positioned rule would overhang both marks. */
 .pair{position:relative;display:flex;align-items:center;gap:0}
 .pair .link{
   width:24px;height:1px;flex:none;
-  background:linear-gradient(90deg,rgb(191 155 255 / .3),var(--brand-focus),rgb(191 155 255 / .3));
-  box-shadow:0 0 5px rgb(144 83 255 / .45);
+  background:var(--link-line);box-shadow:var(--link-glow);
 }
 .mark-tile{
-  position:relative;width:56px;height:56px;flex:none;overflow:hidden;
+  position:relative;width:52px;height:52px;flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
   border-radius:16px;background:var(--bg-inverse);
-  box-shadow:
-    inset 0 0 0 1px rgb(0 0 0 / .06),
-    0 2px 4px rgb(0 0 0 / .28),
-    0 14px 26px -10px rgb(0 0 0 / .7);
+  box-shadow:var(--tile-ring),var(--shadow-tile);
 }
-.mark-tile img{width:32px;height:32px;object-fit:contain;display:block}
-.mark-tile.nt{
-  background:var(--bg-canvas);
-  box-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / .08),
-    0 2px 4px rgb(0 0 0 / .28),
-    0 14px 26px -10px rgb(0 0 0 / .7);
-}
+.mark-tile img{width:30px;height:30px;object-fit:contain;display:block}
+.mark-tile.nt{background:transparent;box-shadow:var(--shadow-tile)}
 .mark-tile.nt svg{width:100%;height:100%;display:block}
-.card-body{padding:32px 34px 30px;text-align:center}
+.card-body{padding:26px 32px 24px}
 h1.title{
-  font-size:1.25rem;line-height:1.625rem;font-weight:600;letter-spacing:-.02em;
-  margin:0 0 12px;text-wrap:balance;
+  font-size:1.25rem;line-height:1.75rem;font-weight:600;letter-spacing:-.021em;
+  margin:0 0 5px;text-wrap:balance;
 }
 p.lede{
-  margin:0 auto;max-width:38ch;color:var(--fg-muted);
-  font-size:.875rem;line-height:1.5rem;letter-spacing:-.002em;text-wrap:pretty;
+  margin:0;color:var(--fg-muted);
+  font-size:.8125rem;line-height:1.3125rem;letter-spacing:-.003em;text-wrap:pretty;
 }
-.card-body .flash{margin:20px 0 0;text-align:left}
+.card-body .flash{margin:18px 0 0}
+/* What the connection grants — the substance of a consent screen. */
+.access{margin-top:22px}
+.eyebrow{
+  display:block;margin:0 0 10px;color:var(--fg-disabled);
+  font-size:.6875rem;line-height:1rem;font-weight:500;letter-spacing:.085em;text-transform:uppercase;
+}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  font-family:var(--font-mono);font-size:.6875rem;line-height:1rem;font-weight:400;
+  letter-spacing:-.01em;padding:5px 8px;border-radius:var(--radius-sm);
+  background:var(--bg-surface-hover);color:var(--fg-secondary);
+}
+.chip.more{
+  font-family:var(--font-sans);background:transparent;color:var(--fg-disabled);padding:5px 2px;
+}
+.note{
+  display:flex;gap:8px;margin:16px 0 0;
+  color:var(--fg-disabled);font-size:.75rem;line-height:1.125rem;
+}
+.note svg{flex:none;margin-top:1px}
 .account{
-  display:inline-flex;align-items:center;gap:7px;margin-top:20px;padding:6px 12px;
-  background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-full);
+  display:inline-flex;align-items:center;gap:7px;margin-top:18px;padding:6px 12px;
+  background:var(--bg-surface-hover);border-radius:var(--radius-full);
   color:var(--fg-secondary);font-size:.8125rem;line-height:1.125rem;
 }
 .account svg{flex:none;color:var(--fg-success)}
 .account.danger svg{color:var(--fg-danger)}
 .card-foot{
-  position:relative;display:flex;flex-direction:column;gap:8px;align-items:stretch;
-  padding:20px 34px 22px;background:var(--bg-muted);
+  position:relative;display:flex;flex-direction:column;gap:6px;align-items:stretch;
+  padding:20px 32px 22px;background:var(--card-bg);
 }
 .card-foot form{display:flex;width:100%}
 a.btn.block,button.btn.block{
-  width:100%;height:44px;border-radius:10px;font-weight:500;letter-spacing:-.006em;
+  width:100%;height:42px;border-radius:10px;font-weight:500;letter-spacing:-.006em;
+}
+a.btn.primary.block:focus-visible,button.btn.primary.block:focus-visible{
+  outline:2px solid var(--brand-focus);outline-offset:2px;box-shadow:var(--shadow-cta);
 }
 /* A hairline top light and a brand-tinted lift keep the full-width CTA from
    reading as a flat slab; the fill itself stays the brand token. */
-a.btn.primary.block,button.btn.primary.block{
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .14),
-    0 1px 2px rgb(0 0 0 / .35);
-}
-a.btn.primary.block:hover,button.btn.primary.block:hover{
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .18),
-    0 1px 2px rgb(0 0 0 / .35);
-}
-a.btn.primary.block:active,button.btn.primary.block:active{
-  box-shadow:inset 0 1px 2px rgb(0 0 0 / .25);
-}
+a.btn.primary.block,button.btn.primary.block{box-shadow:var(--shadow-cta)}
+a.btn.primary.block:hover,button.btn.primary.block:hover{box-shadow:var(--shadow-cta-hover)}
+a.btn.primary.block:active,button.btn.primary.block:active{box-shadow:var(--shadow-cta-active)}
 a.btn.ghost,button.btn.ghost{
   background:transparent;color:var(--fg-muted);font-weight:400;
   text-decoration:underline;text-underline-offset:2px;
 }
 a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
 .card-foot .btn.ghost,.card-foot .btn.ghost-danger{
-  height:30px;font-weight:400;font-size:.8125rem;text-decoration:none;
+  height:26px;font-weight:400;font-size:.75rem;text-decoration:none;color:var(--fg-muted);
 }
 .card-foot .btn.ghost:hover,.card-foot .btn.ghost-danger:hover{
   text-decoration:underline;text-underline-offset:2px;
 }
-.card-foot .btn.ghost-danger{color:var(--fg-danger)}
+.card-foot .btn.ghost-danger:hover{color:var(--danger-solid)}
 .secured{
   display:flex;align-items:center;justify-content:center;gap:7px;
-  margin-top:6px;color:var(--fg-disabled);
+  margin-top:4px;color:var(--fg-disabled);
   font-size:.75rem;line-height:1rem;letter-spacing:.004em;
 }
 /* The mark goes monochrome here: the gradient tile turns to mud below ~20px. */
@@ -302,12 +325,14 @@ const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div
 
 const securedByFooter = `<div class="secured">` + brandGlyph + `Secured by NeuralTrust TrustGate</div>`
 
+const lockGlyph = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+
 const alertGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
 
 const badgeCheck = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
 
 var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype html>
-<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect accounts - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body class="store dotted"><div class="shell">` + brandHeader + `
@@ -370,7 +395,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 </div></body></html>`))
 
 var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype html>
-<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Configure {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body class="dotted"><div class="card">` + brandHeader + `
@@ -387,7 +412,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 </div></body></html>`))
 
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
-<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body class="dotted"><div class="card flush">
@@ -402,19 +427,22 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 {{if not .Found}}
   <h1 class="title">Connect your {{.ServerName}} account</h1>
   <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
-{{else if .Linked}}
-  <h1 class="title">{{.ServerName}} is connected</h1>
-  <p class="lede">TrustGate uses this connection whenever your agent calls {{.ServerName}}. Credentials never reach the agent.</p>
-{{else if .NeedsReconnect}}
-  <h1 class="title">Reconnect your {{.ServerName}} account</h1>
-  <p class="lede">{{.ServerName}} expired or revoked the stored credentials. Sign in again to restore access.</p>
 {{else}}
-  <h1 class="title">Connect your {{.ServerName}} account</h1>
-  <p class="lede">TrustGate connects to {{.ServerName}} on your behalf. Credentials are encrypted in the gateway vault and never reach the agent.</p>
+  {{if .Linked}}<h1 class="title">{{.ServerName}} is connected</h1>
+  {{else if .NeedsReconnect}}<h1 class="title">Reconnect your {{.ServerName}} account</h1>
+  {{else}}<h1 class="title">Connect your {{.ServerName}} account</h1>{{end}}
+  {{if .Description}}<p class="lede">{{.Description}}</p>
+  {{else if .NeedsReconnect}}<p class="lede">{{.ServerName}} expired or revoked the stored credentials.</p>
+  {{else}}<p class="lede">TrustGate connects to {{.ServerName}} on your behalf.</p>{{end}}
+  {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
+  {{if .AccessLabel}}<div class="access">
+    <span class="eyebrow">{{.AccessLabel}}</span>
+    <div class="chips">{{range .Items}}<span class="chip">{{.}}</span>{{end}}{{if .ItemsMore}}<span class="chip more">+{{.ItemsMore}} more</span>{{end}}</div>
+  </div>{{end}}
+  {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
+  {{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}
+  <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
-{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-{{if .Found}}{{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
-{{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}{{end}}
 </div>
 <div class="card-foot">
 {{if .Found}}
@@ -436,7 +464,7 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 </div></body></html>`))
 
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
-<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect API key - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body class="dotted"><div class="card">` + brandHeader + `
@@ -452,7 +480,7 @@ var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(
 </div></body></html>`))
 
 var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype html>
-<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Authentication complete - NeuralTrust TrustGate</title><style>` + pageCSS + `
 .card{display:none}
