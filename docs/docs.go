@@ -100,6 +100,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models": {
+            "get": {
+                "description": "Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "List a registry's available models from the data plane",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "registry_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
@@ -3458,7 +3521,7 @@ const docTemplate = `{
         },
         "/v1/models-catalog": {
             "get": {
-                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied for an AWS Bedrock registry, the list is narrowed to the models those credentials can invoke serverless (on-demand base models and system-defined inference profiles), excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed ids and unreachable AWS endpoints are ignored and yield the full catalog.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -6548,6 +6611,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide": {
+            "type": "object",
+            "properties": {
+                "docs_url": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth": {
             "type": "object",
             "properties": {
@@ -6615,6 +6698,9 @@ const docTemplate = `{
                 },
                 "code": {
                     "type": "string"
+                },
+                "config_guide": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide"
                 },
                 "description": {
                     "type": "string"
