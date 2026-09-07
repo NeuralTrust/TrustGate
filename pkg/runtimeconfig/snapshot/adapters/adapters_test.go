@@ -27,7 +27,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -44,7 +43,6 @@ type fixture struct {
 	reg     registrydomain.Registry
 	auth    authdomain.Auth
 	policy  policydomain.Policy
-	role    roledomain.Role
 }
 
 func newFixture() fixture {
@@ -79,7 +77,6 @@ func newFixture() fixture {
 		CreatedAt: baseTime,
 	}
 	pol := policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Priority: 1, CreatedAt: baseTime}
-	rl := roledomain.Role{ID: ids.New[ids.RoleKind](), GatewayID: gwID, Name: "role", CreatedAt: baseTime}
 	con := consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Slug: "consumer-one", Active: true,
 		AuthIDs: []ids.AuthID{auth.ID}, CreatedAt: baseTime,
@@ -91,12 +88,11 @@ func newFixture() fixture {
 		Registries: []registrydomain.Registry{reg},
 		Policies:   []policydomain.Policy{pol},
 		Auths:      []authdomain.Auth{auth},
-		Roles:      []roledomain.Role{rl},
 	})
 	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
 	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: snap})
 
-	return fixture{store: store, gateway: gw, other: otherGW, reg: reg, auth: auth, policy: pol, role: rl}
+	return fixture{store: store, gateway: gw, other: otherGW, reg: reg, auth: auth, policy: pol}
 }
 
 func emptyStore() *configsync.MemoryStore[*readmodel.Snapshot] {
@@ -342,30 +338,6 @@ func TestAuthAdapter(t *testing.T) {
 
 	assert.ErrorIs(t, repo.Save(ctx, &authdomain.Auth{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.auth.ID), configsync.ErrReadOnly)
-}
-
-func TestRoleAdapter(t *testing.T) {
-	t.Parallel()
-	f := newFixture()
-	repo := adapters.NewRoleRepository(f.store)
-	ctx := context.Background()
-
-	got, err := repo.FindByID(ctx, f.role.ID)
-	require.NoError(t, err)
-	assert.Equal(t, f.role.ID, got.ID)
-
-	byGateway, err := repo.ListByGateway(ctx, f.gateway.ID)
-	require.NoError(t, err)
-	assert.Len(t, byGateway, 1)
-
-	crossGateway, err := repo.FindByIDs(ctx, f.other, []ids.RoleID{f.role.ID})
-	require.NoError(t, err)
-	assert.Empty(t, crossGateway)
-
-	assert.ErrorIs(t, repo.Save(ctx, &roledomain.Role{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.AttachRegistry(ctx, f.role.ID, ids.New[ids.RegistryKind]()), configsync.ErrReadOnly)
-	_, err = repo.DetachRegistryIfUnreferenced(ctx, f.gateway.ID, f.role.ID, ids.New[ids.RegistryKind]())
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 }
 
 func TestCatalogAdapter(t *testing.T) {

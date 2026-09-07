@@ -223,10 +223,9 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		Slug:        "mcp-cons",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeRoleBased,
+		ID:   ids.New[ids.ConsumerKind](),
+		Slug: "mcp-cons",
+		Type: consumerdomain.TypeMCP,
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -274,34 +273,6 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_RejectsDisablingAuthOfRoleBasedConsumer(t *testing.T) {
-	t.Parallel()
-	repo := repomocks.NewRepository(t)
-	gwID := ids.New[ids.GatewayKind]()
-	existing := existingOAuth2Auth(gwID)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		Slug:        "role-cons",
-		Type:        consumerdomain.TypeLLM,
-		RoutingMode: consumerdomain.RoutingModeRoleBased,
-	}}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appauth.UpdateInput{
-		ID:      existing.ID,
-		Enabled: ptr(false),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (disabling the only auth of a role_based consumer)", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
 func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -311,12 +282,11 @@ func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Slug:        "mcp-inline",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeInline,
-		AuthIDs:     []ids.AuthID{existing.ID},
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Slug:      "mcp-inline",
+		Type:      consumerdomain.TypeMCP,
+		AuthIDs:   []ids.AuthID{existing.ID},
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -347,12 +317,11 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Slug:        "mcp-inline",
-		Type:        consumerdomain.TypeMCP,
-		RoutingMode: consumerdomain.RoutingModeInline,
-		AuthIDs:     []ids.AuthID{existing.ID, sibling.ID},
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Slug:      "mcp-inline",
+		Type:      consumerdomain.TypeMCP,
+		AuthIDs:   []ids.AuthID{existing.ID, sibling.ID},
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)

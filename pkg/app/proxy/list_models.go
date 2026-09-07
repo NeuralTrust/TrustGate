@@ -34,7 +34,6 @@ var ErrModelNotFound = errors.New("model not found")
 type ListModelsInput struct {
 	Consumer *appconsumer.RoutableConsumer
 	Data     *appconsumer.Data
-	RoleIDs  []ids.RoleID
 }
 
 type ModelCard struct {
@@ -92,7 +91,6 @@ func (l *modelsLister) collect(ctx context.Context, in ListModelsInput) ([]Model
 	}
 	candidates, err := l.resolver.Resolve(approuting.ResolveInput{
 		Consumer:   in.Consumer,
-		Roles:      effectiveRoles(in.Data, in.RoleIDs),
 		Registries: registryLookup(in.Data),
 	})
 	if err != nil {

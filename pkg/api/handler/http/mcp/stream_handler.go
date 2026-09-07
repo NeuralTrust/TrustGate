@@ -74,10 +74,6 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	rc, err = h.scopeByRoles(c, rc)
-	if err != nil {
-		return err
-	}
 	principal := identity.PrincipalFromContext(c.UserContext())
 	streamCtx := c.UserContext()
 	snapshot := func() string {

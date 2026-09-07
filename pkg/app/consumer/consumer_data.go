@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 type RoutableConsumer struct {
@@ -37,16 +36,12 @@ type RoutableConsumer struct {
 type Data struct {
 	GatewayID    ids.GatewayID
 	Consumers    []RoutableConsumer
-	Roles        []*roledomain.Role
 	bySlug       map[string]*RoutableConsumer
 	registryByID map[ids.RegistryID]*registrydomain.Registry
 }
 
-func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*roledomain.Role) *Data {
+func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
-	if len(roles) > 0 {
-		d.Roles = roles[0]
-	}
 	d.indexBySlug()
 	d.indexRegistries()
 	return d
@@ -78,39 +73,13 @@ func (d *Data) indexRegistries() {
 	}
 }
 
+// EffectiveRegistries returns the registries a consumer routes to. Every
+// consumer routes inline over its own registry associations.
 func (d *Data) EffectiveRegistries(rc *RoutableConsumer) []*registrydomain.Registry {
 	if rc == nil || rc.Consumer == nil {
 		return nil
 	}
-	if rc.Consumer.RoutingMode != domain.RoutingModeRoleBased {
-		return rc.Registries
-	}
-	assigned := make(map[ids.RoleID]struct{}, len(rc.Consumer.RoleIDs))
-	for _, id := range rc.Consumer.RoleIDs {
-		assigned[id] = struct{}{}
-	}
-	seen := make(map[ids.RegistryID]struct{})
-	out := make([]*registrydomain.Registry, 0)
-	for _, role := range d.Roles {
-		if role == nil {
-			continue
-		}
-		if _, ok := assigned[role.ID]; !ok {
-			continue
-		}
-		for _, id := range role.RegistryIDs {
-			reg, ok := d.RegistryByID(id)
-			if !ok || !reg.IsMCP() {
-				continue
-			}
-			if _, dup := seen[reg.ID]; dup {
-				continue
-			}
-			seen[reg.ID] = struct{}{}
-			out = append(out, reg)
-		}
-	}
-	return out
+	return rc.Registries
 }
 
 func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {

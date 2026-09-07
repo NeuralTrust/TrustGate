@@ -30,7 +30,6 @@ var (
 	ErrInvalidType      = fmt.Errorf("consumer: invalid type: %w", commonerrors.ErrValidation)
 	ErrInvalidSlug      = fmt.Errorf("consumer: invalid slug: %w", commonerrors.ErrValidation)
 
-	ErrInvalidRoutingMode = fmt.Errorf("consumer: invalid routing_mode: %w", commonerrors.ErrValidation)
 	ErrInvalidLBConfig    = fmt.Errorf("consumer: invalid lb_config: %w", commonerrors.ErrValidation)
 	ErrSlugAlreadyExists  = fmt.Errorf("consumer: slug already exists: %w", commonerrors.ErrAlreadyExists)
 	ErrInvalidFallback    = fmt.Errorf("consumer: invalid fallback: %w", commonerrors.ErrValidation)

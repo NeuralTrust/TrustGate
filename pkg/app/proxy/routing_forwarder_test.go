@@ -20,13 +20,11 @@ import (
 	"strings"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -154,110 +152,6 @@ func TestForward_PoolAliasRoutesToMembersOnly(t *testing.T) {
 	}
 	if invokedReq.DefaultModel != "gpt-5" {
 		t.Fatalf("expected member default stamped, got %q", invokedReq.DefaultModel)
-	}
-}
-
-func TestForward_RoleBasedPicksDirectly(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	role := &roledomain.Role{
-		ID:            ids.New[ids.RoleKind](),
-		GatewayID:     gatewayID,
-		Name:          "analyst",
-		RegistryIDs:   []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5"}, Default: "gpt-5"}},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-		},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{openai.ID: openai})
-
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
-			return bk.ID == openai.ID
-		}), mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
-		Once()
-
-	fwd := newTestForwarder(t, invoker)
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Data:      data,
-		RoleIDs:   []ids.RoleID{role.ID},
-		Request: &infracontext.RequestContext{
-			Body: []byte(`{"model":"gpt-5"}`),
-		},
-	})
-	if err != nil {
-		t.Fatalf("Forward: %v", err)
-	}
-	if res.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d", res.StatusCode)
-	}
-}
-
-func TestForward_RoleBasedDeniedModel(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	role := &roledomain.Role{
-		ID:            ids.New[ids.RoleKind](),
-		GatewayID:     gatewayID,
-		Name:          "analyst",
-		RegistryIDs:   []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5"}}},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-		},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{openai.ID: openai})
-
-	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Data:      data,
-		RoleIDs:   []ids.RoleID{role.ID},
-		Request: &infracontext.RequestContext{
-			Body: []byte(`{"model":"@openai/gpt-4o"}`),
-		},
-	})
-	if !errors.Is(err, routingdomain.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
-	}
-}
-
-func TestForward_RoleBasedWithoutRolesIs503(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-		},
-	}
-
-	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Request:   &infracontext.RequestContext{},
-	})
-	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
-		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
 	}
 }
 
@@ -473,59 +367,6 @@ func TestForward_PoolAliasBalancesAcrossMembers(t *testing.T) {
 	}
 }
 
-func TestForward_RoleBasedNeverEntersLBOrFallback(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	fallbackBk := backendFor(gatewayID, "anthropic")
-	role := &roledomain.Role{
-		ID:            ids.New[ids.RoleKind](),
-		GatewayID:     gatewayID,
-		Name:          "analyst",
-		RegistryIDs:   []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5"}, Default: "gpt-5"}},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-			Fallback:    enabledFallback(fallbackBk.ID),
-		},
-		FallbackBackends: []*registrydomain.Registry{fallbackBk},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{
-		openai.ID:     openai,
-		fallbackBk.ID: fallbackBk,
-	})
-
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
-			return bk.ID == openai.ID
-		}), mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
-		Once()
-
-	fwd := newTestForwarder(t, invoker)
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Data:      data,
-		RoleIDs:   []ids.RoleID{role.ID},
-		Request: &infracontext.RequestContext{
-			Body: []byte(`{"model":"gpt-5"}`),
-		},
-	})
-	if err != nil {
-		t.Fatalf("Forward: %v", err)
-	}
-	if res.StatusCode != 503 {
-		t.Fatalf("expected 503 relayed without fallback, got %d", res.StatusCode)
-	}
-}
-
 func TestForward_SpanRecordsRouteSource(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -543,35 +384,6 @@ func TestForward_SpanRecordsRouteSource(t *testing.T) {
 					Consumer:  rc,
 					Request:   &infracontext.RequestContext{Body: []byte(`{"model":"pool:fast-chat"}`)},
 				}, "pool:fast-chat"
-			},
-		},
-		{
-			name: "role based",
-			setup: func(gatewayID ids.GatewayID, bk *registrydomain.Registry) (appproxy.ForwardInput, string) {
-				role := &roledomain.Role{
-					ID:            ids.New[ids.RoleKind](),
-					GatewayID:     gatewayID,
-					Name:          "analyst",
-					RegistryIDs:   []ids.RegistryID{bk.ID},
-					ModelPolicies: roledomain.ModelPolicies{bk.ID: {Allowed: []string{"gpt-5"}, Default: "gpt-5"}},
-				}
-				rc := &appconsumer.RoutableConsumer{
-					Consumer: &domainconsumer.Consumer{
-						ID:          ids.New[ids.ConsumerKind](),
-						GatewayID:   gatewayID,
-						RoutingMode: domainconsumer.RoutingModeRoleBased,
-						RoleIDs:     []ids.RoleID{role.ID},
-					},
-				}
-				data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-				data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{bk.ID: bk})
-				return appproxy.ForwardInput{
-					GatewayID: gatewayID,
-					Consumer:  rc,
-					Data:      data,
-					RoleIDs:   []ids.RoleID{role.ID},
-					Request:   &infracontext.RequestContext{Body: []byte(`{"model":"gpt-5"}`)},
-				}, "role:analyst"
 			},
 		},
 		{

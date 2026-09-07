@@ -31,15 +31,14 @@ import (
 )
 
 type UpdateInput struct {
-	ID          ids.ConsumerID
-	GatewayID   ids.GatewayID
-	Name        *string
-	Type        *domain.Type
-	RoutingMode *domain.RoutingMode
-	LBConfig    *domain.LBConfig
-	Headers     *map[string]string
-	Active      *bool
-	Fallback    *domain.Fallback
+	ID        ids.ConsumerID
+	GatewayID ids.GatewayID
+	Name      *string
+	Type      *domain.Type
+	LBConfig  *domain.LBConfig
+	Headers   *map[string]string
+	Active    *bool
+	Fallback  *domain.Fallback
 	// Registries replaces the whole registry association set. A nil value keeps
 	// the associations the consumer already has.
 	Registries    *domain.RegistryBindings
@@ -101,10 +100,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.Type = *in.Type
 		existing.MCP = nil
 	}
-	previousMode := existing.RoutingMode
-	if in.RoutingMode != nil {
-		existing.RoutingMode = *in.RoutingMode
-	}
 	if in.LBConfig != nil {
 		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)
 		existing.LBConfig = in.LBConfig
@@ -122,11 +117,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.ModelPolicies = *in.ModelPolicies
 	}
 	applyMCPPolicyUpdate(existing, in)
-	if previousMode != existing.RoutingMode {
-		cleanIncompatibleModeConfig(existing)
-	}
-	// Applied after the mode cleanup so that sending registries alongside
-	// routing_mode=role_based is rejected by Validate instead of silently dropped.
 	if in.Registries != nil {
 		existing.RegistryIDs = in.Registries.IDs
 		existing.RegistryWeights = in.Registries.Weights
@@ -143,7 +133,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 			return nil, err
 		}
 	}
-	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousMode); err != nil {
+	if err := u.revalidateAuthsForTransition(ctx, existing, previousType); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries)); err != nil {
@@ -159,8 +149,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 
 // requestedRegistryBindings returns the association set the repository must
 // persist, or nil when the caller did not ask to change it. It reads the
-// validated aggregate rather than the input so a switch to role_based, which
-// drops every registry, is reflected.
+// validated aggregate rather than the input.
 func requestedRegistryBindings(c *domain.Consumer, requested *domain.RegistryBindings) *domain.RegistryBindings {
 	if requested == nil {
 		return nil
@@ -172,11 +161,9 @@ func (u *updater) revalidateAuthsForTransition(
 	ctx context.Context,
 	c *domain.Consumer,
 	previousType domain.Type,
-	previousMode domain.RoutingMode,
 ) error {
 	toMCP := c.Type == domain.TypeMCP && previousType != domain.TypeMCP
-	toRoleBased := c.RoutingMode == domain.RoutingModeRoleBased && previousMode != domain.RoutingModeRoleBased
-	if (!toMCP && !toRoleBased) || len(c.AuthIDs) == 0 {
+	if !toMCP || len(c.AuthIDs) == 0 {
 		return nil
 	}
 	auths, err := u.authRepo.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
@@ -188,7 +175,7 @@ func (u *updater) revalidateAuthsForTransition(
 			commonerrors.ErrConflict, len(c.AuthIDs), len(auths))
 	}
 	for _, au := range auths {
-		if err := domain.ValidateAuthType(c.Type, c.RoutingMode, au.Type); err != nil {
+		if err := domain.ValidateAuthType(c.Type, au.Type); err != nil {
 			return err
 		}
 	}
@@ -212,9 +199,6 @@ func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
 }
 
 func validateRegistryRefsAssociated(c *domain.Consumer) error {
-	if c.RoutingMode == domain.RoutingModeRoleBased {
-		return nil
-	}
 	associated := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
 	for _, id := range c.RegistryIDs {
 		associated[id] = struct{}{}
@@ -248,20 +232,6 @@ func validateRegistryRefsAssociated(c *domain.Consumer) error {
 		}
 	}
 	return nil
-}
-
-func cleanIncompatibleModeConfig(c *domain.Consumer) {
-	switch c.RoutingMode {
-	case domain.RoutingModeRoleBased:
-		c.RegistryIDs = nil
-		c.RegistryWeights = nil
-		c.Fallback = nil
-		c.LBConfig = nil
-		c.ModelPolicies = nil
-		c.MCP = nil
-	case domain.RoutingModeInline:
-		c.RoleIDs = nil
-	}
 }
 
 func resolveLBConfigSecrets(next, prev *domain.LBConfig) {

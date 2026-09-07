@@ -30,13 +30,11 @@ type ConsumerResponse struct {
 	Name            string                   `json:"name"`
 	Type            string                   `json:"type"`
 	Slug            string                   `json:"slug"`
-	RoutingMode     string                   `json:"routing_mode"`
 	LBConfig        *LBConfigResponse        `json:"lb_config,omitempty"`
 	Headers         map[string]string        `json:"headers,omitempty"`
 	Active          bool                     `json:"active"`
 	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
 	RegistryWeights []RegistryWeightResponse `json:"registry_weights,omitempty"`
-	RoleIDs         []ids.RoleID             `json:"role_ids"`
 	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
@@ -130,23 +128,17 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if authIDs == nil {
 		authIDs = []ids.AuthID{}
 	}
-	roleIDs := c.RoleIDs
-	if roleIDs == nil {
-		roleIDs = []ids.RoleID{}
-	}
 	return ConsumerResponse{
 		ID:              c.ID,
 		GatewayID:       c.GatewayID,
 		Name:            c.Name,
 		Type:            string(c.Type),
 		Slug:            c.Slug,
-		RoutingMode:     string(c.RoutingMode),
 		LBConfig:        fromLBConfig(c.LBConfig),
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
 		RegistryWeights: fromRegistryWeights(c.RegistryWeights),
-		RoleIDs:         roleIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),

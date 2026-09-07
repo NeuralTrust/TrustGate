@@ -45,7 +45,7 @@ func guardAuthTypeChange(ctx context.Context, consumers consumerAuthRefs, authID
 		return err
 	}
 	for _, c := range refs {
-		if err := consumerdomain.ValidateAuthType(c.Type, c.RoutingMode, newType); err != nil {
+		if err := consumerdomain.ValidateAuthType(c.Type, newType); err != nil {
 			return fmt.Errorf("%w (referenced by consumer %q)", err, c.Slug)
 		}
 	}
@@ -62,23 +62,18 @@ func guardAuthDisable(ctx context.Context, consumers consumerAuthRefs, auths dom
 
 func evaluateAuthRemoval(ctx context.Context, auths domain.Repository, refs []*consumerdomain.Consumer, authID ids.AuthID, action string) error {
 	for _, c := range refs {
-		switch {
-		case c.RoutingMode == consumerdomain.RoutingModeRoleBased:
+		if c.Type != consumerdomain.TypeMCP {
+			continue
+		}
+		hasAlternative, err := consumerHasOtherUsableAuth(ctx, auths, c, authID)
+		if err != nil {
+			return err
+		}
+		if !hasAlternative {
 			return fmt.Errorf(
-				"%w: auth is the only identity provider of role_based consumer %q; reassign it before %s",
+				"%w: auth is the only usable identity provider of MCP consumer %q; reassign it before %s",
 				commonerrors.ErrConflict, c.Slug, action,
 			)
-		case c.Type == consumerdomain.TypeMCP:
-			hasAlternative, err := consumerHasOtherUsableAuth(ctx, auths, c, authID)
-			if err != nil {
-				return err
-			}
-			if !hasAlternative {
-				return fmt.Errorf(
-					"%w: auth is the only usable identity provider of MCP consumer %q; reassign it before %s",
-					commonerrors.ErrConflict, c.Slug, action,
-				)
-			}
 		}
 	}
 	return nil
@@ -96,7 +91,7 @@ func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c 
 		if s.ID == excluded || !s.Enabled {
 			continue
 		}
-		if consumerdomain.ValidateAuthType(c.Type, c.RoutingMode, s.Type) == nil {
+		if consumerdomain.ValidateAuthType(c.Type, s.Type) == nil {
 			return true, nil
 		}
 	}
