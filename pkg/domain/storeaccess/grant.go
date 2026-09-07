@@ -189,6 +189,23 @@ func (g *Grant) AddUser(subject string) bool {
 	return true
 }
 
+// AddGroup names one more group key on the grant; a no-op when already named.
+// Returns whether the grant changed.
+func (g *Grant) AddGroup(key string) bool {
+	k := strings.TrimSpace(key)
+	if g == nil || k == "" {
+		return false
+	}
+	for _, existing := range g.Groups {
+		if existing == k {
+			return false
+		}
+	}
+	g.Groups = normalizeSubjects(append(g.Groups, k))
+	g.UpdatedAt = time.Now().UTC()
+	return true
+}
+
 func normalizeSubjects(in []string) []string {
 	if len(in) == 0 {
 		return nil

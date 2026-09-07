@@ -228,6 +228,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
+			store.Get("/requests/history", r.deps.StoreRequests.History)
 			store.Post("/requests/approve", r.deps.StoreRequests.Approve)
 			store.Post("/requests/deny", r.deps.StoreRequests.Deny)
 		}

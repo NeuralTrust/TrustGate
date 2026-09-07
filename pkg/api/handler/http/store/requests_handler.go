@@ -52,6 +52,24 @@ type pendingRequestResponse struct {
 	RequestedAt  time.Time `json:"requested_at"`
 }
 
+// decidedRequestResponse is one row of the approval history.
+type decidedRequestResponse struct {
+	InstanceID   string    `json:"instance_id"`
+	PrincipalSub string    `json:"principal_sub"`
+	Code         string    `json:"code"`
+	Name         string    `json:"name"`
+	RegistryID   string    `json:"registry_id,omitempty"`
+	Decision     string    `json:"decision"`
+	DecidedBy    string    `json:"decided_by,omitempty"`
+	DecidedAt    time.Time `json:"decided_at"`
+	RequestedAt  time.Time `json:"requested_at"`
+}
+
+type listHistoryResponse struct {
+	Items []decidedRequestResponse `json:"items"`
+	Total int                      `json:"total"`
+}
+
 type listRequestsResponse struct {
 	Items []pendingRequestResponse `json:"items"`
 	Total int                      `json:"total"`
@@ -65,6 +83,9 @@ type decideRequest struct {
 	PrincipalSub string `json:"principal_sub"`
 	Code         string `json:"code"`
 	InstanceID   string `json:"instance_id"`
+	// GrantToGroup (approve only): grant the server to this group of the
+	// requester instead of to the requester alone.
+	GrantToGroup string `json:"grant_to_group"`
 }
 
 func (r decideRequest) validate() error {
@@ -114,9 +135,49 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 	return httpio.WriteOK(c, out)
 }
 
+// History godoc
+// @Summary      List decided Store install requests
+// @Description  Returns the gateway's approved and denied MCP Store install requests, newest decision first.
+// @Tags         store
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
+// @Success      200         {object}  listHistoryResponse
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/store/requests/history [get]
+func (h *RequestsHandler) History(c *fiber.Ctx) error {
+	gatewayID, err := httpio.ParseGatewayID(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	decided, err := h.approver.ListDecided(c.UserContext(), gatewayID)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	out := listHistoryResponse{Items: make([]decidedRequestResponse, 0, len(decided)), Total: len(decided)}
+	for _, d := range decided {
+		row := decidedRequestResponse{
+			InstanceID:   d.InstanceID,
+			PrincipalSub: d.PrincipalSub,
+			Code:         d.Code,
+			Name:         d.Name,
+			Decision:     string(d.Decision),
+			DecidedBy:    d.DecidedBy,
+			DecidedAt:    d.DecidedAt,
+			RequestedAt:  d.RequestedAt,
+		}
+		if !d.RegistryID.IsNil() {
+			row.RegistryID = d.RegistryID.String()
+		}
+		out.Items = append(out.Items, row)
+	}
+	return httpio.WriteOK(c, out)
+}
+
 // Approve godoc
 // @Summary      Approve a Store install request
-// @Description  Shelves the server available (if needed) and marks the request installed.
+// @Description  Shelves the server available (if needed), grants it to the requester (or to one of their groups via grant_to_group) and marks the request installed.
 // @Tags         store
 // @Accept       json
 // @Produce      json
@@ -139,6 +200,7 @@ func (h *RequestsHandler) Approve(c *fiber.Ctx) error {
 		Code:         req.Code,
 		InstanceID:   req.InstanceID,
 		ApprovedBy:   callerActor(c),
+		GrantToGroup: req.GrantToGroup,
 	}); err != nil {
 		return httpio.WriteError(c, err)
 	}

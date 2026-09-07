@@ -158,7 +158,13 @@ type storeApprovalParams struct {
 }
 
 func provideStoreRequestsHandler(p storeApprovalParams) (*storehttp.RequestsHandler, error) {
-	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs, p.Grants, appstore.WithApproverEnsurer(p.Ensurer))
+	opts := []appstore.ApproverOption{appstore.WithApproverEnsurer(p.Ensurer)}
+	// The durable installation store keeps the decision history; a data-plane
+	// proxy does not, and then History reports it unavailable.
+	if history, ok := p.Installs.(installationdomain.DecisionHistory); ok {
+		opts = append(opts, appstore.WithApproverHistory(history))
+	}
+	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs, p.Grants, opts...)
 	if err != nil {
 		return nil, err
 	}
