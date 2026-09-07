@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
@@ -179,6 +180,45 @@ func TestCoerceClaim(t *testing.T) {
 	}
 }
 
+func TestEmailFromToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		token map[string]any
+		want  string
+	}{
+		{
+			name:  "neuraltrust access token email",
+			token: map[string]any{"access_token": unsignedJWT(t, map[string]any{"sub": "user-1", "email": "ada@neuraltrust.ai"})},
+			want:  "ada@neuraltrust.ai",
+		},
+		{
+			name:  "id_token wins over access token",
+			token: map[string]any{"id_token": unsignedJWT(t, map[string]any{"email": "from-id@example.com"}), "access_token": unsignedJWT(t, map[string]any{"email": "from-access@example.com"})},
+			want:  "from-id@example.com",
+		},
+		{
+			name:  "opaque access token",
+			token: map[string]any{"access_token": "gho_opaque"},
+			want:  "",
+		},
+		{
+			name:  "subject uuid is not an email",
+			token: map[string]any{"access_token": unsignedJWT(t, map[string]any{"sub": "fff9c76a-52e8-416f-8b6a-489000000001"})},
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := emailFromToken(tt.token); got != tt.want {
+				t.Fatalf("emailFromToken() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func sessionAuth(t *testing.T, idpURL string) *authdomain.Auth {
 	t.Helper()
 	return oauth2Auth(t, authdomain.OAuth2Config{
@@ -197,7 +237,7 @@ func TestCallbackSessionModeEmptySubjectDenied(t *testing.T) {
 	store := newMemFlowStore()
 	userinfo := &fakeUserInfo{info: map[string]any{"login": "octocat"}}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{sessionAuth(t, idp.URL)}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), userinfo, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), userinfo)
 
 	gwState := authorizeAndGetState(t, proxy, "")
 	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
@@ -214,13 +254,14 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
 	signer := newTestSigner(t)
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, signer, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, signer, nil)
 	ctx := context.Background()
 
 	if err := store.SaveCode(ctx, "gw-code", CodeGrant{
 		RedirectURI:   "cursor://anysphere.cursor-mcp/oauth/callback",
 		CodeChallenge: s256("client-verifier"),
 		Subject:       "user-42",
+		Email:         "ada@example.com",
 		AuthID:        "auth-1",
 		GatewayID:     "gw-1",
 		Audiences:     []string{"api://gw"},
@@ -268,6 +309,9 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	if claims["sub"] != "user-42" || claims["token_use"] != "mcp_session" || claims["authid"] != "auth-1" {
 		t.Fatalf("unexpected minted claims: %v", claims)
 	}
+	if claims["email"] != "ada@example.com" {
+		t.Fatalf("session token must carry the IdP email, got %v", claims["email"])
+	}
 	if claims["iss"] != signer.Issuer() {
 		t.Fatalf("expected issuer %q, got %v", signer.Issuer(), claims["iss"])
 	}
@@ -277,7 +321,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 		t.Fatal("SaveSession must persist a record")
 		return
 	}
-	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
+	if rec.Subject != "user-42" || rec.Email != "ada@example.com" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
 	}
 }
@@ -287,16 +331,19 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	store := newMemFlowStore()
 	signer := newTestSigner(t)
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil)
 	ctx := context.Background()
 
 	const oldRefresh = "gwrt_old-refresh"
 	if err := store.SaveSession(ctx, oldRefresh, SessionRecord{
 		Subject:   "user-42",
+		Email:     "ada@example.com",
 		Scopes:    []string{"mcp.access", "openid"},
 		GatewayID: "gw-1",
 		AuthID:    "auth-1",
 		Audiences: []string{"api://gw"},
+		LoginAt:   time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
@@ -324,8 +371,8 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 		t.Fatal("rotated session must be persisted")
 		return
 	}
-	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
-		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)
+	if rotated.Subject != "user-42" || rotated.Email != "ada@example.com" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
+		t.Fatalf("rotated record must preserve subject/scopes/email, got %+v", rotated)
 	}
 
 	// Rotation must leave the old token usable for a short grace window: MCP
@@ -368,6 +415,9 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	if claims["sub"] != "user-42" || claims["token_use"] != "mcp_session" || claims["authid"] != "auth-1" {
 		t.Fatalf("unexpected re-minted claims: %v", claims)
 	}
+	if claims["email"] != "ada@example.com" {
+		t.Fatalf("refresh must re-stamp the stored email, got %v", claims["email"])
+	}
 }
 
 func TestRefreshUnknownTokenFallsBackToIdP(t *testing.T) {
@@ -393,7 +443,7 @@ func TestRefreshUnknownTokenFallsBackToIdP(t *testing.T) {
 func TestRefreshUnknownGatewayTokenRejected(t *testing.T) {
 	t.Parallel()
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, newMemFlowStore(), nil, newTestSigner(t), nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, newMemFlowStore(), nil, newTestSigner(t), nil)
 
 	_, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
@@ -418,7 +468,7 @@ func TestCallbackSessionMintsIdPGrantedScopes(t *testing.T) {
 			RequiredScopes: []string{"api://gw-client-id/mcp.access"},
 		}),
 	}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, signer, nil, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, signer, nil)
 	ctx := context.Background()
 
 	gwState := authorizeAndGetState(t, proxy, "")
@@ -488,7 +538,7 @@ func fakeIdPWithScopedToken(t *testing.T, scope, idToken string) *httptest.Serve
 func TestExchangeCodeOffModeReturnsTokenVerbatim(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, newTestSigner(t), nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, newTestSigner(t), nil)
 	ctx := context.Background()
 
 	idpToken := map[string]any{"access_token": "idp-access-token", "token_type": "Bearer", "expires_in": 3600}

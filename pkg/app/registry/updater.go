@@ -17,11 +17,14 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -37,6 +40,8 @@ type UpdateInput struct {
 	Description     *string
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
+	Pricing         *domain.Pricing
+	SetPricing      bool
 	MCPTarget       *domain.MCPTarget
 }
 
@@ -54,6 +59,7 @@ type updater struct {
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
 	catalog     MCPAuthCatalog
+	openapi     appopenapi.Compiler
 }
 
 func NewUpdater(
@@ -63,7 +69,12 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	catalog MCPAuthCatalog,
+	compilers ...appopenapi.Compiler,
 ) Updater {
+	var compiler appopenapi.Compiler
+	if len(compilers) > 0 {
+		compiler = compilers[0]
+	}
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
@@ -71,6 +82,7 @@ func NewUpdater(
 		logger:      logger,
 		signaler:    signaler,
 		catalog:     catalog,
+		openapi:     compiler,
 	}
 }
 
@@ -92,7 +104,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		existing.Enabled = *in.Enabled
 	}
 	applyLLMTargetUpdate(existing, in)
-	if err := applyMCPTargetUpdate(existing, in, u.catalog); err != nil {
+	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
 		return nil, err
 	}
 	existing.UpdatedAt = time.Now().UTC()
@@ -115,13 +127,27 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	return existing, nil
 }
 
-func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput, catalog MCPAuthCatalog) error {
+func applyMCPTargetUpdate(
+	ctx context.Context,
+	existing *domain.Registry,
+	in UpdateInput,
+	catalog MCPAuthCatalog,
+	compiler appopenapi.Compiler,
+) error {
 	if in.MCPTarget == nil {
 		return nil
 	}
 	incoming := in.MCPTarget
 	if prev := existing.MCPTarget; prev != nil {
-		if strings.TrimSpace(incoming.URL) == "" {
+		sourceChanged := incoming.Source != "" && normalizedMCPSource(incoming.Source) != normalizedMCPSource(prev.Source)
+		if incoming.Source == "" {
+			incoming.Source = prev.Source
+		}
+		// A masked URL is the read API's rendering of the stored one (a secret
+		// URL variable shown as ***xxxx), echoed back by a client that edited
+		// other fields — the same round-trip secret.Resolve handles for auth
+		// secrets. Persisting it would replace the real token with the mask.
+		if strings.TrimSpace(incoming.URL) == "" || urlCarriesMaskedSecret(incoming.URL) {
 			incoming.URL = prev.URL
 		}
 		if incoming.Transport == "" {
@@ -139,8 +165,14 @@ func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput, catalog MCP
 		if strings.TrimSpace(incoming.Code) == "" {
 			incoming.Code = prev.Code
 		}
+		if incoming.OpenAPI == nil && !sourceChanged {
+			incoming.OpenAPI = prev.OpenAPI
+		}
 	}
 	incoming.Normalize()
+	if err := compileOpenAPITarget(ctx, incoming, compiler); err != nil {
+		return err
+	}
 	incoming.ResolveSecretsFrom(existing.MCPTarget)
 	if err := CanonicalizeMCPAuthFromCatalog(incoming, catalog); err != nil {
 		return err
@@ -149,8 +181,39 @@ func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput, catalog MCP
 	return nil
 }
 
+// urlCarriesMaskedSecret reports whether an mcp_target.url holds a masked
+// secret — the redaction marker as (a prefix of) any query value or path
+// segment — i.e. it is the read API's masked form, not a new value.
+func urlCarriesMaskedSecret(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.Contains(raw, secret.Redacted)
+	}
+	for _, values := range u.Query() {
+		for _, v := range values {
+			if secret.IsMasked(v) {
+				return true
+			}
+		}
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if secret.IsMasked(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedMCPSource(source domain.MCPSource) domain.MCPSource {
+	if source == "" {
+		return domain.MCPSourceRemote
+	}
+	return source
+}
+
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
-	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil {
+	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil && !in.SetPricing {
 		return
 	}
 	if existing.LLMTarget == nil {
@@ -169,5 +232,8 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	}
 	if in.HealthChecks != nil {
 		target.HealthChecks = in.HealthChecks
+	}
+	if in.SetPricing {
+		target.Pricing = in.Pricing
 	}
 }

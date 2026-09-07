@@ -127,16 +127,15 @@ func newIntegrationServer(t *testing.T, lifetime, keepalive time.Duration) *inte
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{}, nil).Maybe()
 	executor := pluginmocks.NewExecutor(t)
 	executor.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	handler := mcphttp.NewHandlerWithSubscriptions(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(
 			composer,
 			appmcp.NewPluginRunner(executor, discardLogger()),
 			limiter,
 		),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{},
-		subs,
+		nil,
+		mcphttp.WithSubscriptions(subs),
 	)
 	app.Post(mcpPath, handler.Handle)
 

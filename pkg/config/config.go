@@ -16,6 +16,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -41,6 +42,10 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
+	// org/groups/store_access claims are a login-time snapshot re-minted on
+	// refresh, so the snapshot must expire and force a fresh platform login.
+	defaultMCPDefaultIdPSessionMaxAge = 24 * time.Hour
 
 	defaultMCPMRTRMaxRounds            = 8
 	defaultMCPMRTRTicketTTL            = 5 * time.Minute
@@ -121,6 +126,9 @@ const (
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
 	defaultOpsMetricsEnabled            = false
+	defaultOpsTracesEnabled             = false
+	defaultOpsTracesSamplingRatio       = 1.0
+	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -177,6 +185,10 @@ const (
 	defaultConfigSyncOutboxMaxRows        int64 = 10000
 
 	configSyncKeyBytes = 32
+
+	defaultAdminM2MAudience           = "trustgate-admin"
+	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
+	defaultAdminPlatformClaimRequired = false
 )
 
 type Config struct {
@@ -202,6 +214,41 @@ type Config struct {
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
+	AdminM2M            AdminM2MConfig
+}
+
+// AdminM2MPublicKey is one verification key advertised by the credential
+// issuer. Two keys may be configured at once so the issuer can rotate without
+// downtime: tokens carry the `kid` that selects the key. A single key may be
+// configured without a KID, in which case it verifies every token.
+type AdminM2MPublicKey struct {
+	KID string `json:"kid"`
+	PEM string `json:"pem"`
+}
+
+// AdminM2MConfig verifies machine-to-machine admin tokens minted by the
+// NeuralTrust control plane. The signing key is asymmetric and lives outside
+// TrustGate, so a compromised gateway cannot forge admin credentials, and the
+// key is deliberately unrelated to ServerConfig.SecretKey (which also derives
+// the vault cipher).
+type AdminM2MConfig struct {
+	Issuer     string
+	Audience   string
+	PublicKeys []AdminM2MPublicKey
+	// MaxTokenTTL rejects service tokens whose own exp-iat span exceeds the
+	// agreed ceiling. Verification is offline, so this span is also how long a
+	// revoked credential's last token stays usable: lower it to shorten that
+	// window.
+	MaxTokenTTL time.Duration
+	// PlatformClaimRequired turns a missing tenant claim from an implicit
+	// platform-admin grant into a rejection unless `platform_admin` is set.
+	// Off by default so TrustGate can ship before the issuer stamps the claim.
+	PlatformClaimRequired bool
+}
+
+// Enabled reports whether service tokens can be verified at all.
+func (c AdminM2MConfig) Enabled() bool {
+	return c.Issuer != "" && c.Audience != "" && len(c.PublicKeys) > 0
 }
 
 const (
@@ -250,17 +297,24 @@ type ServerConfig struct {
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
-	STSIssuer         string
-	STSSigningKey     string
-	TrustXFCCFrom     []string
+	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
+	// redirect_uri base for upstream MCP connect (authorize + code exchange +
+	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
+	// so a single Google/Entra app can allowlist one host across tenants.
+	// Example: https://oauth.mcp.neuraltrust.ai
+	MCPOAuthPublicBaseURL string
+	STSIssuer             string
+	STSSigningKey         string
+	TrustXFCCFrom         []string
 	// MCPDefaultIdP is the built-in NeuralTrust identity provider used as the
 	// fallback OAuth2 login for MCP consumers that have no identity provider of
 	// their own. Empty Issuer disables it (behaviour unchanged).
-	MCPDefaultIdP    MCPDefaultIdPConfig
-	MCPMRTR          MCPMRTRConfig
-	MCPTasks         MCPTasksConfig
-	MCPApps          MCPAppsConfig
-	MCPSubscriptions MCPSubscriptionsConfig
+	MCPDefaultIdP      MCPDefaultIdPConfig
+	GoogleWorkspaceMCP GoogleWorkspaceMCPConfig
+	MCPMRTR            MCPMRTRConfig
+	MCPTasks           MCPTasksConfig
+	MCPApps            MCPAppsConfig
+	MCPSubscriptions   MCPSubscriptionsConfig
 }
 
 // MCPMRTRConfig holds env-only HMAC ticket settings for modern tools/call MRTR.
@@ -332,6 +386,15 @@ type MCPDefaultIdPConfig struct {
 	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 	Audiences    []string
 	Scopes       []string
+	// SessionMaxAge is the absolute lifetime of an MCP session brokered through
+	// the built-in identity provider. Refreshing past it forces a new platform
+	// login so org, groups and store_access are re-derived.
+	SessionMaxAge time.Duration
+}
+
+type GoogleWorkspaceMCPConfig struct {
+	ClientID     string
+	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 }
 
 type DatabaseConfig struct {
@@ -382,24 +445,35 @@ type KafkaConfig struct {
 }
 
 type TelemetryConfig struct {
-	Enabled             bool
-	KafkaTopic          string
-	ExportersFile       string
-	ExportersMetadata   string
-	ExportersRaw        string
-	EnableRequestTraces bool
-	EnablePluginTraces  bool
-	OpsMetricsEnabled   bool
-	OTLP                OTLPConfig
+	Enabled                bool
+	KafkaTopic             string
+	ExportersFile          string
+	ExportersMetadata      string
+	ExportersRaw           string
+	EnableRequestTraces    bool
+	EnablePluginTraces     bool
+	OpsMetricsEnabled      bool
+	OpsTracesEnabled       bool
+	OpsTracesSamplingRatio float64
+	// OpsTracesProbeSamplingRatio governs health and readiness routes only.
+	// Unlike OpsTracesSamplingRatio, 0 is a meaningful value here: it drops
+	// probe spans entirely while leaving request traces untouched.
+	OpsTracesProbeSamplingRatio float64
+	OTLP                        OTLPConfig
 }
 
+// OTLPConfig holds the process-level OTEL_EXPORTER_OTLP_* settings. Endpoint
+// carries the product-event log path (/v1/logs), so the operational signals get
+// their own endpoints rather than deriving one from it.
 type OTLPConfig struct {
-	Endpoint    string
-	Headers     map[string]string
-	Protocol    string
-	Timeout     time.Duration
-	Insecure    bool
-	Compression string
+	Endpoint        string
+	TracesEndpoint  string
+	MetricsEndpoint string
+	Headers         map[string]string
+	Protocol        string
+	Timeout         time.Duration
+	Insecure        bool
+	Compression     string
 }
 
 type MetricsConfig struct {
@@ -508,6 +582,7 @@ func LoadConfig() (*Config, error) {
 		ConfigSync:          getConfigSyncConfig(),
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
+		AdminM2M:            getAdminM2MConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -533,18 +608,24 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
-		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
-		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
-			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
-			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
-			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
-			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
-			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
-			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
-			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
-			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:      getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:       getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:      getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret:  getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:     splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:        splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", defaultMCPDefaultIdPSessionMaxAge),
+		},
+		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
+			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
+			ClientSecret: getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_SECRET", ""),
 		},
 		MCPMRTR: MCPMRTRConfig{
 			TicketSecret:         getEnv("MCP_MRTR_TICKET_SECRET", ""),
@@ -750,24 +831,33 @@ func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
+		ExportersFile:       getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
 		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),
-		OTLP:                getOTLPConfig(),
+		OpsTracesEnabled:    getEnvBool("OPS_TRACES_ENABLED", defaultOpsTracesEnabled),
+		OpsTracesSamplingRatio: getEnvFloat(
+			"OPS_TRACES_SAMPLING_RATIO", defaultOpsTracesSamplingRatio,
+		),
+		OpsTracesProbeSamplingRatio: getEnvFloat(
+			"OPS_TRACES_PROBE_SAMPLING_RATIO", defaultOpsTracesProbeSamplingRatio,
+		),
+		OTLP: getOTLPConfig(),
 	}
 }
 
 func getOTLPConfig() OTLPConfig {
 	return OTLPConfig{
-		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		Headers:     parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
-		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
-		Timeout:     getOTLPTimeout(),
-		Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
-		Compression: getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
+		Endpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		TracesEndpoint:  getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""),
+		MetricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", ""),
+		Headers:         parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
+		Protocol:        getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+		Timeout:         getOTLPTimeout(),
+		Insecure:        getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+		Compression:     getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
 	}
 }
 
@@ -946,6 +1036,51 @@ func getRateLimitConfig() RateLimitConfig {
 	}
 }
 
+func getAdminM2MConfig() AdminM2MConfig {
+	return AdminM2MConfig{
+		Issuer:                getEnv("ADMIN_M2M_ISSUER", ""),
+		Audience:              getEnv("ADMIN_M2M_AUDIENCE", defaultAdminM2MAudience),
+		PublicKeys:            parseAdminM2MPublicKeys(getEnv("ADMIN_M2M_PUBLIC_KEYS", "")),
+		MaxTokenTTL:           getEnvDuration("ADMIN_M2M_MAX_TOKEN_TTL", defaultAdminM2MMaxTokenTTL),
+		PlatformClaimRequired: getEnvBool("ADMIN_PLATFORM_CLAIM_REQUIRED", defaultAdminPlatformClaimRequired),
+	}
+}
+
+// parseAdminM2MPublicKeys reads either a bare public key (PEM or its base64
+// form, which keeps the whole value on one line) or a JSON array of {kid, pem}
+// entries for rotation. Env values commonly carry PEM newlines escaped as "\n",
+// so those are restored before the key is parsed. Malformed input yields no
+// keys, which disables service tokens rather than silently trusting a partial
+// key set.
+func parseAdminM2MPublicKeys(raw string) []AdminM2MPublicKey {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return []AdminM2MPublicKey{{PEM: strings.ReplaceAll(raw, `\n`, "\n")}}
+	}
+	var entries []AdminM2MPublicKey
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		slog.Warn("invalid ADMIN_M2M_PUBLIC_KEYS, service tokens disabled", slog.String("error", err.Error()))
+		return nil
+	}
+	out := make([]AdminM2MPublicKey, 0, len(entries))
+	for _, entry := range entries {
+		kid := strings.TrimSpace(entry.KID)
+		pem := strings.ReplaceAll(strings.TrimSpace(entry.PEM), `\n`, "\n")
+		if kid == "" || pem == "" {
+			slog.Warn("skipping ADMIN_M2M_PUBLIC_KEYS entry without kid or pem")
+			continue
+		}
+		out = append(out, AdminM2MPublicKey{KID: kid, PEM: pem})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func getMCPConnectRateLimitConfig() (MCPConnectRateLimitConfig, error) {
 	enabled, err := parseStrictBoolEnv("MCP_CONNECT_RATE_LIMIT_ENABLED", defaultMCPConnectRateLimitEnabled)
 	if err != nil {
@@ -1087,6 +1222,9 @@ func (c *Config) Validate() error {
 	}
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
+	}
+	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
+		return err
 	}
 	if !c.ConfigSync.DataPlaneEnabled {
 		if c.Database.Host == "" {
@@ -1450,11 +1588,48 @@ func isDeployedEnv(appEnv string) bool {
 	}
 }
 
+// validateMCPOAuthPublicBaseURL normalizes an optional absolute http(s) origin
+// used as the MCP connect OAuth redirect base. Path, query, and fragment are
+// rejected so redirect_uri is always {base}/oauth/callback/{provider}.
+func validateMCPOAuthPublicBaseURL(raw *string) error {
+	v := strings.TrimSpace(*raw)
+	if v == "" {
+		*raw = ""
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL is not a valid URL", errors.ErrInvalidConfig)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must use http or https", errors.ErrInvalidConfig)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must include a host", errors.ErrInvalidConfig)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must be an origin only (no userinfo, query, or fragment)", errors.ErrInvalidConfig)
+	}
+	if path := strings.Trim(u.Path, "/"); path != "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must not include a path (got %q)", errors.ErrInvalidConfig, u.Path)
+	}
+	*raw = strings.TrimRight(u.Scheme+"://"+u.Host, "/")
+	return nil
+}
+
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvAllowEmpty(key, defaultValue string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return defaultValue
+	}
+	return value
 }
 
 func getEnvInt(key string, defaultValue int) int {
@@ -1493,6 +1668,20 @@ func getEnvInt64(key string, defaultValue int64) int64 {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || parsed < 0 {
 		slog.Warn("invalid int64 environment variable, falling back to default",
+			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
+		return defaultValue
+	}
+	return parsed
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		slog.Warn("invalid float environment variable, falling back to default",
 			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
 		return defaultValue
 	}

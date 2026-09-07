@@ -15,12 +15,15 @@
 package modules
 
 import (
+	"log/slog"
+
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
@@ -48,6 +51,9 @@ type healthParams struct {
 }
 
 func API(c *container.Container) error {
+	if err := c.Provide(o11y.NewSDK); err != nil {
+		return err
+	}
 	if err := c.Provide(o11y.NewProvider); err != nil {
 		return err
 	}
@@ -94,7 +100,22 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewAdminAuthMiddleware); err != nil {
+	if err := c.Provide(func(cfg *config.Config) (jwt.ServiceVerifier, error) {
+		return jwt.NewServiceVerifier(cfg.AdminM2M)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		logger *slog.Logger,
+		manager jwt.Manager,
+		verifier jwt.ServiceVerifier,
+		cfg *config.Config,
+	) *middleware.AdminAuthMiddleware {
+		return middleware.NewAdminAuthMiddleware(logger, manager, verifier, cfg.AdminM2M.PlatformClaimRequired)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewAdminAuthzMiddleware); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
@@ -183,8 +204,16 @@ func API(c *container.Container) error {
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
 		verifier appauth.OIDCVerifier,
+		cfg *config.Config,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo, verifier)
+		// The platform token minted by the built-in default IdP is verified
+		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
+		// claims are trusted, and the sessions it brokers are bounded by
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
+			appoauth.WithIdPTokenVerifier(verifier),
+			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+		)
 	}); err != nil {
 		return err
 	}
@@ -212,10 +241,21 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
+	if err := c.Provide(func(
+		connect appoauth.ConnectService,
+		catalog appcatalog.MCPServerCatalog,
+		cfg *config.Config,
+	) *oauthhttp.ConnectHandler {
+		return oauthhttp.NewConnectHandler(connect, catalog, cfg.Server.MCPOAuthPublicBaseURL)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
+		return oauthhttp.NewConfigureHandler(configure)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {

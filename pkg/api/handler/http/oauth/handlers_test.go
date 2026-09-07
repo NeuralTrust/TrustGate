@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -342,6 +343,9 @@ func TestCallbackHandlerForwardsISS(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodGet, "/oauth/callback?state=s&code=secret-code&iss=https://idp.example/issuer", nil)
 	req.Host = "gw.example.com"
+	// The callback is bound to the browser that started the flow: without the
+	// state cookie the handler refuses before it ever reaches the proxy.
+	req.AddCookie(&http.Cookie{Name: stateCookiePlainName, Value: "s"})
 	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

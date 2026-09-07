@@ -23,21 +23,33 @@ import (
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
+	mcpopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/openapi"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	"go.uber.org/dig"
 )
 
 const mcpAppsPipelineReady = true
@@ -46,8 +58,18 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
-	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, cfg *config.Config) appmcp.Dialer {
-		return mcpclient.NewNegotiatingDialer(client, logger, mcpclient.NewProtocolDecisionRecorder(cfg.Telemetry.OpsMetricsEnabled))
+	if err := c.Provide(func(
+		client *mcpclient.Client,
+		logger *slog.Logger,
+		cfg *config.Config,
+		compiler appopenapi.Compiler,
+	) appmcp.Dialer {
+		remote := mcpclient.NewNegotiatingDialer(
+			client,
+			logger,
+			mcpclient.NewProtocolDecisionRecorder(cfg.Telemetry.OpsMetricsEnabled),
+		)
+		return mcpopenapi.NewDialer(remote, compiler)
 	}); err != nil {
 		return err
 	}
@@ -104,16 +126,10 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		store appoauth.ConnectStore,
-		vault vaultdomain.Repository,
-		consumers appconsumer.DataFinder,
-		provider appoauth.ProviderClient,
-		registrar appoauth.UpstreamRegistrar,
-		auditor appoauth.ConnectAuditor,
-	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor)
-	}); err != nil {
+	if err := c.Provide(provideConnectService); err != nil {
+		return err
+	}
+	if err := c.Provide(provideConfigureService); err != nil {
 		return err
 	}
 	if err := c.Provide(provideAPIKeyConnectService); err != nil {
@@ -170,25 +186,7 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		dialer appmcp.Dialer,
-		creds appmcp.CredentialResolver,
-		manager *cache.TTLMapManager,
-		logger *slog.Logger,
-		signer *appmcp.TicketSigner,
-		tasks *appmcp.TaskHandleSigner,
-		cfg *config.Config,
-	) appmcp.Composer {
-		return appmcp.NewComposerWithMediation(
-			dialer,
-			creds,
-			manager.GetTTLMap(cache.MCPToolsTTLName),
-			logger,
-			signer,
-			tasks,
-			int64(cfg.Server.MCPTasks.PollIntervalFloorMs),
-		)
-	}); err != nil {
+	if err := c.Provide(provideComposer); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewIntrospector); err != nil {
@@ -200,24 +198,15 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		composer appmcp.Composer,
-		plugins *appmcp.PluginRunner,
-		limiter ratelimitapp.Checker,
-		appsListPolicy appmcp.AppsListPolicy,
-		appsReadPolicy appmcp.AppsReadPolicy,
-		cfg *config.Config,
-	) *mcphttp.RPCGateway {
-		return mcphttp.NewRPCGatewayWithAppsPolicies(
-			composer,
-			plugins,
-			limiter,
-			appsListPolicy,
-			appsReadPolicy,
-			cfg.Server.MCPMRTR.MaxContinuationBytes,
-			mcphttp.NewAppsRecorder(cfg.Telemetry.OpsMetricsEnabled),
-		)
+	if err := c.Provide(func(connect appoauth.ConnectService) appmcp.ConnectionGateway {
+		return connect
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appmcp.NewConnectionTool); err != nil {
+		return err
+	}
+	if err := c.Provide(provideRPCGateway); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
@@ -238,41 +227,288 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideSubscriptionMultiplexer); err != nil {
 		return err
 	}
-	return c.Provide(func(
-		gw *mcphttp.RPCGateway,
-		scoper appmcp.RoleScoper,
-		signer *appmcp.TicketSigner,
-		tasks *appmcp.TaskHandleSigner,
-		registry *appmcp.SubscriptionRegistry,
-		policy appmcp.SubscriptionPolicy,
-		targets appmcp.SubscriptionTargetResolver,
-		multiplexer *appmcp.SubscriptionMultiplexer,
-		apps appmcp.AppsMediator,
-		cfg *config.Config,
-	) *mcphttp.Handler {
-		return mcphttp.NewHandlerWithApps(
-			gw,
-			scoper,
-			mcphttp.MRTRSupport{
-				Signer:   signer,
-				Recorder: mcphttp.NewMRTRRecorder(cfg.Telemetry.OpsMetricsEnabled),
-			},
-			mcphttp.TasksSupport{
-				Signer:   tasks,
-				Recorder: mcphttp.NewTasksRecorder(cfg.Telemetry.OpsMetricsEnabled),
-			},
-			subscriptionsSupport(
-				cfg.Server.MCPSubscriptions,
-				registry,
-				policy,
-				targets,
-				multiplexer,
-				mcphttp.NewSubscriptionsRecorder(cfg.Telemetry.OpsMetricsEnabled),
-			),
-			apps,
-			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
-		)
-	})
+	return c.Provide(provideMCPHandler)
+}
+
+// mcpHandlerParams wires the MCP HTTP handler. Installs is optional: when present
+// the notification stream also watches the caller's Store installations, so a
+// self-service install pushes tools/list_changed like connecting an account does.
+type mcpHandlerParams struct {
+	dig.In
+
+	Gateway     *mcphttp.RPCGateway
+	RoleScoper  appmcp.RoleScoper
+	Vault       vaultdomain.Repository
+	Signer      *appmcp.TicketSigner
+	Tasks       *appmcp.TaskHandleSigner
+	Registry    *appmcp.SubscriptionRegistry
+	Policy      appmcp.SubscriptionPolicy
+	Targets     appmcp.SubscriptionTargetResolver
+	Multiplexer *appmcp.SubscriptionMultiplexer
+	Apps        appmcp.AppsMediator
+	Config      *config.Config
+	Installs    installationdomain.Repository `optional:"true"`
+}
+
+func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
+	metrics := p.Config.Telemetry.OpsMetricsEnabled
+	opts := []mcphttp.HandlerOption{
+		mcphttp.WithProtocolRecorder(mcphttp.NewProtocolValidationRecorder(metrics)),
+		mcphttp.WithMRTR(mcphttp.MRTRSupport{
+			Signer:   p.Signer,
+			Recorder: mcphttp.NewMRTRRecorder(metrics),
+		}),
+		mcphttp.WithTasks(mcphttp.TasksSupport{
+			Signer:   p.Tasks,
+			Recorder: mcphttp.NewTasksRecorder(metrics),
+		}),
+		mcphttp.WithSubscriptions(subscriptionsSupport(
+			p.Config.Server.MCPSubscriptions,
+			p.Registry,
+			p.Policy,
+			p.Targets,
+			p.Multiplexer,
+			mcphttp.NewSubscriptionsRecorder(metrics),
+		)),
+		mcphttp.WithApps(p.Apps),
+	}
+	if p.Installs != nil {
+		opts = append(opts, mcphttp.WithInstallations(p.Installs))
+	}
+	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, p.Vault, opts...)
+}
+
+// composerParams wires the MCP composer. Installs is optional: present on the
+// full plane (Postgres) and the DB-less data plane (gRPC channel), absent on a
+// SEARCH-only plane. When present it powers the per-user URL-variable resolver so
+// catalog servers whose URL carries placeholders (Snowflake, ServiceNow, …) dial
+// each principal's own upstream.
+type composerParams struct {
+	dig.In
+
+	Dialer   appmcp.Dialer
+	Creds    appmcp.CredentialResolver
+	Manager  *cache.TTLMapManager
+	Logger   *slog.Logger
+	Signer   *appmcp.TicketSigner
+	Tasks    *appmcp.TaskHandleSigner
+	Config   *config.Config
+	Installs installationdomain.Repository `optional:"true"`
+	Vault    vaultdomain.Repository        `optional:"true"`
+}
+
+func provideComposer(p composerParams) appmcp.Composer {
+	var opts []appmcp.ComposerOption
+	if p.Installs != nil {
+		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
+	}
+	return appmcp.NewComposerWithMediation(
+		p.Dialer,
+		p.Creds,
+		p.Manager.GetTTLMap(cache.MCPToolsTTLName),
+		p.Logger,
+		p.Signer,
+		p.Tasks,
+		int64(p.Config.Server.MCPTasks.PollIntervalFloorMs),
+		opts...,
+	)
+}
+
+type connectServiceParams struct {
+	dig.In
+
+	Store      appoauth.ConnectStore
+	Vault      vaultdomain.Repository
+	Consumers  appconsumer.DataFinder
+	Provider   appoauth.ProviderClient
+	Registrar  appoauth.UpstreamRegistrar
+	Auditor    appoauth.ConnectAuditor
+	Shared     mcpoauth.Provider
+	Userinfo   appoauth.UserInfoClient
+	Catalog    appcatalog.MCPServerCatalog `optional:"true"`
+	Registries registrydomain.Repository   `optional:"true"`
+}
+
+type rpcGatewayParams struct {
+	dig.In
+
+	Composer    appmcp.Composer
+	Plugins     *appmcp.PluginRunner
+	Limiter     ratelimitapp.Checker
+	Connections appmcp.ConnectionTool
+	Shared      mcpoauth.Provider
+	AppsList    appmcp.AppsListPolicy
+	AppsRead    appmcp.AppsReadPolicy
+	Config      *config.Config
+	Catalog     appcatalog.MCPServerCatalog `optional:"true"`
+	// Install path — present on the full/control plane only. When any is absent
+	// the Store offers SEARCH but not INSTALL (e.g. the Redis data plane, which
+	// has no installation store yet).
+	Registries registrydomain.Repository     `optional:"true"`
+	Installs   installationdomain.Repository `optional:"true"`
+	// Grants is the Store access model (who may use which catalog server or
+	// instance). The full plane reads Postgres, the data plane the snapshot.
+	// Absent, nothing is granted under Selected access (fail closed).
+	Grants storeaccessdomain.Reader `optional:"true"`
+	// Policies are the per-principal access levels the Store mode is resolved
+	// from live (own → groups → gateway default). Absent, the legacy token claim
+	// / gateway default rule applies.
+	Policies storeaccessdomain.PolicyReader `optional:"true"`
+	// Ensurer materialises the shared registry on a self-service install. The
+	// full plane provides the direct (Creator-backed) implementation; the data
+	// plane provides the gRPC-client one. Absent on SEARCH-only planes, where a
+	// self-service install downgrades to a pending request.
+	Ensurer appstore.RegistryEnsurer `optional:"true"`
+	// Configure mints the hosted-form link where a user enters a server's per-user
+	// URL variables. Nil on planes without the installation/vault stores; then the
+	// install tool reports the needed variables but offers no link.
+	Configure appoauth.ConfigureService `optional:"true"`
+	// Connect mints the OAuth connect link the install returns for a server that
+	// needs the user's own account (the install's second step).
+	Connect appoauth.ConnectService `optional:"true"`
+}
+
+func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+
+	var installer appstore.Installer
+	if p.Registries != nil && p.Installs != nil {
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		if err != nil {
+			return nil, err
+		}
+		installer = made
+	}
+
+	var registries appstore.RegistryLister
+	if p.Registries != nil {
+		registries = p.Registries
+	}
+	var grants storeaccessdomain.Reader
+	if p.Grants != nil {
+		grants = p.Grants
+	}
+	var configure appmcp.ConfigureGateway
+	if p.Configure != nil {
+		configure = p.Configure
+	}
+	var connect appmcp.ServerConnectGateway
+	if p.Connect != nil {
+		connect = p.Connect
+	}
+	modes := appstore.NewModeResolver(p.Policies)
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect,
+		appmcp.WithStoreToolModes(modes))
+	if err != nil {
+		return nil, err
+	}
+	metrics := p.Config.Telemetry.OpsMetricsEnabled
+	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store).
+		WithAppsPolicies(p.AppsList, p.AppsRead, mcphttp.NewAppsRecorder(metrics)).
+		WithMaxContinuationBytes(p.Config.Server.MCPMRTR.MaxContinuationBytes)
+
+	if p.Installs != nil && p.Registries != nil {
+		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
+		if err != nil {
+			return nil, err
+		}
+		gateway = gateway.WithStoreScoper(scoper)
+	}
+	return gateway, nil
+}
+
+// configureServiceParams wires the MCP-Store per-user configure flow. Every dep
+// is optional so the provider degrades to nil on a plane that lacks the
+// installation or vault stores (e.g. a SEARCH-only proxy); the install tool then
+// simply offers no configure link.
+type configureServiceParams struct {
+	dig.In
+
+	Store     appoauth.ConnectStore         `optional:"true"`
+	Consumers appconsumer.DataFinder        `optional:"true"`
+	Vault     vaultdomain.Repository        `optional:"true"`
+	Installs  installationdomain.Repository `optional:"true"`
+	Catalog   appcatalog.MCPServerCatalog   `optional:"true"`
+	Shared    mcpoauth.Provider
+	// Registries, Ensurer and Gateways let a configure-before-install submission
+	// run through the same governed installer the install tool uses (shelf,
+	// approval, group gates, self-service materialisation). Without Registries the
+	// form can only update an existing installation, never create one.
+	Registries registrydomain.Repository      `optional:"true"`
+	Grants     storeaccessdomain.Reader       `optional:"true"`
+	Policies   storeaccessdomain.PolicyReader `optional:"true"`
+	Ensurer    appstore.RegistryEnsurer       `optional:"true"`
+	Gateways   gatewaydomain.Repository       `optional:"true"`
+}
+
+func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
+	if p.Store == nil || p.Consumers == nil || p.Vault == nil || p.Installs == nil {
+		return nil, nil
+	}
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+	var opts []appoauth.ConfigureOption
+	if p.Registries != nil {
+		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, appoauth.WithConfigureInstaller(installer))
+	}
+	if p.Gateways != nil {
+		// The form-driven first install runs the same live mode decision as the
+		// install tool: the principal's policy, else the gateway default.
+		gateways := p.Gateways
+		modes := appstore.NewModeResolver(p.Policies)
+		opts = append(opts, appoauth.WithConfigureOpenMode(func(ctx context.Context, gatewayID ids.GatewayID) bool {
+			gw, err := gateways.FindByID(ctx, gatewayID)
+			if err != nil || gw == nil {
+				return false // unknown gateway: fail closed to curated
+			}
+			return modes.Mode(appgateway.WithGateway(ctx, gw), gatewayID) == gatewaydomain.StoreModeOpen
+		}))
+	}
+	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault, opts...), nil
+}
+
+func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+	var registries appoauth.RegistryLister
+	if p.Registries != nil {
+		registries = p.Registries
+	}
+	return appoauth.NewConnectService(
+		p.Store,
+		p.Vault,
+		p.Consumers,
+		p.Provider,
+		p.Registrar,
+		p.Auditor,
+		p.Shared,
+		p.Userinfo,
+		catalog,
+		registries,
+	), nil
 }
 
 func provideAppsMetadataPolicy(cfg *config.Config) (appmcp.AppsMetadataPolicy, error) {

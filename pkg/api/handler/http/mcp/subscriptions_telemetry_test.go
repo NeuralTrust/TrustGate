@@ -152,12 +152,11 @@ func newListenTelemetryApp(t *testing.T, subs mcphttp.SubscriptionsSupport) *lis
 		c.Locals(infracontext.StreamMetricsFinalizerKey, harness.finalizer())
 		return c.Next()
 	})
-	handler := mcphttp.NewHandlerWithSubscriptions(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{},
-		subs,
+		nil,
+		mcphttp.WithSubscriptions(subs),
 	)
 	app.Post(mcpPath, handler.Handle)
 	harness.app = app

@@ -17,13 +17,16 @@ package metrics
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -62,17 +65,21 @@ func (b *Builder) Build(
 	}
 
 	evt := &events.Event{
-		SchemaVersion: events.SchemaVersion,
-		Kind:          events.KindLLM,
-		TraceID:       traceID,
-		GatewayID:     meta.GatewayID,
-		TenantID:      meta.TenantID,
-		Timestamp:     startTime.UTC().Format(time.RFC3339),
-		OccurredOn:    startTime.UnixMilli(),
-		EndTimestamp:  endTime.UnixMilli(),
-		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
-		SessionID:     meta.SessionID,
-		IP:            meta.IP,
+		SchemaVersion:    events.SchemaVersion,
+		Kind:             events.KindLLM,
+		TraceID:          traceID,
+		GatewayID:        meta.GatewayID,
+		TenantID:         meta.TenantID,
+		Timestamp:        startTime.UTC().Format(time.RFC3339),
+		OccurredOn:       startTime.UnixMilli(),
+		EndTimestamp:     endTime.UnixMilli(),
+		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
+		SessionID:        meta.SessionID,
+		IP:               meta.IP,
+		PrincipalSubject: meta.PrincipalSubject,
+		PrincipalMethod:  meta.PrincipalMethod,
+		PrincipalEmail:   meta.PrincipalEmail,
+		Retention:        retention(meta, startTime),
 	}
 
 	if meta.Kind == events.KindMCP {
@@ -101,9 +108,24 @@ func (b *Builder) Build(
 	b.fillRequest(evt, req, served)
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
-	b.fillUsageAndCost(ctx, evt, served)
+	b.fillUsageAndCost(ctx, evt, served, req)
+	b.fillSavings(ctx, evt, served)
 
 	return evt
+}
+
+// retention measures the expiry from startTime, the same instant recorded as the
+// event's occurredOn, so a trace's expiry and its timestamp can never disagree.
+// Returns nil when the gateway carries no stamp — an absent expiry is a signal the
+// sink can act on, a zero one is a trace that expired at the epoch.
+func retention(meta trace.Metadata, startTime time.Time) *events.Retention {
+	if meta.RetentionWindow <= 0 {
+		return nil
+	}
+	return &events.Retention{
+		Plan:      meta.RetentionPlan,
+		ExpiresAt: startTime.Add(meta.RetentionWindow).UnixMilli(),
+	}
 }
 
 func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttrs, []events.Attempt) {
@@ -250,6 +272,11 @@ func (b *Builder) buildMCP(
 		mcp.UpstreamLatencyMs = upstreamMs
 	}
 	evt.MCP = mcp
+	if evt.PrincipalEmail == "" && mcp != nil {
+		if ref := strings.TrimSpace(mcp.AccountRef); identity.LooksLikeEmail(ref) {
+			evt.PrincipalEmail = ref
+		}
+	}
 
 	policies := b.foldPluginSpans(requestTrace)
 	evt.PolicyChain = policies.chain
@@ -308,6 +335,7 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			Targets:         attrs.Targets,
 			UpstreamStatus:  attrs.UpstreamStatus,
 			RPCErrorCode:    attrs.RPCErrorCode,
+			AccountRef:      attrs.AccountRef,
 			ProtocolEra:     trace.BoundMCPProtocolEra(attrs.ProtocolEra),
 			ProtocolVersion: trace.BoundMCPProtocolVersion(attrs.ProtocolVersion),
 			MRTROutcome:     trace.BoundMRTROutcome(attrs.MRTROutcome),
@@ -395,45 +423,82 @@ func (b *Builder) fillStatus(
 	}
 }
 
-func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, served *trace.LLMAttrs, req *infracontext.RequestContext) {
 	if served == nil || served.Usage == nil {
 		return
 	}
 	u := served.Usage
 	evt.Usage = &events.Usage{
-		PromptTokens:          u.InputTokens,
-		CompletionTokens:      u.OutputTokens,
-		TotalTokens:           u.TotalTokens,
-		CachedInputTokens:     u.CachedInputTokens,
-		ReasoningOutputTokens: u.ReasoningOutputTokens,
+		PromptTokens:            u.InputTokens,
+		CompletionTokens:        u.OutputTokens,
+		TotalTokens:             u.TotalTokens,
+		CachedInputTokens:       u.CachedInputTokens,
+		CacheWriteInputTokens:   u.CacheWriteInputTokens,
+		CacheWrite1hInputTokens: u.CacheWrite1hInputTokens,
+		ToolUseInputTokens:      u.ToolUseInputTokens,
+		ReasoningOutputTokens:   u.ReasoningOutputTokens,
 	}
 	evt.Request.PromptTokens = u.InputTokens
 	evt.Response.CompletionTokens = u.OutputTokens
 
-	if b.pricing == nil || served.Provider == "" {
+	if served.Provider == "" {
 		return
 	}
-	var price appcatalog.Pricing
-	for _, slug := range pricingSlugs(evt, served) {
-		price = b.pricing.Resolve(ctx, served.Provider, slug)
-		if price.Found {
-			break
+	slugs := pricingSlugs(evt, served)
+	overlay := servedRates(served, req)
+	rates, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
+	if !found {
+		return
+	}
+	if b.pricing != nil {
+		for _, slug := range slugs {
+			price := b.pricing.Resolve(ctx, served.Provider, slug)
+			if price.Found && price.ModelLabel != "" {
+				evt.Request.ModelLabel = price.ModelLabel
+				break
+			}
 		}
 	}
-	if !price.Found {
-		return
-	}
-	if price.ModelLabel != "" {
-		evt.Request.ModelLabel = price.ModelLabel
-	}
-	promptUsd := float64(u.InputTokens) * price.InputPrice
-	completionUsd := float64(u.OutputTokens) * price.OutputPrice
+	promptUsd, completionUsd := rates.CostUSD(u)
 	evt.Cost = &events.Cost{
 		PromptUsd:     events.DecimalFloat(promptUsd),
 		CompletionUsd: events.DecimalFloat(completionUsd),
 		TotalUsd:      events.DecimalFloat(promptUsd + completionUsd),
 		Currency:      costCurrencyUSD,
 	}
+}
+
+func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmcost.RegistryRates {
+	if served != nil && served.ServedPricing != nil {
+		return llmcost.RatesFromDomain(served.ServedPricing)
+	}
+	if req != nil {
+		return llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	return nil
+}
+
+func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+	if served == nil || served.Usage == nil || evt.Cost == nil {
+		return
+	}
+	if !served.TierApplied || served.Baseline == nil {
+		return
+	}
+	base := served.Baseline
+	if base.Provider == "" || base.Model == "" {
+		return
+	}
+	rates, found := llmcost.Resolve(
+		ctx, b.pricing, nil, llmcost.RatesFromDomain(base.Pricing), base.Provider, base.Model,
+	)
+	if !found {
+		return
+	}
+	u := served.Usage
+	baselineUsd := float64(u.InputTokens)*rates.Input + float64(u.OutputTokens)*rates.Output
+	savings := events.DecimalFloat(baselineUsd - float64(evt.Cost.TotalUsd))
+	evt.Cost.SavingsUsd = &savings
 }
 
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {

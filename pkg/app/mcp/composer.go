@@ -61,6 +61,7 @@ type composer struct {
 	dialer      Dialer
 	creds       CredentialResolver
 	discovery   DiscoveryCache
+	urlvars     URLValueResolver
 	flight      singleflight.Group
 	logger      *slog.Logger
 	signer      *TicketSigner
@@ -68,8 +69,25 @@ type composer struct {
 	pollFloorMs int64
 }
 
-func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger) Composer {
-	return NewComposerWithSigner(dialer, creds, discovery, logger, nil)
+// ComposerOption configures optional composer collaborators without widening the
+// constructor for the common case.
+type ComposerOption func(*composer)
+
+// WithURLValues wires the resolver that fills a registry's per-user URL
+// placeholders (e.g. {account_url}) from the calling principal's install before
+// dialing. Omitted, servers that declare URL variables cannot be reached.
+func WithURLValues(r URLValueResolver) ComposerOption {
+	return func(c *composer) { c.urlvars = r }
+}
+
+func NewComposer(
+	dialer Dialer,
+	creds CredentialResolver,
+	discovery DiscoveryCache,
+	logger *slog.Logger,
+	opts ...ComposerOption,
+) Composer {
+	return NewComposerWithSigner(dialer, creds, discovery, logger, nil, opts...)
 }
 
 func NewComposerWithSigner(
@@ -78,8 +96,9 @@ func NewComposerWithSigner(
 	discovery DiscoveryCache,
 	logger *slog.Logger,
 	signer *TicketSigner,
+	opts ...ComposerOption,
 ) Composer {
-	return NewComposerWithMediation(dialer, creds, discovery, logger, signer, nil, 0)
+	return NewComposerWithMediation(dialer, creds, discovery, logger, signer, nil, 0, opts...)
 }
 
 // NewComposerWithMediation wires both mediated continuation primitives: MRTR
@@ -92,8 +111,9 @@ func NewComposerWithMediation(
 	signer *TicketSigner,
 	tasks *TaskHandleSigner,
 	pollFloorMs int64,
+	opts ...ComposerOption,
 ) Composer {
-	return &composer{
+	c := &composer{
 		dialer:      dialer,
 		creds:       creds,
 		discovery:   discovery,
@@ -102,6 +122,10 @@ func NewComposerWithMediation(
 		tasks:       tasks,
 		pollFloorMs: pollFloorMs,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type binding struct {
@@ -121,7 +145,7 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	}
 	out := make([]Tool, 0, len(comp.bindings))
 	for _, b := range comp.bindings {
-		t := b.tool
+		t := attributeTool(b.tool, b.registry)
 		t.Name = b.exposed
 		t.source = b.registry.ID.String()
 		out = append(out, t)
@@ -168,18 +192,11 @@ func (c *composer) callTool(
 		if err != nil {
 			return nil, false, err
 		}
-		target, err := c.target(ctx, rc, b.registry)
-		if err != nil {
-			return nil, false, err
-		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
-		up, err := c.dialer.Connect(ctx, target)
-		if err != nil {
-			return nil, false, err
-		}
-		defer up.Close(ctx)
-		result, err := up.CallTool(ctx, south)
+		result, err := invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+			return up.CallTool(ctx, south)
+		})
 		if err != nil {
 			return nil, false, err
 		}

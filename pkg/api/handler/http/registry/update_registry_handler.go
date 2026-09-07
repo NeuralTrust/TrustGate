@@ -75,6 +75,8 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Description:     req.Description,
 		Auth:            req.ToAuth(),
 		HealthChecks:    req.ToHealthChecks(),
+		Pricing:         req.ToPricing(),
+		SetPricing:      req.Pricing != nil,
 		MCPTarget:       req.ToMCPTarget(),
 	})
 	if err != nil {

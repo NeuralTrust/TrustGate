@@ -27,9 +27,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/moonshot"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
 )
@@ -51,12 +52,17 @@ const (
 	ProviderCerebras         = providers.ProviderCerebras
 	ProviderOpenRouter       = providers.ProviderOpenRouter
 	ProviderCohere           = providers.ProviderCohere
+	ProviderMoonshot         = providers.ProviderMoonshot
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
 type ProviderLocator interface {
 	Get(provider string) (providers.Client, error)
 	GetTester(provider string) (providers.ConnectionTester, error)
+	// GetModelLister returns the provider's live model listing when the client
+	// supports it; providers without a listing endpoint return an error and the
+	// caller falls back to the static catalog.
+	GetModelLister(provider string) (providers.ModelLister, error)
 }
 
 type providerLocator struct {
@@ -86,6 +92,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderOpenRouter:       openrouter.NewOpenRouterClient(),
 			ProviderVertex:           vertex.NewVertexClient(),
 			ProviderCohere:           cohere.NewCohereClient(),
+			ProviderMoonshot:         moonshot.NewMoonshotClient(),
 		},
 	}
 }
@@ -95,6 +102,18 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 		return c, nil
 	}
 	return nil, fmt.Errorf("unsupported provider: %s", provider)
+}
+
+func (f *providerLocator) GetModelLister(provider string) (providers.ModelLister, error) {
+	c, ok := f.clients[provider]
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+	lister, ok := c.(providers.ModelLister)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support live model listing", provider)
+	}
+	return lister, nil
 }
 
 func (f *providerLocator) GetTester(provider string) (providers.ConnectionTester, error) {

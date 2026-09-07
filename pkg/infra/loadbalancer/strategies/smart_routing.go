@@ -71,6 +71,7 @@ func (s *SmartRouting) Next(
 		return nil
 	}
 	if len(candidates) == 1 {
+		s.record(req, false)
 		return pick(candidates[0])
 	}
 	if s.config == nil || s.scorer == nil || !s.scorer.Configured() || req == nil {
@@ -88,6 +89,7 @@ func (s *SmartRouting) Next(
 	if target == nil {
 		return s.fallbackNext(ctx, req, exclude, "no candidate matched complexity score")
 	}
+	s.record(req, true)
 	if s.logger != nil {
 		s.logger.Debug("smart routing selected route",
 			slog.String("registry_id", target.Registry.ID.String()),
@@ -98,10 +100,26 @@ func (s *SmartRouting) Next(
 	return target
 }
 
+func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool) {
+	if req == nil {
+		return
+	}
+	req.RoutingDecision = &infracontext.RoutingDecision{TierApplied: tierApplied}
+}
+
 func (s *SmartRouting) routeForScore(score float64, candidates []routingdomain.Route) *routingdomain.Route {
 	tier, ok := s.config.TierForScore(score)
 	if !ok {
-		return nil
+		// A ladder whose cheapest tier sits above 0 matches no tier at all for
+		// scores under that floor. Those are the easiest requests in the pool,
+		// so they belong on the lowest tier: rounding them to round-robin would
+		// let the cheapest traffic land on the priciest model. A tier that did
+		// match but has no candidate left still falls through to round-robin
+		// below - that case is the fail-open, not this one.
+		tier, ok = s.config.LowestTier()
+		if !ok {
+			return nil
+		}
 	}
 	model := tier.RouteModel()
 	for _, route := range candidates {
@@ -122,6 +140,7 @@ func (s *SmartRouting) fallbackNext(
 	exclude map[routingdomain.RouteKey]struct{},
 	reason string,
 ) *routingdomain.Route {
+	s.record(req, false)
 	if s.logger != nil {
 		s.warnOnce.Do(func() {
 			s.logger.Warn("smart routing falling back to round-robin", slog.String("reason", reason))

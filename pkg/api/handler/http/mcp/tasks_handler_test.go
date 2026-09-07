@@ -117,11 +117,11 @@ func newTasksAppWithRunner(
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandlerWithMediation(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(composer, plugins, nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{Signer: signer, Recorder: recorder},
+		nil,
+		mcphttp.WithTasks(mcphttp.TasksSupport{Signer: signer, Recorder: recorder}),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app

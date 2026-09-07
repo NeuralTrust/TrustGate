@@ -55,6 +55,57 @@ func TestNewGroqClient(t *testing.T) {
 	assert.NotNil(t, NewGroqClient())
 }
 
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write([]byte("wav-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewGroqClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "groq-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/openai/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"playai-tts","input":"hi","voice":"austin"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer groq-key", gotAuth)
+	assert.Equal(t, "/openai/v1/audio/speech", gotPath)
+	assert.Equal(t, []byte("wav-bytes"), result.Body)
+	assert.Equal(t, "audio/wav", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewGroqClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "groq-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/openai/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/v1/audio/transcriptions", gotPath)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
 func TestCompletions_MissingAPIKey(t *testing.T) {
 	_, err := NewGroqClient().Completions(context.Background(), &providers.Config{}, []byte(`{}`))
 	require.Error(t, err)

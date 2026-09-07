@@ -55,7 +55,7 @@ func TestNormalizeModernResult(t *testing.T) {
 					modernServerInfoKey: map[string]any{"name": "upstream", "version": "0"},
 				},
 			}
-			normalized, err := normalizeModernResult(method, source, rc, nil)
+			normalized, err := normalizeModernResult(method, source, rc, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, "preserved", normalized["value"])
 			// Only tools/call may keep an upstream input_required; every other
@@ -69,7 +69,7 @@ func TestNormalizeModernResult(t *testing.T) {
 			require.Equal(t, "preserved", metadata["upstream"])
 			serverInfo := metadata[modernServerInfoKey].(map[string]any)
 			require.Equal(t, serverName, serverInfo["name"])
-			require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc), serverInfo["version"])
+			require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc, nil), serverInfo["version"])
 			if wantTTL == nil {
 				require.NotContains(t, normalized, "ttlMs")
 				require.NotContains(t, normalized, "cacheScope")
@@ -96,6 +96,7 @@ func TestNormalizeModernResultSubscriptionsListenIsUncacheable(t *testing.T) {
 		appmcp.MethodSubscriptionsListen,
 		subscriptionsListenResult(id, honoured),
 		rc,
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -165,7 +166,7 @@ func TestNormalizeModernResultToolsCallKeepsContinuation(t *testing.T) {
 	}
 	caps := map[string]any{"elicitation": map[string]any{}}
 
-	normalized, err := normalizeModernResult("tools/call", source, nil, caps)
+	normalized, err := normalizeModernResult("tools/call", source, nil, caps, nil)
 	require.NoError(t, err)
 	require.Equal(t, "input_required", normalized["resultType"])
 	require.Equal(t, "tg1.c.payload.sig", normalized["requestState"])
@@ -185,7 +186,7 @@ func TestNormalizeModernResultToolsCallDropsUndeclaredKinds(t *testing.T) {
 	}
 	caps := map[string]any{"elicitation": map[string]any{}}
 
-	normalized, err := normalizeModernResult("tools/call", source, nil, caps)
+	normalized, err := normalizeModernResult("tools/call", source, nil, caps, nil)
 	require.NoError(t, err)
 	requests, ok := normalized["inputRequests"].(map[string]any)
 	require.True(t, ok)
@@ -206,7 +207,7 @@ func TestNormalizeModernResultNonToolsStripsMRTRFields(t *testing.T) {
 			}
 			caps := map[string]any{"elicitation": map[string]any{}}
 
-			normalized, err := normalizeModernResult(method, source, nil, caps)
+			normalized, err := normalizeModernResult(method, source, nil, caps, nil)
 			require.NoError(t, err)
 			require.Equal(t, "complete", normalized["resultType"])
 			require.NotContains(t, normalized, "requestState")
@@ -217,7 +218,7 @@ func TestNormalizeModernResultNonToolsStripsMRTRFields(t *testing.T) {
 
 func TestNormalizeModernResultPreservesJSONNumbers(t *testing.T) {
 	t.Parallel()
-	normalized, err := normalizeModernResult("tools/call", json.RawMessage(`{"value":9007199254740993}`), nil, nil)
+	normalized, err := normalizeModernResult("tools/call", json.RawMessage(`{"value":9007199254740993}`), nil, nil, nil)
 	require.NoError(t, err)
 	raw, err := json.Marshal(normalized)
 	require.NoError(t, err)
@@ -250,7 +251,7 @@ func TestNormalizeModernToolsListConcurrentImmutability(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			normalized, err := normalizeModernResult("tools/list", source, nil, nil)
+			normalized, err := normalizeModernResult("tools/list", source, nil, nil, nil)
 			if err != nil {
 				errs <- err
 				return

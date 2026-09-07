@@ -70,6 +70,311 @@ func TestBuildURL(t *testing.T) {
 	})
 }
 
+func TestBuildEmbeddingsURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2025-01-01",
+		c.buildEmbeddingsURL(cfg, "text-embedding-3-small"),
+	)
+}
+
+func TestBuildFilesURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	got := c.buildFilesURL(cfg, providers.FilesRequest{
+		Path:  "/v1/files",
+		Query: map[string][]string{"purpose": {"fine-tune"}},
+	})
+	assert.Contains(t, got, "https://x.openai.azure.com/openai/files?")
+	assert.Contains(t, got, "api-version=2025-01-01")
+	assert.Contains(t, got, "purpose=fine-tune")
+}
+
+func TestBuildImagesURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-3", "/v1/images/generations"),
+	)
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-2/images/edits?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-2", "/v1/images/edits"),
+	)
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-2/images/variations?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-2", "/v1/images/variations"),
+	)
+}
+
+func TestImages_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{}, providers.ImagesRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/images/generations",
+		Body:   []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestImages_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotMethod = r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://img"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/generations",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-3/images/generations", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
+}
+
+func TestImages_EditsUsesMultipartModelAndPath(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/edits",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-2/images/edits", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
+}
+
+func TestImages_UsesConfigModelWhenMultipartOmitsModel(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{
+		Model: "dall-e-2",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/variations",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"image\"; filename=\"cat.png\"\r\n\r\npng\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-2/images/variations", gotPath)
+}
+
+func TestFiles_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.FilesClient)
+	_, err := c.Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestFiles_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotMethod, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotMethod = r.Method
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+		Query:  map[string][]string{"purpose": {"assistants"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/files", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Contains(t, gotQuery, "api-version=2024-10-21")
+	assert.Contains(t, gotQuery, "purpose=assistants")
+	assert.JSONEq(t, `{"object":"list","data":[]}`, string(result.Body))
+}
+
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("mp3-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Model: "tts-1",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/tts-1/audio/speech", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Contains(t, gotQuery, "api-version=2024-10-21")
+	assert.Equal(t, []byte("mp3-bytes"), result.Body)
+	assert.Equal(t, "audio/mpeg", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Model: "whisper-1",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/whisper-1/audio/transcriptions", gotPath)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
+func TestAudioSpeech_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.AudioSpeechClient)
+	_, err := c.AudioSpeech(context.Background(), &providers.Config{}, providers.AudioRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/audio/speech",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestEmbeddings_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"dep"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.4]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "/openai/deployments/text-embedding-3-small/embeddings", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.JSONEq(t, `{"object":"list","data":[{"index":0,"embedding":[0.4]}]}`, string(resp))
+}
+
 func TestAuthHeaderApply(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "http://x", nil)
 

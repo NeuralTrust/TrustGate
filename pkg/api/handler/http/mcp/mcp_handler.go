@@ -17,10 +17,15 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -29,7 +34,11 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -37,9 +46,23 @@ import (
 )
 
 const (
-	serverName    = "trustgate"
-	serverVersion = "1.0"
+	serverName              = "trustgate"
+	serverVersion           = "1.0"
+	discoverCacheTTLMs      = 0
+	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
+
+// advertisedProtocolVersions is the ordered list a legacy-era server/discover
+// returns, newest first. It is deliberately narrower than
+// supportedProtocolVersions: the modern revision is negotiated through the
+// modern era's own boundary (see protocol_era.go), and a legacy client that was
+// told about it would keep applying legacy rules to a modern answer — which is
+// exactly the silent downgrade this list exists to prevent.
+var advertisedProtocolVersions = []string{
+	latestLegacyProtocolVersion,
+	"2025-03-26",
+	"2024-11-05",
+}
 
 const (
 	codeParseError     = -32700
@@ -84,60 +107,62 @@ type Handler struct {
 	tasks      TasksSupport
 	subs       SubscriptionsSupport
 	apps       appmcp.AppsMediator
+	vault      vaultdomain.Repository
+	installs   installationdomain.Repository
+	timings    streamTimings
 }
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
-	return NewHandlerWithMRTR(gateway, roleScoper, MRTRSupport{}, rec...)
+// HandlerOption configures optional Handler collaborators.
+type HandlerOption func(*Handler)
+
+// WithInstallations lets the notification stream also watch the caller's Store
+// installations, so a self-service install pushes tools/list_changed the same
+// way connecting an account does. Omitted, the stream watches credentials only
+// and a new install is seen by the client only on its next reconnect.
+func WithInstallations(installs installationdomain.Repository) HandlerOption {
+	return func(h *Handler) { h.installs = installs }
 }
 
-// NewHandlerWithMRTR wires the handler with multi round-trip mediation support.
-func NewHandlerWithMRTR(
+// WithProtocolRecorder reports northbound protocol validation rejections.
+func WithProtocolRecorder(rec ProtocolValidationRecorder) HandlerOption {
+	return func(h *Handler) { h.protocol = rec }
+}
+
+// WithMRTR wires multi round-trip mediation support.
+func WithMRTR(mrtr MRTRSupport) HandlerOption {
+	return func(h *Handler) { h.mrtr = mrtr }
+}
+
+// WithTasks wires the tasks extension. A zero value leaves task mediation off,
+// which is the fail-closed default.
+func WithTasks(tasks TasksSupport) HandlerOption {
+	return func(h *Handler) { h.tasks = tasks }
+}
+
+// WithSubscriptions wires bounded modern subscriptions.
+func WithSubscriptions(subs SubscriptionsSupport) HandlerOption {
+	return func(h *Handler) { h.subs = subs }
+}
+
+// WithApps wires the secure-Apps mediator. Nil leaves Apps enforcement off.
+func WithApps(apps appmcp.AppsMediator) HandlerOption {
+	return func(h *Handler) { h.apps = apps }
+}
+
+func NewHandler(
 	gateway *RPCGateway,
 	roleScoper appmcp.RoleScoper,
-	mrtr MRTRSupport,
-	rec ...ProtocolValidationRecorder,
+	vault vaultdomain.Repository,
+	opts ...HandlerOption,
 ) *Handler {
-	return NewHandlerWithMediation(gateway, roleScoper, mrtr, TasksSupport{}, rec...)
-}
-
-// NewHandlerWithMediation wires the handler with both mediated continuation
-// features: multi round-trip tickets and the tasks extension.
-func NewHandlerWithMediation(
-	gateway *RPCGateway,
-	roleScoper appmcp.RoleScoper,
-	mrtr MRTRSupport,
-	tasks TasksSupport,
-	rec ...ProtocolValidationRecorder,
-) *Handler {
-	return NewHandlerWithSubscriptions(gateway, roleScoper, mrtr, tasks, SubscriptionsSupport{}, rec...)
-}
-
-// NewHandlerWithSubscriptions wires the handler with bounded subscriptions on top
-// of the mediated continuation features.
-func NewHandlerWithSubscriptions(
-	gateway *RPCGateway,
-	roleScoper appmcp.RoleScoper,
-	mrtr MRTRSupport,
-	tasks TasksSupport,
-	subs SubscriptionsSupport,
-	rec ...ProtocolValidationRecorder,
-) *Handler {
-	return NewHandlerWithApps(gateway, roleScoper, mrtr, tasks, subs, nil, rec...)
-}
-
-// NewHandlerWithApps wires all mediated protocol capabilities.
-func NewHandlerWithApps(
-	gateway *RPCGateway,
-	roleScoper appmcp.RoleScoper,
-	mrtr MRTRSupport,
-	tasks TasksSupport,
-	subs SubscriptionsSupport,
-	apps appmcp.AppsMediator,
-	rec ...ProtocolValidationRecorder,
-) *Handler {
-	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks, subs: subs, apps: apps}
-	if len(rec) > 0 {
-		h.protocol = rec[0]
+	h := &Handler{
+		gateway:    gateway,
+		roleScoper: roleScoper,
+		vault:      vault,
+		timings:    defaultStreamTimings,
+	}
+	for _, opt := range opts {
+		opt(h)
 	}
 	return h
 }
@@ -276,6 +301,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+		stampRequestIdentity(c, rt, rc, nil)
 	}
 
 	if parseErr != nil {
@@ -303,7 +329,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 			addAppsExtension(discovery["capabilities"].(map[string]any),
 				h.apps.Advertise(c.UserContext(), true, rc, appsCapability))
 		}
-		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
+		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil, h.connectedProviders(c, rc))
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
 		}
@@ -315,16 +341,25 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
+	if req.Method != "ping" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			stampRequestIdentity(c, rt, rc, h.vault)
+		}
+	}
+
 	switch req.Method {
 	case "initialize":
 		h.recordInitialize(c)
 		return h.handleInitialize(c, req, rc)
+	case "server/discover":
+		recordServerDiscovery(c)
+		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.connectedProviders(c, rc)))
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
 	}
 
-	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
+	result, err := h.gateway.DispatchWithBaseURL(c.UserContext(), rc, c.BaseURL(), req.Method, req.Params)
 	h.recordTaskOutcome(c, req.Method, era)
 	if err != nil {
 		h.recordToolCallFailure(c, req.Method, era, err)
@@ -335,7 +370,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 	if era == protocolEraModern {
 		caps := appmcp.ClientCapabilitiesFromContext(c.UserContext())
-		normalized, err := normalizeModernResult(req.Method, result, rc, caps)
+		normalized, err := normalizeModernResult(req.Method, result, rc, caps, h.connectedProviders(c, rc))
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
 		}
@@ -534,6 +569,21 @@ func isJSONObject(raw []byte) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
+func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, vault vaultdomain.Repository) {
+	if rt == nil {
+		return
+	}
+	p := identity.PrincipalFromContext(c.UserContext())
+	if p == nil {
+		return
+	}
+	email := p.Email()
+	if email == "" && vault != nil && rc != nil && rc.Consumer != nil {
+		email = appmcp.ConnectedAccountEmail(c.UserContext(), vault, rc.Consumer.GatewayID, p.Subject)
+	}
+	rt.SetPrincipalIdentity(p.Subject, string(p.Method), email)
+}
+
 func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	rt := trace.FromContext(c.UserContext())
 	if rt == nil {
@@ -559,20 +609,199 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{
 		"protocolVersion": version,
+		// tools.listChanged has to be advertised for clients to act on the
+		// notification at all — Claude drops notifications/tools/list_changed
+		// from a server that did not declare the capability. The gateway backs
+		// it with the SSE stream served on GET.
 		"capabilities": fiber.Map{
-			"tools":     fiber.Map{"listChanged": false},
+			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
 			"prompts":   fiber.Map{"listChanged": false},
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion + "+" + surfaceFingerprint(rc),
+			"version": serverVersion + "+" + surfaceFingerprint(rc, h.connectedProviders(c, rc)),
 		},
+		// instructions steer the connected agent: TrustGate is the governed path
+		// for MCP tools, so the agent should obtain capabilities through this
+		// gateway (installing from the Store when needed) rather than telling the
+		// user to wire an upstream MCP server directly into their client, which
+		// bypasses the gateway's governance, auditing and credential control.
+		"instructions": serverInstructions(rc),
 	})
 }
 
-func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
-	return appmcp.SurfaceConfigFingerprint(rc)
+const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."
+
+const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
+
+// serverInstructions returns the initialize-time guidance for the calling
+// consumer: the governance baseline for every TrustGate consumer, plus the
+// self-service install guidance for a Store consumer.
+func serverInstructions(rc *appconsumer.RoutableConsumer) string {
+	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+		return baseServerInstructions + storeServerInstructions
+	}
+	return baseServerInstructions
+}
+
+// connectedProviders describes, for the calling principal, which of this
+// consumer's forwarded-auth providers currently hold a credential and when it
+// last changed. Federation skips upstreams pending consent, so connecting an
+// account on the connect page changes the tool surface without touching any
+// registry or toolkit — the configuration-only fingerprint stayed identical and
+// a version-keyed client kept serving its stale tool list. Providers this
+// consumer does not federate are left out so an unrelated connection elsewhere
+// on the gateway does not invalidate this surface.
+func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
+	ctx := c.UserContext()
+	return h.connectionSnapshot(ctx, rc, identity.PrincipalFromContext(ctx))
+}
+
+// connectionSnapshot takes its context and principal as arguments because the
+// notification stream keeps polling it long after the request context that
+// opened the stream is gone.
+func (h *Handler) connectionSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
+	if h.vault == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	federated := forwardedProviders(rc)
+	if len(federated) == 0 {
+		return nil
+	}
+	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
+	if err != nil {
+		return nil
+	}
+	parts := make([]string, 0, len(creds))
+	for _, cred := range creds {
+		if cred == nil {
+			continue
+		}
+		if _, ok := federated[cred.Provider]; !ok {
+			continue
+		}
+		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return parts
+}
+
+// connectionWatchSnapshot fingerprints every credential the caller has stored on
+// this gateway, so the notification stream pushes tools/list_changed whenever an
+// account is connected, reconnected, or refreshed.
+//
+// Unlike connectionSnapshot it does NOT filter by the consumer's forwarded
+// providers: the stream's routable consumer is frozen when the stream opens, so
+// its registry set does not include a server installed later in the same
+// session. Gating on that frozen set would silently drop the credential for a
+// just-installed server (install Notion, then connect it) and never push a
+// refresh — the client would keep its stale, Notion-less tool list. The
+// tools/list the client issues in response resolves a fresh consumer and decides
+// what actually federates, so watching every credential here is safe and only
+// ever costs a redundant re-list. Sorted so an unstable repository order does not
+// read as a change.
+func (h *Handler) connectionWatchSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
+	if h.vault == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
+	if err != nil {
+		return nil
+	}
+	parts := make([]string, 0, len(creds))
+	for _, cred := range creds {
+		if cred == nil {
+			continue
+		}
+		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	sort.Strings(parts)
+	return parts
+}
+
+// installSnapshot fingerprints the caller's Store installations, so the stream
+// pushes tools/list_changed when a self-service install (or uninstall, or a
+// status change) alters which catalog servers are on the surface — the same way
+// connectionSnapshot handles a newly-connected account. Empty when installations
+// are not wired (a plane without the Store).
+func (h *Handler) installSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
+	if h.installs == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	installs, err := h.installs.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
+	if err != nil {
+		return nil
+	}
+	parts := make([]string, 0, len(installs))
+	for _, in := range installs {
+		if in == nil {
+			continue
+		}
+		parts = append(parts, "in:"+in.CatalogCode+":"+string(in.Status)+"@"+in.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	sort.Strings(parts)
+	return parts
+}
+
+func forwardedProviders(rc *appconsumer.RoutableConsumer) map[string]struct{} {
+	providers := make(map[string]struct{})
+	for _, reg := range rc.Registries {
+		if reg == nil || !reg.IsMCP() || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
+			continue
+		}
+		if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
+			continue
+		}
+		providers[reg.MCPTarget.Auth.Provider] = struct{}{}
+	}
+	return providers
+}
+
+// surfaceFingerprint summarises everything that decides which tools a virtual
+// MCP exposes: the configuration digest — the bound MCP registries, when each
+// was last changed, and the toolkit that filters them — plus the caller's
+// connected accounts. It rides in serverInfo.version as semver build metadata,
+// so a client that caches a server's tool list keyed on its reported version
+// re-lists after the consumer is reconfigured or the user connects an account.
+// Without it every virtual MCP reports a constant "1.0" forever and a newly
+// attached registry stays invisible until the client is reinstalled.
+//
+// The connections are folded in as a second digest over the configuration one
+// rather than mixed into its material: that material is also the subscription
+// isolation key's RoleScope (appmcp.SurfaceConfigFingerprint), which must stay a
+// function of configuration alone.
+func surfaceFingerprint(rc *appconsumer.RoutableConsumer, connections []string) string {
+	config := appmcp.SurfaceConfigFingerprint(rc)
+	if len(connections) == 0 {
+		return config
+	}
+	// The vault answers in its own order, so sort: the same set of connected
+	// accounts must always fingerprint the same.
+	linked := append([]string(nil), connections...)
+	sort.Strings(linked)
+	sum := sha256.Sum256([]byte(config + "|" + strings.Join(linked, "|")))
+	return hex.EncodeToString(sum[:6])
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra, method string) error {
@@ -655,6 +884,18 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra,
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
+		// A dial failure names the upstream address, and for a server with
+		// per-user URL variables that address can carry the user's API token
+		// (?token=...). The client gets a fixed message; the detail — already
+		// redacted at source — goes to the server log only.
+		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "upstream MCP server unreachable")
+	case errors.Is(err, registrydomain.ErrURLTemplate):
+		// The caller's own per-user URL configuration is unusable (missing value,
+		// unsafe host, ...). These messages name the variable, never its value.
+		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}
@@ -822,6 +1063,19 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+	}
+	// The MCP Store is synthetic: it is not in the gateway's persisted consumer
+	// data. The auth chain has already restricted its path to the built-in
+	// default identity provider, so any authenticated caller that reaches here is
+	// admitted. Stamp it with the addressed gateway from the request context.
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
+		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+		if !ok {
+			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+		}
+		return &appconsumer.RoutableConsumer{
+			Consumer: consumerdomain.BuildStoreConsumer(gatewayID),
+		}, nil
 	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {

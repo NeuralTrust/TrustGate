@@ -19,14 +19,17 @@ import (
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"go.uber.org/dig"
 )
 
 func Registry(c *container.Container) error {
@@ -42,26 +45,44 @@ func provideRegistryRepository(c *container.Container) error {
 	})
 }
 
+// registryDeleterGrants carries the optional Store grant repository (full plane
+// only) so a registry delete can clean its instance-level grants.
+type registryDeleterGrants struct {
+	dig.In
+	Grants storeaccessdomain.Repository `optional:"true"`
+}
+
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, compiler)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Updater {
-		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, compiler)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Deleter {
-		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, grants registryDeleterGrants) appregistry.Deleter {
+		var opts []appregistry.DeleterOption
+		if grants.Grants != nil {
+			// Deleting a configured instance removes the Store grants scoped to it.
+			opts = append(opts, appregistry.WithDependentCleaner(grants.Grants))
+		}
+		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, opts...)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appregistry.NewFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appregistry.NewGroupedFinder); err != nil {
+		return err
+	}
 	if err := c.Provide(appregistry.NewConnectionTester); err != nil {
+		return err
+	}
+	if err := c.Provide(appregistry.NewOpenAPIValidator); err != nil {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewCreateRegistryHandler); err != nil {
@@ -80,6 +101,9 @@ func provideRegistryServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewTestConnectionHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewValidateOpenAPIHandler); err != nil {
 		return err
 	}
 	return nil

@@ -102,3 +102,7 @@ func ProviderOptions(code string) []ProviderOptionField {
 	}
 	return []ProviderOptionField{}
 }
+
+func ProviderCapabilities(code string) map[string]bool {
+	return providers.ProviderCapabilities(code)
+}

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -43,7 +44,7 @@ func TestRenderedPagesAreNotCacheable(t *testing.T) {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
 			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp"}},
-		}, "tk", "")
+		}, "tk", "", nil)
 	})
 	res, err := app.Test(httptest.NewRequest("GET", "/page", nil))
 	if err != nil {
@@ -78,7 +79,7 @@ func TestAPIKeyConnectPage_RendersSecureForm(t *testing.T) {
 	if !strings.Contains(body, `method="post"`) {
 		t.Fatalf("API-key form must submit with POST, body:\n%s", body)
 	}
-	if !strings.Contains(body, `<input id="api-key" name="api_key" type="password" autocomplete="off" required>`) {
+	if !strings.Contains(body, `id="api-key" name="api_key" type="password" autocomplete="off" required`) {
 		t.Fatalf("missing secure API-key field attributes, body:\n%s", body)
 	}
 	if strings.Contains(body, "value=") {
@@ -94,9 +95,9 @@ func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	body := renderToString(t, func(c *fiber.Ctx) error {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
-			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp", Linked: true}},
+			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp", Linked: true, AccountRef: "ada@linear.app"}},
 			ResumeURL:    "cursor://anysphere.cursor-mcp/oauth/callback?code=abc&state=s",
-		}, "tk", "")
+		}, "tk", "", nil)
 	})
 	if strings.Contains(body, "ZgotmplZ") {
 		t.Fatal("resume URL was sanitized away")
@@ -107,6 +108,9 @@ func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	if !strings.Contains(body, "Connected") || !strings.Contains(body, "/oauth/disconnect/linear?ticket=tk") {
 		t.Fatal("linked provider must render status and revoke action")
 	}
+	if !strings.Contains(body, "ada@linear.app") {
+		t.Fatal("linked provider must render the stored account identity")
+	}
 }
 
 func TestConnectPage_NoResumeNoContinue(t *testing.T) {
@@ -115,7 +119,7 @@ func TestConnectPage_NoResumeNoContinue(t *testing.T) {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
 			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp"}},
-		}, "tk", "denied by provider")
+		}, "tk", "denied by provider", nil)
 	})
 	if strings.Contains(body, "Continue") {
 		t.Fatal("continue button must only render during chained consent")
@@ -145,6 +149,118 @@ func TestDeepLinkPage_RendersCustomScheme(t *testing.T) {
 	if !strings.Contains(body, "Open Cursor") {
 		t.Fatal("known scheme must render the product name")
 	}
+}
+
+func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "linear", Registry: "linear-mcp", Linked: true},
+				{Provider: "github", Registry: "github-mcp"},
+			},
+			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
+		}, "tk", "", nil)
+	})
+	for _, want := range []string{
+		`family=Inter`,
+		`font-family:var(--font-sans)`,
+		`--bg-canvas:#03020f`,
+		`--brand:#9053ff`,
+		`--badge-green:#00fe18`,
+		`font-size:1.125rem;line-height:1.75rem`,
+		`class="btn secondary"`,
+		`class="btn primary"`,
+		`class="badge green"`,
+		`class="grid"`,
+		`class="tile"`,
+		`id="filter"`,
+		`width="40" height="40"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("connect page must use app DS token %q", want)
+		}
+	}
+}
+
+func TestConnectPage_RendersCatalogLogo(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp",
+				Registry: "linear-mcp",
+				Code:     "app.linear/mcp",
+			}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if !strings.Contains(body, `src="/oauth/brands/mcp/linear.svg"`) {
+		t.Fatalf("missing Linear logo, body:\n%s", body)
+	}
+	if !strings.Contains(body, "Linear") {
+		t.Fatalf("catalog display name must render, body:\n%s", body)
+	}
+	if !strings.Contains(body, "Issues, projects, cycles, and teams in Linear.") {
+		t.Fatalf("catalog description must render on the store tile, body:\n%s", body)
+	}
+	if !strings.Contains(body, `class="logo"`) {
+		t.Fatal("provider tile must use the branded logo")
+	}
+	if !strings.Contains(body, `class="tile"`) {
+		t.Fatal("providers must render as store tiles")
+	}
+}
+
+func TestConnectPage_UnknownProviderUsesGenericMark(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers:    []appoauth.ProviderStatus{{Provider: "custom-acme", Registry: "acme-mcp"}},
+		}, "tk", "", nil)
+	})
+	if !strings.Contains(body, `src="/oauth/brands/mcp.svg"`) {
+		t.Fatalf("unknown provider must fall back to the MCP mark, body:\n%s", body)
+	}
+}
+
+func TestServeBrandAsset_ReturnsLogo(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Get(BrandAssetPath, ServeBrandAsset)
+
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/brands/mcp/linear.svg", nil))
+	if err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if !strings.Contains(res.Header.Get(fiber.HeaderContentType), "image/svg") {
+		t.Fatalf("content-type = %q", res.Header.Get(fiber.HeaderContentType))
+	}
+	if !strings.Contains(res.Header.Get(fiber.HeaderCacheControl), "max-age=") {
+		t.Fatalf("brand assets should be cacheable, got %q", res.Header.Get(fiber.HeaderCacheControl))
+	}
+
+	blocked, err := app.Test(httptest.NewRequest("GET", "/oauth/brands/../embed.go", nil))
+	if err != nil {
+		t.Fatalf("traversal: %v", err)
+	}
+	if blocked.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("traversal status = %d, want 404", blocked.StatusCode)
+	}
+}
+
+func mustMCPCatalog(t *testing.T) appcatalog.MCPServerCatalog {
+	t.Helper()
+	catalog, err := appcatalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	return catalog
 }
 
 func TestDeepLinkPage_UnknownSchemeFallsBackToGenericName(t *testing.T) {

@@ -21,10 +21,29 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
-	return serverDiscoveryResultWith(rc, mrtr, false, false)
+// serverDiscoveryResult is the legacy-era answer: no era-specific extension is
+// advertised, and the cache envelope and serverInfo are written here because no
+// modern normalization pass runs over a legacy result.
+func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []string) map[string]any {
+	return map[string]any{
+		"resultType":        "complete",
+		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
+		"capabilities":      configuredCapabilities(rc, false),
+		// Reconnect is the only refresh signal until the stateless gateway can emit list_changed.
+		"ttlMs":      discoverCacheTTLMs,
+		"cacheScope": "private",
+		"_meta": map[string]any{
+			modernServerInfoMetaKey: map[string]any{
+				"name":    serverName,
+				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+			},
+		},
+	}
 }
 
+// serverDiscoveryResultWith is the modern-era answer. The cache envelope and
+// serverInfo are left to normalizeModernResult, which owns both for every
+// modern result.
 func serverDiscoveryResultWith(rc *appconsumer.RoutableConsumer, mrtr, tasks, listChanged bool) map[string]any {
 	capabilities := configuredCapabilities(rc, mrtr)
 	addListChanged(capabilities, listChanged)

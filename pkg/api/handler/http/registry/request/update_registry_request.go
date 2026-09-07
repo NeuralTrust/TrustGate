@@ -30,6 +30,7 @@ type UpdateRegistryRequest struct {
 	Description     *string              `json:"description,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
 }
 
@@ -60,6 +61,9 @@ func (r UpdateRegistryRequest) Validate() error {
 	if err := r.MCPTarget.validateProtocolMode(); err != nil {
 		return err
 	}
+	if err := r.Pricing.ToDomain().Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -69,6 +73,10 @@ func (r UpdateRegistryRequest) ToAuth() *domain.TargetAuth {
 
 func (r UpdateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
 	return r.HealthChecks.ToDomain()
+}
+
+func (r UpdateRegistryRequest) ToPricing() *domain.Pricing {
+	return r.Pricing.ToDomain()
 }
 
 func (r UpdateRegistryRequest) ToMCPTarget() *domain.MCPTarget {

@@ -16,6 +16,7 @@ package mcp
 
 import (
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -25,6 +26,28 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
+
+// A revision advertised by the legacy-era server/discover but refused by
+// initialize downgrades the client silently: it keeps applying the newer
+// revision's rules to responses the gateway builds under an older one, and
+// rejects them as malformed.
+func TestAdvertisedProtocolVersionsAreAllNegotiable(t *testing.T) {
+	t.Parallel()
+	// Pinned rather than derived: adding a revision here has to be a deliberate
+	// edit, because advertising one obliges every response the gateway emits —
+	// including the tools/call results it relays verbatim from upstreams — to
+	// satisfy that revision's envelope. The modern revision is deliberately
+	// absent: it is negotiated through the modern era's own boundary.
+	require.Equal(t, []string{"2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
+	require.Equal(t, latestLegacyProtocolVersion, advertisedProtocolVersions[0],
+		"the preferred revision must be the one initialize falls back to")
+	for _, version := range advertisedProtocolVersions {
+		require.Truef(t, isSupportedProtocolVersion(version),
+			"server/discover advertises %q but initialize cannot negotiate it", version)
+		require.Truef(t, isLegacyProtocolVersion(version),
+			"the legacy-era advertisement must not name a modern revision: %q", version)
+	}
+}
 
 func TestServerDiscoveryResultCapabilities(t *testing.T) {
 	t.Parallel()
@@ -59,20 +82,29 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rc := &appconsumer.RoutableConsumer{
 				Consumer: &consumerdomain.Consumer{MCP: tc.policy},
 			}
-			result := serverDiscoveryResult(rc, false)
-			require.Equal(t, supportedProtocolVersions, result["supportedVersions"])
+			result := serverDiscoveryResult(rc, nil)
+			require.Equal(t, advertisedProtocolVersions, result["supportedVersions"])
+			require.Equal(t, "complete", result["resultType"])
+			require.Equal(t, "private", result["cacheScope"])
+			require.Zero(t, result["ttlMs"])
+			require.Equal(t,
+				supportedProtocolVersions,
+				serverDiscoveryResultWith(rc, false, false, false)["supportedVersions"],
+				"the modern era advertises every supported revision")
 			capabilities := result["capabilities"].(map[string]any)
 			require.Len(t, capabilities, len(tc.want))
 			for _, kind := range tc.want {
 				require.Contains(t, capabilities, kind)
 				require.Empty(t, capabilities[kind])
 			}
+			serverInfo := result["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
+			require.Equal(t, serverName, serverInfo["name"])
+			require.Contains(t, serverInfo["version"], serverVersion+"+")
 		})
 	}
 }
@@ -155,7 +187,6 @@ func TestServerDiscoveryResultAdvertisesListChanged(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rc := &appconsumer.RoutableConsumer{
@@ -202,7 +233,6 @@ func TestSubscriptionsEndToEndNeedsAModernUpstream(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rc := &appconsumer.RoutableConsumer{
@@ -221,14 +251,14 @@ func TestServerDiscoveryResultUsesModernNormalization(t *testing.T) {
 			ID: ids.New[ids.ConsumerKind](),
 		},
 	}
-	normalized, err := normalizeModernResult("server/discover", serverDiscoveryResult(rc, false), rc, nil)
+	normalized, err := normalizeModernResult("server/discover", serverDiscoveryResultWith(rc, false, false, false), rc, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "complete", normalized["resultType"])
 	require.Equal(t, modernCacheTTLDefault, normalized["ttlMs"])
 	require.Equal(t, "private", normalized["cacheScope"])
 	serverInfo := normalized["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)
 	require.Equal(t, serverName, serverInfo["name"])
-	require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc), serverInfo["version"])
+	require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc, nil), serverInfo["version"])
 }
 
 func TestSurfaceFingerprintDistinguishesNilAndEmptyToolkit(t *testing.T) {
@@ -244,20 +274,91 @@ func TestSurfaceFingerprintDistinguishesNilAndEmptyToolkit(t *testing.T) {
 		},
 	}
 
-	nilFingerprint := surfaceFingerprint(nilToolkit)
-	emptyFingerprint := surfaceFingerprint(emptyToolkit)
+	nilFingerprint := surfaceFingerprint(nilToolkit, nil)
+	emptyFingerprint := surfaceFingerprint(emptyToolkit, nil)
 	require.NotEqual(t, nilFingerprint, emptyFingerprint)
 
-	nilResult, err := normalizeModernResult("server/discover", serverDiscoveryResult(nilToolkit, false), nilToolkit, nil)
+	nilResult, err := normalizeModernResult("server/discover", serverDiscoveryResultWith(nilToolkit, false, false, false), nilToolkit, nil, nil)
 	require.NoError(t, err)
 	emptyResult, err := normalizeModernResult(
 		"server/discover",
-		serverDiscoveryResult(emptyToolkit, false),
+		serverDiscoveryResultWith(emptyToolkit, false, false, false),
 		emptyToolkit,
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
 	nilVersion := nilResult["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)["version"]
 	emptyVersion := emptyResult["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)["version"]
 	require.NotEqual(t, nilVersion, emptyVersion)
+}
+
+func TestServerDiscoveryResultChangesAfterRegistryAttachment(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	registry := func(name string) *registrydomain.Registry {
+		result, err := registrydomain.NewMCPRegistry(
+			gatewayID,
+			name,
+			"",
+			&registrydomain.MCPTarget{URL: "https://" + name + ".example.com/mcp"},
+		)
+		require.NoError(t, err)
+		return result
+	}
+	consumer := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind]()}
+	notion := registry("notion")
+	one := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+		Consumer:   consumer,
+		Registries: []*registrydomain.Registry{notion},
+	}, nil)
+	two := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+		Consumer:   consumer,
+		Registries: []*registrydomain.Registry{notion, registry("linear")},
+	}, nil)
+
+	require.Zero(t, one["ttlMs"])
+	require.Zero(t, two["ttlMs"])
+	oneInfo := one["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
+	twoInfo := two["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
+	require.NotEqual(t, oneInfo["version"], twoInfo["version"])
+}
+
+// Connecting an account on the connect page changes which upstreams federate
+// without touching any registry, so the reported version has to move with it or
+// a version-keyed client keeps replaying its cached tool list.
+func TestServerDiscoveryResultChangesAfterConnectingAnAccount(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	linear, err := registrydomain.NewMCPRegistry(
+		gatewayID,
+		"linear",
+		"",
+		&registrydomain.MCPTarget{
+			URL: "https://linear.example.com/mcp",
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     "linear",
+				ClientID:     "cid",
+				AuthorizeURL: "https://linear.example.com/authorize",
+				TokenURL:     "https://linear.example.com/token",
+			},
+		},
+	)
+	require.NoError(t, err)
+	rc := &appconsumer.RoutableConsumer{
+		Consumer:   &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID},
+		Registries: []*registrydomain.Registry{linear},
+	}
+	linkedAt := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+
+	pending := serverDiscoveryResult(rc, nil)
+	linked := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Format(time.RFC3339Nano)})
+	reconnected := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	versionOf := func(result map[string]any) string {
+		return result["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)["version"].(string)
+	}
+	require.NotEqual(t, versionOf(pending), versionOf(linked))
+	require.NotEqual(t, versionOf(linked), versionOf(reconnected))
 }

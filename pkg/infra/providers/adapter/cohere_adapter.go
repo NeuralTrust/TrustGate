@@ -22,27 +22,27 @@ import (
 type CohereAdapter struct{}
 
 type cohereRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	Messages    []cohereMessage        `json:"messages"`
-	MaxTokens   *int                   `json:"max_tokens,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"p,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	Tools       []cohereTool           `json:"tools,omitempty"`
-	ToolChoice  *cohereToolChoice      `json:"tool_choice,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Messages    []cohereMessage   `json:"messages"`
+	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Temperature *float64          `json:"temperature,omitempty"`
+	TopP        *float64          `json:"p,omitempty"`
+	Stream      *bool             `json:"stream,omitempty"`
+	Tools       []cohereTool      `json:"tools,omitempty"`
+	ToolChoice  *cohereToolChoice `json:"tool_choice,omitempty"`
+	StopSeqs    []string          `json:"stop_sequences,omitempty"`
 }
 
 type cohereMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
 	ToolCalls  []cohereToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type cohereTool struct {
-	Type     string              `json:"type"`
-	Function cohereToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function cohereToolFunction `json:"function"`
 }
 
 type cohereToolFunction struct {
@@ -75,9 +75,9 @@ type cohereResponse struct {
 }
 
 type cohereAssistantMessage struct {
-	Role      string                  `json:"role"`
-	Content   []cohereContentBlock    `json:"content,omitempty"`
-	ToolCalls []cohereToolCall        `json:"tool_calls,omitempty"`
+	Role      string               `json:"role"`
+	Content   []cohereContentBlock `json:"content,omitempty"`
+	ToolCalls []cohereToolCall     `json:"tool_calls,omitempty"`
 }
 
 type cohereContentBlock struct {
@@ -114,7 +114,7 @@ type cohereMessageEndDelta struct {
 }
 
 type cohereToolCallDelta struct {
-	ID       string                 `json:"id,omitempty"`
+	ID       string                  `json:"id,omitempty"`
 	Function *cohereToolCallFunction `json:"function,omitempty"`
 }
 

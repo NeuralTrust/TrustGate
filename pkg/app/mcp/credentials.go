@@ -19,16 +19,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -60,6 +63,7 @@ type credentialResolver struct {
 	provider  appoauth.ProviderClient
 	logger    *slog.Logger
 	refresh   singleflight.Group
+	attempts  sync.Map // gateway|subject|provider → time.Time
 	ccFlight  singleflight.Group
 	ccCache   sync.Map // key → *ccCacheEntry
 }
@@ -92,6 +96,8 @@ func NewCredentialResolver(
 }
 
 const vaultRefreshSkew = 60 * time.Second
+
+const rejectedCredentialRefreshCooldown = 30 * time.Second
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
@@ -149,7 +155,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	gatewayID := rc.Consumer.GatewayID
 	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
 	if errors.Is(err, vaultdomain.ErrNotFound) {
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
 			"no stored credential for this user and provider")
 	}
 	if errors.Is(err, vaultdomain.ErrUndecryptable) {
@@ -158,19 +164,53 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		// them round a reconnect loop that only papers over one provider at a
 		// time. Name the real cause; reconnecting rewrites it under the current
 		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
 			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
 	}
 	if err != nil {
 		return err
 	}
 	if cred.Expired(vaultRefreshSkew) {
-		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider)
+		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider, "")
 		if err != nil {
 			return err
 		}
 	}
 	setAuthorization(target, "Bearer "+cred.AccessToken)
+	stampAccountRef(ctx, cred.AccountRef)
+	return nil
+}
+
+// Refresh replaces a forwarded OAuth credential rejected by an upstream.
+func (r *credentialResolver) Refresh(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	target *Target,
+) error {
+	cfg := reg.MCPTarget.Auth
+	if cfg == nil || cfg.Mode != registrydomain.MCPAuthModeForwarded {
+		return errCredentialRefreshUnsupported
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil {
+		return ErrNoPrincipal
+	}
+	rejected := bearerToken(target.Headers["Authorization"])
+	cred, err := r.refreshCredential(
+		ctx,
+		rc,
+		reg,
+		rc.Consumer.GatewayID,
+		principal.Subject,
+		cfg.Provider,
+		rejected,
+	)
+	if err != nil {
+		return err
+	}
+	setAuthorization(target, "Bearer "+cred.AccessToken)
+	stampAccountRef(ctx, cred.AccountRef)
 	return nil
 }
 
@@ -179,7 +219,7 @@ func (r *credentialResolver) refreshCredential(
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
 	gatewayID ids.GatewayID,
-	subject, provider string,
+	subject, provider, rejectedAccessToken string,
 ) (*vaultdomain.Credential, error) {
 	key := gatewayID.String() + "|" + subject + "|" + provider
 	v, err, _ := r.refresh.Do(key, func() (any, error) {
@@ -187,11 +227,23 @@ func (r *credentialResolver) refreshCredential(
 		if err != nil {
 			return nil, err
 		}
-		if !cred.Expired(vaultRefreshSkew) {
+		if rejectedAccessToken == "" && !cred.Expired(vaultRefreshSkew) {
+			return cred, nil
+		}
+		if rejectedAccessToken != "" && cred.AccessToken != rejectedAccessToken {
 			return cred, nil
 		}
 		if cred.RefreshToken == "" {
 			return nil, errGrantExhausted
+		}
+		if rejectedAccessToken != "" {
+			if value, ok := r.attempts.Load(key); ok {
+				attemptedAt, valid := value.(time.Time)
+				if valid && time.Since(attemptedAt) < rejectedCredentialRefreshCooldown {
+					return nil, errCredentialRefreshThrottled
+				}
+				r.attempts.Delete(key)
+			}
 		}
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
@@ -208,7 +260,10 @@ func (r *credentialResolver) refreshCredential(
 			// refresh succeeded and there is nothing for the user to consent to.
 			if errors.Is(err, appoauth.ErrInvalidGrant) {
 				latest, findErr := r.vault.Find(ctx, gatewayID, subject, provider)
-				if findErr == nil && !latest.Expired(vaultRefreshSkew) {
+				peerRefreshed := findErr == nil && ((rejectedAccessToken != "" &&
+					latest.AccessToken != rejectedAccessToken) ||
+					(rejectedAccessToken == "" && !latest.Expired(vaultRefreshSkew)))
+				if peerRefreshed {
 					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
 						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
 					return latest, nil
@@ -224,25 +279,28 @@ func (r *credentialResolver) refreshCredential(
 		if err := r.vault.Upsert(ctx, cred); err != nil {
 			return nil, err
 		}
+		if rejectedAccessToken != "" {
+			r.attempts.Store(key, time.Now())
+		}
 		return cred, nil
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, errGrantExhausted):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
-				"provider rejected the stored refresh token (invalid_grant)")
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				"provider rejected the stored refresh token")
 		case errors.Is(err, vaultdomain.ErrNotFound):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored credential vanished while refreshing")
 		case errors.Is(err, appoauth.ErrNoRegisteredClient):
 			// The DCR client the refresh token was issued to is gone from the
 			// store. The token cannot be redeemed without it, so this is a
 			// consent case — reconnecting re-registers the client — not an
 			// unreachable upstream to be skipped in silence.
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"dynamically registered client was lost (store flushed?); reconnect re-registers it")
 		}
 		return nil, err
@@ -256,22 +314,53 @@ func (r *credentialResolver) refreshCredential(
 
 var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
 
+var errCredentialRefreshUnsupported = errors.New("mcp credentials: auth mode cannot refresh after an upstream rejection")
+
+var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected credential was refreshed too recently")
+
 // consentRequired is the single funnel through which a downstream call asks the
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
 // guessed at from the client-side error alone.
-func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub, reason string) error {
+//
+// On the Store the ticket must name the server: the Store connect page only
+// attaches registries for a ticket that carries a catalog code, so a bare
+// consumer ticket would send the user to an empty page. Every other consumer
+// keeps the plain consumer-wide ticket.
+func (r *credentialResolver) consentRequired(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	provider, principalSub, reason string,
+) error {
 	r.logger.Info("mcp credentials: user consent required",
 		"provider", provider,
 		"subject", principalSub,
 		"gateway_id", rc.Consumer.GatewayID.String(),
 		"reason", reason)
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	var (
+		ticket string
+		err    error
+	)
+	if code := storeServerCode(rc, reg); code != "" {
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, "")
+	} else {
+		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	}
 	if err != nil {
 		return err
 	}
 	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
+}
+
+// storeServerCode returns the catalog code a Store consent ticket must carry,
+// or "" when the caller is not the Store or the registry has no code.
+func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) string {
+	if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) || reg == nil || reg.MCPTarget == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.MCPTarget.Code)
 }
 
 func (r *credentialResolver) clientCredentials(
@@ -347,4 +436,21 @@ func setAuthorization(target *Target, value string) {
 		target.Headers = map[string]string{}
 	}
 	target.Headers["Authorization"] = value
+}
+
+func stampAccountRef(ctx context.Context, accountRef string) {
+	if accountRef == "" {
+		return
+	}
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPAccountRef(accountRef)
+	}
+}
+
+func bearerToken(authorization string) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(authorization), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }

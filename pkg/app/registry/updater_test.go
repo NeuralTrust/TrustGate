@@ -119,6 +119,64 @@ func TestUpdater_Update_EnabledUnchangedWhenNil(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_Partial_PreservesPricing(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	pricing := &domain.Pricing{Discount: 0.2, Overrides: map[string]domain.PriceOverride{"gpt-4o": {Input: 0.0000015, Output: 0.000006}}}
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-real"), Pricing: pricing})
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Name == "renamed" && b.Pricing() != nil && b.Pricing().Discount == 0.2
+	})).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:   existing.ID,
+		Name: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Pricing() == nil || got.Pricing().Discount != 0.2 {
+		t.Fatalf("pricing not preserved: %+v", got.Pricing())
+	}
+}
+
+func TestUpdater_Update_ReplacesPricing(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-real"), Pricing: &domain.Pricing{Discount: 0.1}})
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Pricing() != nil && b.Pricing().Discount == 0.3
+	})).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:         existing.ID,
+		SetPricing: true,
+		Pricing:    &domain.Pricing{Discount: 0.3},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Pricing() == nil || got.Pricing().Discount != 0.3 {
+		t.Fatalf("pricing not replaced: %+v", got.Pricing())
+	}
+}
+
 func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -284,6 +342,47 @@ func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 	}
 	if got.MCPTarget.Auth.Mode != domain.MCPAuthModeNone {
 		t.Fatalf("auth should be cleared: %+v", got.MCPTarget.Auth)
+	}
+}
+
+func TestUpdater_Update_OpenAPISourceCanSwitchToRemoteMCP(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "api", "", &domain.MCPTarget{
+		Source:  domain.MCPSourceOpenAPI,
+		URL:     "https://api.example.com",
+		OpenAPI: &domain.OpenAPITarget{SpecURL: "https://api.example.com/openapi.json"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{
+			GatewayID:  existing.GatewayID.String(),
+			RegistryID: existing.ID.String(),
+		}).
+		Return(nil).
+		Once()
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		MCPTarget: &domain.MCPTarget{
+			Source: domain.MCPSourceRemote,
+			URL:    "https://mcp.example.com/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.OpenAPI != nil {
+		t.Fatalf("OpenAPI config was not cleared: %+v", got.MCPTarget.OpenAPI)
+	}
+	if got.MCPTarget.Transport != domain.MCPTransportStreamableHTTP {
+		t.Fatalf("Transport = %q", got.MCPTarget.Transport)
 	}
 }
 

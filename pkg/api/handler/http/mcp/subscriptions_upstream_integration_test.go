@@ -256,16 +256,15 @@ func newUpstreamIntegrationHarnessWithCaps(
 	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(nil)
 	executor := pluginmocks.NewExecutor(t)
 	executor.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	handler := mcphttp.NewHandlerWithSubscriptions(
+	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(
 			composer,
 			appmcp.NewPluginRunner(executor, discardLogger()),
 			limiter,
 		),
 		scoper,
-		mcphttp.MRTRSupport{},
-		mcphttp.TasksSupport{},
-		mcphttp.SubscriptionsSupport{
+		nil,
+		mcphttp.WithSubscriptions(mcphttp.SubscriptionsSupport{
 			On:             true,
 			MaxLifetime:    time.Minute,
 			ReauthInterval: time.Hour,
@@ -277,7 +276,7 @@ func newUpstreamIntegrationHarnessWithCaps(
 			Upstream:       true,
 			Targets:        targets,
 			Source:         multiplexer,
-		},
+		}),
 	)
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Use(func(c *fiber.Ctx) error {

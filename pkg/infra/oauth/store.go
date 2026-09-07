@@ -93,8 +93,20 @@ func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoaut
 	return &c, nil
 }
 
+// SaveSession stores the record until rec.ExpiresAt, the absolute deadline the
+// proxy fixed at login. Re-saving a rotated record therefore shortens the TTL
+// rather than resetting it: the session cannot be kept alive indefinitely by
+// refreshing, and a revoked or changed platform decision is re-derived at the
+// next login. A record with no deadline keeps the legacy TTL.
 func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
-	return s.save(ctx, sessionPrefix+refreshToken, rec, sessionTTL)
+	ttl := sessionTTL
+	if !rec.ExpiresAt.IsZero() {
+		ttl = time.Until(rec.ExpiresAt)
+		if ttl <= 0 {
+			return errors.New("oauth flow store: session already expired")
+		}
+	}
+	return s.save(ctx, sessionPrefix+refreshToken, rec, ttl)
 }
 
 func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {

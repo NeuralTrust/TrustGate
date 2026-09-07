@@ -32,12 +32,33 @@ type Deleter interface {
 
 var _ Deleter = (*deleter)(nil)
 
+// DependentCleaner removes state that hangs off a registry and must not outlive
+// it — today the MCP Store's instance-level access grants on that registry.
+type DependentCleaner interface {
+	DeleteByRegistry(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error
+}
+
+// DeleterOption tunes NewDeleter.
+type DeleterOption func(*deleter)
+
+// WithDependentCleaner runs the cleaner after a successful delete. A cleanup
+// failure is logged, not returned: the registry is already gone and a dangling
+// grant on a missing registry grants nothing.
+func WithDependentCleaner(c DependentCleaner) DeleterOption {
+	return func(d *deleter) {
+		if c != nil {
+			d.cleaners = append(d.cleaners, c)
+		}
+	}
+}
+
 type deleter struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
+	cleaners    []DependentCleaner
 }
 
 func NewDeleter(
@@ -46,14 +67,21 @@ func NewDeleter(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	opts ...DeleterOption,
 ) Deleter {
-	return &deleter{
+	d := &deleter{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(d)
+		}
+	}
+	return d
 }
 
 func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error {
@@ -68,6 +96,12 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Re
 		return err
 	}
 	d.memoryCache.Delete(id.String())
+	for _, cleaner := range d.cleaners {
+		if err := cleaner.DeleteByRegistry(ctx, gatewayID, id); err != nil && d.logger != nil {
+			d.logger.WarnContext(ctx, "registry: dependent cleanup failed after delete",
+				slog.String("registry_id", id.String()), slog.String("error", err.Error()))
+		}
+	}
 	invalidation.Registry(ctx, d.publisher, d.logger, existing.GatewayID, existing.ID)
 	if d.signaler != nil {
 		d.signaler.Signal(ctx)

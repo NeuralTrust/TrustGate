@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 )
 
 const (
@@ -35,6 +37,11 @@ const (
 	contentTypeJSON  = "application/json"
 	maxResponseBytes = 1 << 20
 	defaultTimeout   = 15 * time.Second
+
+	// peerService must match the firewall gateway's own service.name, and
+	// scoreSpanName stays a bounded label rather than the request target.
+	peerService   = "firewall-gateway"
+	scoreSpanName = "firewall.complexity"
 )
 
 // ErrUnauthorized is returned when the Firewall Complexity API rejects the token.
@@ -63,7 +70,10 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 		timeout = defaultTimeout
 	}
 	return &Client{
-		http:          &http.Client{Timeout: timeout},
+		http: &http.Client{
+			Timeout:   timeout,
+			Transport: o11y.InternalTransport(peerService, scoreSpanName),
+		},
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		tokenProvider: tokenProvider,
 	}

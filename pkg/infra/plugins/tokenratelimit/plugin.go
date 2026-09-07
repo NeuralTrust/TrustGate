@@ -113,7 +113,7 @@ func (p *Plugin) preRequest(
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
-		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, cfg.CostCap, req.Provider, model, req.RequestedModel)
+		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, llmcost.RatesFromDomain(req.RegistryPricing), cfg.CostCap, req.Provider, model, req.RequestedModel)
 		capTel = llmcost.TelemetryFrom(dec)
 		if dec.Kind == llmcost.DecisionViolation {
 			appplugins.SetDecision(event, mode)

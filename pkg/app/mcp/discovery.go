@@ -247,16 +247,9 @@ func askUpstream[T any](
 	reg *registrydomain.Registry,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
-	target, err := c.target(ctx, rc, reg)
-	if err != nil {
-		return nil, err
-	}
-	up, err := c.dialer.Connect(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	defer up.Close(ctx)
-	return list(ctx, up)
+	return invokeUpstream(c, ctx, rc, reg, func(up Upstream) ([]T, error) {
+		return list(ctx, up)
+	})
 }
 
 // cachedDiscovery reports a hit, which is either the tools an upstream served
@@ -300,7 +293,13 @@ func callerScoped(err error) bool {
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if !perPrincipalAuth(reg) {
+	// A server whose URL carries per-user placeholders is dialed at a different
+	// upstream per principal, so its discovered tools must be keyed per principal
+	// too — otherwise one user's discovery (against their own account) would be
+	// served to another. This holds even when the auth mode is not per-principal.
+	perPrincipal := perPrincipalAuth(reg) ||
+		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
+	if !perPrincipal {
 		return key, true
 	}
 	fingerprint := principalFingerprint(ctx)

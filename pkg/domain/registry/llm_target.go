@@ -25,6 +25,7 @@ type LLMTarget struct {
 	ProviderOptions map[string]any `json:"provider_options,omitempty"`
 	Auth            *TargetAuth    `json:"auth,omitempty"`
 	HealthChecks    *HealthChecks  `json:"health_checks,omitempty"`
+	Pricing         *Pricing       `json:"pricing,omitempty"`
 }
 
 func (t *LLMTarget) Validate() error {
@@ -46,6 +47,14 @@ func (t *LLMTarget) Validate() error {
 	if t.HealthChecks != nil {
 		if err := t.HealthChecks.Validate(); err != nil {
 			return err
+		}
+	}
+	if t.Pricing != nil {
+		if err := t.Pricing.Validate(); err != nil {
+			return err
+		}
+		if t.Pricing.IsZero() {
+			t.Pricing = nil
 		}
 	}
 	return nil

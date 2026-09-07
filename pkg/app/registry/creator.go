@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -49,6 +50,7 @@ type creator struct {
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
 	catalog     MCPAuthCatalog
+	openapi     appopenapi.Compiler
 }
 
 func NewCreator(
@@ -57,13 +59,19 @@ func NewCreator(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	catalog MCPAuthCatalog,
+	compilers ...appopenapi.Compiler,
 ) Creator {
+	var compiler appopenapi.Compiler
+	if len(compilers) > 0 {
+		compiler = compilers[0]
+	}
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		logger:      logger,
 		signaler:    signaler,
 		catalog:     catalog,
+		openapi:     compiler,
 	}
 }
 
@@ -71,6 +79,10 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	var b *domain.Registry
 	var err error
 	if in.Type == domain.TypeMCP {
+		in.MCPTarget.Normalize()
+		if err := compileOpenAPITarget(ctx, in.MCPTarget, c.openapi); err != nil {
+			return nil, err
+		}
 		if err := CanonicalizeMCPAuthFromCatalog(in.MCPTarget, c.catalog); err != nil {
 			return nil, err
 		}

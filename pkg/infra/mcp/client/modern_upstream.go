@@ -88,7 +88,7 @@ func newModernUpstreamWithTransport(
 	if protocolVersion == "" {
 		return nil, fmt.Errorf("%w: %w", appmcp.ErrProtocolIncompatible, errModernProtocolAbsent)
 	}
-	httpClient, err := newTargetHTTPClientWithTransport(target.Headers, transport)
+	httpClient, err := newTargetHTTPClientWithTransport(target.Headers, restrictedFor(target, transport))
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid upstream HTTP configuration: %w", appmcp.ErrUnreachable, err)
 	}

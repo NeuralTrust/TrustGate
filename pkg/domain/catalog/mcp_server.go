@@ -14,18 +14,26 @@
 
 package catalog
 
+import "strings"
+
 // MCPServer is a single entry in the curated catalog of remote MCP servers,
 // used to prefill MCP registry creation.
 type MCPServer struct {
-	Code         string `json:"code"`
-	DisplayName  string `json:"display_name"`
-	Vendor       string `json:"vendor,omitempty"`
-	Category     string `json:"category,omitempty"`
-	Description  string `json:"description,omitempty"`
-	URL          string `json:"url"`
-	Transport    string `json:"transport"`
-	AuthHint     string `json:"auth_hint"` // none | static | oauth
-	RequiresAuth bool   `json:"requires_auth"`
+	Code        string `json:"code"`
+	DisplayName string `json:"display_name"`
+	Vendor      string `json:"vendor,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url"`
+	Transport   string `json:"transport"`
+	AuthHint    string `json:"auth_hint"` // none | static | oauth
+	// AuthMethods lists every auth method an operator may pick when installing
+	// this server: "static" (API key / header) and/or "oauth". It is the
+	// authoritative declaration the UI uses to decide whether to offer a choice
+	// of auth (both present) or a single fixed method. AuthHint stays the coarse
+	// default/prefill; AuthMethods is the full menu. Empty ⇒ derive from AuthHint.
+	AuthMethods  []string `json:"auth_methods,omitempty"`
+	RequiresAuth bool     `json:"requires_auth"`
 	// RequiresConfig reports whether the operator must supply input before the
 	// server can be connected (a required URL variable, a static secret, or a
 	// manual/tenant OAuth client). When false the UI can connect it by default
@@ -33,6 +41,14 @@ type MCPServer struct {
 	// client self-registers (registration "auto") where the user simply logs in
 	// at runtime.
 	RequiresConfig bool `json:"requires_config"`
+	PlatformClient bool `json:"platform_client,omitempty"`
+	// SelfService reports whether a user can install this server from the Store
+	// with nothing configured by an admin: OAuth with dynamic client registration
+	// or a platform-held client, a public server, or a static server whose only
+	// credential is a per-user secret URL variable. False means an admin must
+	// connect an instance first (a shared API key, a manual OAuth client, or a
+	// client_credentials grant). Computed from the entry (see IsSelfService).
+	SelfService bool `json:"self_service"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`
@@ -121,4 +137,78 @@ type MCPOAuth struct {
 	// TokenEndpointAuthMethod is used with client_credentials:
 	// client_secret_basic (default) or client_secret_post.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+}
+
+// SupportedAuthMethods reports which install methods the entry offers: an
+// explicit AuthMethods list wins; otherwise the coarse AuthHint plus the
+// presence of an OAuth spec / auth headers decide.
+func (s MCPServer) SupportedAuthMethods() (static, oauth bool) {
+	if len(s.AuthMethods) > 0 {
+		for _, m := range s.AuthMethods {
+			switch strings.ToLower(strings.TrimSpace(m)) {
+			case "static":
+				static = true
+			case "oauth":
+				oauth = true
+			}
+		}
+		return static, oauth
+	}
+	hint := strings.ToLower(strings.TrimSpace(s.AuthHint))
+	oauth = hint == "oauth" || s.OAuth != nil
+	static = hint == "static" || len(s.AuthHeaders) > 0
+	return static, oauth
+}
+
+// IsSelfService reports whether the entry can be installed without an admin
+// connecting it first:
+//
+//   - an OAuth server whose client the gateway can obtain itself — dynamic
+//     registration (auto) or a platform-held client; not a client_credentials
+//     grant nor a manual registration without a platform client;
+//   - a public server (no auth);
+//   - a static server whose only credential is a per-user secret URL variable
+//     (each user enters their own value through the hosted form).
+//
+// A static-only server whose credential is a shared header value (an API key)
+// the catalog does not carry is NOT self-service: only an admin can add it.
+func (s MCPServer) IsSelfService() bool {
+	static, oauth := s.SupportedAuthMethods()
+	if oauth {
+		return s.oauthSelfServiceable()
+	}
+	if !static {
+		return true
+	}
+	return len(s.AuthHeaders) == 0 && s.hasSecretURLVariable()
+}
+
+func (s MCPServer) oauthSelfServiceable() bool {
+	o := s.OAuth
+	if o == nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(o.GrantType), "client_credentials") {
+		return false
+	}
+	if s.PlatformClient {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(o.Registration)) {
+	case "auto":
+		return true
+	case "":
+		return !o.Required
+	default:
+		return false
+	}
+}
+
+func (s MCPServer) hasSecretURLVariable() bool {
+	for _, v := range s.URLVariables {
+		if v.Secret {
+			return true
+		}
+	}
+	return false
 }

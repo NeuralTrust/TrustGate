@@ -28,6 +28,29 @@ const (
 	MethodMTLS          Method = "mtls"
 )
 
+const (
+	// ClaimOrg is the claim carrying the platform tenant (team) the principal
+	// belongs to. For built-in default-IdP sessions it is authoritative for the
+	// tenant-binding check that stops a user of one org reaching another org's
+	// gateway.
+	ClaimOrg = "org"
+	// ClaimGroups is the claim carrying the principal's IdP group memberships,
+	// which role oidc_mapping rules are authored against.
+	ClaimGroups = "groups"
+	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
+	// Store access level: "open" (the whole Store), "curated" (only servers the
+	// admin granted them), or "none" (closed). Minted by the control plane from
+	// the admin's per-user/per-group Access decision. Absent means the gateway's
+	// own Store default mode applies.
+	ClaimStoreAccess = "store_access"
+	// ClaimGateway is the claim naming the gateway a platform token was minted
+	// for. The control plane resolves store_access per gateway (Access policies
+	// are gateway-scoped), so the token must not be redeemed at another gateway
+	// of the same tenant: the callback refuses a token whose gateway claim names
+	// a different gateway.
+	ClaimGateway = "gateway"
+)
+
 type Principal struct {
 	Subject  string         `json:"subject"`
 	Method   Method         `json:"method"`
@@ -97,4 +120,50 @@ func WithPrincipal(ctx context.Context, p *Principal) context.Context {
 func PrincipalFromContext(ctx context.Context) *Principal {
 	p, _ := ctx.Value(contextKey{}).(*Principal)
 	return p
+}
+
+func (p *Principal) Email() string {
+	if p == nil {
+		return ""
+	}
+	return EmailFromClaims(p.Claims)
+}
+
+// Org returns the platform tenant (team) claim, or "" when absent.
+func (p *Principal) Org() string {
+	if p == nil {
+		return ""
+	}
+	org, _ := p.Claims[ClaimOrg].(string)
+	return strings.TrimSpace(org)
+}
+
+// StoreAccess returns the per-principal MCP Store access level claim
+// ("open" | "curated" | "none"), or "" when absent — in which case the
+// gateway's own Store default mode applies.
+func (p *Principal) StoreAccess() string {
+	if p == nil {
+		return ""
+	}
+	v, _ := p.Claims[ClaimStoreAccess].(string)
+	return strings.TrimSpace(v)
+}
+
+func EmailFromClaims(claims map[string]any) string {
+	if len(claims) == 0 {
+		return ""
+	}
+	for _, key := range []string{"email", "emailAddress", "preferred_username", "upn", "unique_name"} {
+		raw, _ := claims[key].(string)
+		raw = strings.TrimSpace(raw)
+		if LooksLikeEmail(raw) {
+			return raw
+		}
+	}
+	return ""
+}
+
+func LooksLikeEmail(s string) bool {
+	at := strings.IndexByte(s, '@')
+	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " \t\n")
 }

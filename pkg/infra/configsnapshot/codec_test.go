@@ -21,6 +21,7 @@ import (
 
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
@@ -134,4 +135,29 @@ func TestDecodeDefaultsEmptyEntitlementsToFree(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, snap.Data().Gateways, 1)
 	assert.Equal(t, gatewaydomain.TierFree, snap.Data().Gateways[0].Entitlements.Tier)
+}
+
+func TestCodecRoundTripsStoreGrants(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	code, err := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
+	require.NoError(t, err)
+	inst, err := storeaccessdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
+	require.NoError(t, err)
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", StoreGrants: []storeaccessdomain.Grant{*code, *inst}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.StoreGrantsByGateway(gw)
+	require.Len(t, got, 2)
+	assert.Equal(t, "github", got[0].CatalogCode)
+	assert.True(t, got[0].RegistryID.IsNil(), "code-level grant stays code-level")
+	assert.Equal(t, []string{"eng"}, got[0].Groups)
+	assert.Equal(t, reg, got[1].RegistryID)
+	assert.Equal(t, []string{"ana"}, got[1].Users)
+	assert.Empty(t, snap.StoreGrantsByGateway(ids.New[ids.GatewayKind]()))
 }

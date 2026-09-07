@@ -17,6 +17,7 @@ package factory
 import (
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +47,99 @@ func TestProviderLocator_Get(t *testing.T) {
 			assert.NotNil(t, client)
 		})
 	}
+}
+
+func TestProviderLocator_EmbeddingsClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderOpenAICompatible,
+		ProviderAzure,
+		ProviderCohere,
+		ProviderMistral,
+		ProviderVertex,
+		ProviderBedrock,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := client.(providers.EmbeddingsClient)
+			assert.True(t, ok)
+		})
+	}
+}
+
+func TestProviderLocator_FilesClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderAzure,
+		ProviderOpenRouter,
+		ProviderXAI,
+		ProviderMistral,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := client.(providers.FilesClient)
+			assert.True(t, ok)
+		})
+	}
+
+	client, err := locator.Get(ProviderOpenAICompatible)
+	require.NoError(t, err)
+	_, ok := client.(providers.FilesClient)
+	assert.False(t, ok)
+}
+
+func TestProviderLocator_ImagesClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderAzure,
+		ProviderOpenAICompatible,
+		ProviderOpenRouter,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			got, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := got.(providers.ImagesClient)
+			assert.True(t, ok)
+		})
+	}
+
+	client, err := locator.Get(ProviderGroq)
+	require.NoError(t, err)
+	_, ok := client.(providers.ImagesClient)
+	assert.False(t, ok)
+}
+
+func TestProviderLocator_AudioClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderOpenAICompatible,
+		ProviderAzure,
+		ProviderOpenRouter,
+		ProviderGroq,
+		ProviderMistral,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, speech := client.(providers.AudioSpeechClient)
+			_, transcription := client.(providers.AudioTranscriptionClient)
+			assert.True(t, speech)
+			assert.True(t, transcription)
+		})
+	}
+
+	client, err := locator.Get(ProviderAnthropic)
+	require.NoError(t, err)
+	_, speech := client.(providers.AudioSpeechClient)
+	_, transcription := client.(providers.AudioTranscriptionClient)
+	assert.False(t, speech)
+	assert.False(t, transcription)
 }
 
 func TestProviderLocator_GetUnknown(t *testing.T) {

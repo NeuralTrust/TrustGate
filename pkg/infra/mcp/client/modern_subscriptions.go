@@ -92,7 +92,7 @@ func (c *modernSubscriptionConnector) Open(
 	if err != nil {
 		return nil, fmt.Errorf("%w: encode listen request: %v", appmcp.ErrSubscriptionProtocol, err)
 	}
-	client, err := newTargetHTTPClientWithTransport(target.Headers, c.transport)
+	client, err := newTargetHTTPClientWithTransport(target.Headers, restrictedFor(target, c.transport))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", appmcp.ErrSubscriptionProtocol, err)
 	}

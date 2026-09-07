@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Attachment struct {
@@ -26,11 +28,16 @@ type Attachment struct {
 	Data        []byte
 }
 
+type RoutingDecision struct {
+	TierApplied bool
+}
+
 type RequestContext struct {
 	GatewayID          string
 	ConsumerID         string
 	ConsumerType       string
 	RegistryID         string
+	RegistryPricing    *domain.Pricing
 	Headers            map[string][]string
 	Method             string
 	Path               string
@@ -50,6 +57,7 @@ type RequestContext struct {
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
+	RoutingDecision    *RoutingDecision
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
