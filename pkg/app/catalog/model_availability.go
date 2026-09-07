@@ -137,7 +137,14 @@ func (a *modelAvailability) load(ctx context.Context, providerCode string) provi
 			slog.String("error", err.Error()))
 		return providerListing{}
 	}
-	slugs := make(map[string]struct{}, len(models)*2)
+	const maxInt = int(^uint(0) >> 1)
+	slugCapacity := len(models)
+	if slugCapacity > maxInt/2 {
+		slugCapacity = maxInt
+	} else {
+		slugCapacity *= 2
+	}
+	slugs := make(map[string]struct{}, slugCapacity)
 	for _, model := range models {
 		if !model.Enabled {
 			continue
