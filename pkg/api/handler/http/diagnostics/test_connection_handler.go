@@ -33,11 +33,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// HeaderDiagnosticsToken carries the short-lived, control-plane-minted JWT that
-// authorizes a diagnostics probe. RS256 tokens are verified against the issuer
-// keys distributed via config-sync; HS256 against the local SERVER_SECRET_KEY.
-const HeaderDiagnosticsToken = "X-AG-Diagnostics-Token" // #nosec G101 -- HTTP header name, not a credential
-
 // StageNotSynced reports a by-id probe whose registry has not reached this
 // data plane's config snapshot yet — a freshly created registry races the
 // config-sync push, so the caller should retry rather than treat it as broken.
@@ -71,19 +66,7 @@ func (h *TestConnectionHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
-	token := c.Get(HeaderDiagnosticsToken)
-	if token == "" {
-		return unauthorized(c)
-	}
-	claims, err := h.verifier.Verify(token)
-	if err != nil {
-		return unauthorized(c)
-	}
-	if claims.Purpose != jwt.PurposeDiagnostics {
-		return unauthorized(c)
-	}
-	// The token is bound to one gateway; a leaked one cannot probe another.
-	if claims.GatewayID == "" || claims.GatewayID != gatewayID.String() {
+	if !authorizeGateway(c, h.verifier, gatewayID) {
 		return unauthorized(c)
 	}
 
@@ -124,8 +107,4 @@ func (h *TestConnectionHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteOK(c, registryresponse.FromTestConnectionResult(result))
-}
-
-func unauthorized(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{Error: "unauthenticated"})
 }
