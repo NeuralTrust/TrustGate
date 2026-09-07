@@ -216,14 +216,14 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
   </div>
   <div class="tile-foot">{{if .NeedsReconnect}}
     <span class="badge red">Expired</span>
-    <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn secondary" type="submit">Reconnect</button></form>
   {{else if .Linked}}
     <div>{{if .AccountRef}}<span class="reg">{{.AccountRef}}</span>{{end}}
     <span class="badge green">` + badgeCheck + `Connected</span></div>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
   {{else}}
     <span></span>
-    <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Connect</a>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn secondary" type="submit">Connect</button></form>
   {{end}}</div>
 </article>{{end}}</div>
 {{if .ResumeURL}}<div class="resume">
@@ -293,12 +293,12 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 <div class="single-actions">
   {{if .NeedsReconnect}}
     <span class="badge red">Expired</span>
-    <a class="btn primary" href="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}">Reconnect {{.ServerName}}</a>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary" type="submit">Reconnect {{.ServerName}}</button></form>
   {{else if .Linked}}
     <span class="badge green">` + badgeCheck + `Connected{{if .AccountRef}} — {{.AccountRef}}{{end}}</span>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn ghost-danger" type="submit">Disconnect</button></form>
   {{else}}
-    <a class="btn primary" href="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}">Connect {{.ServerName}}</a>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary" type="submit">Connect {{.ServerName}}</button></form>
   {{end}}
   {{if .ResumeURL}}<a class="btn secondary" href="{{.ResumeURL}}">Return to your app</a>{{end}}
 </div>

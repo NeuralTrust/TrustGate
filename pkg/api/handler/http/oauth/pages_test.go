@@ -272,3 +272,22 @@ func TestDeepLinkPage_UnknownSchemeFallsBackToGenericName(t *testing.T) {
 		t.Fatalf("unknown scheme must fall back to a generic name, body:\n%s", body)
 	}
 }
+
+// The Connect / Reconnect controls submit a POST: a GET link is prefetchable
+// by browsers, and a prefetched start plus the real click leaves the IdP with
+// two pending approvals (Linear rejects the first callback with "Invalid
+// approval").
+func TestConnectPage_StartIsAPostNotALink(t *testing.T) {
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp"}},
+		}, "tk", "", nil)
+	})
+	if strings.Contains(body, `href="/oauth/connect/`) {
+		t.Fatalf("connect start must not be a GET link:\n%s", body)
+	}
+	if !strings.Contains(body, `<form method="post" action="/oauth/connect/linear?ticket=tk">`) {
+		t.Fatalf("connect start must be a POST form:\n%s", body)
+	}
+}
