@@ -75,6 +75,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
+			req := m.buildRequestContext(c, gatewayID)
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {

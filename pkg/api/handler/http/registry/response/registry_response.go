@@ -99,7 +99,10 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code         string                 `json:"code,omitempty"`
+	Code string `json:"code,omitempty"`
+	// Origin is "store" when the gateway materialised this registry from the
+	// catalog itself (self-service install, approval, consumer binding).
+	Origin       string                 `json:"origin,omitempty"`
 	Source       string                 `json:"source,omitempty"`
 	URL          string                 `json:"url,omitempty"`
 	Transport    string                 `json:"transport,omitempty"`
@@ -268,6 +271,7 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	out := &MCPTargetResponse{
 		Code:         t.Code,
+		Origin:       string(t.Origin),
 		Source:       string(t.Source),
 		URL:          maskSecretURLVariables(t),
 		Transport:    string(t.Transport),

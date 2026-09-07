@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -34,6 +35,18 @@ type ModeResolver interface {
 	Mode(ctx context.Context, gatewayID ids.GatewayID) string
 }
 
+// ModeQuery contains the explicit inputs used to resolve Store access.
+type ModeQuery struct {
+	GatewayID ids.GatewayID
+	Subject   string
+	Groups    []string
+	Fallback  string
+}
+
+type queryModeResolver interface {
+	Resolve(ctx context.Context, query ModeQuery) string
+}
+
 type modeResolver struct {
 	policies storeaccessdomain.PolicyReader
 }
@@ -46,28 +59,54 @@ func NewModeResolver(policies storeaccessdomain.PolicyReader) ModeResolver {
 
 func (r *modeResolver) Mode(ctx context.Context, gatewayID ids.GatewayID) string {
 	principal := identity.PrincipalFromContext(ctx)
-	if r != nil && r.policies != nil && principal != nil && principal.Subject != "" && !gatewayID.IsNil() {
-		policies, err := r.policies.ListPoliciesByGateway(ctx, gatewayID)
+	query := ModeQuery{GatewayID: gatewayID, Fallback: EffectiveStoreMode(ctx)}
+	if principal != nil {
+		query.Subject = principal.Subject
+		query.Groups = principal.Groups()
+	}
+	return r.Resolve(ctx, query)
+}
+
+func (r *modeResolver) Resolve(ctx context.Context, query ModeQuery) string {
+	if r != nil && r.policies != nil && strings.TrimSpace(query.Subject) != "" && !query.GatewayID.IsNil() {
+		policies, err := r.policies.ListPoliciesByGateway(ctx, query.GatewayID)
 		if err != nil {
-			// A policy read failure must not widen anyone: curated keeps grants in
-			// force and turns everything else into a request.
 			slog.WarnContext(ctx, "store: policy lookup failed; failing closed to curated",
-				slog.String("gateway_id", gatewayID.String()), slog.String("error", err.Error()))
+				slog.String("gateway_id", query.GatewayID.String()), slog.String("error", err.Error()))
 			return gatewaydomain.StoreModeCurated
 		}
-		if mode := storeaccessdomain.IndexPolicies(policies).Mode(principal.Subject, principalGroups(principal)); mode != "" {
+		if mode := storeaccessdomain.IndexPolicies(policies).Mode(strings.TrimSpace(query.Subject), query.Groups); mode != "" {
 			return mode
 		}
 	}
-	return EffectiveStoreMode(ctx)
+	return normalizeMode(query.Fallback)
 }
 
-// resolveMode is the shared fallback for services wired without a resolver.
-func resolveMode(ctx context.Context, r ModeResolver, gatewayID ids.GatewayID) string {
+// ResolveMode resolves a Store mode from explicit identity and gateway inputs.
+func ResolveMode(ctx context.Context, r ModeResolver, query ModeQuery) string {
 	if r == nil {
-		return EffectiveStoreMode(ctx)
+		return normalizeMode(query.Fallback)
 	}
-	return r.Mode(ctx, gatewayID)
+	if resolver, ok := r.(queryModeResolver); ok {
+		return resolver.Resolve(ctx, query)
+	}
+	legacy := identity.WithPrincipal(ctx, &identity.Principal{
+		Subject: query.Subject,
+		Claims: map[string]any{
+			identity.ClaimGroups:      query.Groups,
+			identity.ClaimStoreAccess: normalizeMode(query.Fallback),
+		},
+	})
+	return r.Mode(legacy, query.GatewayID)
+}
+
+func normalizeMode(mode string) string {
+	switch mode {
+	case gatewaydomain.StoreModeOpen, gatewaydomain.StoreModeNone:
+		return mode
+	default:
+		return gatewaydomain.StoreModeCurated
+	}
 }
 
 // EffectiveStoreMode is the Store access that applies to the calling principal

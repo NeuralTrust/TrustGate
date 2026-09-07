@@ -258,7 +258,7 @@ func TestServerDiscoveryResultUsesModernNormalization(t *testing.T) {
 	require.Equal(t, "private", normalized["cacheScope"])
 	serverInfo := normalized["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)
 	require.Equal(t, serverName, serverInfo["name"])
-	require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc, nil), serverInfo["version"])
+	require.Equal(t, serverVersion+"+"+appmcp.SurfaceFingerprint(rc, nil), serverInfo["version"])
 }
 
 func TestSurfaceFingerprintDistinguishesNilAndEmptyToolkit(t *testing.T) {
@@ -274,8 +274,8 @@ func TestSurfaceFingerprintDistinguishesNilAndEmptyToolkit(t *testing.T) {
 		},
 	}
 
-	nilFingerprint := surfaceFingerprint(nilToolkit, nil)
-	emptyFingerprint := surfaceFingerprint(emptyToolkit, nil)
+	nilFingerprint := appmcp.SurfaceFingerprint(nilToolkit, nil)
+	emptyFingerprint := appmcp.SurfaceFingerprint(emptyToolkit, nil)
 	require.NotEqual(t, nilFingerprint, emptyFingerprint)
 
 	nilResult, err := normalizeModernResult("server/discover", serverDiscoveryResultWith(nilToolkit, false, false, false), nilToolkit, nil, nil)

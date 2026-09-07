@@ -19,7 +19,9 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -72,15 +74,27 @@ func (m *memInstallations) ListByPrincipal(
 }
 
 func (m *memInstallations) ListByCatalogCode(
-	context.Context, ids.GatewayID, string,
+	_ context.Context, gatewayID ids.GatewayID, code string,
 ) ([]*installationdomain.Installation, error) {
-	return nil, nil
+	var out []*installationdomain.Installation
+	for _, in := range m.rows {
+		if in.GatewayID == gatewayID && in.CatalogCode == code {
+			out = append(out, in)
+		}
+	}
+	return out, nil
 }
 
 func (m *memInstallations) ListPendingByGateway(
-	context.Context, ids.GatewayID,
+	_ context.Context, gatewayID ids.GatewayID,
 ) ([]*installationdomain.Installation, error) {
-	return nil, nil
+	var out []*installationdomain.Installation
+	for _, in := range m.rows {
+		if in.GatewayID == gatewayID && in.Status == installationdomain.StatusPendingApproval {
+			out = append(out, in)
+		}
+	}
+	return out, nil
 }
 
 func (m *memInstallations) FindByID(
@@ -117,7 +131,8 @@ func (m *memInstallations) DeleteByID(
 ) error {
 	for k, in := range m.rows {
 		if in.GatewayID == g && in.PrincipalSub == sub && in.ID == id {
-			delete(m.rows, k)
+			in.Status = installationdomain.StatusRevoked
+			m.rows[k] = in
 			return nil
 		}
 	}
@@ -147,7 +162,9 @@ func dialInstallationsWithEnsurer(t *testing.T, repo installationdomain.Reposito
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gsrv := grpc.NewServer()
-	snapshotpb.RegisterStoreInstallationsServer(gsrv, NewInstallationsService(repo, ensurer, nil, discardLogger()))
+	service := NewInstallationsService(repo, ensurer, nil, discardLogger())
+	snapshotpb.RegisterStoreInstallationsServer(gsrv, service)
+	registerInstallationOperationsServer(gsrv, service)
 	go func() { _ = gsrv.Serve(lis) }()
 	t.Cleanup(gsrv.Stop)
 
@@ -247,14 +264,82 @@ func TestInstallationsClient_EnsureRegistryUnimplementedWithoutEnsurer(t *testin
 	}
 }
 
-func TestInstallationsClient_AdminQueriesUnsupported(t *testing.T) {
-	client := dialInstallations(t, newMemInstallations())
+func TestInstallationsClient_CompleteRepositoryContract(t *testing.T) {
+	repo := newMemInstallations()
+	client := dialInstallations(t, repo)
 	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
-	if _, err := client.ListByCatalogCode(context.Background(), gatewayID, "github"); !errors.Is(err, errDataPlaneAdminUnsupported) {
-		t.Fatalf("ListByCatalogCode err = %v, want errDataPlaneAdminUnsupported", err)
+	in, err := installationdomain.New(gatewayID, "alice", "github", "alice", nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
-	if _, err := client.ListPendingByGateway(context.Background(), gatewayID); !errors.Is(err, errDataPlaneAdminUnsupported) {
-		t.Fatalf("ListPendingByGateway err = %v, want errDataPlaneAdminUnsupported", err)
+	if err := client.Upsert(context.Background(), in); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	byID, err := client.FindByID(context.Background(), gatewayID, "alice", in.ID)
+	if err != nil || byID.ID != in.ID {
+		t.Fatalf("FindByID = (%+v, %v), want %s", byID, err, in.ID)
+	}
+	byPrincipalAndCode, err := client.ListByPrincipalAndCode(context.Background(), gatewayID, "alice", "github")
+	if err != nil || len(byPrincipalAndCode) != 1 {
+		t.Fatalf("ListByPrincipalAndCode = (%+v, %v), want one row", byPrincipalAndCode, err)
+	}
+	byCode, err := client.ListByCatalogCode(context.Background(), gatewayID, "github")
+	if err != nil || len(byCode) != 1 {
+		t.Fatalf("ListByCatalogCode = (%+v, %v), want one row", byCode, err)
+	}
+	in.Status = installationdomain.StatusPendingApproval
+	if err := client.Upsert(context.Background(), in); err != nil {
+		t.Fatalf("Upsert pending: %v", err)
+	}
+	pending, err := client.ListPendingByGateway(context.Background(), gatewayID)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("ListPendingByGateway = (%+v, %v), want one row", pending, err)
+	}
+	if err := client.DeleteByID(context.Background(), gatewayID, "alice", in.ID); err != nil {
+		t.Fatalf("DeleteByID: %v", err)
+	}
+	revoked, err := client.FindByID(context.Background(), gatewayID, "alice", in.ID)
+	if err != nil || revoked.Status != installationdomain.StatusRevoked {
+		t.Fatalf("FindByID after delete = (%+v, %v), want revoked", revoked, err)
+	}
+}
+
+func TestInstallationsOperationsAreRegisteredByServer(t *testing.T) {
+	cfg := config.ConfigSyncConfig{
+		GRPCListenAddr:       "127.0.0.1:0",
+		Token:                "tok",
+		GRPCKeepaliveTime:    30 * time.Second,
+		GRPCKeepaliveTimeout: 10 * time.Second,
+	}
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
+	source := &fakeSource{}
+	source.set([]byte("payload"), "v1")
+	installations := NewInstallationsService(newMemInstallations(), nil, nil, discardLogger())
+	server, err := NewServer(cfg, NewService(NewHub(discardLogger(), nil), source, discardLogger()), installations, auth, discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	go func() { _ = server.Run() }()
+	t.Cleanup(func() { _ = server.Shutdown() })
+	conn, err := grpc.NewClient(server.lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(bearerPerRPCCredentials{token: "tok"}),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := NewInstallationsClient(conn)
+	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
+	items, err := client.ListPendingByGateway(context.Background(), gatewayID)
+	if err != nil {
+		t.Fatalf("ListPendingByGateway: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("ListPendingByGateway = %+v, want empty", items)
 	}
 }
 
@@ -314,8 +399,23 @@ func TestInstallationsService_ScopedCallerCannotReachOtherTenant(t *testing.T) {
 	if _, err := svc.ListByPrincipal(scoped, &snapshotpb.ListByPrincipalRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("ListByPrincipal for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
 	}
+	if _, err := svc.FindByID(scoped, &snapshotpb.Installation{GatewayId: globex.ID.String(), PrincipalSub: "victim", Id: seed.ID.String()}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("FindByID for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.ListByPrincipalAndCode(scoped, &snapshotpb.FindInstallationRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim", CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListByPrincipalAndCode for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.ListByCatalogCode(scoped, &snapshotpb.FindInstallationRequest{GatewayId: globex.ID.String(), CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListByCatalogCode for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.ListPendingByGateway(scoped, &snapshotpb.ListByPrincipalRequest{GatewayId: globex.ID.String()}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListPendingByGateway for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
 	if _, err := svc.Delete(scoped, &snapshotpb.DeleteInstallationRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim", CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("Delete for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.DeleteByID(scoped, &snapshotpb.Installation{GatewayId: globex.ID.String(), PrincipalSub: "victim", Id: seed.ID.String()}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("DeleteByID for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
 	}
 	if _, err := svc.EnsureRegistry(scoped, &snapshotpb.EnsureRegistryRequest{GatewayId: globex.ID.String(), CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("EnsureRegistry for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))

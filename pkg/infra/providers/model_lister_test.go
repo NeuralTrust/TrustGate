@@ -16,6 +16,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -52,8 +53,13 @@ func TestParseOpenAIModelList(t *testing.T) {
 
 func TestParseOpenAIModelList_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	if _, err := ParseOpenAIModelList([]byte("not json")); !errors.Is(err, ErrModelListingFailed) {
+	_, err := ParseOpenAIModelList([]byte("not json"))
+	if !errors.Is(err, ErrModelListingFailed) {
 		t.Fatalf("error = %v, want ErrModelListingFailed", err)
+	}
+	var syntaxError *json.SyntaxError
+	if !errors.As(err, &syntaxError) {
+		t.Fatalf("error = %v, want wrapped json.SyntaxError", err)
 	}
 }
 

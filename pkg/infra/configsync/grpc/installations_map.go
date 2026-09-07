@@ -68,13 +68,21 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 	if err != nil {
 		return nil, fmt.Errorf("parse gateway id: %w", err)
 	}
-	id, err := ids.Parse[ids.InstallationKind](msg.GetId())
-	if err != nil || id.IsNil() {
+	var id ids.InstallationID
+	if msg.GetId() == "" {
 		generated, gerr := ids.NewV7[ids.InstallationKind]()
 		if gerr != nil {
 			return nil, fmt.Errorf("generate installation id: %w", gerr)
 		}
 		id = generated
+	} else {
+		id, err = ids.Parse[ids.InstallationKind](msg.GetId())
+		if err != nil {
+			return nil, fmt.Errorf("parse installation id: %w", err)
+		}
+		if id.IsNil() {
+			return nil, fmt.Errorf("parse installation id: id is nil")
+		}
 	}
 	var config map[string]string
 	if len(msg.GetConfig()) > 0 {
@@ -104,6 +112,9 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 	}
 	if ts := msg.GetUpdatedAtUnix(); ts > 0 {
 		out.UpdatedAt = time.Unix(ts, 0).UTC()
+	}
+	if err := out.Validate(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

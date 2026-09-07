@@ -69,19 +69,19 @@ func NewPolicy(gatewayID ids.GatewayID, principalType PrincipalType, principalID
 // Validate checks the policy's identity and mode.
 func (p *Policy) Validate() error {
 	if p == nil {
-		return fmt.Errorf("%w: nil policy", ErrInvalidGrant)
+		return fmt.Errorf("%w: nil policy", ErrInvalidPolicy)
 	}
 	if p.GatewayID.IsNil() {
-		return fmt.Errorf("%w: gateway id is required", ErrInvalidGrant)
+		return fmt.Errorf("%w: gateway id is required", ErrInvalidPolicy)
 	}
 	if p.PrincipalType != PrincipalUser && p.PrincipalType != PrincipalGroup {
-		return fmt.Errorf("%w: principal type must be user or group", ErrInvalidGrant)
+		return fmt.Errorf("%w: principal type must be user or group", ErrInvalidPolicy)
 	}
 	if strings.TrimSpace(p.PrincipalID) == "" {
-		return fmt.Errorf("%w: principal id is required", ErrInvalidGrant)
+		return fmt.Errorf("%w: principal id is required", ErrInvalidPolicy)
 	}
 	if !ValidMode(p.Mode) {
-		return fmt.Errorf("%w: mode must be open, curated or none", ErrInvalidGrant)
+		return fmt.Errorf("%w: mode must be open, curated or none", ErrInvalidPolicy)
 	}
 	return nil
 }

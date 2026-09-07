@@ -24,6 +24,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
@@ -162,6 +163,47 @@ func TestRoleOrderingAndScope(t *testing.T) {
 	require.Len(t, ordered, 2)
 	assert.Equal(t, r2.ID, ordered[0].ID, "created_at DESC ordering")
 	assert.Equal(t, r1.ID, ordered[1].ID)
+}
+
+func TestRegistryIndexesPreserveGatewayOrderAndCatalogScope(t *testing.T) {
+	t.Parallel()
+	gatewayA := ids.New[ids.GatewayKind]()
+	gatewayB := ids.New[ids.GatewayKind]()
+	registries := []registrydomain.Registry{
+		{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayA, MCPTarget: &registrydomain.MCPTarget{Code: "github"}},
+		{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayB, MCPTarget: &registrydomain.MCPTarget{Code: "github"}},
+		{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayA, MCPTarget: &registrydomain.MCPTarget{Code: "gitlab"}},
+		{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayA, MCPTarget: &registrydomain.MCPTarget{Code: "github"}},
+	}
+	snap := readmodel.Build(readmodel.Data{Registries: registries})
+
+	byGateway := snap.RegistriesByGateway(gatewayA)
+	require.Len(t, byGateway, 3)
+	assert.Equal(t, registries[0].ID, byGateway[0].ID)
+	assert.Equal(t, registries[2].ID, byGateway[1].ID)
+	assert.Equal(t, registries[3].ID, byGateway[2].ID)
+
+	byCode := snap.RegistriesByCatalogCode(gatewayA, "github")
+	require.Len(t, byCode, 2)
+	assert.Equal(t, registries[0].ID, byCode[0].ID)
+	assert.Equal(t, registries[3].ID, byCode[1].ID)
+	assert.Empty(t, snap.RegistriesByCatalogCode(gatewayB, "gitlab"))
+}
+
+func BenchmarkRegistriesByGateway(b *testing.B) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	registries := make([]registrydomain.Registry, 10_000)
+	for i := range registries {
+		registries[i] = registrydomain.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gatewayID}
+	}
+	snap := readmodel.Build(readmodel.Data{Registries: registries})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if len(snap.RegistriesByGateway(gatewayID)) != len(registries) {
+			b.Fatal("registry index returned an incomplete gateway")
+		}
+	}
 }
 
 func TestCatalogKeying(t *testing.T) {

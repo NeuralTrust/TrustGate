@@ -34,19 +34,31 @@ type APIKeyConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey string) (string, error)
 }
 
+type APIKeyTicketIssuer interface {
+	CreateAPIKeyTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub,
+		consumerPath string,
+		consumerID ids.ConsumerID,
+		authID ids.AuthID,
+		providers []string,
+	) (string, error)
+}
+
 var _ APIKeyConnectService = (*apiKeyConnectService)(nil)
 
 type apiKeyConnectService struct {
 	apiKeyFinder   appauth.APIKeyFinder
 	dataFinder     appconsumer.DataFinder
-	connectService ConnectService
+	connectService APIKeyTicketIssuer
 	limiter        ConnectAttemptLimiter
 }
 
 func NewAPIKeyConnectService(
 	apiKeyFinder appauth.APIKeyFinder,
 	dataFinder appconsumer.DataFinder,
-	connectService ConnectService,
+	connectService APIKeyTicketIssuer,
 	limiter ConnectAttemptLimiter,
 ) APIKeyConnectService {
 	return &apiKeyConnectService{

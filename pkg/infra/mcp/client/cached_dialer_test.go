@@ -22,8 +22,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -247,47 +249,95 @@ func TestCachedDialer_NoPinKeyOwnsIndependentSessions(t *testing.T) {
 	}
 }
 
-func TestCachedDialer_ConcurrentColdConnectUsesOneSession(t *testing.T) {
+func TestCachedDialer_ConcurrentColdConnectsShareOneSession(t *testing.T) {
 	t.Parallel()
-
-	var initializes atomic.Int64
+	const callers = 16
 	started := make(chan struct{})
 	release := make(chan struct{})
-
+	var once sync.Once
+	var inits atomic.Int64
 	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
 	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
 		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
 			if method == "initialize" {
-				if initializes.Add(1) == 1 {
-					close(started)
-				}
+				inits.Add(1)
+				once.Do(func() { close(started) })
 				<-release
 			}
 			return next(ctx, method, req)
 		}
 	})
-	inner := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
-	srv := httptest.NewServer(inner)
-	defer srv.Close()
-
+	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
+	t.Cleanup(srv.Close)
 	dialer := newCachedDialer()
-	results := make(chan error, 2)
-	for range 2 {
+	errs := make(chan error, callers)
+	for range callers {
 		go func() {
-			_, err := dialer.Connect(context.Background(),
-				appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
-			results <- err
+			_, err := dialer.Connect(context.Background(), appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
+			errs <- err
 		}()
 	}
-	<-started
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("shared connection did not start")
+	}
 	close(release)
-	for range 2 {
-		if err := <-results; err != nil {
+	for range callers {
+		err := <-errs
+		if err != nil {
 			t.Fatalf("connect: %v", err)
 		}
 	}
-	if got := initializes.Load(); got != 1 {
-		t.Fatalf("initializes = %d, want 1", got)
+	if got := inits.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want one", got)
+	}
+}
+
+func TestCachedDialer_CancelledLeaderDoesNotCancelFollower(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	var inits atomic.Int64
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				inits.Add(1)
+				once.Do(func() { close(started) })
+				<-release
+			}
+			return next(ctx, method, req)
+		}
+	})
+	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
+	t.Cleanup(srv.Close)
+	dialer := newCachedDialer()
+	target := appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"}
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(leaderCtx, target)
+		leaderDone <- err
+	}()
+	<-started
+	followerDone := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), target)
+		followerDone <- err
+	}()
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader error = %v, want context.Canceled", err)
+	}
+	close(release)
+	if err := <-followerDone; err != nil {
+		t.Fatalf("follower connect: %v", err)
+	}
+	if got := inits.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want one", got)
 	}
 }
 

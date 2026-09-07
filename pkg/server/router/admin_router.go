@@ -131,6 +131,10 @@ type AdminRouterDeps struct {
 	StorePolicies *storehttp.PoliciesHandler
 	// StorePrincipal serves the Portal's admin preview of one user's Store state.
 	StorePrincipal *storehttp.PrincipalHandler
+	// StoreMaterialize puts a self-service catalog server on the shelf on an
+	// admin's request (POST registries/from-catalog). Present only on the full
+	// plane; nil-guarded when absent.
+	StoreMaterialize *storehttp.MaterializeHandler
 }
 
 type adminRouter struct {
@@ -181,6 +185,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
+	if r.deps.StoreMaterialize != nil {
+		registries.Post("/from-catalog", r.deps.StoreMaterialize.Handle)
+	}
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
@@ -228,6 +235,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
+			store.Get("/requests/history", r.deps.StoreRequests.History)
 			store.Post("/requests/approve", r.deps.StoreRequests.Approve)
 			store.Post("/requests/deny", r.deps.StoreRequests.Deny)
 		}
@@ -241,6 +249,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		}
 		if r.deps.StorePrincipal != nil {
 			store.Get("/principal", r.deps.StorePrincipal.Get)
+			store.Post("/principal/installs", r.deps.StorePrincipal.Install)
 		}
 	}
 

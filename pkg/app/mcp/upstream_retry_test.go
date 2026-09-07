@@ -53,6 +53,15 @@ func (u *rejectingToolUpstream) CallTool(context.Context, ToolCall) (json.RawMes
 	return nil, ErrUpstreamUnauthorized
 }
 
+type closeAwareUpstream struct {
+	*fakeUpstream
+	closed chan error
+}
+
+func (u *closeAwareUpstream) Close(ctx context.Context) {
+	u.closed <- ctx.Err()
+}
+
 func (c *reactiveCreds) Apply(
 	_ context.Context,
 	_ *appconsumer.RoutableConsumer,
@@ -165,5 +174,47 @@ func TestInvokeUpstream_DoesNotReplayUnsafeInvocation(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("calls = %d, want 1", got)
+	}
+}
+
+func TestInvokeUpstream_DoesNotRefreshAfterCancellation(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "slack", "https://mcp.slack.test/mcp")
+	creds := &reactiveCreds{}
+	c := &composer{
+		creds: creds,
+		dialer: DialerFunc(func(context.Context, Target) (Upstream, error) {
+			return &fakeUpstream{}, nil
+		}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, err := invokeUpstream(c, ctx, nil, reg, upstreamReplaySafe, func(Upstream) ([]Tool, error) {
+		cancel()
+		return nil, ErrUpstreamUnauthorized
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if got := creds.refreshes.Load(); got != 0 {
+		t.Fatalf("refreshes = %d, want zero", got)
+	}
+}
+
+func TestInvokeTargetClosesWithLiveBoundedContext(t *testing.T) {
+	t.Parallel()
+	up := &closeAwareUpstream{fakeUpstream: &fakeUpstream{}, closed: make(chan error, 1)}
+	c := &composer{dialer: DialerFunc(func(context.Context, Target) (Upstream, error) { return up, nil })}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, _, err := invokeTarget(c, ctx, Target{}, func(Upstream) ([]Tool, error) {
+		cancel()
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("invokeTarget: %v", err)
+	}
+	if closeErr := <-up.closed; closeErr != nil {
+		t.Fatalf("close context was canceled: %v", closeErr)
 	}
 }

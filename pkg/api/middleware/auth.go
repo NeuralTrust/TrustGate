@@ -25,6 +25,7 @@ import (
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -98,21 +99,19 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 			roleIDs, err := m.roleResolver.ResolveOIDCRoles(c.UserContext(), data.Roles, authCtx.Claims)
 			if err != nil {
 				m.debug(c).Debug("idp role resolution error",
-					slog.String("subject", authCtx.Subject),
+					slog.String("principal_ref", logref.Opaque(authCtx.Subject)),
 					slog.String("error", err.Error()))
 				return invalidAuthRequest(c, err)
 			}
 			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
 			m.debug(c).Debug("idp roles resolved",
-				slog.String("subject", authCtx.Subject),
+				slog.String("principal_ref", logref.Opaque(authCtx.Subject)),
 				slog.Int("gateway_roles_resolved", len(roleIDs)),
 				slog.Int("consumer_roles_assigned", len(rc.Consumer.RoleIDs)),
-				slog.Int("effective_roles", len(authCtx.RoleIDs)),
-				slog.Any("roles_claim", authCtx.Claims["roles"]),
-				slog.Any("groups_claim", authCtx.Claims["groups"]))
+				slog.Int("effective_roles", len(authCtx.RoleIDs)))
 			if len(authCtx.RoleIDs) == 0 {
 				m.debug(c).Debug("oidc authorization denied: no matching role between token claims and consumer assignment",
-					slog.String("subject", authCtx.Subject))
+					slog.String("principal_ref", logref.Opaque(authCtx.Subject)))
 				return forbidden(c, resolver.ErrForbidden)
 			}
 		}

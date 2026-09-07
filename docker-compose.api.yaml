@@ -1,15 +1,16 @@
 name: agentgateway
 
-# Runs the AgentGateway proxy and admin servers as containers.
-# Meant to be combined with docker-compose.yaml (postgres/redis/kafka):
-#   docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+# Runs the TrustGate admin, proxy and MCP servers as containers.
+# Meant to be combined with docker-compose.yaml (postgres/redis):
+#   docker compose -f docker-compose.yaml -f docker-compose.api.yaml build admin
+#   docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d
 # Both files share the same project name, so these services join the same
 # network and can reach the backing services by hostname.
 
 x-server-common: &server-common
   image: agentgateway:local
-  # confluent-kafka-go v1.9.2 only bundles an amd64 librdkafka, so the image
-  # must be built/run as linux/amd64 (emulated on Apple Silicon).
+  # confluent-kafka-go v1.9.2 vendors librdkafka_glibc_linux.a for amd64 only,
+  # so an arm64 build fails at link time and the image must run as linux/amd64.
   platform: linux/amd64
   build:
     context: .

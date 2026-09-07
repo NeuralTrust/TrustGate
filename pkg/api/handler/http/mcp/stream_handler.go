@@ -79,17 +79,14 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 		return err
 	}
 	principal := identity.PrincipalFromContext(c.UserContext())
+	streamCtx := c.UserContext()
 	snapshot := func() string {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(streamCtx, 5*time.Second)
 		defer cancel()
-		// Watch both the caller's connected accounts and their Store installations,
-		// so connecting an account and installing a server each push a refresh.
-		// connectionWatchSnapshot (not connectionSnapshot) is used deliberately: it
-		// does not filter by the frozen consumer's forwarded providers, so a server
-		// installed after the stream opened still pushes a refresh when connected.
-		parts := h.connectionWatchSnapshot(ctx, rc, principal)
-		parts = append(parts, h.installSnapshot(ctx, rc, principal)...)
-		return strings.Join(parts, "|")
+		if h.surface == nil {
+			return ""
+		}
+		return h.surface.WatchSnapshot(ctx, rc, principal)
 	}
 
 	c.Set(fiber.HeaderContentType, eventStreamContentType)

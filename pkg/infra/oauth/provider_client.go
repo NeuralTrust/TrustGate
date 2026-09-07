@@ -209,7 +209,20 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 	}
 	if res.StatusCode != http.StatusOK || doc.Error != "" || doc.AccessToken == "" {
 		if grantIsInvalid(doc.Error) {
-			return nil, appoauth.ErrInvalidGrant
+			description := doc.ErrorDesc
+			secrets := []string{basicUser, basicPass, doc.AccessToken, doc.RefreshToken, doc.IDToken}
+			for _, values := range form {
+				secrets = append(secrets, values...)
+			}
+			for _, secret := range secrets {
+				if secret != "" {
+					description = strings.ReplaceAll(description, secret, "[redacted]")
+				}
+			}
+			if len(description) > 512 {
+				description = description[:512]
+			}
+			return nil, &appoauth.InvalidGrantError{Code: doc.Error, Description: description}
 		}
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
 	}

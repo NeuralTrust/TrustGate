@@ -16,55 +16,33 @@ package store
 
 import (
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
+	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
+	"strings"
 )
 
-// PrincipalHandler serves the admin preview of one principal's Store state —
-// what the Portal shows that user: their installs and requests, and which
-// company sources they have linked their own account to.
 type PrincipalHandler struct {
-	preview appstore.PrincipalPreview
+	preview   appstore.PrincipalPreview
+	installer appstore.PrincipalInstaller
 }
 
-func NewPrincipalHandler(preview appstore.PrincipalPreview) *PrincipalHandler {
-	return &PrincipalHandler{preview: preview}
+func NewPrincipalHandler(preview appstore.PrincipalPreview, installer appstore.PrincipalInstaller) *PrincipalHandler {
+	return &PrincipalHandler{preview: preview, installer: installer}
 }
 
-type principalInstallResponse struct {
-	InstanceID  string    `json:"instance_id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	RegistryID  string    `json:"registry_id,omitempty"`
-	Registry    string    `json:"registry,omitempty"`
-	Status      string    `json:"status"`
-	InstalledBy string    `json:"installed_by,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// principalConnectionResponse never carries token material: only whether the
-// principal linked an account for the source and whether it needs a reconnect.
-type principalConnectionResponse struct {
-	Provider       string     `json:"provider"`
-	Code           string     `json:"code,omitempty"`
-	RegistryID     string     `json:"registry_id"`
-	Registry       string     `json:"registry"`
-	Linked         bool       `json:"linked"`
-	AccountRef     string     `json:"account_ref,omitempty"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
-	NeedsReconnect bool       `json:"needs_reconnect"`
-}
-
-type principalResponse struct {
-	PrincipalSub string                        `json:"principal_sub"`
-	Installs     []principalInstallResponse    `json:"installs"`
-	Connections  []principalConnectionResponse `json:"connections"`
+func validateInstall(r storerequest.Install) error {
+	if strings.TrimSpace(r.PrincipalSub) == "" {
+		return fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation)
+	}
+	if strings.TrimSpace(r.Code) == "" {
+		return fmt.Errorf("code is required: %w", commonerrors.ErrValidation)
+	}
+	return nil
 }
 
 // Get godoc
@@ -75,7 +53,7 @@ type principalResponse struct {
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
 // @Param        sub         query     string  true  "Principal subject (the user id the gateway sees)"
-// @Success      200         {object}  principalResponse
+// @Success      200         {object}  storeresponse.Principal
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      422         {object}  httpio.ErrorBody
@@ -93,13 +71,13 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := principalResponse{
+	out := storeresponse.Principal{
 		PrincipalSub: state.PrincipalSub,
-		Installs:     make([]principalInstallResponse, 0, len(state.Installs)),
-		Connections:  make([]principalConnectionResponse, 0, len(state.Connections)),
+		Installs:     make([]storeresponse.PrincipalInstall, 0, len(state.Installs)),
+		Connections:  make([]storeresponse.PrincipalConnection, 0, len(state.Connections)),
 	}
 	for _, in := range state.Installs {
-		row := principalInstallResponse{
+		row := storeresponse.PrincipalInstall{
 			InstanceID:  in.InstanceID.String(),
 			Code:        in.Code,
 			Name:        in.Name,
@@ -115,7 +93,7 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 		out.Installs = append(out.Installs, row)
 	}
 	for _, conn := range state.Connections {
-		row := principalConnectionResponse{
+		row := storeresponse.PrincipalConnection{
 			Provider:       conn.Provider,
 			Code:           conn.Code,
 			RegistryID:     conn.RegistryID.String(),
@@ -129,6 +107,73 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 			row.ExpiresAt = &exp
 		}
 		out.Connections = append(out.Connections, row)
+	}
+	return httpio.WriteOK(c, out)
+}
+
+// Install godoc
+// @Summary      Install or request a Store server for a principal
+// @Description  Runs the Store installer as the given user (their live access level applies): installs at once when allowed, records an approval request otherwise. Same outcome the user's own client would get.
+// @Tags         store
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string          true  "Gateway id"  format(uuid)
+// @Param        body        body      storerequest.Install  true  "Who and what"
+// @Success      200         {object}  storeresponse.Install
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "The principal's access level is None"
+// @Failure      422         {object}  httpio.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/store/principal/installs [post]
+func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
+	if h.installer == nil {
+		return httpio.WriteError(c, fmt.Errorf("store installer: %w", commonerrors.ErrNotFound))
+	}
+	gatewayID, err := httpio.ParseGatewayID(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	var req storerequest.Install
+	if err := c.BodyParser(&req); err != nil {
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	}
+	if err := validateInstall(req); err != nil {
+		return httpio.WriteError(c, err)
+	}
+	var registryID ids.RegistryID
+	if raw := strings.TrimSpace(req.InstanceID); raw != "" {
+		parsed, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid instance_id: %w", commonerrors.ErrValidation))
+		}
+		registryID = parsed
+	}
+	res, err := h.installer.InstallFor(c.UserContext(), appstore.OnBehalfInstallRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: req.PrincipalSub,
+		Code:         req.Code,
+		Groups:       req.Groups,
+		RegistryID:   registryID,
+		Actor:        callerActor(c),
+	})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	out := storeresponse.Install{
+		Code:                   res.Code,
+		Name:                   res.Name,
+		Status:                 string(res.Status),
+		InstanceID:             res.InstanceID,
+		Pending:                res.Pending,
+		AlreadyInstalled:       res.AlreadyInstalled,
+		RequiresAuth:           res.RequiresAuth,
+		RequiresConfig:         res.RequiresConfig,
+		RequiresAdminSetup:     res.RequiresAdminSetup,
+		RequiresInstanceChoice: res.RequiresInstanceChoice,
+	}
+	for _, choice := range res.InstanceChoices {
+		out.InstanceChoices = append(out.InstanceChoices, storeresponse.InstanceChoice{RegistryID: choice.RegistryID.String(), Name: choice.Name})
 	}
 	return httpio.WriteOK(c, out)
 }
