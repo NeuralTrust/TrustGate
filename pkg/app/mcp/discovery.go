@@ -247,7 +247,7 @@ func askUpstream[T any](
 	reg *registrydomain.Registry,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
-	return invokeUpstream(c, ctx, rc, reg, func(up Upstream) ([]T, error) {
+	return invokeUpstream(c, ctx, rc, reg, upstreamReplaySafe, func(up Upstream) ([]T, error) {
 		return list(ctx, up)
 	})
 }

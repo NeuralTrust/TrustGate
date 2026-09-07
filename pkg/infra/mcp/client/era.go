@@ -21,6 +21,7 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -92,22 +93,34 @@ func newEraCoordinator(probe protocolProbe, timeout time.Duration) *eraCoordinat
 	}
 }
 
+func eraCacheKey(target appmcp.Target, origin string) string {
+	mode := target.ProtocolMode
+	if mode == "" {
+		mode = registrydomain.MCPProtocolModeAuto
+	}
+	fingerprint, err := canonicalURLFingerprint(origin, target.URL)
+	if err != nil {
+		fingerprint = "-"
+	}
+	return origin + "\x00" + fingerprint + "\x00" + string(mode)
+}
+
 func (c *eraCoordinator) resolve(
 	ctx context.Context,
 	target appmcp.Target,
-	origin string,
+	key string,
 ) (eraResolution, error) {
-	if entry, ok := c.lookup(origin); ok {
+	if entry, ok := c.lookup(key); ok {
 		return resolutionForEntry(entry, decisionCache)
 	}
 	target = cloneTarget(target)
 	credential := credentialFingerprint(target.Headers)
-	resultChannel := c.flight.DoChan(origin, func() (any, error) {
-		if entry, ok := c.lookup(origin); ok {
+	resultChannel := c.flight.DoChan(key, func() (any, error) {
+		if entry, ok := c.lookup(key); ok {
 			return probeWorkResult{entry: entry, cached: true}, nil
 		}
 		result := c.runProbe(ctx, target, credential)
-		return c.publishClassifiable(ctx, target, origin, result), nil
+		return c.publishClassifiable(ctx, target, key, result), nil
 	})
 	if c.originJoined != nil {
 		c.originJoined()
@@ -137,7 +150,7 @@ func (c *eraCoordinator) resolve(
 	}
 	if probeResultRequiresCredentialRetry(result) && result.credential != credential {
 		var err error
-		result, err = c.retryProbe(ctx, target, origin, credential)
+		result, err = c.retryProbe(ctx, target, key, credential)
 		if err != nil {
 			return eraResolution{source: decisionProbe}, err
 		}
@@ -148,28 +161,28 @@ func (c *eraCoordinator) resolve(
 			return resolutionForEntry(result.entry, decisionProbe)
 		}
 	}
-	if entry, ok := c.lookup(origin); ok {
+	if entry, ok := c.lookup(key); ok {
 		return resolutionForEntry(entry, decisionCache)
 	}
-	return c.publishProbeResult(origin, result, decisionProbe)
+	return c.publishProbeResult(key, result, decisionProbe)
 }
 
 func (c *eraCoordinator) retryProbe(
 	ctx context.Context,
 	target appmcp.Target,
-	origin string,
+	key string,
 	credential string,
 ) (probeWorkResult, error) {
-	key := origin + "\x00" + credential
-	resultChannel := c.retryFlight.DoChan(key, func() (any, error) {
-		if entry, ok := c.lookup(origin); ok {
+	flightKey := key + "\x00" + credential
+	resultChannel := c.retryFlight.DoChan(flightKey, func() (any, error) {
+		if entry, ok := c.lookup(key); ok {
 			return probeWorkResult{entry: entry, cached: true}, nil
 		}
 		result := c.runProbe(ctx, target, credential)
-		if entry, ok := c.lookup(origin); ok {
+		if entry, ok := c.lookup(key); ok {
 			return probeWorkResult{entry: entry, cached: true}, nil
 		}
-		return c.publishClassifiable(ctx, target, origin, result), nil
+		return c.publishClassifiable(ctx, target, key, result), nil
 	})
 	if c.retryJoined != nil {
 		c.retryJoined()
@@ -210,36 +223,32 @@ func (c *eraCoordinator) runProbe(
 func (c *eraCoordinator) publishClassifiable(
 	ctx context.Context,
 	target appmcp.Target,
-	origin string,
+	key string,
 	result probeWorkResult,
 ) probeWorkResult {
 	switch result.outcome.kind {
 	case probeModern:
-		result.entry = c.storeInitial(origin, eraEntry{
+		result.entry = c.storeInitial(key, eraEntry{
 			era:         eraModern,
 			version:     result.outcome.version,
 			listChanged: result.outcome.capabilities,
 		})
 		result.published = true
 	case probeModernIncompatible:
-		result.entry = c.storeInitial(origin, eraEntry{era: eraModernIncompatible})
+		result.entry = c.storeInitial(key, eraEntry{era: eraModernIncompatible})
 		result.published = true
 	case probeLegacyCandidate:
 		if result.err == nil {
-			result = c.confirmLegacyCandidate(ctx, target, origin, result)
+			result = c.confirmLegacyCandidate(ctx, target, key, result)
 		}
 	}
 	return result
 }
 
-// confirmLegacyCandidate settles a legacy candidate inside the probe flight so a
-// cold-start stampede on one origin costs a single strict probe. The era is still
-// only cached once a legacy handshake succeeds, so a rejected strict probe alone
-// never pins an origin to legacy.
 func (c *eraCoordinator) confirmLegacyCandidate(
 	ctx context.Context,
 	target appmcp.Target,
-	origin string,
+	key string,
 	result probeWorkResult,
 ) probeWorkResult {
 	if c.confirmLegacy == nil {
@@ -251,7 +260,7 @@ func (c *eraCoordinator) confirmLegacyCandidate(
 		result.err = err
 		return result
 	}
-	result.entry = c.storeInitial(origin, eraEntry{era: eraLegacy})
+	result.entry = c.storeInitial(key, eraEntry{era: eraLegacy})
 	result.published = true
 	return result
 }
@@ -285,48 +294,48 @@ func (c *eraCoordinator) publishProbeResult(
 	}
 }
 
-func (c *eraCoordinator) commitLegacy(origin string) eraEntry {
-	return c.storeInitial(origin, eraEntry{era: eraLegacy})
+func (c *eraCoordinator) commitLegacy(key string) eraEntry {
+	return c.storeInitial(key, eraEntry{era: eraLegacy})
 }
 
-func (c *eraCoordinator) storeInitial(origin string, candidate eraEntry) eraEntry {
+func (c *eraCoordinator) storeInitial(key string, candidate eraEntry) eraEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if current, ok := c.entries[origin]; ok {
+	if current, ok := c.entries[key]; ok {
 		return current
 	}
 	c.generation++
 	candidate.generation = c.generation
-	c.entries[origin] = candidate
+	c.entries[key] = candidate
 	return candidate
 }
 
-func (c *eraCoordinator) correct(origin string, observed, candidate eraEntry) (eraEntry, bool) {
+func (c *eraCoordinator) correct(key string, observed, candidate eraEntry) (eraEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	current, ok := c.entries[origin]
+	current, ok := c.entries[key]
 	if !ok || current.generation != observed.generation || current.corrected {
 		return current, false
 	}
 	c.generation++
 	candidate.generation = c.generation
 	candidate.corrected = true
-	c.entries[origin] = candidate
+	c.entries[key] = candidate
 	return candidate, true
 }
 
-func (c *eraCoordinator) lookup(origin string) (eraEntry, bool) {
+func (c *eraCoordinator) lookup(key string) (eraEntry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	entry, ok := c.entries[origin]
+	entry, ok := c.entries[key]
 	return entry, ok
 }
 
 func (c *eraCoordinator) lookupSubscription(
-	origin string,
+	key string,
 	listChanged appmcp.ListChangedCapabilities,
 ) (eraEntry, bool) {
-	entry, ok := c.lookup(origin)
+	entry, ok := c.lookup(key)
 	if !ok || entry.era != eraModern || entry.version != modernProtocolVersion {
 		return eraEntry{}, false
 	}

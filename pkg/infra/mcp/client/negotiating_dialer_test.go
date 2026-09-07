@@ -280,6 +280,53 @@ func TestNegotiatingDialerAutoModernCacheMissAndHit(t *testing.T) {
 	}
 }
 
+func TestNegotiatingDialerSeparatesEraByEndpointPath(t *testing.T) {
+	t.Parallel()
+
+	var probes atomic.Int64
+	var legacyCalls atomic.Int64
+	var modernCalls atomic.Int64
+	coordinator := newEraCoordinator(probeFunc(func(_ context.Context, target appmcp.Target) (probeOutcome, error) {
+		probes.Add(1)
+		if strings.HasSuffix(target.URL, "/legacy") {
+			return probeOutcome{kind: probeLegacyCandidate}, nil
+		}
+		return probeOutcome{kind: probeModern, version: modernProtocolVersion}, nil
+	}), time.Second)
+	dialer := newNegotiatingDialer(
+		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
+			legacyCalls.Add(1)
+			return &upstreamStub{}, nil
+		}),
+		coordinator,
+		func(appmcp.Target, string) (appmcp.Upstream, error) {
+			modernCalls.Add(1)
+			return &upstreamStub{}, nil
+		},
+		slog.New(slog.DiscardHandler),
+	)
+
+	for _, path := range []string{"/modern", "/legacy", "/modern", "/legacy"} {
+		upstream, err := dialer.Connect(context.Background(), appmcp.Target{
+			URL:          "https://example.com" + path,
+			ProtocolMode: registrydomain.MCPProtocolModeAuto,
+		})
+		if err != nil {
+			t.Fatalf("connect %s: %v", path, err)
+		}
+		upstream.Close(context.Background())
+	}
+	if got := probes.Load(); got != 2 {
+		t.Fatalf("probes = %d, want one per endpoint path", got)
+	}
+	if got := modernCalls.Load(); got != 2 {
+		t.Fatalf("modern connects = %d, want 2", got)
+	}
+	if got := legacyCalls.Load(); got != 3 {
+		t.Fatalf("legacy connects = %d, want one confirmation and two connections", got)
+	}
+}
+
 func TestNegotiatingDialerConcurrentFirstRequestsUseOneProbe(t *testing.T) {
 	t.Parallel()
 
@@ -763,7 +810,7 @@ func TestNegotiatingDialerRetriesInconclusiveContradictionByCredential(t *testin
 		}
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	var legacyCalls atomic.Int64
 	var legacyCloses atomic.Int64
 	dialer := newNegotiatingDialer(
@@ -871,7 +918,7 @@ func TestNegotiatingDialerSeparatesInconclusiveCredentialGroups(t *testing.T) {
 		return probeOutcome{}, appmcp.ErrUnreachable
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return nil, errors.New("legacy must not be attempted")
@@ -926,7 +973,7 @@ func TestNegotiatingDialerContradictionWaiterCancellationIsIndependent(t *testin
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return &upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
@@ -983,7 +1030,7 @@ func TestGuardedUpstreamCanceledReconcileLaterAdoptsDetachedCorrection(t *testin
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	var legacyCalls atomic.Int64
 	var oldCloses atomic.Int64
 	var ownerCloses atomic.Int64
@@ -1066,7 +1113,8 @@ func TestGuardedUpstreamDiscardsStaleConfirmationErrorAfterCorrection(t *testing
 		return probeOutcome{}, appmcp.ErrUnreachable
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	eraKey := eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin)
+	entry := coordinator.storeInitial(eraKey, eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return &upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
@@ -1104,7 +1152,7 @@ func TestGuardedUpstreamDiscardsStaleConfirmationErrorAfterCorrection(t *testing
 		}{tools: tools, err: err}
 	}()
 	<-confirmationReturned
-	if _, won := coordinator.correct(origin, entry, eraEntry{era: eraLegacy}); !won {
+	if _, won := coordinator.correct(eraKey, entry, eraEntry{era: eraLegacy}); !won {
 		t.Fatal("external correction did not win")
 	}
 	close(releaseReconcile)
@@ -1129,7 +1177,7 @@ func TestGuardedUpstreamTransientConfirmationFailureDoesNotConsumeReconcile(t *t
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return &upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
@@ -1176,7 +1224,7 @@ func TestNegotiatingDialerConfirmationDropsCompletedKeys(t *testing.T) {
 		return probeOutcome{}, appmcp.ErrUnreachable
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return nil, errors.New("legacy must not be attempted")
@@ -1240,10 +1288,11 @@ func TestNegotiatingDialerHandlesManyConfirmationGenerations(t *testing.T) {
 	errs := make(chan error, generations)
 	for index := range generations {
 		origin := "https://example-" + strconv.Itoa(index) + ".com:443"
-		entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+		rawURL := "https://example-" + strconv.Itoa(index) + ".com/mcp"
+		entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: rawURL}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 		guarded := newGuardedUpstream(
 			dialer,
-			appmcp.Target{URL: "https://example-" + strconv.Itoa(index) + ".com/mcp"},
+			appmcp.Target{URL: rawURL},
 			origin,
 			entry,
 			&upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
@@ -1289,7 +1338,7 @@ func TestGuardedUpstreamConcurrentCloseAndContradictionContenders(t *testing.T) 
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	var oldCloses atomic.Int64
 	var legacyCalls atomic.Int64
 	var legacyCloses atomic.Int64
@@ -1391,7 +1440,7 @@ func TestGuardedUpstreamConcurrentCloseWhileConfirmationBlocked(t *testing.T) {
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			call := legacyCalls.Add(1)
@@ -1483,7 +1532,7 @@ func TestGuardedUpstreamConcurrentMutationNeverRetries(t *testing.T) {
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	var replacementCalls atomic.Int64
 	var oldCalls atomic.Int64
 	allOldCallsStarted := make(chan struct{})
@@ -1694,7 +1743,7 @@ func TestNegotiatingDialerContradictionTelemetry(t *testing.T) {
 				return tt.outcome, tt.probeErr
 			}), time.Second)
 			origin := "https://example.com:443"
-			entry := coordinator.storeInitial(origin, tt.observed)
+			entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), tt.observed)
 			dialer := newNegotiatingDialer(
 				legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 					return &upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
@@ -1741,7 +1790,7 @@ func TestNegotiatingDialerLogsSubsequentContradictionAfterReconcile(t *testing.T
 		return probeOutcome{kind: probeLegacyCandidate}, nil
 	}), time.Second)
 	origin := "https://example.com:443"
-	entry := coordinator.storeInitial(origin, eraEntry{era: eraModern, version: modernProtocolVersion})
+	entry := coordinator.storeInitial(eraCacheKey(appmcp.Target{URL: "https://example.com/mcp"}, origin), eraEntry{era: eraModern, version: modernProtocolVersion})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
 			return &upstreamStub{listTools: func(context.Context) ([]appmcp.Tool, error) {
