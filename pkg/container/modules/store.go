@@ -23,6 +23,7 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	installationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/installation"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -99,7 +100,30 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(provideStoreRequestsHandler)
+	if err := c.Provide(provideStoreRequestsHandler); err != nil {
+		return err
+	}
+	return c.Provide(provideStorePrincipalHandler)
+}
+
+type storePrincipalParams struct {
+	dig.In
+	Catalog    appcatalog.MCPServerCatalog
+	Registries registrydomain.Repository
+	Installs   installationdomain.Repository
+	// Vault tells whether the principal linked their own account to a
+	// forwarded-auth source; absent on planes without a credential store.
+	Vault vaultdomain.Repository `optional:"true"`
+}
+
+// provideStorePrincipalHandler serves the Portal's admin preview of one user's
+// Store state (installs, requests, linked accounts — never token material).
+func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalHandler, error) {
+	preview, err := appstore.NewPrincipalPreview(p.Installs, p.Registries, p.Catalog, p.Vault)
+	if err != nil {
+		return nil, err
+	}
+	return storehttp.NewPrincipalHandler(preview), nil
 }
 
 type storeApprovalParams struct {
