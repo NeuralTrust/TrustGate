@@ -40,6 +40,7 @@ type CreateInput struct {
 	RegistryWeights map[ids.RegistryID]int
 	ModelPolicies   domain.ModelPolicies
 	MCP             *domain.MCPPolicy
+	Identity        *domain.Identity
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -91,6 +92,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		RegistryWeights: in.RegistryWeights,
 		ModelPolicies:   in.ModelPolicies,
 		MCP:             in.MCP,
+		Identity:        in.Identity,
 	})
 	if err != nil {
 		return nil, err

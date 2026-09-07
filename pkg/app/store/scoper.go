@@ -36,9 +36,11 @@ type InstallLister interface {
 	ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*installationdomain.Installation, error)
 }
 
-// Scoper builds the per-principal surface of the MCP Store: the shared
-// registries the calling principal has actively installed. It leaves any other
-// (real) consumer untouched.
+// Scoper builds the per-principal surface of a consumer that acts for platform
+// users: for the MCP Store, the shared registries the calling principal has
+// actively installed; for a custom acts-for-users consumer, the subset of its
+// own registries that Access lets the principal reach. Consumers that act as
+// the application itself are left untouched.
 //
 //go:generate mockery --name=Scoper --dir=. --output=./mocks --filename=store_scoper_mock.go --case=underscore --with-expecter
 type Scoper interface {
@@ -82,11 +84,17 @@ func (s *scoper) Scope(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 ) (*appconsumer.RoutableConsumer, error) {
-	if rc == nil || rc.Consumer == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
+	if rc == nil || rc.Consumer == nil {
 		return rc, nil
 	}
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || principal.Subject == "" {
+		return rc, nil
+	}
+	if !consumerdomain.IsStoreConsumer(rc.Consumer) {
+		if rc.Consumer.Identity.PlatformUsers() {
+			return s.scopeConsumerRegistries(ctx, rc, principal)
+		}
 		return rc, nil
 	}
 
@@ -282,4 +290,54 @@ func instanceName(shelf *registrydomain.Registry, label string) string {
 		return label
 	}
 	return base + " (" + label + ")"
+}
+
+// scopeConsumerRegistries applies Access to a custom consumer that acts for
+// platform users: the same live mode resolution the Store uses (the principal's
+// own policy, else the most permissive of their groups', else the gateway
+// default), then the consumer's own registries filtered by it. Under All every
+// registry stands; under Selected only those a grant names for the principal
+// (by catalog code or by instance); under None the surface is empty. The
+// consumer's servers are chosen by the admin, so this never adds a registry —
+// it only narrows the set per person. A hand-configured server that carries no
+// catalog code is outside Access (grants key on the code), so it stays exposed
+// under Selected exactly as the admin bound it.
+func (s *scoper) scopeConsumerRegistries(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) (*appconsumer.RoutableConsumer, error) {
+	gatewayID := rc.Consumer.GatewayID
+	groups := principal.Groups()
+	mode := ResolveMode(ctx, s.modes, ModeQuery{
+		GatewayID: gatewayID,
+		Subject:   principal.Subject,
+		Groups:    groups,
+		Fallback:  EffectiveStoreMode(ctx),
+	})
+	if mode == gatewaydomain.StoreModeOpen {
+		return rc, nil
+	}
+	scoped := *rc
+	scoped.Registries = []*registrydomain.Registry{}
+	if mode == gatewaydomain.StoreModeNone {
+		return &scoped, nil
+	}
+	grants, err := loadGrantSet(ctx, s.grants, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("consumer scoper: %w", err)
+	}
+	for _, reg := range rc.Registries {
+		if reg == nil {
+			continue
+		}
+		code := ""
+		if reg.MCPTarget != nil {
+			code = strings.TrimSpace(reg.MCPTarget.Code)
+		}
+		if code == "" || grants.InstanceAllows(code, reg.ID, groups, principal.Subject) {
+			scoped.Registries = append(scoped.Registries, reg)
+		}
+	}
+	return &scoped, nil
 }

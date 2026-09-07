@@ -35,3 +35,34 @@ func ValidateAuthType(consType Type, authType authdomain.Type) error {
 	}
 	return nil
 }
+
+// ValidateAuth rejects an auth type the consumer cannot use given its type and
+// identity. A consumer acting for platform users is entered by people who sign
+// in, so only an oauth2 auth (or none, which leaves the built-in identity
+// provider) fits; a consumer whose application names its own end users
+// authenticates as a machine, so only an API key or a client certificate fits.
+func ValidateAuth(c *Consumer, authType authdomain.Type) error {
+	if c == nil {
+		return nil
+	}
+	if err := ValidateAuthType(c.Type, authType); err != nil {
+		return err
+	}
+	switch {
+	case c.Identity.PlatformUsers():
+		if authType != authdomain.TypeOAuth2 {
+			return fmt.Errorf(
+				"%w: a consumer that acts for platform users needs its users to sign in, so it can only use an oauth2 auth (or none, for the built-in identity provider), not %s",
+				commonerrors.ErrConflict, authType,
+			)
+		}
+	case c.Identity.AppUsers():
+		if authType != authdomain.TypeAPIKey && authType != authdomain.TypeMTLS {
+			return fmt.Errorf(
+				"%w: a consumer whose application identifies its end users authenticates as a machine, so it can only use an api_key or mtls auth, not %s",
+				commonerrors.ErrConflict, authType,
+			)
+		}
+	}
+	return nil
+}

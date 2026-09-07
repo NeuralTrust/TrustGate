@@ -115,18 +115,21 @@ func (d *RPCDispatcher) Dispatch(
 // emptySurfaceInsteadOfError reports whether a list method should answer with an
 // empty surface rather than fail: an upstream still awaiting the user's consent
 // is skipped (the connect page handles it, and the Store meta-tools must stay
-// reachable so the user can fix it), and the Store consumer — whose registries
-// are whatever the caller installed — has nothing to list when none is
-// installed or none is reachable. Every list method (tools, prompts, resources,
-// resource templates) degrades the same way so a client that lists all four
-// during initialization never sees one of them fail on a pending consent.
+// reachable so the user can fix it), and a consumer that acts for users — the
+// Store, whose registries are whatever the caller installed, or a custom
+// consumer whose servers Access scopes per person — has nothing to list when
+// none is exposed to this principal or none is reachable. Every list method
+// (tools, prompts, resources, resource templates) degrades the same way so a
+// client that lists all four during initialization never sees one of them fail
+// on a pending consent.
 func emptySurfaceInsteadOfError(consumer *appconsumer.RoutableConsumer, err error) bool {
 	var consentErr *ConsentRequiredError
 	if errors.As(err, &consentErr) {
 		return true
 	}
-	isStore := consumer != nil && consumer.Consumer != nil && consumerdomain.IsStoreConsumer(consumer.Consumer)
-	return isStore && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
+	perUser := consumer != nil && consumer.Consumer != nil &&
+		(consumerdomain.IsStoreConsumer(consumer.Consumer) || consumer.Consumer.ActsForUsers())
+	return perUser && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
 }
 
 func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any, error) {

@@ -90,6 +90,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		RegistryWeights: registryWeights,
 		ModelPolicies:   modelPolicies,
 		MCP:             mcp,
+		Identity:        req.Identity.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

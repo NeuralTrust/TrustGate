@@ -117,7 +117,7 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err != nil {
 		return err
 	}
-	if err := domain.ValidateAuthType(cons.Type, au.Type); err != nil {
+	if err := domain.ValidateAuth(cons, au.Type); err != nil {
 		return err
 	}
 	if err := a.repo.AttachAuth(ctx, consumerID, authID); err != nil {

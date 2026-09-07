@@ -36,6 +36,32 @@ type CreateConsumerRequest struct {
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      string                   `json:"fail_mode,omitempty"`
+	Identity      *IdentityRequest         `json:"identity,omitempty"`
+}
+
+// IdentityRequest says who the consumer acts for. Omitted, the consumer acts as
+// the application itself.
+type IdentityRequest struct {
+	// ActsForUsers turns on per-user behaviour on an MCP consumer.
+	ActsForUsers bool `json:"acts_for_users"`
+	// Source is how end users are known: platform (they sign in) or app (the
+	// application names them through the X-NeuralTrust-End-User header).
+	// Defaults to platform.
+	Source string `json:"source,omitempty"`
+	// EndUserHeader lets an LLM consumer forward an end-user id for attribution.
+	EndUserHeader bool `json:"end_user_header,omitempty"`
+}
+
+// ToDomain maps the request onto the domain identity; nil when omitted.
+func (r *IdentityRequest) ToDomain() *domain.Identity {
+	if r == nil {
+		return nil
+	}
+	return &domain.Identity{
+		ActsForUsers:  r.ActsForUsers,
+		Source:        domain.IdentitySource(strings.ToLower(strings.TrimSpace(r.Source))),
+		EndUserHeader: r.EndUserHeader,
+	}
 }
 
 type RegistryBindingRequest struct {

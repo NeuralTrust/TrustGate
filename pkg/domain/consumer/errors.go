@@ -36,6 +36,7 @@ var (
 	ErrInvalidModelPolicy = fmt.Errorf("consumer: invalid model policy: %w", commonerrors.ErrValidation)
 
 	ErrInvalidToolkit  = fmt.Errorf("consumer: invalid toolkit: %w", commonerrors.ErrValidation)
+	ErrInvalidIdentity = fmt.Errorf("consumer: invalid identity: %w", commonerrors.ErrValidation)
 	ErrInvalidFailMode = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
 
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)

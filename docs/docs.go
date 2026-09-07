@@ -3647,6 +3647,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "identity": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest"
+                },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
                 },
@@ -3721,6 +3724,24 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest": {
+            "description": "IdentityRequest says who the consumer acts for. Omitted, the consumer acts as\nthe application itself.",
+            "type": "object",
+            "properties": {
+                "acts_for_users": {
+                    "description": "ActsForUsers turns on per-user behaviour on an MCP consumer.",
+                    "type": "boolean"
+                },
+                "end_user_header": {
+                    "description": "EndUserHeader lets an LLM consumer forward an end-user id for attribution.",
+                    "type": "boolean"
+                },
+                "source": {
+                    "description": "Source is how end users are known: platform (they sign in) or app (the\napplication names them through the X-NeuralTrust-End-User header).\nDefaults to platform.",
+                    "type": "string"
                 }
             }
         },
@@ -3888,6 +3909,14 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "identity": {
+                    "description": "Identity replaces who the consumer acts for. Omit to keep it as it is.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest"
+                        }
+                    ]
+                },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
                 },
@@ -3950,6 +3979,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "identity": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse"
                 },
                 "lb_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse"
@@ -4061,6 +4093,21 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse": {
+            "description": "IdentityResponse says who the consumer acts for.",
+            "type": "object",
+            "properties": {
+                "acts_for_users": {
+                    "type": "boolean"
+                },
+                "end_user_header": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "type": "string"
                 }
             }
         },

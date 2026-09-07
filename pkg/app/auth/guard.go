@@ -45,7 +45,7 @@ func guardAuthTypeChange(ctx context.Context, consumers consumerAuthRefs, authID
 		return err
 	}
 	for _, c := range refs {
-		if err := consumerdomain.ValidateAuthType(c.Type, newType); err != nil {
+		if err := consumerdomain.ValidateAuth(c, newType); err != nil {
 			return fmt.Errorf("%w (referenced by consumer %q)", err, c.Slug)
 		}
 	}
@@ -91,7 +91,7 @@ func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c 
 		if s.ID == excluded || !s.Enabled {
 			continue
 		}
-		if consumerdomain.ValidateAuthType(c.Type, s.Type) == nil {
+		if consumerdomain.ValidateAuth(c, s.Type) == nil {
 			return true, nil
 		}
 	}

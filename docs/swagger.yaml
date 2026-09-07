@@ -367,6 +367,8 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      identity:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest'
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest'
       model_policies:
@@ -416,6 +418,25 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest:
+    description: |-
+      IdentityRequest says who the consumer acts for. Omitted, the consumer acts as
+      the application itself.
+    properties:
+      acts_for_users:
+        description: ActsForUsers turns on per-user behaviour on an MCP consumer.
+        type: boolean
+      end_user_header:
+        description: EndUserHeader lets an LLM consumer forward an end-user id for
+          attribution.
+        type: boolean
+      source:
+        description: |-
+          Source is how end users are known: platform (they sign in) or app (the
+          application names them through the X-NeuralTrust-End-User header).
+          Defaults to platform.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest:
     properties:
@@ -534,6 +555,11 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      identity:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest'
+        description: Identity replaces who the consumer acts for. Omit to keep it
+          as it is.
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest'
       model_policies:
@@ -579,6 +605,8 @@ definitions:
         type: object
       id:
         type: string
+      identity:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse'
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse'
       model_policies:
@@ -652,6 +680,16 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse:
+    description: IdentityResponse says who the consumer acts for.
+    properties:
+      acts_for_users:
+        type: boolean
+      end_user_header:
+        type: boolean
+      source:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse:
     properties:
