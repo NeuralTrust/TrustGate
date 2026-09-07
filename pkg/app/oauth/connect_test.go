@@ -27,13 +27,16 @@ import (
 	"testing"
 	"time"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type memConnectStore struct {
@@ -190,8 +193,221 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 	return svc, vault, gw
+}
+
+func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
+	t.Parallel()
+	var gotForm url.Values
+	tokenURL := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotForm = r.Form
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "google-access", "expires_in": 3600})
+	}))
+	defer tokenURL.Close()
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.google.workspace/gmail",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "stale-client",
+			ClientSecret: "stale-secret",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     tokenURL.URL,
+			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	reg.MCPTarget.Auth.ClientID = ""
+	reg.MCPTarget.Auth.ClientSecret = ""
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+		nil,
+		nil,
+		nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	if u.Query().Get("client_id") != "nt-client" {
+		t.Fatalf("client_id = %q, want platform client", u.Query().Get("client_id"))
+	}
+	if _, err := svc.Callback(ctx, "https://gw.example.com", "com.google.workspace/gmail", u.Query().Get("state"), "the-code", "", ""); err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if gotForm.Get("client_id") != "nt-client" || gotForm.Get("client_secret") != "nt-secret" {
+		t.Fatalf("token form = %v", gotForm)
+	}
+
+	refreshCfg, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshCfg.ClientID != "nt-client" || refreshCfg.ClientSecret != "nt-secret" {
+		t.Fatalf("refresh cfg = %+v", refreshCfg)
+	}
+}
+
+func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.google.workspace/gmail",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "customer-client",
+			ClientSecret: "customer-secret",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     "https://oauth2.googleapis.com/token",
+			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(newMemConnectStore(), nil),
+		discardConnectAuditor(),
+		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+		nil,
+		nil,
+		nil,
+	)
+	refreshCfg, err := svc.RefreshAuth(context.Background(), gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshCfg.ClientID != "customer-client" || refreshCfg.ClientSecret != "customer-secret" {
+		t.Fatalf("BYO credentials overwritten: %+v", refreshCfg)
+	}
+}
+
+func TestConnectService_OverlaysCatalogGmailModifyScope(t *testing.T) {
+	t.Parallel()
+	catalog, err := appcatalog.NewMCPServerCatalog(nil)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.google.workspace/gmail",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "nt-client",
+			ClientSecret: "nt-secret",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     "https://oauth2.googleapis.com/token",
+			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		catalog,
+		nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	scope := u.Query().Get("scope")
+	if !strings.Contains(scope, "https://www.googleapis.com/auth/gmail.modify") {
+		t.Fatalf("authorize scope = %q, want catalog gmail.modify", scope)
+	}
+
+	refreshCfg, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	found := false
+	for _, s := range refreshCfg.Scopes {
+		if s == "https://www.googleapis.com/auth/gmail.modify" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("refresh scopes = %v, want catalog gmail.modify", refreshCfg.Scopes)
+	}
 }
 
 func TestConnectService_FullConsentFlow(t *testing.T) {
@@ -203,6 +419,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "gh-access", "refresh_token": "gh-refresh",
 			"expires_in": 3600, "scope": "repo",
+			"id_token": unsignedConnectJWT(t, jwt.MapClaims{"email": "octocat@github.com", "sub": "1"}),
 		})
 	}))
 	defer provider.Close()
@@ -213,6 +430,14 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	statuses, err := svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Provider != "github" || statuses[0].Linked {
+		t.Fatalf("statuses = %+v, want one unlinked github provider", statuses)
 	}
 
 	page, err := svc.Page(ctx, ticket)
@@ -257,10 +482,16 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 	if cred.AccessToken != "gh-access" || cred.RefreshToken != "gh-refresh" {
 		t.Fatalf("vaulted credential = %+v", cred)
 	}
+	if cred.AccountRef != "octocat@github.com" {
+		t.Fatalf("AccountRef = %q, want the id_token email", cred.AccountRef)
+	}
 
 	page, _ = svc.Page(ctx, ticket)
 	if !page.Providers[0].Linked {
 		t.Fatal("provider not reported linked after callback")
+	}
+	if page.Providers[0].AccountRef != "octocat@github.com" {
+		t.Fatalf("page AccountRef = %q", page.Providers[0].AccountRef)
 	}
 
 	if err := svc.Disconnect(ctx, ticket, "github"); err != nil {
@@ -348,6 +579,10 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		registrar,
 		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 	ctx := context.Background()
 
@@ -443,6 +678,10 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
@@ -592,4 +831,97 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	if len(vault.creds) != 0 {
 		t.Fatal("denied consent stored a credential")
 	}
+}
+
+// stubRegistryLister returns a fixed set of registries for List, standing in for
+// registrydomain.Repository so the Store-scoped connect flow can find the
+// installed registry a ticket's catalog code points at.
+type stubRegistryLister struct {
+	items []*registrydomain.Registry
+}
+
+func (s *stubRegistryLister) List(
+	context.Context,
+	registrydomain.ListFilter,
+) ([]*registrydomain.Registry, int, error) {
+	return s.items, len(s.items), nil
+}
+
+// A Store-scoped connect ticket carries only the catalog code; the synthetic
+// Store consumer is never persisted and holds no registries. The connect flow
+// must rebuild that consumer and attach the materialised registry for the code,
+// so forwarded-auth (OAuth) resolves instead of failing with
+// "consumer path /store/mcp no longer exists".
+func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "notion-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.notion/mcp",
+		URL:  "https://mcp.notion.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.notion/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "csecret",
+			AuthorizeURL: "https://mcp.notion.com/authorize",
+			TokenURL:     "https://mcp.notion.com/token",
+			Scopes:       []string{"read"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	// The persisted consumer data holds no Store consumer: the Store is synthetic.
+	data := appconsumer.NewData(gw, nil)
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		&stubRegistryLister{items: []*registrydomain.Registry{reg}},
+	)
+	ctx := context.Background()
+	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	ticket, err := svc.CreateServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "")
+	if err != nil {
+		t.Fatalf("CreateServerTicket: %v", err)
+	}
+
+	// Page resolves the synthetic Store consumer and surfaces the code's provider.
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if page.Code != "com.notion/mcp" {
+		t.Fatalf("page code = %q, want com.notion/mcp", page.Code)
+	}
+	if len(page.Providers) != 1 || page.Providers[0].Provider != "com.notion/mcp" {
+		t.Fatalf("page providers = %+v, want single com.notion/mcp", page.Providers)
+	}
+
+	// Start mints an authorize URL, proving forwarded auth resolves end to end.
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://mcp.notion.com/authorize") {
+		t.Fatalf("authorize url = %q, want notion authorize", location)
+	}
+}
+
+func unsignedConnectJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	raw, err := tok.SignedString([]byte("test-secret"))
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+	return raw
 }

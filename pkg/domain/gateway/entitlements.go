@@ -17,6 +17,7 @@ package gateway
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
@@ -26,11 +27,16 @@ const TierFree = ratelimit.TierFree
 
 // Entitlements is the plan label plus caps stamped by the control plane.
 // Numeric caps are required for rate-limit enforcement (no built-in catalog).
+//
+// RetentionDays is deliberately outside the stamped-limits trio: it is telemetry
+// metadata, not a request cap, so an instance stamped before retention existed
+// must keep metering normally instead of failing closed.
 type Entitlements struct {
 	Tier          string `json:"tier"`
 	BurstPerMin   *int   `json:"burst_per_min,omitempty"`
 	QuotaPerMonth *int   `json:"quota_per_month,omitempty"`
 	MaxInstances  *int   `json:"max_instances,omitempty"`
+	RetentionDays *int   `json:"retention_days,omitempty"`
 }
 
 func DefaultEntitlements() Entitlements {
@@ -40,6 +46,35 @@ func DefaultEntitlements() Entitlements {
 // HasStampedLimits reports whether all three numeric caps were stamped together.
 func (e Entitlements) HasStampedLimits() bool {
 	return e.BurstPerMin != nil && e.QuotaPerMonth != nil && e.MaxInstances != nil
+}
+
+// UnlimitedRetentionWindow is what an unlimited plan (retention_days == 0, the
+// same sentinel the other caps use) resolves to.
+//
+// Unlimited cannot travel further as 0: downstream this becomes a per-trace expiry
+// timestamp, and a TTL needs a real date to compare against, so the wire's
+// sentinel has to become a concrete window somewhere. It stops here rather than in
+// the sink, so every exporter agrees on it.
+//
+// Deliberately large but bounded: ClickHouse DateTime is seconds in a uint32 and
+// tops out in 2106, so a far-future sentinel would saturate. A decade is unlimited
+// in every sense that matters — only on-premise plans are uncapped, and they run
+// their own storage.
+const UnlimitedRetentionWindow = 3650 * 24 * time.Hour
+
+// ResolveRetention returns the stamped trace retention window.
+//
+// Three cases, and the difference matters: never stamped reports false so no expiry
+// is emitted and the sink applies its own fallback; 0 means unlimited, matching the
+// other caps; anything positive is that window.
+func (e Entitlements) ResolveRetention() (time.Duration, bool) {
+	if e.RetentionDays == nil || *e.RetentionDays < 0 {
+		return 0, false
+	}
+	if *e.RetentionDays == 0 {
+		return UnlimitedRetentionWindow, true
+	}
+	return time.Duration(*e.RetentionDays) * 24 * time.Hour, true
 }
 
 // ResolveLimits returns stamped caps only. Unstamped instances have no commercial plan metering.
@@ -74,6 +109,10 @@ func NormalizeEntitlements(e Entitlements) (Entitlements, error) {
 		return Entitlements{}, err
 	}
 	e.Tier = tier
+
+	if e.RetentionDays != nil && *e.RetentionDays < 0 {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements.retention_days must be >= 0 (0 means unlimited): %w", commonerrors.ErrValidation)
+	}
 
 	anyLimit := e.BurstPerMin != nil || e.QuotaPerMonth != nil || e.MaxInstances != nil
 	if !anyLimit {

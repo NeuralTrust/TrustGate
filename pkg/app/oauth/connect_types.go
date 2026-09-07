@@ -37,6 +37,18 @@ type ConnectTicket struct {
 	ConsumerID   string    `json:"consumer_id,omitempty"`
 	AuthID       string    `json:"auth_id,omitempty"`
 	Providers    *[]string `json:"providers,omitempty"`
+	// Code scopes a configure ticket to one catalog server whose per-user URL
+	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
+	Code string `json:"code,omitempty"`
+	// InstanceID pins a Store-scoped ticket (configure or single-server connect)
+	// to one exact installation instance of Code, so the form writes to that
+	// instance rather than to "whichever row has this code" when the principal
+	// holds several. Empty when the install recorded no row yet.
+	InstanceID string `json:"instance_id,omitempty"`
+	// Groups snapshots the principal's IdP groups at mint time so a form-driven
+	// install (configure before install) applies the same group gate the install
+	// tool applied — the browser submitting the form carries no token.
+	Groups []string `json:"groups,omitempty"`
 }
 
 type ConnectState struct {
@@ -56,6 +68,7 @@ type ConnectStore interface {
 type ProviderStatus struct {
 	Provider       string
 	Registry       string
+	Code           string
 	Linked         bool
 	AccountRef     string
 	ExpiresAt      time.Time
@@ -66,11 +79,20 @@ type ConnectPage struct {
 	ConsumerPath string
 	Providers    []ProviderStatus
 	ResumeURL    string
+	// Code, when set, scopes the page to a single catalog server (the ticket was
+	// minted for one server, e.g. from a Store install) so the connect page shows
+	// just that server rather than every provider.
+	Code string
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
 type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
+	// the connect page opens focused on that server (e.g. from a Store install).
+	// instanceID optionally pins the ticket to the exact installation instance
+	// the install recorded; empty when none was.
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 	CreateAPIKeyTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
@@ -81,6 +103,7 @@ type ConnectService interface {
 		providers []string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
+	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error

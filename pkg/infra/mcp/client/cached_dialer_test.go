@@ -17,6 +17,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,47 @@ func TestCachedDialer_ListRetriesAfterLostSession(t *testing.T) {
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
+	}
+}
+
+func TestCachedDialer_DoesNotReconnectWithRejectedCredential(t *testing.T) {
+	t.Parallel()
+	var reject atomic.Bool
+	var inits atomic.Int64
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				inits.Add(1)
+			}
+			return next(ctx, method, req)
+		}
+	})
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if reject.Load() && readRequestMethod(t, req) == "tools/list" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, req)
+	}))
+	t.Cleanup(srv.Close)
+
+	dialer := newCachedDialer()
+	up, err := dialer.Connect(context.Background(), appmcp.Target{
+		URL: srv.URL, PinKey: "gw:consumer:reg:user",
+		Headers: map[string]string{"Authorization": "Bearer rejected"},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	reject.Store(true)
+	_, err = up.ListTools(context.Background())
+	if !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+		t.Fatalf("error = %v, want ErrUpstreamUnauthorized", err)
+	}
+	if got := inits.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want no reconnect with the rejected credential", got)
 	}
 }
 

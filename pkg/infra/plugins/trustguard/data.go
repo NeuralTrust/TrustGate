@@ -31,6 +31,11 @@ type GuardRequest struct {
 	Attributes GuardAttributes `json:"attributes"`
 }
 
+type GuardUser struct {
+	ID    string `json:"id,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
 // GuardPayload is the minimal LLM evaluate body used for response-direction
 // inspect (assistant text). Request-direction LLM evaluates use messages[].
 type GuardPayload struct {
@@ -48,6 +53,7 @@ type GuardAttachment struct {
 type GuardAttributes struct {
 	ContentType string     `json:"content_type"`
 	Model       GuardModel `json:"model"`
+	User        *GuardUser `json:"user,omitempty"`
 }
 
 type GuardModel struct {

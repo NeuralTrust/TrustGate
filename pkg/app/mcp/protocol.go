@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 )
 
 type Tool struct {
@@ -142,9 +144,18 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 }
 
 type Target struct {
-	URL     string
-	Headers map[string]string
-	PinKey  string
+	URL      string
+	Headers  map[string]string
+	PinKey   string
+	Revision string
+	OpenAPI  *appopenapi.Source
+	// RestrictPrivateNetwork is set when URL was produced by per-user variable
+	// substitution. The dialer then refuses to connect to loopback, private
+	// (RFC 1918), link-local, CGNAT, unspecified or multicast addresses — at
+	// connect time, on the resolved address — so a user-controlled host can not
+	// reach the gateway's own network, even through DNS rebinding. Admin-fixed
+	// URLs leave it false.
+	RestrictPrivateNetwork bool
 }
 
 type RPCError struct {
@@ -185,6 +196,8 @@ func IsRPCError(err error) bool {
 }
 
 var ErrUnreachable = errors.New("mcp upstream unreachable")
+
+var ErrUpstreamUnauthorized = errors.New("mcp upstream rejected its credential")
 
 var ErrNotSupported = errors.New("mcp upstream does not support this method")
 

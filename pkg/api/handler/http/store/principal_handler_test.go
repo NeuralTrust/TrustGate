@@ -1,0 +1,222 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package store_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	"github.com/gofiber/fiber/v2"
+)
+
+type fakePreview struct {
+	state *appstore.PrincipalState
+	err   error
+	subs  []string
+}
+
+func (f *fakePreview) Preview(_ context.Context, _ ids.GatewayID, sub string) (*appstore.PrincipalState, error) {
+	f.subs = append(f.subs, sub)
+	return f.state, f.err
+}
+
+type fakePrincipalInstaller struct {
+	got *appstore.OnBehalfInstallRequest
+	res *appstore.InstallResult
+	err error
+}
+
+func (f *fakePrincipalInstaller) InstallFor(_ context.Context, in appstore.OnBehalfInstallRequest) (*appstore.InstallResult, error) {
+	f.got = &in
+	return f.res, f.err
+}
+
+func newPrincipalApp(p appstore.PrincipalPreview) *fiber.App {
+	return newPrincipalAppWith(p, nil)
+}
+
+func newPrincipalAppWith(p appstore.PrincipalPreview, installer appstore.PrincipalInstaller) *fiber.App {
+	app := fiber.New()
+	h := storehttp.NewPrincipalHandler(p, installer)
+	app.Get("/v1/gateways/:gateway_id/store/principal", h.Get)
+	app.Post("/v1/gateways/:gateway_id/store/principal/installs", h.Install)
+	return app
+}
+
+func postJSON(t *testing.T, app *fiber.App, path, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	return resp
+}
+
+func TestPrincipalHandler_Install_RunsAsThePrincipal(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", Status: installationdomain.StatusPendingApproval, InstanceID: "inst-1", Pending: true,
+	}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs",
+		`{"principal_sub":"ana","code":"github","groups":["eng"],"instance_id":"`+reg.String()+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if installer.got == nil || installer.got.PrincipalSub != "ana" || installer.got.Code != "github" || installer.got.RegistryID != reg || len(installer.got.Groups) != 1 {
+		t.Fatalf("request not forwarded: %+v", installer.got)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["pending"] != true || body["status"] != "pending_approval" || body["instance_id"] != "inst-1" || body["name"] != "GitHub" {
+		t.Fatalf("body: %v", body)
+	}
+}
+
+func TestPrincipalHandler_Install_ShapesInstanceChoicesAndErrors(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{
+		Code: "snowflake", Name: "Snowflake", RequiresInstanceChoice: true,
+		InstanceChoices: []appstore.InstanceChoice{{RegistryID: reg, Name: "Snowflake (finance)"}},
+	}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"snowflake"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	choices := body["instance_choices"].([]any)
+	if body["requires_instance_choice"] != true || len(choices) != 1 || choices[0].(map[string]any)["registry_id"] != reg.String() {
+		t.Fatalf("body: %v", body)
+	}
+
+	// Validation: missing code, bad instance id.
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana"}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 without code, got %d", resp.StatusCode)
+	}
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x","instance_id":"nope"}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 for a bad instance id, got %d", resp.StatusCode)
+	}
+	// A closed Store (level None) is a conflict, not a server error.
+	installer.err = appstore.ErrStoreClosed
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x"}`); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("want 409 for a closed store, got %d", resp.StatusCode)
+	}
+	// No installer wired on this plane.
+	if resp := postJSON(t, newPrincipalApp(&fakePreview{}), "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x"}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404 without an installer, got %d", resp.StatusCode)
+	}
+}
+
+func TestPrincipalHandler_RequiresSub(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	fake := &fakePreview{}
+	resp, err := newPrincipalApp(fake).Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/principal", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 without sub, got %d", resp.StatusCode)
+	}
+	if len(fake.subs) != 0 {
+		t.Fatalf("service must not be called without a sub")
+	}
+}
+
+func TestPrincipalHandler_ShapesStateWithoutSecrets(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	inst := ids.New[ids.InstallationKind]()
+	exp := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	fake := &fakePreview{state: &appstore.PrincipalState{
+		PrincipalSub: "ana",
+		Installs: []appstore.PrincipalInstall{
+			{InstanceID: inst, Code: "github", Name: "GitHub", Status: installationdomain.StatusInstalled, InstalledBy: "ana"},
+			{InstanceID: ids.New[ids.InstallationKind](), Code: "snowflake", Name: "Snowflake", RegistryID: reg, Registry: "Snowflake (finance)", Status: installationdomain.StatusPendingApproval},
+		},
+		Connections: []appstore.PrincipalConnection{
+			{Provider: "github", Code: "github", RegistryID: reg, Registry: "GitHub", Linked: true, AccountRef: "ana@corp", ExpiresAt: exp},
+			{Provider: "notion", Code: "notion", RegistryID: reg, Registry: "Notion"},
+		},
+	}}
+	resp, err := newPrincipalApp(fake).Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/principal?sub=%20ana%20", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if len(fake.subs) != 1 || fake.subs[0] != "ana" {
+		t.Fatalf("sub should be trimmed before the service, got %v", fake.subs)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["principal_sub"] != "ana" {
+		t.Fatalf("principal_sub: %v", body["principal_sub"])
+	}
+	installs := body["installs"].([]any)
+	if len(installs) != 2 {
+		t.Fatalf("installs: %v", installs)
+	}
+	first := installs[0].(map[string]any)
+	if first["instance_id"] != inst.String() || first["status"] != "installed" || first["name"] != "GitHub" {
+		t.Fatalf("first install: %v", first)
+	}
+	if _, has := first["registry_id"]; has {
+		t.Fatalf("code-level install must omit registry_id: %v", first)
+	}
+	second := installs[1].(map[string]any)
+	if second["registry_id"] != reg.String() || second["registry"] != "Snowflake (finance)" || second["status"] != "pending_approval" {
+		t.Fatalf("bound install: %v", second)
+	}
+	conns := body["connections"].([]any)
+	if len(conns) != 2 {
+		t.Fatalf("connections: %v", conns)
+	}
+	linked := conns[0].(map[string]any)
+	if linked["linked"] != true || linked["account_ref"] != "ana@corp" || linked["expires_at"] != "2026-09-07T12:00:00Z" || linked["needs_reconnect"] != false {
+		t.Fatalf("linked connection: %v", linked)
+	}
+	for _, k := range []string{"access_token", "refresh_token", "scopes"} {
+		if _, has := linked[k]; has {
+			t.Fatalf("connection leaks %q", k)
+		}
+	}
+	unlinked := conns[1].(map[string]any)
+	if unlinked["linked"] != false {
+		t.Fatalf("unlinked connection: %v", unlinked)
+	}
+	if _, has := unlinked["expires_at"]; has {
+		t.Fatalf("unlinked connection must omit expires_at: %v", unlinked)
+	}
+}

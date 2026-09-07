@@ -147,6 +147,7 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 		"",
 		[]byte(nil),
 		[]byte(nil),
+		[]byte(nil),
 		time.Now().UTC(),
 		time.Now().UTC(),
 	}})
@@ -158,6 +159,44 @@ func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
 	}
 	if reg.Auth().APIKey.APIKey != apiKey {
 		t.Fatalf("decrypted api key = %q, want %q", reg.Auth().APIKey.APIKey, apiKey)
+	}
+}
+
+func TestRepository_ScanPricing(t *testing.T) {
+	t.Parallel()
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	r := &Repository{cipher: cipher}
+
+	provider := "openai"
+	pricingJSON := []byte(`{"discount":0.2,"overrides":{"gpt-4o":{"input":0.0000015,"output":0.000006}}}`)
+	reg, err := r.scanRegistry(fakeRow{values: []any{
+		ids.New[ids.RegistryKind](),
+		ids.New[ids.GatewayKind](),
+		"openai-pool",
+		string(domain.TypeLLM),
+		true,
+		&provider,
+		[]byte(nil),
+		[]byte(nil),
+		"",
+		[]byte(nil),
+		[]byte(nil),
+		pricingJSON,
+		time.Now().UTC(),
+		time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("scanRegistry: %v", err)
+	}
+	if reg.Pricing() == nil || reg.Pricing().Discount != 0.2 {
+		t.Fatalf("pricing = %+v, want discount 0.2", reg.Pricing())
+	}
+	if got := reg.Pricing().Overrides["gpt-4o"].Input; got != 0.0000015 {
+		t.Fatalf("override input = %v", got)
 	}
 }
 

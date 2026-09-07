@@ -28,6 +28,14 @@ type ListFilter struct {
 	Size     int
 }
 
+// RestampedGateway identifies a gateway a re-stamp touched. It carries the slug as
+// well as the id because gateways are cached under both keys — dropping only the id
+// entry would leave FindBySlug serving the old plan.
+type RestampedGateway struct {
+	ID   ids.GatewayID
+	Slug string
+}
+
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=gateway_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, g *Gateway) error
@@ -42,4 +50,12 @@ type Repository interface {
 	SaveWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
 	// UpdateWithTenantCap updates g under the same tenant advisory lock used by SaveWithTenantCap when maxInstances > 0.
 	UpdateWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
+	// RestampEntitlementsByTenantID writes e onto every gateway of the tenant and
+	// returns the ids it touched.
+	//
+	// Deliberately uncapped: a plan change is a fact the control plane has already
+	// committed, and refusing to propagate a downgrade would leave every gateway of
+	// the tenant on the old plan. Instance caps still bind on create, where they
+	// prevent growth.
+	RestampEntitlementsByTenantID(ctx context.Context, tenantID string, e Entitlements) ([]RestampedGateway, error)
 }

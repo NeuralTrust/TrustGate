@@ -1,0 +1,187 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package store
+
+import (
+	"context"
+	"testing"
+
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+)
+
+func mustInstall(t *testing.T, gw ids.GatewayID, sub, code string) *installationdomain.Installation {
+	t.Helper()
+	in, err := installationdomain.New(gw, sub, code, sub, nil)
+	if err != nil {
+		t.Fatalf("new install: %v", err)
+	}
+	return in
+}
+
+func withPrincipal(sub string) context.Context {
+	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: sub})
+}
+
+// withOpenPrincipal is a principal on a gateway whose Store is open (All): every
+// install is exposed regardless of grants. Without a gateway in the context the
+// mode fails closed to Selected, where only granted instances are exposed.
+func withOpenPrincipal(sub string) context.Context {
+	return appgateway.WithGateway(withPrincipal(sub), &gatewaydomain.Gateway{})
+}
+
+func githubRegistry() *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		MCPTarget: &registrydomain.MCPTarget{Code: "github"},
+	}
+}
+
+func TestScoperSurfacesInstalledRegistries(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := githubRegistry()
+	installs := &fakeInstalls{byPrincipal: []*installationdomain.Installation{mustInstall(t, gw, "ana", "github")}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{reg, {
+		ID: ids.New[ids.RegistryKind](), MCPTarget: &registrydomain.MCPTarget{Code: "salesforce"},
+	}}}
+
+	sc, err := NewScoper(installs, regs, nil)
+	if err != nil {
+		t.Fatalf("NewScoper: %v", err)
+	}
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 1 || scoped.Registries[0].ID != reg.ID {
+		t.Fatalf("must surface only the installed github registry, got %+v", scoped.Registries)
+	}
+	// The shared synthetic Store consumer must not be mutated.
+	if len(rc.Registries) != 0 {
+		t.Fatal("the source Store consumer must not be mutated")
+	}
+}
+
+func TestScoperLeavesRegularConsumerUntouched(t *testing.T) {
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{}, nil)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), Slug: "regular", Type: consumerdomain.TypeMCP,
+	}}
+	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if scoped != rc {
+		t.Fatal("a non-Store consumer must be returned unchanged")
+	}
+}
+
+func TestScoperNoInstallsLeavesStoreEmpty(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 0 {
+		t.Fatalf("no installs must surface no registries, got %+v", scoped.Registries)
+	}
+}
+
+func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	sc, _ := NewScoper(&fakeInstalls{byPrincipal: []*installationdomain.Installation{mustInstall(t, gw, "ana", "github")}},
+		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if scoped != rc {
+		t.Fatal("without an authenticated principal the Store must be returned unchanged")
+	}
+}
+
+func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := &registrydomain.Registry{
+		ID:   ids.New[ids.RegistryKind](),
+		Name: "Snowflake",
+		MCPTarget: &registrydomain.MCPTarget{
+			Code: "snowflake",
+			URL:  "https://acme/api/v2/databases/{database}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "database", Required: true},
+			},
+		},
+	}
+	analytics, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "analytics"})
+	finance, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "finance"})
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{analytics, finance}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 2 {
+		t.Fatalf("two instances must surface two registries, got %d", len(scoped.Registries))
+	}
+	names := map[string]bool{}
+	for _, reg := range scoped.Registries {
+		names[reg.Name] = true
+		// Each instance is a distinct clone: its own id and its config overlay.
+		if reg.ID == shelf.ID {
+			t.Fatal("a multi-instance clone must not reuse the shelf registry id")
+		}
+		if len(reg.MCPTarget.InstanceConfig) == 0 {
+			t.Fatalf("instance %q must carry its config overlay", reg.Name)
+		}
+		// The shelf entry itself must never be mutated.
+		if shelf.MCPTarget.InstanceConfig != nil {
+			t.Fatal("the shared shelf registry must not be mutated")
+		}
+	}
+	if !names["Snowflake (analytics)"] || !names["Snowflake (finance)"] {
+		t.Fatalf("instances must be labelled by their config, got %v", names)
+	}
+}
+
+func TestScoperIgnoresRevokedInstalls(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	revoked := mustInstall(t, gw, "ana", "github")
+	revoked.Status = installationdomain.StatusRevoked
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{revoked}},
+		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, _ := sc.Scope(withPrincipal("ana"), rc)
+	if len(scoped.Registries) != 0 {
+		t.Fatal("a revoked install must not surface its registry")
+	}
+}

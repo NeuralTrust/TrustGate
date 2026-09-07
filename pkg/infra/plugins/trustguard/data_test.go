@@ -67,9 +67,21 @@ func TestGuardOutcomeDecision(t *testing.T) {
 	}{
 		{status: statusBlock, mode: policy.ModeEnforce, want: decisionBlocked},
 		{status: statusBlock, mode: policy.ModeObserve, want: decisionReported},
+		{status: statusBlock, mode: policy.ModeThrottle, want: decisionBlocked},
+		// ask has nobody to prompt on a gateway, so it is enforced like a
+		// block and, in observe mode, recorded like one.
+		{status: statusAsk, mode: policy.ModeEnforce, want: decisionBlocked},
+		{status: statusAsk, mode: policy.ModeObserve, want: decisionReported},
+		{status: statusAsk, mode: policy.ModeThrottle, want: decisionBlocked},
 		{status: statusReport, mode: policy.ModeEnforce, want: decisionReported},
-		{status: "allowed", mode: policy.ModeEnforce, want: decisionAllowed},
+		{status: statusReport, mode: policy.ModeObserve, want: decisionReported},
+		{status: statusAllow, mode: policy.ModeEnforce, want: decisionAllowed},
+		// No verdict expressed still passes.
 		{status: "", mode: policy.ModeEnforce, want: decisionAllowed},
+		// An unrecognised verdict is recorded rather than passed silently.
+		// "allowed" is a decision, not a status, so it lands here.
+		{status: "allowed", mode: policy.ModeEnforce, want: decisionReported},
+		{status: "something-new", mode: policy.ModeEnforce, want: decisionReported},
 	}
 	for _, tc := range tests {
 		tc := tc

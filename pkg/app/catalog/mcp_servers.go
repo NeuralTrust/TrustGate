@@ -19,14 +19,15 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 )
 
 type MCPServerCatalog interface {
 	ListMCPServers() []domain.MCPServer
-	// GetByCode returns the curated entry for code, or false when unknown.
 	GetByCode(code string) (domain.MCPServer, bool)
+	SharedOAuthCredentials(code string) (clientID, clientSecret string, ok bool)
 }
 
 var _ MCPServerCatalog = (*mcpServerCatalog)(nil)
@@ -34,21 +35,26 @@ var _ MCPServerCatalog = (*mcpServerCatalog)(nil)
 type mcpServerCatalog struct {
 	servers []domain.MCPServer
 	byCode  map[string]domain.MCPServer
+	shared  mcpoauth.Provider
 }
 
-// NewMCPServerCatalog loads the curated catalog of remote MCP servers embedded
-// at build time. The embedded JSON is a validated build asset, so a parse
-// failure is a programming error and surfaces at startup.
-func NewMCPServerCatalog() (MCPServerCatalog, error) {
+func NewMCPServerCatalog(shared mcpoauth.Provider) (MCPServerCatalog, error) {
 	servers, err := loadCuratedMCPServers()
 	if err != nil {
 		return nil, fmt.Errorf("loading curated mcp catalog: %w", err)
+	}
+	applyPlatformOAuth(servers, shared)
+	// Whether a user can install each entry with nothing configured by an admin —
+	// decided after the platform clients are stamped, since a platform-held
+	// client makes a manual-registration OAuth server self-service.
+	for i := range servers {
+		servers[i].SelfService = servers[i].IsSelfService()
 	}
 	byCode := make(map[string]domain.MCPServer, len(servers))
 	for _, s := range servers {
 		byCode[s.Code] = s
 	}
-	return &mcpServerCatalog{servers: servers, byCode: byCode}, nil
+	return &mcpServerCatalog{servers: servers, byCode: byCode, shared: shared}, nil
 }
 
 func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
@@ -60,6 +66,14 @@ func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
 func (c *mcpServerCatalog) GetByCode(code string) (domain.MCPServer, bool) {
 	s, ok := c.byCode[code]
 	return s, ok
+}
+
+func (c *mcpServerCatalog) SharedOAuthCredentials(code string) (string, string, bool) {
+	if c.shared == nil {
+		return "", "", false
+	}
+	creds, ok := c.shared.CredentialsFor(code)
+	return creds.ClientID, creds.ClientSecret, ok
 }
 
 const curatedSource = "curated"
@@ -95,8 +109,12 @@ type rawServer struct {
 	RequiresAuth bool                    `json:"requires_auth"`
 	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
-	Tools        []domain.MCPTool        `json:"tools"`
-	Relevance    int                     `json:"relevance"`
+	// AuthMethods optionally overrides the derived list of installable auth
+	// methods ("static" and/or "oauth"). Set it to offer a choice (e.g. both)
+	// where the derivation alone would pick a single method.
+	AuthMethods []string         `json:"auth_methods"`
+	Tools       []domain.MCPTool `json:"tools"`
+	Relevance   int              `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
 	// ListMCPServers (Admin UI / product catalog).
 	Hidden       bool   `json:"hidden,omitempty"`
@@ -137,6 +155,7 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			URL:            s.ServerURL,
 			Transport:      s.Transport,
 			AuthHint:       authHint(s),
+			AuthMethods:    authMethods(s),
 			RequiresAuth:   s.RequiresAuth,
 			RequiresConfig: requiresConfig(s),
 			Relevance:      s.Relevance,
@@ -175,6 +194,60 @@ func authHint(s rawServer) string {
 	}
 }
 
+// authMethods lists every auth method an operator may pick when installing the
+// server, each guaranteed renderable — the catalog never advertises a method the
+// install UI has no field for. An explicit seed `auth_methods` wins (normalized/
+// deduped); otherwise it is derived additively: "static" when the server has a
+// slot for an operator-supplied credential (an auth header or a secret URL
+// variable), "oauth" when it advertises an OAuth spec. A server that carries
+// both therefore offers a choice. Empty derivation (public server) yields nil,
+// and the UI treats a server with no declared methods as none.
+func authMethods(s rawServer) []string {
+	if len(s.AuthMethods) > 0 {
+		return normalizeAuthMethods(s.AuthMethods)
+	}
+	var methods []string
+	if hasStaticCredentialSlot(s) {
+		methods = append(methods, authHintStatic)
+	}
+	if s.OAuth != nil {
+		methods = append(methods, authHintOAuth)
+	}
+	return methods
+}
+
+// hasStaticCredentialSlot reports whether the server has somewhere for the
+// operator to put a static credential: an auth header, or a secret URL variable
+// (e.g. a `?token=` query value). Without a slot there is no field to enter an
+// API key, so "static" is not offered even if the server otherwise requires auth.
+func hasStaticCredentialSlot(s rawServer) bool {
+	if len(s.AuthHeaders) > 0 {
+		return true
+	}
+	for _, v := range s.URLVariables {
+		if v.Secret {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeAuthMethods keeps only recognized method identifiers, in a stable
+// order (static before oauth), dropping duplicates and "none".
+func normalizeAuthMethods(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	for _, m := range raw {
+		seen[m] = struct{}{}
+	}
+	var out []string
+	for _, m := range []string{authHintStatic, authHintOAuth} {
+		if _, ok := seen[m]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // requiresConfig reports whether the operator must supply input before the
 // server can be connected, so the UI can connect zero-config servers by default
 // and only surface a setup step for the rest.
@@ -197,4 +270,31 @@ func requiresConfig(s rawServer) bool {
 	default:
 		return true
 	}
+}
+
+func applyPlatformOAuth(servers []domain.MCPServer, shared mcpoauth.Provider) {
+	if shared == nil {
+		return
+	}
+	for i := range servers {
+		if _, ok := shared.CredentialsFor(servers[i].Code); !ok {
+			continue
+		}
+		servers[i].PlatformClient = true
+		if !needsNonOAuthConfig(servers[i]) {
+			servers[i].RequiresConfig = false
+		}
+	}
+}
+
+func needsNonOAuthConfig(s domain.MCPServer) bool {
+	for _, v := range s.URLVariables {
+		if v.Required {
+			return true
+		}
+	}
+	if s.AuthHint == authHintStatic {
+		return true
+	}
+	return s.OAuth != nil && s.OAuth.GrantType == grantTypeClientCredentials
 }

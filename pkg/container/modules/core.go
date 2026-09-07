@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -26,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	infraopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/openapi"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
@@ -64,6 +66,9 @@ func provideRuntimeBase(c *container.Container) error {
 	if err := c.Provide(config.LoadConfig); err != nil {
 		return err
 	}
+	if err := c.Provide(infraopenapi.NewCompiler); err != nil {
+		return err
+	}
 	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
 		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format), cfg.Logger.FileEnabled)
 		slog.SetDefault(log)
@@ -73,6 +78,14 @@ func provideRuntimeBase(c *container.Container) error {
 	}
 	if err := c.Provide(func() context.Context {
 		return context.Background()
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) mcpoauth.Provider {
+		return mcpoauth.NewGoogleWorkspace(
+			cfg.Server.GoogleWorkspaceMCP.ClientID,
+			cfg.Server.GoogleWorkspaceMCP.ClientSecret,
+		)
 	}); err != nil {
 		return err
 	}

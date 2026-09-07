@@ -42,6 +42,15 @@ type client struct {
 	tokenSource azureTokenSource
 }
 
+var (
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.ImagesClient             = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
+)
+
 func NewAzureClient() providers.Client {
 	return &client{
 		pool:        providers.NewHTTPClientPool(),
@@ -82,6 +91,163 @@ func (c *client) Completions(
 	url := c.buildURL(config, model)
 
 	return c.rawPost(ctx, url, auth, reqBody)
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model, err := adapter.ExtractModel(reqBody)
+	if err != nil || model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.rawPost(ctx, c.buildEmbeddingsURL(config, model), auth, reqBody)
+}
+
+func (c *client) Images(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.ImagesRequest,
+) (*providers.ImagesResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model := azureImagesModel(config, req)
+	if model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	contentType := req.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return providers.ImagesResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildImagesURL(config, model, req.Path),
+		contentType,
+		req.Body,
+		auth.apply,
+	))
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model := azureAudioModel(config, req)
+	if model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	contentType := req.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return providers.AudioResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildAudioURL(config, model, req.Path),
+		contentType,
+		req.Body,
+		auth.apply,
+	))
+}
+
+func azureAudioModel(config *providers.Config, req providers.AudioRequest) string {
+	if config != nil && config.Model != "" {
+		return config.Model
+	}
+	return providers.ExtractAudioModel(req.ContentType, req.Body)
+}
+
+func (c *client) buildAudioURL(config *providers.Config, model, gatewayPath string) string {
+	return c.buildDeploymentURL(config, model, providers.AzureAudioOperation(gatewayPath))
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildFilesURL(config, req),
+		req.ContentType,
+		req.Body,
+		auth.apply,
+	)
 }
 
 func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
@@ -211,15 +377,45 @@ func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
 }
 
 func (c *client) buildURL(config *providers.Config, model string) string {
-	originalEndpoint := config.Credentials.Azure.Endpoint
-	endpoint := azureRESTEndpoint(originalEndpoint)
+	return c.buildDeploymentURL(config, model, "chat/completions")
+}
+
+func (c *client) buildEmbeddingsURL(config *providers.Config, model string) string {
+	return c.buildDeploymentURL(config, model, "embeddings")
+}
+
+func azureImagesModel(config *providers.Config, req providers.ImagesRequest) string {
+	if config != nil && config.Model != "" {
+		return config.Model
+	}
+	return providers.ExtractImagesModel(req.ContentType, req.Body)
+}
+
+func (c *client) buildImagesURL(config *providers.Config, model, gatewayPath string) string {
+	return c.buildDeploymentURL(config, model, providers.AzureImagesOperation(gatewayPath))
+}
+
+func (c *client) buildFilesURL(config *providers.Config, req providers.FilesRequest) string {
 	apiVersion := defaultAPIVersion
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
-	finalURL := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-		endpoint, model, apiVersion)
-	return finalURL
+	return providers.JoinAzureFilesURL(
+		azureRESTEndpoint(config.Credentials.Azure.Endpoint),
+		req.Path,
+		apiVersion,
+		req.Query,
+	)
+}
+
+func (c *client) buildDeploymentURL(config *providers.Config, model, operation string) string {
+	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
+	apiVersion := defaultAPIVersion
+	if config.Credentials.Azure.ApiVersion != "" {
+		apiVersion = config.Credentials.Azure.ApiVersion
+	}
+	return fmt.Sprintf("%s/openai/deployments/%s/%s?api-version=%s",
+		endpoint, model, operation, apiVersion)
 }
 
 func azureRESTEndpoint(endpoint string) string {

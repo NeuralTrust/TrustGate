@@ -25,17 +25,11 @@ import (
 
 const grantTypeClientCredentials = "client_credentials"
 
-// MCPAuthCatalog looks up curated MCP server metadata used to canonicalize
-// client_credentials auth. Defined here (instead of importing app/catalog) to
-// avoid an import cycle with catalog → registry.
 type MCPAuthCatalog interface {
 	GetByCode(code string) (catalogdomain.MCPServer, bool)
+	SharedOAuthCredentials(code string) (clientID, clientSecret string, ok bool)
 }
 
-// CanonicalizeMCPAuthFromCatalog overwrites client-supplied token endpoint
-// metadata from the curated catalog when the registry was created from a
-// catalog code. This prevents an operator from redirecting a client secret to
-// an attacker-controlled token URL.
 func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCatalog) error {
 	if target == nil {
 		return nil
@@ -44,8 +38,6 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	if code == "" {
 		return nil
 	}
-	// Fail closed: without the catalog a client-supplied token_url could not be
-	// checked against the curated entry it claims to be.
 	if catalog == nil {
 		return fmt.Errorf("%w: mcp catalog unavailable; cannot verify catalog entry %q",
 			commonerrors.ErrValidation, code)
@@ -54,9 +46,17 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	if !ok || entry.OAuth == nil || !entry.OAuth.Required {
 		return nil
 	}
-	if entry.OAuth.GrantType != grantTypeClientCredentials {
-		return nil
+	if entry.OAuth.GrantType == grantTypeClientCredentials {
+		return canonicalizeClientCredentials(target, entry, code)
 	}
+	if err := canonicalizeAuthorizationCode(target, entry, code); err != nil {
+		return err
+	}
+	injectSharedOAuth(target, catalog)
+	return nil
+}
+
+func canonicalizeClientCredentials(target *domain.MCPTarget, entry catalogdomain.MCPServer, code string) error {
 	if target.Auth == nil {
 		target.Auth = &domain.MCPAuth{}
 	}
@@ -79,15 +79,76 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	case entry.OAuth.ResourceMetadata:
 		target.Auth.Resource = target.URL
 	default:
-		// The audience is part of what the catalog vouches for; never keep a
-		// client-supplied resource indicator.
 		target.Auth.Resource = ""
 	}
-	// Drop authorization-code fields that do not apply to M2M.
 	target.Auth.Provider = ""
 	target.Auth.Registration = ""
 	target.Auth.AuthorizeURL = ""
 	target.Auth.Header = ""
 	target.Auth.Value = ""
 	return nil
+}
+
+func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain.MCPServer, code string) error {
+	if target.Auth == nil {
+		target.Auth = &domain.MCPAuth{}
+	}
+	if mode := strings.TrimSpace(string(target.Auth.Mode)); mode != "" && mode != string(domain.MCPAuthModeForwarded) {
+		return fmt.Errorf("%w: catalog entry %q requires auth mode forwarded", commonerrors.ErrValidation, code)
+	}
+	target.Auth.Mode = domain.MCPAuthModeForwarded
+	if strings.TrimSpace(target.Auth.Provider) == "" {
+		target.Auth.Provider = code
+	}
+	if reg := strings.TrimSpace(entry.OAuth.Registration); reg != "" {
+		target.Auth.Registration = domain.MCPClientRegistration(reg)
+	}
+	if target.Auth.Registration == "" {
+		target.Auth.Registration = domain.RegistrationManual
+	}
+	if target.Auth.Registration != domain.RegistrationAuto {
+		if strings.TrimSpace(entry.OAuth.AuthorizeURL) == "" || strings.TrimSpace(entry.OAuth.TokenURL) == "" {
+			return fmt.Errorf("%w: catalog entry %q is missing oauth.authorize_url/token_url", commonerrors.ErrValidation, code)
+		}
+		target.Auth.AuthorizeURL = entry.OAuth.AuthorizeURL
+		target.Auth.TokenURL = entry.OAuth.TokenURL
+	} else {
+		if entry.OAuth.AuthorizeURL != "" {
+			target.Auth.AuthorizeURL = entry.OAuth.AuthorizeURL
+		}
+		if entry.OAuth.TokenURL != "" {
+			target.Auth.TokenURL = entry.OAuth.TokenURL
+		}
+	}
+	if len(entry.OAuth.Scopes) > 0 {
+		target.Auth.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	}
+	switch resource := strings.TrimSpace(entry.OAuth.Resource); {
+	case resource != "":
+		target.Auth.Resource = resource
+	case entry.OAuth.ResourceMetadata && strings.TrimSpace(target.Auth.Resource) == "":
+		target.Auth.Resource = target.URL
+	}
+	return nil
+}
+
+func injectSharedOAuth(target *domain.MCPTarget, catalog MCPAuthCatalog) {
+	if target == nil || target.Auth == nil || catalog == nil {
+		return
+	}
+	if target.Auth.Mode != domain.MCPAuthModeForwarded {
+		return
+	}
+	if target.Auth.Registration == domain.RegistrationAuto {
+		return
+	}
+	clientID, clientSecret, ok := catalog.SharedOAuthCredentials(target.Code)
+	if !ok {
+		return
+	}
+	if id := strings.TrimSpace(target.Auth.ClientID); id != "" && id != clientID {
+		return
+	}
+	target.Auth.ClientID = clientID
+	target.Auth.ClientSecret = clientSecret
 }

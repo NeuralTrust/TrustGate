@@ -15,12 +15,71 @@
 package response
 
 import (
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
+
+// maskSecretURLVariables returns the target URL with the value of every secret
+// URL variable masked, the same way auth secrets are masked in this response.
+// A registry that declares a secret query variable (Bright Data's ?token=,
+// Browserbase's ?browserbaseApiKey=) normally stores the template placeholder
+// — which is not a value and stays visible — but a URL that carries a concrete
+// value in that parameter would otherwise hand the token to anyone with
+// registry read access, including app READ_ONLY users. The query is rewritten
+// pair by pair so the rest of the URL is returned byte-for-byte as stored.
+func maskSecretURLVariables(t *domain.MCPTarget) string {
+	raw := t.URL
+	if raw == "" || len(t.URLVariables) == 0 {
+		return raw
+	}
+	secrets := make(map[string]struct{}, len(t.URLVariables))
+	for _, v := range t.URLVariables {
+		if v.Secret {
+			secrets[v.Name] = struct{}{}
+		}
+	}
+	if len(secrets) == 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.RawQuery == "" {
+		return raw
+	}
+	pairs := strings.Split(u.RawQuery, "&")
+	changed := false
+	for i, pair := range pairs {
+		key, rawValue, hasValue := strings.Cut(pair, "=")
+		if !hasValue || rawValue == "" {
+			continue
+		}
+		name, err := url.QueryUnescape(key)
+		if err != nil {
+			continue
+		}
+		if _, isSecret := secrets[name]; !isSecret {
+			continue
+		}
+		value, err := url.QueryUnescape(rawValue)
+		if err != nil {
+			value = rawValue
+		}
+		if value == "{"+name+"}" {
+			continue // the template placeholder, not a value
+		}
+		pairs[i] = key + "=" + secret.Mask(value)
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	u.RawQuery = strings.Join(pairs, "&")
+	return u.String()
+}
 
 type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
@@ -33,17 +92,24 @@ type RegistryResponse struct {
 	Description     string                `json:"description,omitempty"`
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
+	Pricing         *PricingResponse      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
 type MCPTargetResponse struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+	Code      string                 `json:"code,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Transport string                 `json:"transport,omitempty"`
+	Headers   map[string]string      `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
+}
+
+type OpenAPITargetResponse struct {
+	SpecURL string `json:"spec_url"`
 }
 
 type MCPAuthResponse struct {
@@ -75,6 +141,19 @@ type HealthChecksResponse struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Threshold int               `json:"threshold"`
 	Interval  int               `json:"interval"`
+}
+
+type PricingResponse struct {
+	Discount  float64                          `json:"discount,omitempty"`
+	Overrides map[string]PriceOverrideResponse `json:"overrides,omitempty"`
+}
+
+type PriceOverrideResponse struct {
+	Input        float64  `json:"input"`
+	Output       float64  `json:"output"`
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
 }
 
 type TargetAuthResponse struct {
@@ -152,10 +231,30 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Description:     b.Description,
 		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
+		Pricing:         fromPricing(b.Pricing()),
 		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
+}
+
+func fromPricing(p *domain.Pricing) *PricingResponse {
+	if p.IsZero() {
+		return nil
+	}
+	out := &PricingResponse{Discount: p.Discount}
+	if len(p.Overrides) == 0 {
+		return out
+	}
+	out.Overrides = make(map[string]PriceOverrideResponse, len(p.Overrides))
+	for slug, rate := range p.Overrides {
+		out.Overrides[slug] = PriceOverrideResponse{
+			Input: rate.Input, Output: rate.Output,
+			CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+			CacheWrite1h: rate.CacheWrite1h,
+		}
+	}
+	return out
 }
 
 func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
@@ -164,9 +263,13 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	out := &MCPTargetResponse{
 		Code:      t.Code,
-		URL:       t.URL,
+		Source:    string(t.Source),
+		URL:       maskSecretURLVariables(t),
 		Transport: string(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.OpenAPI != nil {
+		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{

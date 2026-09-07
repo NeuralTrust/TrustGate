@@ -44,6 +44,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusOK, ErrorBody{}
 	case errors.Is(err, ErrInvalidUUIDParam):
 		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_uuid", Message: err.Error()}
+	case errors.Is(err, ErrInvalidQuery):
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_query", Message: err.Error()}
 	case errors.Is(err, ErrInvalidPage), errors.Is(err, ErrInvalidSize):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_pagination", Message: err.Error()}
 	case errors.Is(err, ErrInvalidSort):
@@ -62,6 +64,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: err.Error()}
+	case errors.Is(err, commonerrors.ErrResultTooLarge):
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: err.Error()}
 	default:
 		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error"}
 	}

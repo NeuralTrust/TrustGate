@@ -1,0 +1,67 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package registry
+
+import (
+	"fmt"
+	"strings"
+)
+
+type PriceOverride struct {
+	Input        float64  `json:"input"`
+	Output       float64  `json:"output"`
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
+}
+
+type Pricing struct {
+	Discount  float64                  `json:"discount,omitempty"`
+	Overrides map[string]PriceOverride `json:"overrides,omitempty"`
+}
+
+func (p *Pricing) IsZero() bool {
+	if p == nil {
+		return true
+	}
+	return p.Discount == 0 && len(p.Overrides) == 0
+}
+
+func (p *Pricing) Validate() error {
+	if p == nil || p.IsZero() {
+		return nil
+	}
+	if p.Discount < 0 || p.Discount > 1 {
+		return fmt.Errorf("%w: pricing.discount must be between 0 and 1", ErrInvalidPricing)
+	}
+	for key, rate := range p.Overrides {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("%w: pricing.overrides key must not be empty", ErrInvalidPricing)
+		}
+		if rate.Input < 0 || rate.Output < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q] rates must be >= 0", ErrInvalidPricing, key)
+		}
+		if rate.CacheRead != nil && *rate.CacheRead < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q].cache_read must be >= 0", ErrInvalidPricing, key)
+		}
+		if rate.CacheWrite != nil && *rate.CacheWrite < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q].cache_write must be >= 0", ErrInvalidPricing, key)
+		}
+		if rate.CacheWrite1h != nil && *rate.CacheWrite1h < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q].cache_write_1h must be >= 0", ErrInvalidPricing, key)
+		}
+	}
+	return nil
+}

@@ -197,8 +197,9 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.mu.Unlock()
 
-	// Counted only once the capture is visible, so a test that waits on
-	// GuardHits can read lastGuard without racing the handler.
+	// The counter is published after the capture: a test that waits on
+	// GuardHits() for an async post_response would otherwise read a zero-value
+	// lastGuard between the increment and this write.
 	atomic.AddInt64(&s.guardHits, 1)
 
 	text := trustGuardInspectText(req.Payload)

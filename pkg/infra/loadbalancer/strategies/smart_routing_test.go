@@ -142,6 +142,71 @@ func TestSmartRouting_ExcludedModelRouteFallsBackToItsSibling(t *testing.T) {
 	}
 }
 
+// A ladder whose cheapest tier sits above 0 leaves scores under that floor
+// matching no tier at all. Those are the easiest requests in the pool, so they
+// belong on the lowest tier - round-robin could hand them the priciest model.
+// The tiers below are declared so the lowest one is NOT the first route in the
+// pool, which is what round-robin would return.
+func TestSmartRouting_ScoreBelowEveryThresholdUsesLowestTier(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		score float64
+		want  string
+	}{
+		{"below every threshold", 0.1, "c"},
+		{"at the lowest threshold", 0.49, "c"},
+		{"between thresholds", 0.5, "c"},
+		{"middle tier", 0.8, "b"},
+		{"highest tier", 0.95, "a"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			routes := makeRoutes("a", "b", "c")
+			cfg := tiersFor(routes, 0.9, 0.7, 0.49)
+			scorer := &fakeScorer{score: tc.score, configured: true}
+			s := NewSmartRouting(routes, cfg, scorer, nil)
+			req := promptReq()
+
+			got := s.Next(context.Background(), req, nil)
+
+			if got == nil || routeName(t, got) != tc.want {
+				t.Fatalf("score %g: got %+v, want %q", tc.score, got, tc.want)
+			}
+			if scorer.calls != 1 {
+				t.Fatalf("expected exactly one score call, got %d", scorer.calls)
+			}
+			if req.RoutingDecision == nil || !req.RoutingDecision.TierApplied {
+				t.Fatalf("score %g: expected a tier-applied decision, got %+v", tc.score, req.RoutingDecision)
+			}
+		})
+	}
+}
+
+// Routing a sub-threshold score to the lowest tier must not swallow the
+// separate case where that tier's route is excluded or unhealthy: with no
+// candidate left to honour the tier, round-robin remains the right answer and
+// the decision must not claim a tier was applied.
+func TestSmartRouting_LowestTierExcludedFallsBackToRoundRobin(t *testing.T) {
+	t.Parallel()
+	routes := makeRoutes("a", "b", "c")
+	cfg := tiersFor(routes, 0.9, 0.7, 0.49)
+	scorer := &fakeScorer{score: 0.1, configured: true}
+	s := NewSmartRouting(routes, cfg, scorer, nil)
+	req := promptReq()
+
+	got := s.Next(context.Background(), req, excludeRoutes(routes[2]))
+
+	if got == nil || routeName(t, got) != "a" {
+		t.Fatalf("excluding the lowest tier must round-robin from the first candidate, got %+v", got)
+	}
+	if req.RoutingDecision == nil || req.RoutingDecision.TierApplied {
+		t.Fatalf("round-robin fail-open must not be recorded as a tier decision, got %+v", req.RoutingDecision)
+	}
+}
+
 func TestSmartRouting_NotConfiguredFallsBackToRoundRobin(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b", "c")
@@ -217,4 +282,95 @@ func TestSmartRouting_EmptyReturnsNil(t *testing.T) {
 	if s.Next(context.Background(), promptReq(), nil) != nil {
 		t.Fatal("empty SmartRouting.Next must return nil")
 	}
+}
+
+// The forwarder cannot tell a tier decision from the round-robin fail-open by
+// looking at the returned route, so the strategy has to say which one it made.
+func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		routes      []routingdomain.Route
+		scorer      *fakeScorer
+		req         *infracontext.RequestContext
+		wantApplied bool
+	}{
+		{
+			name:        "tier decision",
+			routes:      makeRoutes("a", "b", "c"),
+			scorer:      &fakeScorer{score: 0.9, configured: true},
+			wantApplied: true,
+		},
+		{
+			name:   "scorer unconfigured",
+			routes: makeRoutes("a", "b", "c"),
+			scorer: &fakeScorer{score: 0.9, configured: false},
+		},
+		{
+			name:   "score unavailable",
+			routes: makeRoutes("a", "b", "c"),
+			scorer: &fakeScorer{err: errors.New("boom"), configured: true},
+		},
+		{
+			name:   "input not extractable",
+			routes: makeRoutes("a", "b", "c"),
+			scorer: &fakeScorer{score: 0.9, configured: true},
+			req:    &infracontext.RequestContext{},
+		},
+		{
+			name:        "score below every threshold still lands on a tier",
+			routes:      makeRoutes("a", "b", "c"),
+			scorer:      &fakeScorer{score: 0.9, configured: true},
+			wantApplied: true,
+		},
+		{
+			name:   "single candidate is forced, not chosen",
+			routes: makeRoutes("only"),
+			scorer: &fakeScorer{score: 0.9, configured: true},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tiersFor(tc.routes, thresholdsFor(len(tc.routes))...)
+			if tc.name == "score below every threshold still lands on a tier" {
+				cfg = tiersFor(tc.routes, 0.95, 0.96, 0.97)
+			}
+			req := tc.req
+			if req == nil {
+				req = promptReq()
+			}
+			s := NewSmartRouting(tc.routes, cfg, tc.scorer, nil)
+
+			if got := s.Next(context.Background(), req, nil); got == nil {
+				t.Fatal("expected a route")
+			}
+
+			decision := req.RoutingDecision
+			if decision == nil {
+				t.Fatal("expected a routing decision to be recorded")
+			}
+			if decision.TierApplied != tc.wantApplied {
+				t.Fatalf("tier applied = %v, want %v", decision.TierApplied, tc.wantApplied)
+			}
+		})
+	}
+}
+
+func TestSmartRouting_NilRequestRoutesWithoutPanicking(t *testing.T) {
+	t.Parallel()
+	routes := makeRoutes("a", "b")
+	s := NewSmartRouting(routes, tiersFor(routes, 0.0, 0.5), &fakeScorer{configured: true}, nil)
+	if got := s.Next(context.Background(), nil, nil); got == nil {
+		t.Fatal("a nil request must still route, not panic")
+	}
+}
+
+func thresholdsFor(n int) []float64 {
+	out := make([]float64, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, float64(i)*0.4)
+	}
+	return out
 }

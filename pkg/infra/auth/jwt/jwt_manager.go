@@ -57,7 +57,7 @@ func NewJwtManager(config *config.ServerConfig) Manager {
 const PurposePlayground = "playground"
 
 type Claims struct {
-	TenantID    string `json:"tenant_id,omitempty"`
+	TenantID  string `json:"tenant_id,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 	UserEmail string `json:"user_email,omitempty"`
 	// Purpose restricts where a token is accepted. Empty means a regular
@@ -65,6 +65,13 @@ type Claims struct {
 	Purpose string `json:"purpose,omitempty"`
 	// ConsumerSlug binds a playground token to a single consumer route.
 	ConsumerSlug string `json:"consumer_slug,omitempty"`
+	// TokenUse marks machine-to-machine credentials. Those are verified against
+	// the asymmetric issuer key, so seeing it on a shared-secret token means the
+	// token is being replayed on the wrong verifier and must be rejected.
+	TokenUse string `json:"token_use,omitempty"`
+	// PlatformAdmin is the explicit cross-tenant grant. Absence of tenant_id is
+	// not sufficient once ADMIN_PLATFORM_CLAIM_REQUIRED is on.
+	PlatformAdmin bool `json:"platform_admin,omitempty"`
 	jwt.RegisteredClaims
 }
 
