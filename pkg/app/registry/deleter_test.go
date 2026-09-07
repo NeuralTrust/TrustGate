@@ -29,6 +29,14 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+type failingDependentCleaner struct {
+	err error
+}
+
+func (f failingDependentCleaner) DeleteByRegistry(context.Context, ids.GatewayID, ids.RegistryID) error {
+	return f.err
+}
+
 func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -85,4 +93,27 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
+
+func TestDeleter_Delete_StopsWhenDependentCleanupFails(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.RegistryKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Registry{ID: id, GatewayID: gwID}, nil).Once()
+
+	cleanupErr := errors.New("cleanup failed")
+	deleter := appregistry.NewDeleter(
+		repo,
+		newCacheManager(),
+		cachemocks.NewEventPublisher(t),
+		newTestLogger(),
+		nil,
+		appregistry.WithDependentCleaner(failingDependentCleaner{err: cleanupErr}),
+	)
+	err := deleter.Delete(context.Background(), gwID, id)
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("err = %v, want cleanup error", err)
+	}
+	repo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything, mock.Anything)
 }

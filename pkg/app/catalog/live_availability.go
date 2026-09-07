@@ -21,75 +21,74 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	providerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
-	// liveModelsCacheTTL keeps one provider round trip out of every model picker
-	// render while still noticing a rotated or re-scoped key within minutes.
 	liveModelsCacheTTL = 10 * time.Minute
-	// liveModelsTimeout bounds the provider GET so a slow provider cannot hold
-	// the admin API request open.
-	liveModelsTimeout = 8 * time.Second
+	liveModelsTimeout  = 8 * time.Second
 )
 
-// LiveAvailabilityFilter narrows a catalog listing to the models a registry's
-// credentials can actually use, by asking the provider's authenticated models
-// endpoint (the static models.dev catalog cannot see org-restricted API keys,
-// Azure deployments, or account-gated models).
-//
-// It never returns an error and degrades to the input on any doubt: a missing
-// registry, unsupported provider, listing failure, or an intersection that
-// comes back empty (more likely an id mismatch than a key that can invoke
-// nothing) all yield the catalog unchanged — a too-long list fails at request
-// time with a real provider message, a spuriously empty picker is a dead end.
-//
 //go:generate mockery --name=LiveAvailabilityFilter --dir=. --output=./mocks --filename=catalog_live_availability_filter_mock.go --case=underscore --with-expecter
 type LiveAvailabilityFilter interface {
 	Filter(ctx context.Context, in ServerlessFilterInput) []domain.Model
 }
 
+type LiveModel struct {
+	ID          string
+	DisplayName string
+}
+
+type LiveModelSource interface {
+	Supports(providerCode string) bool
+	List(ctx context.Context, providerCode string, auth *registrydomain.TargetAuth, options map[string]any) ([]LiveModel, error)
+}
+
+type cachedLiveModels struct {
+	models  []LiveModel
+	expires time.Time
+}
+
 var _ LiveAvailabilityFilter = (*liveAvailabilityFilter)(nil)
 
 type liveAvailabilityFilter struct {
-	finder  appregistry.Finder
-	locator factory.ProviderLocator
-	cache   *cache.TTLMap
-	logger  *slog.Logger
+	finder appregistry.Finder
+	source LiveModelSource
+	logger *slog.Logger
+	mu     sync.RWMutex
+	cache  map[string]cachedLiveModels
+	flight singleflight.Group
 }
 
 func NewLiveAvailabilityFilter(
 	finder appregistry.Finder,
-	locator factory.ProviderLocator,
+	source LiveModelSource,
 	logger *slog.Logger,
 ) LiveAvailabilityFilter {
 	return &liveAvailabilityFilter{
-		finder:  finder,
-		locator: locator,
-		cache:   cache.NewTTLMap(liveModelsCacheTTL),
-		logger:  logger,
+		finder: finder,
+		source: source,
+		cache:  make(map[string]cachedLiveModels),
+		logger: logger,
 	}
 }
 
 func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilterInput) []domain.Model {
-	// Bedrock availability is owned by the ServerlessFilter (control-plane
-	// entitlement checks); everything else resolves through the provider's
-	// authenticated models endpoint.
-	if in.ProviderCode == providers.ProviderBedrock || len(in.Models) == 0 {
+	if in.ProviderCode == providerdomain.Bedrock || len(in.Models) == 0 {
 		return in.Models
 	}
 	if in.GatewayID.IsNil() || in.RegistryID.IsNil() {
 		return in.Models
 	}
 
-	if _, err := f.locator.GetModelLister(in.ProviderCode); err != nil {
+	if f.source == nil || !f.source.Supports(in.ProviderCode) {
 		return in.Models
 	}
 
@@ -108,12 +107,7 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 		return in.Models
 	}
 
-	cfg := &providers.Config{
-		Options:     reg.ProviderOptions(),
-		Credentials: providers.CredentialsFromTargetAuth(auth),
-	}
-
-	live, err := f.liveModels(ctx, in.ProviderCode, auth, cfg)
+	live, err := f.liveModels(ctx, in.ProviderCode, auth, reg.ProviderOptions())
 	if err != nil {
 		f.logger.Warn("live model listing failed, listing unfiltered catalog",
 			slog.String("provider", in.ProviderCode),
@@ -144,8 +138,7 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 		}
 	}
 
-	// Empty here cannot be told apart from a catalog-vs-provider naming
-	// mismatch, so degrade to the full catalog instead of a dead-end picker.
+	// An empty intersection may indicate mismatched provider naming.
 	if len(kept) == 0 {
 		f.logger.Warn("no catalog model matched the provider's live listing, listing unfiltered catalog",
 			slog.String("provider", in.ProviderCode),
@@ -166,29 +159,42 @@ func (f *liveAvailabilityFilter) liveModels(
 	ctx context.Context,
 	providerCode string,
 	auth *registrydomain.TargetAuth,
-	cfg *providers.Config,
-) ([]providers.LiveModel, error) {
-	key := liveModelsCacheKey(providerCode, auth, cfg.Options)
-	if cached, ok := f.cache.Get(key); ok {
-		if live, ok := cached.([]providers.LiveModel); ok {
-			return live, nil
+	options map[string]any,
+) ([]LiveModel, error) {
+	key := liveModelsCacheKey(providerCode, auth, options)
+	f.mu.RLock()
+	cached, ok := f.cache[key]
+	f.mu.RUnlock()
+	if ok && time.Now().Before(cached.expires) {
+		return cached.models, nil
+	}
+	result := f.flight.DoChan(key, func() (any, error) {
+		f.mu.RLock()
+		cached, ok := f.cache[key]
+		f.mu.RUnlock()
+		if ok && time.Now().Before(cached.expires) {
+			return cached.models, nil
 		}
+		listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), liveModelsTimeout)
+		defer cancel()
+		models, err := f.source.List(listCtx, providerCode, auth, options)
+		if err != nil {
+			return nil, err
+		}
+		f.mu.Lock()
+		f.cache[key] = cachedLiveModels{models: models, expires: time.Now().Add(liveModelsCacheTTL)}
+		f.mu.Unlock()
+		return models, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case completed := <-result:
+		if completed.Err != nil {
+			return nil, completed.Err
+		}
+		return completed.Val.([]LiveModel), nil
 	}
-
-	lister, err := f.locator.GetModelLister(providerCode)
-	if err != nil {
-		return nil, err
-	}
-
-	listCtx, cancel := context.WithTimeout(ctx, liveModelsTimeout)
-	defer cancel()
-
-	live, err := lister.ListLiveModels(listCtx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	f.cache.Set(key, live)
-	return live, nil
 }
 
 func (f *liveAvailabilityFilter) debugSkip(in ServerlessFilterInput, reason string, err error) {
@@ -203,9 +209,6 @@ func (f *liveAvailabilityFilter) debugSkip(in ServerlessFilterInput, reason stri
 	f.logger.Debug("live availability filter skipped", attrs...)
 }
 
-// liveModelsCacheKey scopes a cached listing to the exact credentials and
-// provider options, so rotating or re-scoping a key stops serving the previous
-// key's availability. Secrets are only ever hashed, never stored or logged.
 func liveModelsCacheKey(providerCode string, auth *registrydomain.TargetAuth, options map[string]any) string {
 	digest := sha256.New()
 	digest.Write([]byte(providerCode))

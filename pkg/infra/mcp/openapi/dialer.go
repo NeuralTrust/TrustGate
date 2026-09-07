@@ -65,7 +65,6 @@ func NewDialer(remote appmcp.Dialer, compiler appopenapi.Compiler) appmcp.Dialer
 	return NewDialerWithClient(remote, compiler, infraopenapi.NewSafeHTTPClient(30*time.Second))
 }
 
-// NewDialerWithClient returns a multiplexing dialer using the supplied REST client.
 func NewDialerWithClient(
 	remote appmcp.Dialer,
 	compiler appopenapi.Compiler,
@@ -85,8 +84,6 @@ func (d *Dialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upst
 	key := target.Revision
 	if key == "" {
 		key = target.OpenAPI.SpecURL + "|" + target.OpenAPI.BaseURL
-	} else {
-		d.evictStaleRevisions(key)
 	}
 	compiled, err := d.load(ctx, key, *target.OpenAPI)
 	if err != nil {
@@ -118,6 +115,18 @@ func (d *Dialer) load(ctx context.Context, key string, source appopenapi.Source)
 	if cached, ok := d.cached(key); ok {
 		return cached, nil
 	}
+	if stale, ok := d.stale(key); ok {
+		go func() {
+			refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			_, _ = d.refresh(refreshCtx, key, source)
+		}()
+		return stale, nil
+	}
+	return d.refresh(ctx, key, source)
+}
+
+func (d *Dialer) refresh(ctx context.Context, key string, source appopenapi.Source) (*compiledDocument, error) {
 	value, err, _ := d.flight.Do(key, func() (any, error) {
 		if cached, ok := d.cached(key); ok {
 			return cached, nil
@@ -130,6 +139,7 @@ func (d *Dialer) load(ctx context.Context, key string, source appopenapi.Source)
 		if err != nil {
 			return nil, err
 		}
+		d.evictStaleRevisions(key)
 		d.pruneCache()
 		d.cache.Store(key, cacheEntry{compiled: compiled, expiresAt: time.Now().Add(compileCacheTTL)})
 		return compiled, nil
@@ -147,10 +157,17 @@ func (d *Dialer) cached(key string) (*compiledDocument, bool) {
 	}
 	entry := value.(cacheEntry)
 	if time.Now().After(entry.expiresAt) {
-		d.cache.Delete(key)
 		return nil, false
 	}
 	return entry.compiled, true
+}
+
+func (d *Dialer) stale(key string) (*compiledDocument, bool) {
+	value, ok := d.cache.Load(key)
+	if !ok {
+		return nil, false
+	}
+	return value.(cacheEntry).compiled, true
 }
 
 func (d *Dialer) pruneCache() {

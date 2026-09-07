@@ -24,6 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testFinding struct {
+	Evidence map[string]any
+}
+
+type testGuardData struct {
+	Findings []testFinding
+}
+
 func TestDeep_SharesNoContainerWithTheOriginal(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -83,6 +91,15 @@ func TestDeep_SharesNoContainerWithTheOriginal(t *testing.T) {
 				return original, func() { original["present"] = "mutated" }
 			},
 			wantOut: map[string]any{"present": 1, "absent": nil},
+		},
+		{
+			name: "pointer to struct with nested containers",
+			build: func() (any, func()) {
+				evidence := map[string]any{"category": "toxicity"}
+				original := &testGuardData{Findings: []testFinding{{Evidence: evidence}}}
+				return original, func() { evidence["category"] = "mutated" }
+			},
+			wantOut: &testGuardData{Findings: []testFinding{{Evidence: map[string]any{"category": "toxicity"}}}},
 		},
 	}
 

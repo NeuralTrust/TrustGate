@@ -67,11 +67,7 @@ func (r *registryRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.Re
 	return configsync.ErrReadOnly
 }
 
-// List returns a gateway's registries from the compiled snapshot. It is a read,
-// so — unlike the write methods — it is served rather than rejected: the MCP
-// Store's installer and scoper scan a gateway's registries by catalog code
-// through it. The NameContains, Page and Size filter fields are honored;
-// gateway id is required (a zero filter yields nothing).
+// List returns a paginated defensive copy of a gateway's registries.
 func (r *registryRepository) List(_ context.Context, filter domain.ListFilter) ([]*domain.Registry, int, error) {
 	snap, ok := snapshotFrom(r.store)
 	if !ok {
@@ -94,6 +90,41 @@ func (r *registryRepository) List(_ context.Context, filter domain.ListFilter) (
 		return nil, 0, err
 	}
 	return cloned, total, nil
+}
+
+// ListByGateway returns immutable snapshot registries through the Store fast path.
+func (r *registryRepository) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByGateway(gatewayID), nil
+}
+
+// ListByGatewayAndCatalogCode resolves Store registries through the catalog index.
+func (r *registryRepository) ListByGatewayAndCatalogCode(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	code string,
+) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByCatalogCode(gatewayID, strings.TrimSpace(code)), nil
+}
+
+// ListByGatewayAndIDs resolves Store registries through the gateway ID index.
+func (r *registryRepository) ListByGatewayAndIDs(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	registryIDs []ids.RegistryID,
+) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByIDs(gatewayID, registryIDs), nil
 }
 
 // paginate returns the 1-based Page window of size Size. A non-positive size

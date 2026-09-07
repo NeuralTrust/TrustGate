@@ -21,9 +21,7 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -31,19 +29,17 @@ import (
 
 // fakeSurfaceScoper stands in for the Store scoper: it exposes whatever
 // registries the test says the caller may currently see, and records the
-// context it was asked with.
+// principal it was asked as.
 type fakeSurfaceScoper struct {
 	exposed []*registrydomain.Registry
 	err     error
 	subject string
-	gateway *gatewaydomain.Gateway
 }
 
 func (f *fakeSurfaceScoper) Scope(ctx context.Context, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
 	if p := identity.PrincipalFromContext(ctx); p != nil {
 		f.subject = p.Subject
 	}
-	f.gateway, _ = appgateway.FromContext(ctx)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -52,57 +48,70 @@ func (f *fakeSurfaceScoper) Scope(ctx context.Context, rc *appconsumer.RoutableC
 	return &scoped, nil
 }
 
-func reg(name string) *registrydomain.Registry {
+func surfaceReg(name string) *registrydomain.Registry {
 	return &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), Name: name}
 }
 
-func TestSurfaceSnapshot_ChangesWhenAccessIsRevoked(t *testing.T) {
-	notion, linear := reg("Notion"), reg("Linear")
+func TestSurfaceWatcher_LoadSurface_ChangesWhenAccessIsRevoked(t *testing.T) {
+	notion, linear := surfaceReg("Notion"), surfaceReg("Linear")
 	scoper := &fakeSurfaceScoper{exposed: []*registrydomain.Registry{linear, notion}}
-	h := NewHandler(NewRPCGateway(nil, nil, nil).WithStoreScoper(scoper), nil, nil)
-	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
-	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: gw.ID}}
+	w := NewSurfaceWatcher(nil, nil, WithSurfaceScoper(scoper)).(*surfaceWatcher)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: ids.New[ids.GatewayKind]()}}
 	ana := &identity.Principal{Subject: "ana"}
 
-	before := h.surfaceSnapshot(context.Background(), rc, ana, gw)
+	before, err := w.loadSurface(context.Background(), rc, ana)
+	if err != nil {
+		t.Fatalf("loadSurface: %v", err)
+	}
 	if len(before) != 2 || !strings.HasPrefix(before[0], "sf:") {
 		t.Fatalf("both exposed registries must be fingerprinted, got %v", before)
 	}
-	// The scoper runs as the caller, with the gateway for the live mode decision.
-	if scoper.subject != "ana" || scoper.gateway != gw {
-		t.Fatalf("scoper must see the principal and gateway: sub=%q gw=%v", scoper.subject, scoper.gateway)
+	// The scoper runs as the caller.
+	if scoper.subject != "ana" {
+		t.Fatalf("scoper must see the principal, got %q", scoper.subject)
 	}
 	// Sorted: the repository order must not read as a change.
 	scoper.exposed = []*registrydomain.Registry{notion, linear}
-	if same := h.surfaceSnapshot(context.Background(), rc, ana, gw); strings.Join(same, "|") != strings.Join(before, "|") {
+	same, _ := w.loadSurface(context.Background(), rc, ana)
+	if strings.Join(same, "|") != strings.Join(before, "|") {
 		t.Fatalf("reordering must not change the snapshot: %v vs %v", same, before)
 	}
 	// An admin revokes Notion: the install row is unchanged, the surface shrinks,
-	// the snapshot string changes and the stream pushes tools/list_changed.
+	// and the fingerprint must move so the stream pushes tools/list_changed.
 	scoper.exposed = []*registrydomain.Registry{linear}
-	after := h.surfaceSnapshot(context.Background(), rc, ana, gw)
+	after, _ := w.loadSurface(context.Background(), rc, ana)
 	if len(after) != 1 || strings.Join(after, "|") == strings.Join(before, "|") {
-		t.Fatalf("revoking a server must change the snapshot, got %v", after)
+		t.Fatalf("revocation must change the snapshot: before=%v after=%v", before, after)
 	}
 }
 
-func TestSurfaceSnapshot_QuietWhenUnwiredOrFailing(t *testing.T) {
+func TestSurfaceWatcher_WatchSnapshotIncludesSurface(t *testing.T) {
+	scoper := &fakeSurfaceScoper{exposed: []*registrydomain.Registry{surfaceReg("Notion")}}
+	w := NewSurfaceWatcher(nil, nil, WithSurfaceScoper(scoper))
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: ids.New[ids.GatewayKind]()}}
+
+	snapshot := w.WatchSnapshot(context.Background(), rc, &identity.Principal{Subject: "ana"})
+	if !strings.Contains(snapshot, "sf:") {
+		t.Fatalf("watch snapshot must carry the Store surface, got %q", snapshot)
+	}
+}
+
+func TestSurfaceWatcher_LoadSurface_NoScoperOrError(t *testing.T) {
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: ids.New[ids.GatewayKind]()}}
 	ana := &identity.Principal{Subject: "ana"}
-	// No gateway / no scoper: nothing to watch.
-	if parts := NewHandler(nil, nil, nil).surfaceSnapshot(context.Background(), rc, ana, nil); parts != nil {
-		t.Fatalf("no scoper must yield an empty snapshot, got %v", parts)
+
+	plain := NewSurfaceWatcher(nil, nil).(*surfaceWatcher)
+	if parts, err := plain.loadSurface(context.Background(), rc, ana); err != nil || len(parts) != 0 {
+		t.Fatalf("no scoper must mean no surface parts, got %v %v", parts, err)
 	}
-	if parts := NewHandler(NewRPCGateway(nil, nil, nil), nil, nil).surfaceSnapshot(context.Background(), rc, ana, nil); parts != nil {
-		t.Fatalf("unwired scoper must yield an empty snapshot, got %v", parts)
+
+	failing := NewSurfaceWatcher(nil, nil, WithSurfaceScoper(&fakeSurfaceScoper{err: errors.New("boom"), exposed: nil})).(*surfaceWatcher)
+	if _, err := failing.loadSurface(context.Background(), rc, ana); err == nil {
+		t.Fatal("a scoper error must surface so the snapshot is not cached")
 	}
-	// A transient scoper error reads as "no change", never as a refresh storm.
-	failing := &fakeSurfaceScoper{err: errors.New("boom")}
-	if parts := NewHandler(NewRPCGateway(nil, nil, nil).WithStoreScoper(failing), nil, nil).surfaceSnapshot(context.Background(), rc, ana, nil); parts != nil {
-		t.Fatalf("scoper error must yield an empty snapshot, got %v", parts)
-	}
-	// No principal: nothing to scope.
-	if parts := NewHandler(NewRPCGateway(nil, nil, nil).WithStoreScoper(&fakeSurfaceScoper{}), nil, nil).surfaceSnapshot(context.Background(), rc, nil, nil); parts != nil {
-		t.Fatalf("no principal must yield an empty snapshot, got %v", parts)
+	// A transient scoper error yields an empty, uncached snapshot (like the
+	// credential and installation lookups), never a poisoned cache entry.
+	if got := failing.WatchSnapshot(context.Background(), rc, ana); got != "" {
+		t.Fatalf("failed load must yield an empty snapshot, got %q", got)
 	}
 }

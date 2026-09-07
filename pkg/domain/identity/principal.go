@@ -134,8 +134,7 @@ func (p *Principal) Org() string {
 	if p == nil {
 		return ""
 	}
-	org, _ := p.Claims[ClaimOrg].(string)
-	return strings.TrimSpace(org)
+	return StringClaim(p.Claims, ClaimOrg)
 }
 
 // StoreAccess returns the per-principal MCP Store access level claim
@@ -145,8 +144,64 @@ func (p *Principal) StoreAccess() string {
 	if p == nil {
 		return ""
 	}
-	v, _ := p.Claims[ClaimStoreAccess].(string)
+	return StringClaim(p.Claims, ClaimStoreAccess)
+}
+
+// Groups returns the principal's normalized group memberships.
+func (p *Principal) Groups() []string {
+	if p == nil {
+		return nil
+	}
+	return GroupsFromClaims(p.Claims)
+}
+
+// StringClaim returns a trimmed string claim.
+func StringClaim(claims map[string]any, key string) string {
+	v, _ := claims[key].(string)
 	return strings.TrimSpace(v)
+}
+
+// GroupsFromClaims returns normalized group memberships from identity claims.
+func GroupsFromClaims(claims map[string]any) []string {
+	return GroupsFromClaim(claims[ClaimGroups])
+}
+
+// GroupsFromClaim normalizes string, string-slice, and JSON-array group claims.
+func GroupsFromClaim(value any) []string {
+	var values []string
+	switch v := value.(type) {
+	case string:
+		values = strings.Fields(v)
+	case []string:
+		values = v
+	case []any:
+		values = make([]string, 0, len(v))
+		for _, item := range v {
+			if group, ok := item.(string); ok {
+				values = append(values, group)
+			}
+		}
+	default:
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	groups := make([]string, 0, len(values))
+	for _, group := range values {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
 }
 
 func EmailFromClaims(claims map[string]any) string {
