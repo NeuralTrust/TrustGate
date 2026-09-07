@@ -1,6 +1,6 @@
 # Consumers & identity — target model
 
-Status: gateway side implemented (see §10) · app side pending · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
+Status: gateway and app implemented (see §10) · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
 
 Companion to `plan-b-mcp-store-and-identity.md`, which built the Store. This memo
 answers the question that memo left open: now that people are served by the
@@ -426,3 +426,26 @@ two UI flavours (§4.4), and moving the trust-anchor forms to gateway Settings �
 that is presentation; the gateway already keeps auths at gateway level and
 binds them per consumer. Resolved open questions: the attribution header is
 `X-NeuralTrust-End-User`; app-supplied users stay outside Access.
+
+### App (NeuralTrust/app, branch `claude/access-page`)
+
+- **Consumers.** Routing mode and roles are gone from types, mappers, actions,
+  the create panel and the Routing tab. General gains the *Identity* section:
+  MCP → *Acts on behalf of end users* with the source choice *Users sign in* /
+  *My app identifies its users* (the latter shows `X-NeuralTrust-End-User` and a
+  curl snippet of the connections endpoints for that consumer); LLM → *Accept
+  end-user attribution header*. The Auth tab is *API key | OAuth*: an API-keys
+  list with *Issue key*, masked keys, created date, *Rotate* and *Revoke*; under
+  OAuth the trusted-IdP picker plus *Allowed client IDs* (or *Allowed
+  certificate subjects* for mTLS) bound to `auth_binding`. The gateway's
+  identity ↔ credential rule is mirrored in the UI (the disallowed method is
+  disabled with a hint).
+- **Identity → Settings.** The Roles UI is deleted. Gateway trust anchors live
+  in Settings → Agent Gateway → *Machine identity*: only `oauth2` / `oidc` /
+  `mtls` auths are listed (API keys are per consumer), and the create form
+  offers *External IdP (JWT)* (Issuer, Audience; Advanced: JWKS, algorithms,
+  subject claim, scopes), *External IdP (users)* (plus client, endpoints,
+  session, userinfo) and *mTLS*. The old `/gateway/identity` route redirects to
+  that tab.
+- Not done: the Access *Applications* tab listing acts-for-users consumers, and a
+  per-user note on the Connect tab for acts-for-users consumers.
