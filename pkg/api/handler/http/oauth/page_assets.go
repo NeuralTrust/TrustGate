@@ -19,83 +19,50 @@ import "html/template"
 const pageFonts = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">`
 
 const pageCSS = `
-/* These are standalone hosted pages, not app surfaces, so they follow the
-   visitor's system theme rather than the app's dark-forced shell. Every
-   theme-dependent value lives here; component rules below reference vars only.
-   Light values track the v2 DS light ramp (Radix slate / green-11 / red-11);
-   dark values are the DS dark ramp. */
+/* Single light palette, tracking the v2 DS light ramp (Radix slate, green-11,
+   red-11) with brand purple unchanged. Two line weights on purpose: --stroke
+   for a card's own edge and controls, --hairline (lighter) for seams drawn
+   inside a card. */
 :root{
   color-scheme:light;
   --bg-canvas:#f6f6f9;--bg-default:#fff;--card-bg:#fff;
-  --bg-surface-hover:#f6f6f8;--bg-muted:#ededf1;--bg-inverse:#fff;
-  --tile-bg:#fff;--tile-bg-hover:#f6f6f8;
-  --stroke:#e4e4e9;--dot:rgb(28 32 36 / .07);
-  --fg-title:#1c2024;--fg-default:#42464e;--fg-secondary:#52565f;
-  --fg-muted:#60646c;--fg-disabled:#8b8d98;
+  --bg-surface-hover:#f4f4f7;--bg-muted:#ececf0;--bg-inverse:#fff;
+  --tile-bg:#fff;--tile-bg-hover:#f7f7f9;
+  --stroke:#e6e6ec;--hairline:#eeeef2;--dot:rgb(28 32 36 / .055);
+  --fg-title:#1a1d21;--fg-default:#3f434a;--fg-secondary:#52565f;
+  --fg-muted:#5f636b;--fg-disabled:#8b8d98;
   --fg-on-brand:#fff;--fg-danger:#ce2c31;--fg-brand:#9053ff;--fg-success:#218358;
   --badge-green:#00b211;--badge-green-bg:rgb(0 178 17 / .12);
-  --badge-red:#ce2c31;--badge-red-bg:rgb(229 72 77 / .12);
+  --badge-red:#ce2c31;--badge-red-bg:rgb(229 72 77 / .1);
   --danger-solid:#ce2c31;--danger-hover:#e5484d;--danger-active:#b32832;
-  --danger-subtle:#ffefef;--danger-border:rgb(229 72 77 / .28);
-  --canvas-pool:rgb(156 41 255 / .07);
+  --danger-subtle:#fff1f1;--danger-border:rgb(229 72 77 / .22);
+  --canvas-pool:rgb(156 41 255 / .06);
   --hero-wash:
-    linear-gradient(180deg,rgb(255 255 255 / 0) 42%,rgb(255 255 255 / .75) 88%,rgb(255 255 255 / .95) 100%),
-    radial-gradient(50% 82% at 50% 44%,rgb(156 41 255 / .17) 0%,rgb(156 41 255 / .05) 54%,transparent 78%),
-    linear-gradient(102deg,rgb(156 41 255 / .13) 0%,rgb(122 96 255 / .07) 46%,rgb(4 175 255 / .11) 100%);
-  --link-line:linear-gradient(90deg,rgb(101 58 179 / .35),rgb(101 58 179 / .9),rgb(101 58 179 / .35));
+    linear-gradient(180deg,rgb(255 255 255 / 0) 38%,rgb(255 255 255 / .72) 84%,#fff 100%),
+    radial-gradient(48% 78% at 50% 42%,rgb(156 41 255 / .16) 0%,rgb(156 41 255 / .04) 56%,transparent 80%),
+    linear-gradient(102deg,rgb(156 41 255 / .12) 0%,rgb(122 96 255 / .06) 46%,rgb(4 175 255 / .10) 100%);
+  --link-line:linear-gradient(90deg,rgb(101 58 179 / .28),rgb(101 58 179 / .8),rgb(101 58 179 / .28));
   --link-glow:none;
-  --shadow-card:0 1px 2px rgb(16 18 27 / .06),0 16px 36px -16px rgb(16 18 27 / .18);
-  --shadow-tile:0 1px 2px rgb(16 18 27 / .12),0 10px 20px -10px rgb(16 18 27 / .28);
-  --tile-ring:inset 0 0 0 1px rgb(16 18 27 / .07);
-  --nt-ring:inset 0 0 0 1px rgb(16 18 27 / .06);
-  --shadow-cta:inset 0 1px 0 rgb(255 255 255 / .18),0 1px 2px rgb(16 18 27 / .18);
-  --shadow-cta-hover:inset 0 1px 0 rgb(255 255 255 / .22),0 2px 4px rgb(16 18 27 / .2);
-  --shadow-cta-active:inset 0 1px 2px rgb(16 18 27 / .28);
-  --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .12);
-  --shadow-overlay:0 16px 32px -8px rgb(16 18 27 / .14);
+  --shadow-card:0 0 0 1px rgb(16 18 27 / .05),0 1px 2px rgb(16 18 27 / .04),0 14px 32px -14px rgb(16 18 27 / .16);
+  --shadow-tile:0 1px 2px rgb(16 18 27 / .1),0 8px 16px -8px rgb(16 18 27 / .22);
+  --tile-ring:inset 0 0 0 1px rgb(16 18 27 / .06);
+  --shadow-cta:inset 0 1px 0 rgb(255 255 255 / .16),0 1px 2px rgb(16 18 27 / .14);
+  --shadow-cta-hover:inset 0 1px 0 rgb(255 255 255 / .2),0 2px 6px rgb(16 18 27 / .16);
+  --shadow-cta-active:inset 0 1px 2px rgb(16 18 27 / .22);
+  --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .1);
+  --shadow-overlay:0 12px 28px -12px rgb(16 18 27 / .12);
 
-  /* Brand and shape are theme-agnostic. */
   --brand:#9053ff;--brand-hover:#a370ff;--brand-active:#653ab3;--brand-focus:#bf9bff;
   --radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;
   --font-sans:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   --duration-fast:100ms;
 }
-@media (prefers-color-scheme:dark){
-  :root{
-    color-scheme:dark;
-    --bg-canvas:#03020f;--bg-default:#03020f;--card-bg:#1a1a28;
-    --bg-surface-hover:#11101d;--bg-muted:#1a1a28;--bg-inverse:#fcfcfc;
-    --tile-bg:#11101d;--tile-bg-hover:#1a1a28;
-    --stroke:#272730;--dot:rgb(255 255 255 / .03);
-    --fg-title:#fcfcfc;--fg-default:#fcfcfc;--fg-secondary:#c4c2ca;
-    --fg-muted:#999;--fg-disabled:#888;
-    --fg-on-brand:#fff;--fg-danger:#ff5b67;--fg-brand:#9053ff;--fg-success:#30a46c;
-    --badge-green:#00fe18;--badge-green-bg:rgb(0 254 24 / .2);
-    --badge-red:#ff3948;--badge-red-bg:rgb(255 57 72 / .2);
-    --danger-solid:#ff3948;--danger-hover:#ff5b67;--danger-active:#b32832;
-    --danger-subtle:#350d1a;--danger-border:rgb(255 91 103 / .2);
-    --canvas-pool:rgb(144 83 255 / .05);
-    --hero-wash:
-      linear-gradient(180deg,rgb(26 26 40 / 0) 52%,rgb(26 26 40 / .6) 92%,rgb(26 26 40 / .85) 100%),
-      radial-gradient(50% 82% at 50% 44%,rgb(144 83 255 / .22) 0%,rgb(144 83 255 / .05) 54%,transparent 78%);
-    --link-line:linear-gradient(90deg,rgb(191 155 255 / .3),var(--brand-focus),rgb(191 155 255 / .3));
-    --link-glow:0 0 5px rgb(144 83 255 / .45);
-    --shadow-card:inset 0 1px 0 rgb(255 255 255 / .06),0 1px 2px rgb(0 0 0 / .5),0 28px 56px -20px rgb(0 0 0 / .72);
-    --shadow-tile:0 2px 4px rgb(0 0 0 / .28),0 14px 26px -10px rgb(0 0 0 / .7);
-    --tile-ring:inset 0 0 0 1px rgb(0 0 0 / .06);
-    --nt-ring:inset 0 0 0 1px rgb(255 255 255 / .08);
-    --shadow-cta:inset 0 1px 0 rgb(255 255 255 / .14),0 1px 2px rgb(0 0 0 / .35);
-    --shadow-cta-hover:inset 0 1px 0 rgb(255 255 255 / .18),0 1px 2px rgb(0 0 0 / .35);
-    --shadow-cta-active:inset 0 1px 2px rgb(0 0 0 / .25);
-    --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .24);
-    --shadow-overlay:0 16px 32px -8px rgb(0 0 0 / .55);
-  }
-}
 *{box-sizing:border-box}
 body{
   margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:var(--bg-canvas);color:var(--fg-default);font-family:var(--font-sans);
+  font-optical-sizing:auto;text-rendering:optimizeLegibility;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 body.store{display:block;align-items:stretch}
@@ -238,30 +205,28 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 body.dotted{
   background-color:var(--bg-canvas);
   background-image:radial-gradient(var(--dot) 1px,transparent 1px);
-  background-size:24px 24px;background-position:-12px -12px;background-attachment:fixed;
+  background-size:26px 26px;background-position:-13px -13px;background-attachment:fixed;
 }
 body.dotted:not(.store){
   background-image:
     radial-gradient(var(--dot) 1px,transparent 1px),
     radial-gradient(46% 42% at 50% 44%,var(--canvas-pool) 0%,transparent 72%);
-  background-size:24px 24px,100% 100%;
-  background-position:-12px -12px,0 0;
+  background-size:26px 26px,100% 100%;
+  background-position:-13px -13px,0 0;
   background-attachment:fixed,fixed;
 }
 .card.flush{
-  max-width:428px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
-  background:var(--card-bg);border-color:var(--stroke);box-shadow:var(--shadow-card);
+  max-width:420px;padding:0;overflow:hidden;border-radius:var(--radius-xl);
+  background:var(--card-bg);border-color:transparent;box-shadow:var(--shadow-card);
 }
 .card-hero{
-  position:relative;display:flex;align-items:center;justify-content:center;height:104px;
+  display:flex;align-items:center;justify-content:center;height:112px;
   background:var(--hero-wash),var(--card-bg);
 }
-.card-hero::after,.card-foot::before{
-  content:"";position:absolute;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--stroke) 14%,var(--stroke) 86%,transparent);
+.card-foot::before{
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--hairline) 12%,var(--hairline) 88%,transparent);
 }
-.card-hero::after{bottom:0}
-.card-foot::before{top:0}
 /* gap:0 plus an explicit connector element keeps the line inside the pair —
    a wider absolutely-positioned rule would overhang both marks. */
 .pair{position:relative;display:flex;align-items:center;gap:0}
@@ -276,33 +241,32 @@ body.dotted:not(.store){
   box-shadow:var(--tile-ring),var(--shadow-tile);
 }
 .mark-tile img{width:30px;height:30px;object-fit:contain;display:block}
-.mark-tile.nt{background:var(--bg-canvas);box-shadow:var(--nt-ring),var(--shadow-tile)}
+.mark-tile.nt{background:transparent;box-shadow:var(--shadow-tile)}
 .mark-tile.nt svg{width:100%;height:100%;display:block}
-.card-body{padding:24px 28px 22px}
+.card-body{padding:26px 32px 24px}
 h1.title{
-  font-size:1.125rem;line-height:1.75rem;font-weight:600;letter-spacing:-.014em;
-  margin:0 0 4px;text-wrap:balance;
+  font-size:1.25rem;line-height:1.75rem;font-weight:600;letter-spacing:-.021em;
+  margin:0 0 5px;text-wrap:balance;
 }
 p.lede{
   margin:0;color:var(--fg-muted);
-  font-size:.8125rem;line-height:1.25rem;letter-spacing:-.002em;text-wrap:pretty;
+  font-size:.8125rem;line-height:1.3125rem;letter-spacing:-.003em;text-wrap:pretty;
 }
 .card-body .flash{margin:18px 0 0}
 /* What the connection grants — the substance of a consent screen. */
-.access{margin-top:20px}
+.access{margin-top:22px}
 .eyebrow{
-  display:block;margin:0 0 9px;color:var(--fg-disabled);
-  font-size:.6875rem;line-height:1rem;font-weight:500;letter-spacing:.07em;text-transform:uppercase;
+  display:block;margin:0 0 10px;color:var(--fg-disabled);
+  font-size:.6875rem;line-height:1rem;font-weight:500;letter-spacing:.085em;text-transform:uppercase;
 }
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{
   font-family:var(--font-mono);font-size:.6875rem;line-height:1rem;font-weight:400;
-  padding:4px 7px;border-radius:var(--radius-sm);
-  background:var(--bg-surface-hover);border:1px solid var(--stroke);color:var(--fg-secondary);
+  letter-spacing:-.01em;padding:5px 8px;border-radius:var(--radius-sm);
+  background:var(--bg-surface-hover);color:var(--fg-secondary);
 }
 .chip.more{
-  font-family:var(--font-sans);background:transparent;border-color:transparent;
-  color:var(--fg-disabled);padding:4px 2px;
+  font-family:var(--font-sans);background:transparent;color:var(--fg-disabled);padding:5px 2px;
 }
 .note{
   display:flex;gap:8px;margin:16px 0 0;
@@ -310,19 +274,22 @@ p.lede{
 }
 .note svg{flex:none;margin-top:1px}
 .account{
-  display:inline-flex;align-items:center;gap:7px;margin-top:18px;padding:5px 11px;
-  background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-full);
+  display:inline-flex;align-items:center;gap:7px;margin-top:18px;padding:6px 12px;
+  background:var(--bg-surface-hover);border-radius:var(--radius-full);
   color:var(--fg-secondary);font-size:.8125rem;line-height:1.125rem;
 }
 .account svg{flex:none;color:var(--fg-success)}
 .account.danger svg{color:var(--fg-danger)}
 .card-foot{
   position:relative;display:flex;flex-direction:column;gap:6px;align-items:stretch;
-  padding:18px 28px 20px;background:var(--card-bg);
+  padding:20px 32px 22px;background:var(--card-bg);
 }
 .card-foot form{display:flex;width:100%}
 a.btn.block,button.btn.block{
-  width:100%;height:44px;border-radius:10px;font-weight:500;letter-spacing:-.006em;
+  width:100%;height:42px;border-radius:10px;font-weight:500;letter-spacing:-.006em;
+}
+a.btn.primary.block:focus-visible,button.btn.primary.block:focus-visible{
+  outline:2px solid var(--brand-focus);outline-offset:2px;box-shadow:var(--shadow-cta);
 }
 /* A hairline top light and a brand-tinted lift keep the full-width CTA from
    reading as a flat slab; the fill itself stays the brand token. */
@@ -335,12 +302,12 @@ a.btn.ghost,button.btn.ghost{
 }
 a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
 .card-foot .btn.ghost,.card-foot .btn.ghost-danger{
-  height:26px;font-weight:400;font-size:.8125rem;text-decoration:none;
+  height:26px;font-weight:400;font-size:.75rem;text-decoration:none;color:var(--fg-muted);
 }
 .card-foot .btn.ghost:hover,.card-foot .btn.ghost-danger:hover{
   text-decoration:underline;text-underline-offset:2px;
 }
-.card-foot .btn.ghost-danger{color:var(--fg-danger)}
+.card-foot .btn.ghost-danger:hover{color:var(--danger-solid)}
 .secured{
   display:flex;align-items:center;justify-content:center;gap:7px;
   margin-top:4px;color:var(--fg-disabled);
