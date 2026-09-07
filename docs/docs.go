@@ -3629,11 +3629,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest": {
+            "description": "AuthBindingRequest narrows which callers of a shared auth (external IdP,\nmTLS CA) may enter the consumer. Omitted or empty lists accept every caller\nthe auth verifies.",
+            "type": "object",
+            "properties": {
+                "allowed_certificate_subjects": {
+                    "description": "AllowedCertificateSubjects are the client-certificate common names or SAN\nDNS names accepted over mTLS.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_client_ids": {
+                    "description": "AllowedClientIDs are the azp / client_id values accepted on a bearer JWT.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "auth_binding": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
                 },
                 "fail_mode": {
                     "type": "string"
@@ -3897,6 +3920,14 @@ const docTemplate = `{
                 "active": {
                     "type": "boolean"
                 },
+                "auth_binding": {
+                    "description": "AuthBinding replaces the whole binding. Omit to keep it; send empty lists\nto clear it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
+                        }
+                    ]
+                },
                 "fail_mode": {
                     "type": "string"
                 },
@@ -3947,11 +3978,32 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse": {
+            "description": "AuthBindingResponse narrows which callers of a shared auth may enter the\nconsumer; empty lists accept every caller the auth verifies.",
+            "type": "object",
+            "properties": {
+                "allowed_certificate_subjects": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_client_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "auth_binding": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse"
                 },
                 "auth_ids": {
                     "type": "array",

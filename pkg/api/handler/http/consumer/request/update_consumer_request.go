@@ -38,6 +38,9 @@ type UpdateConsumerRequest struct {
 	FailMode      *string                   `json:"fail_mode,omitempty"`
 	// Identity replaces who the consumer acts for. Omit to keep it as it is.
 	Identity *IdentityRequest `json:"identity,omitempty"`
+	// AuthBinding replaces the whole binding. Omit to keep it; send empty lists
+	// to clear it.
+	AuthBinding *AuthBindingRequest `json:"auth_binding,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {

@@ -41,6 +41,7 @@ type ConsumerResponse struct {
 	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
 	FailMode        string                   `json:"fail_mode,omitempty"`
 	Identity        IdentityResponse         `json:"identity"`
+	AuthBinding     AuthBindingResponse      `json:"auth_binding"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
 }
@@ -146,6 +147,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		Toolkit:         fromToolkit(c.Toolkit()),
 		FailMode:        string(c.FailMode()),
 		Identity:        fromIdentity(c.Identity),
+		AuthBinding:     fromAuthBinding(c.AuthBinding),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -296,4 +298,25 @@ func fromIdentity(i domain.Identity) IdentityResponse {
 		Source:        string(i.Source),
 		EndUserHeader: i.EndUserHeader,
 	}
+}
+
+// AuthBindingResponse narrows which callers of a shared auth may enter the
+// consumer; empty lists accept every caller the auth verifies.
+type AuthBindingResponse struct {
+	AllowedClientIDs           []string `json:"allowed_client_ids"`
+	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects"`
+}
+
+func fromAuthBinding(b domain.AuthBinding) AuthBindingResponse {
+	out := AuthBindingResponse{
+		AllowedClientIDs:           b.AllowedClientIDs,
+		AllowedCertificateSubjects: b.AllowedCertificateSubjects,
+	}
+	if out.AllowedClientIDs == nil {
+		out.AllowedClientIDs = []string{}
+	}
+	if out.AllowedCertificateSubjects == nil {
+		out.AllowedCertificateSubjects = []string{}
+	}
+	return out
 }

@@ -47,6 +47,8 @@ type UpdateInput struct {
 	FailMode      *domain.FailMode
 	// Identity replaces who the consumer acts for. A nil value keeps it.
 	Identity *domain.Identity
+	// AuthBinding replaces the whole binding. A nil value keeps it.
+	AuthBinding *domain.AuthBinding
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -105,6 +107,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	previousIdentity := existing.Identity
 	if in.Identity != nil {
 		existing.Identity = *in.Identity
+	}
+	if in.AuthBinding != nil {
+		existing.AuthBinding = *in.AuthBinding
 	}
 	if in.LBConfig != nil {
 		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)

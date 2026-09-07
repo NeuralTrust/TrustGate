@@ -75,6 +75,7 @@ type Consumer struct {
 	ModelPolicies   ModelPolicies          `json:"model_policies,omitempty"`
 	MCP             *MCPPolicy             `json:"mcp,omitempty"`
 	Identity        Identity               `json:"identity"`
+	AuthBinding     AuthBinding            `json:"auth_binding"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
@@ -117,6 +118,7 @@ type CreateParams struct {
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
 	Identity        *Identity
+	AuthBinding     *AuthBinding
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -154,6 +156,9 @@ func New(params CreateParams) (*Consumer, error) {
 	if params.Identity != nil {
 		c.Identity = *params.Identity
 	}
+	if params.AuthBinding != nil {
+		c.AuthBinding = *params.AuthBinding
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -176,6 +181,7 @@ type RehydrateParams struct {
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
 	Identity        Identity
+	AuthBinding     AuthBinding
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -197,6 +203,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		ModelPolicies:   params.ModelPolicies,
 		MCP:             params.MCP,
 		Identity:        params.Identity,
+		AuthBinding:     params.AuthBinding,
 		CreatedAt:       params.CreatedAt,
 		UpdatedAt:       params.UpdatedAt,
 	}
@@ -226,6 +233,10 @@ func (c *Consumer) Validate() error {
 	}
 	c.Identity.Normalize(c.Type)
 	if err := c.Identity.Validate(c.Type); err != nil {
+		return err
+	}
+	c.AuthBinding.Normalize()
+	if err := c.AuthBinding.Validate(); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.RegistryIDs, ErrInvalidModelPolicy, "registry"); err != nil {

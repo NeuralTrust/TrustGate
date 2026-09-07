@@ -355,10 +355,32 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest:
+    description: |-
+      AuthBindingRequest narrows which callers of a shared auth (external IdP,
+      mTLS CA) may enter the consumer. Omitted or empty lists accept every caller
+      the auth verifies.
+    properties:
+      allowed_certificate_subjects:
+        description: |-
+          AllowedCertificateSubjects are the client-certificate common names or SAN
+          DNS names accepted over mTLS.
+        items:
+          type: string
+        type: array
+      allowed_client_ids:
+        description: AllowedClientIDs are the azp / client_id values accepted on a
+          bearer JWT.
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
         type: boolean
+      auth_binding:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
       fail_mode:
         type: string
       fallback:
@@ -547,6 +569,12 @@ definitions:
     properties:
       active:
         type: boolean
+      auth_binding:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
+        description: |-
+          AuthBinding replaces the whole binding. Omit to keep it; send empty lists
+          to clear it.
       fail_mode:
         type: string
       fallback:
@@ -583,10 +611,26 @@ definitions:
       type:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse:
+    description: |-
+      AuthBindingResponse narrows which callers of a shared auth may enter the
+      consumer; empty lists accept every caller the auth verifies.
+    properties:
+      allowed_certificate_subjects:
+        items:
+          type: string
+        type: array
+      allowed_client_ids:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse:
     properties:
       active:
         type: boolean
+      auth_binding:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse'
       auth_ids:
         items:
           type: string
