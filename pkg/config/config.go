@@ -261,11 +261,18 @@ type ServerConfig struct {
 	// so a single Google/Entra app can allowlist one host across tenants.
 	// Example: https://oauth.mcp.neuraltrust.ai
 	MCPOAuthPublicBaseURL string
-	STSIssuer             string
-	STSSigningKey         string
-	TrustXFCCFrom         []string
-	MCPDefaultIdP         MCPDefaultIdPConfig
-	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
+	// MCPOAuthClientName is the client_name the gateway registers with upstream
+	// MCP authorization servers through dynamic client registration — the app
+	// name a user sees on the upstream's consent screen and the admin sees in
+	// its third-party application list. Give each environment its own name so
+	// a dev gateway never collides with the prod app registered at the same
+	// upstream. Defaults to "TrustGate MCP Gateway".
+	MCPOAuthClientName string
+	STSIssuer          string
+	STSSigningKey      string
+	TrustXFCCFrom      []string
+	MCPDefaultIdP      MCPDefaultIdPConfig
+	GoogleWorkspaceMCP GoogleWorkspaceMCPConfig
 }
 
 type MCPDefaultIdPConfig struct {
@@ -493,6 +500,7 @@ func getServerConfig() ServerConfig {
 			defaultMCPBaseDomain,
 		),
 		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		MCPOAuthClientName:    strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
 		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
