@@ -3,10 +3,16 @@
 package functional_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupIntentRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
@@ -344,7 +350,7 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 		assert.Equal(t, 0, compatUp.Hits())
 	})
 
-	t.Run("short model shared by providers pins the first registry", func(t *testing.T) {
+	t.Run("short model shared by providers is served by the first registry in the chain", func(t *testing.T) {
 		openaiUp := newJSONUpstream(t, "openai-served")
 		compatUp := newJSONUpstream(t, "compat-served")
 		apiKey, path := setupTwoProviderRoute(t, openaiUp, compatUp,
@@ -369,5 +375,139 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
 		assert.Contains(t, string(body), "model_not_allowed")
 		assert.Equal(t, 0, openaiUp.Hits()+compatUp.Hits())
+	})
+}
+
+func newModelNotFoundUpstream(t *testing.T) *fakeUpstream {
+	t.Helper()
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w,
+			`{"error":{"message":"The model does not exist or you do not have access to it.",`+
+				`"type":"invalid_request_error","code":"model_not_found"}}`)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+func openaiCatalogListsModel(t *testing.T, slug string) bool {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/models-catalog?provider=openai", AdminURL)
+	status, body := sendRequest(t, http.MethodGet, url, nil, nil)
+	if status != http.StatusOK {
+		return false
+	}
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	return strings.Contains(string(raw), slug)
+}
+
+func TestRoutingIntent_SequentialChain(t *testing.T) {
+	defer Track(t, "RoutingIntent")()
+
+	setupOrderedChain := func(t *testing.T, registries ...map[string]any) (string, string) {
+		t.Helper()
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("chain-gw")})
+		bindings := make([]map[string]any, 0, len(registries))
+		for _, payload := range registries {
+			bindings = append(bindings, map[string]any{"id": CreateRegistry(t, gatewayID, payload)})
+		}
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name":       uniqueName("cons"),
+			"registries": bindings,
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+		return apiKey, chatCompletionsPath(t, coID)
+	}
+
+	t.Run("resolution falls through to the first registry that serves the model", func(t *testing.T) {
+		unknown := newModelNotFoundUpstream(t)
+		serving := newJSONUpstream(t, "serving-registry")
+		apiKey, path := setupOrderedChain(t,
+			openaiCompatibleBackendPayload(uniqueName("be-unknown"), unknown.URL()),
+			openaiBackendPayload(uniqueName("be-serving"), serving.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("gpt-4o-mini"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "serving-registry")
+		assert.Equal(t, 1, unknown.Hits(), "the first registry keeps its configured position and is probed")
+		assert.Equal(t, 1, serving.Hits(),
+			"a model_not_found from the first registry must not end resolution")
+	})
+
+	t.Run("a registry whose provider cannot serve the model is skipped without an upstream call", func(t *testing.T) {
+		if !openaiCatalogListsModel(t, "gpt-4o-mini") {
+			t.Skip("provider catalog is empty in this environment; the in-process verdict cannot be exercised")
+		}
+		cannotServe := newJSONUpstream(t, "must-not-serve")
+		serving := newJSONUpstream(t, "serving-registry")
+		apiKey, path := setupOrderedChain(t,
+			openaiBackendPayload(uniqueName("be-openai"), cannotServe.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-selfhosted"), serving.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("gemini-3-flash-preview"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "serving-registry")
+		assert.Equal(t, 0, cannotServe.Hits(),
+			"the provider catalog rules the registry out before any request is sent to it")
+		assert.Equal(t, 1, serving.Hits())
+	})
+
+	t.Run("no registry serves the model", func(t *testing.T) {
+		first := newModelNotFoundUpstream(t)
+		second := newModelNotFoundUpstream(t)
+		apiKey, path := setupOrderedChain(t,
+			openaiCompatibleBackendPayload(uniqueName("be-first"), first.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-second"), second.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("nope-9"))
+
+		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
+		assert.Contains(t, string(body), "model_not_supported",
+			"the gateway owns the failure instead of relaying one provider's model_not_found")
+		assert.Contains(t, string(body), "nope-9")
+		assert.Equal(t, 1, first.Hits())
+		assert.Equal(t, 1, second.Hits())
+	})
+
+	t.Run("a qualified reference still pins its registry", func(t *testing.T) {
+		pinned := newModelNotFoundUpstream(t)
+		other := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupOrderedChain(t,
+			openaiCompatibleBackendPayload(uniqueName("be-pinned"), pinned.URL()),
+			openaiBackendPayload(uniqueName("be-other"), other.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai_compatible/whatever"))
+
+		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
+		assert.Equal(t, 1, pinned.Hits())
+		assert.Equal(t, 0, other.Hits(), "a qualified reference must not fall through to another provider")
+	})
+
+	t.Run("an unqualified model does not load-balance across registries", func(t *testing.T) {
+		first := newJSONUpstream(t, "first-served")
+		second := newJSONUpstream(t, "second-served")
+		apiKey, path := setupOrderedChain(t,
+			openaiCompatibleBackendPayload(uniqueName("be-first"), first.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-second"), second.URL()),
+		)
+
+		for i := 0; i < 4; i++ {
+			status, _, body := proxyPost(t, apiKey, path, chatRequestModel("some-model"))
+			assert.Equal(t, http.StatusOK, status, "body: %s", body)
+			assert.Contains(t, string(body), "first-served")
+		}
+
+		assert.Equal(t, 4, first.Hits())
+		assert.Equal(t, 0, second.Hits(), "the chain walk is deterministic, not round-robin")
 	})
 }
