@@ -176,7 +176,7 @@ func (d *negotiatingDialer) connectAuto(
 	origin string,
 	started time.Time,
 ) (appmcp.Upstream, error) {
-	resolution, err := d.coordinator.resolve(ctx, target, origin)
+	resolution, err := d.coordinator.resolve(ctx, target, eraCacheKey(target, origin))
 	if err != nil {
 		era := resolution.entry.era
 		outcome := "failed"
@@ -202,7 +202,7 @@ func (d *negotiatingDialer) connectAuto(
 			)
 			return nil, connectErr
 		}
-		resolution.entry = d.coordinator.commitLegacy(origin)
+		resolution.entry = d.coordinator.commitLegacy(eraCacheKey(target, origin))
 		if resolution.entry.era == eraLegacy {
 			upstream := newGuardedUpstream(d, target, origin, resolution.entry, legacy)
 			d.logSelection(
@@ -306,7 +306,8 @@ func (d *negotiatingDialer) confirmContradiction(
 	origin string,
 	observed eraEntry,
 ) (upstreamOwner, eraEntry, bool, error) {
-	key := origin + "\x00" + strconv.FormatUint(observed.generation, 10)
+	eraKey := eraCacheKey(target, origin)
+	key := eraKey + "\x00" + strconv.FormatUint(observed.generation, 10)
 	target = cloneTarget(target)
 	credential := credentialFingerprint(target.Headers)
 	resultChannel := d.confirmationFlight.DoChan(key, func() (any, error) {
@@ -319,13 +320,13 @@ func (d *negotiatingDialer) confirmContradiction(
 	if err != nil {
 		return upstreamOwner{}, observed, false, err
 	}
-	if current, changed := d.correctedEntry(origin, observed); changed {
+	if current, changed := d.correctedEntry(eraKey, observed); changed {
 		return d.connectConfirmedEntry(ctx, target, current)
 	}
 	if !result.conclusive && result.credential != credential {
 		retryKey := key + "\x00" + credential
 		retryChannel := d.confirmationRetry.DoChan(retryKey, func() (any, error) {
-			if current, changed := d.correctedEntry(origin, observed); changed {
+			if current, changed := d.correctedEntry(eraKey, observed); changed {
 				return confirmationResult{
 					entry:      current,
 					corrected:  true,
@@ -335,7 +336,7 @@ func (d *negotiatingDialer) confirmContradiction(
 				}, nil
 			}
 			retry := d.confirmContradictionWork(ctx, target, origin, observed)
-			if current, changed := d.correctedEntry(origin, observed); changed {
+			if current, changed := d.correctedEntry(eraKey, observed); changed {
 				return confirmationResult{
 					entry:      current,
 					corrected:  true,
@@ -354,7 +355,7 @@ func (d *negotiatingDialer) confirmContradiction(
 			return upstreamOwner{}, observed, false, err
 		}
 	}
-	if current, changed := d.correctedEntry(origin, observed); changed {
+	if current, changed := d.correctedEntry(eraKey, observed); changed {
 		return d.connectConfirmedEntry(ctx, target, current)
 	}
 	if result.err != nil {
@@ -388,8 +389,8 @@ func awaitConfirmation(
 	}
 }
 
-func (d *negotiatingDialer) correctedEntry(origin string, observed eraEntry) (eraEntry, bool) {
-	current, ok := d.coordinator.lookup(origin)
+func (d *negotiatingDialer) correctedEntry(eraKey string, observed eraEntry) (eraEntry, bool) {
+	current, ok := d.coordinator.lookup(eraKey)
 	return current, ok && current.generation != observed.generation
 }
 
@@ -423,7 +424,8 @@ func (d *negotiatingDialer) confirmContradictionWork(
 ) confirmationResult {
 	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.coordinator.timeout)
 	defer cancel()
-	current, ok := d.coordinator.lookup(origin)
+	eraKey := eraCacheKey(target, origin)
+	current, ok := d.coordinator.lookup(eraKey)
 	if !ok {
 		return confirmationResult{
 			entry: observed,
@@ -471,7 +473,7 @@ func (d *negotiatingDialer) confirmContradictionWork(
 	default:
 		return confirmationResult{entry: observed, credential: credential}
 	}
-	current, won := d.coordinator.correct(origin, observed, candidate)
+	current, won := d.coordinator.correct(eraKey, observed, candidate)
 	if !won {
 		if current.generation == observed.generation || current.generation == 0 {
 			return confirmationResult{entry: observed, credential: credential}
@@ -582,6 +584,7 @@ type guardedUpstream struct {
 	dialer      *negotiatingDialer
 	target      appmcp.Target
 	origin      string
+	eraKey      string
 	lifecycleMu sync.RWMutex
 	reconcileMu sync.Mutex
 	stateMu     sync.RWMutex
@@ -603,6 +606,7 @@ func newGuardedUpstream(
 		dialer: dialer,
 		target: cloneTarget(target),
 		origin: origin,
+		eraKey: eraCacheKey(target, origin),
 		entry:  entry,
 		owner:  ownUpstream(upstream),
 	}
@@ -694,7 +698,7 @@ func (g *guardedUpstream) reconcile(ctx context.Context) (bool, error) {
 		g.dialer.reconcileConfirmed()
 	}
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		if current, changed := g.dialer.correctedEntry(g.origin, snapshot.entry); changed {
+		if current, changed := g.dialer.correctedEntry(g.eraKey, snapshot.entry); changed {
 			replacement.Close(ctx)
 			replacement, entry, corrected, err = g.dialer.connectConfirmedEntry(ctx, g.target, current)
 		}

@@ -194,7 +194,7 @@ func (c *composer) callTool(
 		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
-		result, err := invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+		result, err := invokeUpstream(c, ctx, rc, b.registry, upstreamNoReplay, func(up Upstream) (json.RawMessage, error) {
 			return up.CallTool(ctx, south)
 		})
 		if err != nil {

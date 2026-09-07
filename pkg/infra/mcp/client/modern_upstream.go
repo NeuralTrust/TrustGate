@@ -128,6 +128,13 @@ func (t *modernRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		closeErr := resp.Body.Close()
+		return nil, errors.Join(
+			fmt.Errorf("%w: HTTP %d", appmcp.ErrUpstreamUnauthorized, resp.StatusCode),
+			closeErr,
+		)
+	}
 	if resp.Header.Get("Mcp-Session-Id") != "" {
 		closeErr := resp.Body.Close()
 		return nil, errors.Join(errModernSession, closeErr)

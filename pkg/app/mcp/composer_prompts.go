@@ -54,7 +54,7 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		}
 		stop := annotateUpstream(ctx, b.registry, b.prompt.Name)
 		defer stop()
-		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+		return invokeUpstream(c, ctx, rc, b.registry, upstreamReplaySafe, func(up Upstream) (json.RawMessage, error) {
 			return up.GetPrompt(ctx, b.prompt.Name, arguments)
 		})
 	}

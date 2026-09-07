@@ -16,6 +16,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,30 @@ import (
 
 type reactiveCreds struct {
 	refreshes atomic.Int64
+}
+
+type credentialAwareListUpstream struct {
+	fakeUpstream
+	authorized bool
+	calls      *atomic.Int64
+}
+
+func (u *credentialAwareListUpstream) ListTools(context.Context) ([]Tool, error) {
+	u.calls.Add(1)
+	if !u.authorized {
+		return nil, ErrUpstreamUnauthorized
+	}
+	return u.tools, nil
+}
+
+type rejectingToolUpstream struct {
+	fakeUpstream
+	calls *atomic.Int64
+}
+
+func (u *rejectingToolUpstream) CallTool(context.Context, ToolCall) (json.RawMessage, error) {
+	u.calls.Add(1)
+	return nil, ErrUpstreamUnauthorized
 }
 
 func (c *reactiveCreds) Apply(
@@ -54,16 +79,18 @@ func TestInvokeUpstream_RefreshesRejectedCredentialAndRetriesOnce(t *testing.T) 
 	reg := mcpRegistry(t, "slack", "https://mcp.slack.test/mcp")
 	creds := &reactiveCreds{}
 	var dials atomic.Int64
+	var calls atomic.Int64
 	dialer := DialerFunc(func(_ context.Context, target Target) (Upstream, error) {
 		dials.Add(1)
-		if target.Headers["Authorization"] == "Bearer stale" {
-			return nil, ErrUpstreamUnauthorized
-		}
-		return &fakeUpstream{tools: []Tool{{Name: "search"}}}, nil
+		return &credentialAwareListUpstream{
+			fakeUpstream: fakeUpstream{tools: []Tool{{Name: "search"}}},
+			authorized:   target.Headers["Authorization"] == "Bearer fresh",
+			calls:        &calls,
+		}, nil
 	})
 	c := &composer{dialer: dialer, creds: creds}
 
-	tools, err := invokeUpstream(c, context.Background(), nil, reg, func(up Upstream) ([]Tool, error) {
+	tools, err := invokeUpstream(c, context.Background(), nil, reg, upstreamReplaySafe, func(up Upstream) ([]Tool, error) {
 		return up.ListTools(context.Background())
 	})
 	if err != nil {
@@ -77,6 +104,9 @@ func TestInvokeUpstream_RefreshesRejectedCredentialAndRetriesOnce(t *testing.T) 
 	}
 	if got := dials.Load(); got != 2 {
 		t.Fatalf("dials = %d, want 2", got)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls = %d, want 2", got)
 	}
 }
 
@@ -93,7 +123,7 @@ func TestInvokeUpstream_DoesNotRetryRejectedRefreshedCredential(t *testing.T) {
 		}),
 	}
 
-	_, err := invokeUpstream(c, context.Background(), nil, reg, func(up Upstream) ([]Tool, error) {
+	_, err := invokeUpstream(c, context.Background(), nil, reg, upstreamReplaySafe, func(up Upstream) ([]Tool, error) {
 		return up.ListTools(context.Background())
 	})
 	if !errors.Is(err, ErrUpstreamUnauthorized) {
@@ -104,5 +134,36 @@ func TestInvokeUpstream_DoesNotRetryRejectedRefreshedCredential(t *testing.T) {
 	}
 	if got := dials.Load(); got != 2 {
 		t.Fatalf("dials = %d, want one initial attempt and one retry", got)
+	}
+}
+
+func TestInvokeUpstream_DoesNotReplayUnsafeInvocation(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "slack", "https://mcp.slack.test/mcp")
+	creds := &reactiveCreds{}
+	var dials atomic.Int64
+	var calls atomic.Int64
+	c := &composer{
+		creds: creds,
+		dialer: DialerFunc(func(context.Context, Target) (Upstream, error) {
+			dials.Add(1)
+			return &rejectingToolUpstream{calls: &calls}, nil
+		}),
+	}
+
+	_, err := invokeUpstream(c, context.Background(), nil, reg, upstreamNoReplay, func(up Upstream) (json.RawMessage, error) {
+		return up.CallTool(context.Background(), ToolCall{Name: "mutate"})
+	})
+	if !errors.Is(err, ErrUpstreamUnauthorized) {
+		t.Fatalf("error = %v, want ErrUpstreamUnauthorized", err)
+	}
+	if got := creds.refreshes.Load(); got != 1 {
+		t.Fatalf("refreshes = %d, want 1", got)
+	}
+	if got := dials.Load(); got != 1 {
+		t.Fatalf("dials = %d, want 1", got)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("calls = %d, want 1", got)
 	}
 }

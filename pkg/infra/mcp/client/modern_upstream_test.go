@@ -156,6 +156,21 @@ func newTestModernUpstream(t *testing.T, endpoint string, transport http.RoundTr
 	return upstream
 }
 
+func TestModernUpstreamExposesUnauthorizedResponse(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	upstream := newTestModernUpstream(t, server.URL, sharedHTTPTransport)
+	_, err := upstream.ListTools(context.Background())
+	if !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+		t.Fatalf("error = %v, want ErrUpstreamUnauthorized", err)
+	}
+}
+
 func TestModernUpstreamOperationsAndStatelessWire(t *testing.T) {
 	recorder := &modernWireRecorder{}
 	page := make(map[string]int)
