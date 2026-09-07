@@ -31,7 +31,8 @@ import (
 )
 
 const (
-	defaultAppEnv = "dev"
+	defaultAppEnv         = "dev"
+	serverSecretKeyMinLen = 32
 
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
@@ -997,6 +998,9 @@ func (c *Config) Validate() error {
 	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
 		return err
 	}
+	if err := c.validateServerSecretKey(); err != nil {
+		return err
+	}
 	if !c.ConfigSync.DataPlaneEnabled {
 		if c.Database.Host == "" {
 			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
@@ -1034,9 +1038,6 @@ func (c *Config) Validate() error {
 		if c.Redis.Username == "" {
 			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
 		}
-	}
-	if len(c.Kafka.Brokers) == 0 {
-		return fmt.Errorf("%w: KAFKA_BROKERS must contain at least one broker", errors.ErrInvalidConfig)
 	}
 	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
 		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
@@ -1114,6 +1115,21 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+func (c *Config) validateServerSecretKey() error {
+	env := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	if env == "prod" || env == "production" {
+		return nil
+	}
+	if len(strings.TrimSpace(c.Server.SecretKey)) < serverSecretKeyMinLen {
+		return fmt.Errorf(
+			"%w: SERVER_SECRET_KEY must be at least %d bytes of random data; generate one with: openssl rand -base64 32",
+			errors.ErrInvalidConfig,
+			serverSecretKeyMinLen,
+		)
+	}
+	return nil
 }
 
 func (c *Config) isDeployed() bool {
