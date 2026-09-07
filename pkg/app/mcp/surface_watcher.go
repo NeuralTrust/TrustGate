@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -56,10 +57,14 @@ type SurfaceWatcher interface {
 type surfaceWatcher struct {
 	credentials   CredentialLister
 	installations InstallationLister
-	mu            sync.RWMutex
-	cache         map[string]*surfaceWatchEntry
-	lru           *list.List
-	flight        singleflight.Group
+	// scoper is the Store scoper (optional): the same scoping tools/list applies,
+	// so the snapshot also moves when an admin revokes a grant or tightens the
+	// caller's access level — the install rows stay, the surface shrinks.
+	scoper appstore.Scoper
+	mu     sync.RWMutex
+	cache  map[string]*surfaceWatchEntry
+	lru    *list.List
+	flight singleflight.Group
 }
 
 type surfaceWatchEntry struct {
@@ -69,13 +74,30 @@ type surfaceWatchEntry struct {
 	element   *list.Element
 }
 
-func NewSurfaceWatcher(credentials CredentialLister, installations InstallationLister) SurfaceWatcher {
-	return &surfaceWatcher{
+// SurfaceWatcherOption tunes NewSurfaceWatcher.
+type SurfaceWatcherOption func(*surfaceWatcher)
+
+// WithSurfaceScoper makes the watch snapshot include the registries the Store
+// scoper exposes to the caller right now. Without it a revoked server would stay
+// in the client's cached tool list (its calls failing) until it reconnected:
+// connections and installations are unchanged by a revocation, only the grant is.
+func WithSurfaceScoper(scoper appstore.Scoper) SurfaceWatcherOption {
+	return func(w *surfaceWatcher) { w.scoper = scoper }
+}
+
+func NewSurfaceWatcher(credentials CredentialLister, installations InstallationLister, opts ...SurfaceWatcherOption) SurfaceWatcher {
+	w := &surfaceWatcher{
 		credentials:   credentials,
 		installations: installations,
 		cache:         make(map[string]*surfaceWatchEntry),
 		lru:           list.New(),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(w)
+		}
+	}
+	return w
 }
 
 func (w *surfaceWatcher) WatchSnapshot(
@@ -105,6 +127,11 @@ func (w *surfaceWatcher) WatchSnapshot(
 			return "", err
 		}
 		parts = append(parts, installations...)
+		surface, err := w.loadSurface(loadCtx, rc, principal)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, surface...)
 		value := strings.Join(parts, "|")
 		w.storeSnapshot(key, value, time.Now())
 		return value, nil
@@ -260,6 +287,38 @@ func (w *surfaceWatcher) loadInstallations(
 			continue
 		}
 		parts = append(parts, "in:"+installation.CatalogCode+":"+string(installation.Status)+"@"+installation.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	sort.Strings(parts)
+	return parts, nil
+}
+
+// loadSurface fingerprints the registries the Store exposes to the caller right
+// now — the same scoping tools/list applies (installs re-checked against the
+// live grants and the caller's access level). The scoper runs as the principal;
+// the gateway for the live mode decision (own policy → groups → gateway default)
+// rides the context the stream handler carried over from the request. Empty when
+// no scoper is wired or the consumer is not the Store.
+func (w *surfaceWatcher) loadSurface(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) ([]string, error) {
+	if w.scoper == nil || !validSurfaceInput(rc, principal) {
+		return nil, nil
+	}
+	scoped, err := w.scoper.Scope(identity.WithPrincipal(ctx, principal), rc)
+	if err != nil {
+		return nil, err
+	}
+	if scoped == nil {
+		return nil, nil
+	}
+	parts := make([]string, 0, len(scoped.Registries))
+	for _, registry := range scoped.Registries {
+		if registry == nil {
+			continue
+		}
+		parts = append(parts, "sf:"+registry.ID.String()+"/"+registry.Name)
 	}
 	sort.Strings(parts)
 	return parts, nil

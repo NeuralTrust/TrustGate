@@ -83,6 +83,16 @@ func (d *RPCDispatcher) WithStoreScoper(scoper appstore.Scoper) *RPCDispatcher {
 	return d
 }
 
+// StoreScoper returns the Store scoper this dispatcher applies before every
+// method (nil when the Store is not wired), so the stream's surface watcher can
+// fingerprint the same view the caller's tools/list gets.
+func (d *RPCDispatcher) StoreScoper() appstore.Scoper {
+	if d == nil {
+		return nil
+	}
+	return d.storeScoper
+}
+
 func (d *RPCDispatcher) Dispatch(
 	ctx context.Context,
 	consumer *appconsumer.RoutableConsumer,
