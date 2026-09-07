@@ -176,11 +176,11 @@ type mcpHandlerParams struct {
 }
 
 func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
-	var opts []mcphttp.HandlerOption
-	if p.Installs != nil {
-		opts = append(opts, mcphttp.WithInstallations(p.Installs))
-	}
-	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, p.Vault, opts...)
+	// The watcher fingerprints the Store surface with the same scoper the
+	// dispatcher applies to tools/list, so an admin revoking a grant pushes
+	// tools/list_changed to the affected user's clients.
+	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs, appmcp.WithSurfaceScoper(p.Gateway.StoreScoper()))
+	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, surface)
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the

@@ -16,39 +16,26 @@ package store
 
 import (
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
+	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
+	"strings"
 )
 
-// PrincipalHandler serves the admin preview of one principal's Store state —
-// what the Portal shows that user: their installs and requests, and which
-// company sources they have linked their own account to.
 type PrincipalHandler struct {
 	preview   appstore.PrincipalPreview
 	installer appstore.PrincipalInstaller
 }
 
-// NewPrincipalHandler wires the preview read and, when installer is non-nil,
-// the on-behalf install (the Portal's Request access / Install buttons).
 func NewPrincipalHandler(preview appstore.PrincipalPreview, installer appstore.PrincipalInstaller) *PrincipalHandler {
 	return &PrincipalHandler{preview: preview, installer: installer}
 }
 
-// installRequest is an install (or request) made for a user from the Portal.
-type installRequest struct {
-	PrincipalSub string   `json:"principal_sub"`
-	Code         string   `json:"code"`
-	Groups       []string `json:"groups"`
-	InstanceID   string   `json:"instance_id"`
-}
-
-func (r installRequest) validate() error {
+func validateInstall(r storerequest.Install) error {
 	if strings.TrimSpace(r.PrincipalSub) == "" {
 		return fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation)
 	}
@@ -56,58 +43,6 @@ func (r installRequest) validate() error {
 		return fmt.Errorf("code is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
-}
-
-type instanceChoiceResponse struct {
-	RegistryID string `json:"registry_id"`
-	Name       string `json:"name"`
-}
-
-// installResponse mirrors the install tool's outcome so the Portal can show the
-// same next step the user's client would.
-type installResponse struct {
-	Code                   string                   `json:"code"`
-	Name                   string                   `json:"name"`
-	Status                 string                   `json:"status,omitempty"`
-	InstanceID             string                   `json:"instance_id,omitempty"`
-	Pending                bool                     `json:"pending"`
-	AlreadyInstalled       bool                     `json:"already_installed"`
-	RequiresAuth           bool                     `json:"requires_auth"`
-	RequiresConfig         bool                     `json:"requires_config"`
-	RequiresAdminSetup     bool                     `json:"requires_admin_setup"`
-	RequiresInstanceChoice bool                     `json:"requires_instance_choice"`
-	InstanceChoices        []instanceChoiceResponse `json:"instance_choices,omitempty"`
-}
-
-type principalInstallResponse struct {
-	InstanceID  string    `json:"instance_id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	RegistryID  string    `json:"registry_id,omitempty"`
-	Registry    string    `json:"registry,omitempty"`
-	Status      string    `json:"status"`
-	InstalledBy string    `json:"installed_by,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// principalConnectionResponse never carries token material: only whether the
-// principal linked an account for the source and whether it needs a reconnect.
-type principalConnectionResponse struct {
-	Provider       string     `json:"provider"`
-	Code           string     `json:"code,omitempty"`
-	RegistryID     string     `json:"registry_id"`
-	Registry       string     `json:"registry"`
-	Linked         bool       `json:"linked"`
-	AccountRef     string     `json:"account_ref,omitempty"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
-	NeedsReconnect bool       `json:"needs_reconnect"`
-}
-
-type principalResponse struct {
-	PrincipalSub string                        `json:"principal_sub"`
-	Installs     []principalInstallResponse    `json:"installs"`
-	Connections  []principalConnectionResponse `json:"connections"`
 }
 
 // Get godoc
@@ -118,7 +53,7 @@ type principalResponse struct {
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
 // @Param        sub         query     string  true  "Principal subject (the user id the gateway sees)"
-// @Success      200         {object}  principalResponse
+// @Success      200         {object}  storeresponse.Principal
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      422         {object}  httpio.ErrorBody
@@ -136,13 +71,13 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := principalResponse{
+	out := storeresponse.Principal{
 		PrincipalSub: state.PrincipalSub,
-		Installs:     make([]principalInstallResponse, 0, len(state.Installs)),
-		Connections:  make([]principalConnectionResponse, 0, len(state.Connections)),
+		Installs:     make([]storeresponse.PrincipalInstall, 0, len(state.Installs)),
+		Connections:  make([]storeresponse.PrincipalConnection, 0, len(state.Connections)),
 	}
 	for _, in := range state.Installs {
-		row := principalInstallResponse{
+		row := storeresponse.PrincipalInstall{
 			InstanceID:  in.InstanceID.String(),
 			Code:        in.Code,
 			Name:        in.Name,
@@ -158,7 +93,7 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 		out.Installs = append(out.Installs, row)
 	}
 	for _, conn := range state.Connections {
-		row := principalConnectionResponse{
+		row := storeresponse.PrincipalConnection{
 			Provider:       conn.Provider,
 			Code:           conn.Code,
 			RegistryID:     conn.RegistryID.String(),
@@ -184,8 +119,8 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string          true  "Gateway id"  format(uuid)
-// @Param        body        body      installRequest  true  "Who and what"
-// @Success      200         {object}  installResponse
+// @Param        body        body      storerequest.Install  true  "Who and what"
+// @Success      200         {object}  storeresponse.Install
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody  "The principal's access level is None"
@@ -199,11 +134,11 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	var req installRequest
+	var req storerequest.Install
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
-	if err := req.validate(); err != nil {
+	if err := validateInstall(req); err != nil {
 		return httpio.WriteError(c, err)
 	}
 	var registryID ids.RegistryID
@@ -225,7 +160,7 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := installResponse{
+	out := storeresponse.Install{
 		Code:                   res.Code,
 		Name:                   res.Name,
 		Status:                 string(res.Status),
@@ -238,7 +173,7 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 		RequiresInstanceChoice: res.RequiresInstanceChoice,
 	}
 	for _, choice := range res.InstanceChoices {
-		out.InstanceChoices = append(out.InstanceChoices, instanceChoiceResponse{RegistryID: choice.RegistryID.String(), Name: choice.Name})
+		out.InstanceChoices = append(out.InstanceChoices, storeresponse.InstanceChoice{RegistryID: choice.RegistryID.String(), Name: choice.Name})
 	}
 	return httpio.WriteOK(c, out)
 }

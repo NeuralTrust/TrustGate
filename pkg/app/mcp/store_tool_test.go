@@ -17,11 +17,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -39,10 +41,19 @@ func (f fakeRegistryLister) List(context.Context, registrydomain.ListFilter) ([]
 	return f.items, len(f.items), nil
 }
 
-type fakeGrantReader struct{ items []*storeaccessdomain.Grant }
+type panicRegistryLister struct{}
+
+func (panicRegistryLister) List(context.Context, registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
+	panic("registry list must not be called by Store search")
+}
+
+type fakeGrantReader struct {
+	items []*storeaccessdomain.Grant
+	err   error
+}
 
 func (f fakeGrantReader) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
-	return f.items, nil
+	return f.items, f.err
 }
 
 func shelfReg(code string) *registrydomain.Registry {
@@ -215,6 +226,47 @@ func TestStoreSearchRespectsLimitAndReportsTruncation(t *testing.T) {
 	}
 }
 
+func TestStoreSearchRejectsMalformedArguments(t *testing.T) {
+	t.Parallel()
+	tool := newStoreToolForTest(t)
+	if _, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":`)); !errors.Is(err, ErrStoreToolUnavailable) {
+		t.Fatalf("malformed search error = %v", err)
+	}
+}
+
+func TestStoreSearchUsesGrantIndexWithoutRegistryRead(t *testing.T) {
+	t.Parallel()
+	grant := grantFor("gitlab", ids.New[ids.RegistryKind](), []string{"sre"}, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, panicRegistryLister{}, fakeGrantReader{items: []*storeaccessdomain.Grant{grant}}, nil, nil)
+	if err != nil {
+		t.Fatalf("new Store tool: %v", err)
+	}
+	ctx := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: "sre"}}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated),
+	)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got := resultsByCode(t, raw)["gitlab"]["store_state"]; got != storeStateAvailable {
+		t.Fatalf("instance grant state = %v", got)
+	}
+}
+
+func TestStoreSearchSurfacesGrantReadError(t *testing.T) {
+	t.Parallel()
+	readErr := errors.New("grants unavailable")
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, nil, fakeGrantReader{err: readErr}, nil, nil)
+	if err != nil {
+		t.Fatalf("new Store tool: %v", err)
+	}
+	ctx := appgateway.WithGateway(context.Background(), enterpriseGateway(gatewaydomain.StoreModeCurated))
+	if _, err = tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil); !errors.Is(err, readErr) {
+		t.Fatalf("search error = %v", err)
+	}
+}
+
 func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	tool := newStoreToolForTest(t)
 	if _, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil); err == nil {
@@ -332,6 +384,9 @@ func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
 	if _, ok := got["salesforce"]; !ok {
 		t.Fatal("principal store_access=open must reveal non-shelf servers despite a curated gateway")
 	}
+	if mode := decodeStructured(t, raw)["mode"]; mode != gatewaydomain.StoreModeOpen {
+		t.Fatalf("reported mode = %v, want %s", mode, gatewaydomain.StoreModeOpen)
+	}
 }
 
 func TestStoreSearchPrincipalNoneClosesStore(t *testing.T) {
@@ -395,6 +450,18 @@ type fakeInstaller struct {
 	instances    []*installationdomain.Installation
 	uninstallErr error
 	result       *appstore.InstallResult
+}
+
+type failingConnect struct{ err error }
+
+func (f failingConnect) CreateServerTicket(context.Context, ids.GatewayID, string, string, string, string) (string, error) {
+	return "", f.err
+}
+
+type failingConfigure struct{ err error }
+
+func (f failingConfigure) CreateTicket(context.Context, appoauth.ConfigureTicketRequest) (string, error) {
+	return "", f.err
 }
 
 func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
@@ -461,6 +528,42 @@ func TestStoreInstallCall(t *testing.T) {
 	sc := decodeStructured(t, raw)
 	if sc["code"] != "github" || sc["requires_auth"] != true {
 		t.Fatalf("unexpected install result: %+v", sc)
+	}
+}
+
+func TestStoreInstallSurfacesLinkErrors(t *testing.T) {
+	t.Parallel()
+	ticketErr := errors.New("ticket unavailable")
+	tests := []struct {
+		name      string
+		result    *appstore.InstallResult
+		configure ConfigureGateway
+		connect   ServerConnectGateway
+	}{
+		{
+			name:      "configure ticket",
+			result:    &appstore.InstallResult{Code: "github", Name: "GitHub", RequiresConfig: true},
+			configure: failingConfigure{err: ticketErr},
+		},
+		{
+			name:    "connect ticket",
+			result:  &appstore.InstallResult{Code: "github", Name: "GitHub", RequiresAuth: true},
+			connect: failingConnect{err: ticketErr},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			tool, err := NewStoreToolWithInstaller(sampleCatalog(), &fakeInstaller{result: test.result}, nil, nil, test.configure, test.connect)
+			if err != nil {
+				t.Fatalf("new Store tool: %v", err)
+			}
+			_, err = tool.Call(ctxWithPrincipal(), storeRC(), "https://gateway.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+			if !errors.Is(err, ticketErr) || !errors.Is(err, ErrStoreToolUnavailable) {
+				t.Fatalf("install link error = %v", err)
+			}
+		})
 	}
 }
 

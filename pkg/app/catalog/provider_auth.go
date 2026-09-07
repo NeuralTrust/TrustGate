@@ -14,7 +14,11 @@
 
 package catalog
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+import (
+	"slices"
+
+	providerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/provider"
+)
 
 type AuthFieldType string
 
@@ -243,26 +247,30 @@ var (
 )
 
 var providerAuthCatalog = map[string][]AuthTypeOption{
-	providers.ProviderOpenAI:           {apiKeyAuthOption},
-	providers.ProviderOpenAICompatible: {openAICompatibleAuthOption},
-	providers.ProviderGoogle:           {apiKeyAuthOption},
-	providers.ProviderVertex:           {gcpServiceAccountAuthOption},
-	providers.ProviderAnthropic:        {apiKeyAuthOption},
-	providers.ProviderBedrock:          awsAuthOptions,
-	providers.ProviderAzure:            azureAuthOptions,
-	providers.ProviderMistral:          {apiKeyAuthOption},
-	providers.ProviderGroq:             {apiKeyAuthOption},
-	providers.ProviderDeepSeek:         {apiKeyAuthOption},
-	providers.ProviderXAI:              {apiKeyAuthOption},
-	providers.ProviderCerebras:         {apiKeyAuthOption},
-	providers.ProviderOpenRouter:       {apiKeyAuthOption},
-	providers.ProviderCohere:           {apiKeyAuthOption},
-	providers.ProviderMoonshot:         {apiKeyAuthOption},
+	providerdomain.OpenAI:           {apiKeyAuthOption},
+	providerdomain.OpenAICompatible: {openAICompatibleAuthOption},
+	providerdomain.Google:           {apiKeyAuthOption},
+	providerdomain.Vertex:           {gcpServiceAccountAuthOption},
+	providerdomain.Anthropic:        {apiKeyAuthOption},
+	providerdomain.Bedrock:          awsAuthOptions,
+	providerdomain.Azure:            azureAuthOptions,
+	providerdomain.Mistral:          {apiKeyAuthOption},
+	providerdomain.Groq:             {apiKeyAuthOption},
+	providerdomain.DeepSeek:         {apiKeyAuthOption},
+	providerdomain.XAI:              {apiKeyAuthOption},
+	providerdomain.Cerebras:         {apiKeyAuthOption},
+	providerdomain.OpenRouter:       {apiKeyAuthOption},
+	providerdomain.Cohere:           {apiKeyAuthOption},
+	providerdomain.Moonshot:         {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {
 	if opts, ok := providerAuthCatalog[code]; ok {
-		return opts
+		cloned := slices.Clone(opts)
+		for i := range cloned {
+			cloned[i].Fields = slices.Clone(cloned[i].Fields)
+		}
+		return cloned
 	}
 	return []AuthTypeOption{}
 }

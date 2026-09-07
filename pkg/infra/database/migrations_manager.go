@@ -38,6 +38,11 @@ var (
 	migrationsOrder    = make([]string, 0)
 )
 
+const (
+	migrationsAdvisoryLockKey int64 = 942_021
+	migrationsUnlockTimeout         = 5 * time.Second
+)
+
 func extractTimestampPrefix(id string) int64 {
 	parts := strings.SplitN(id, "_", 2)
 	timestamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -79,20 +84,20 @@ func NewMigrationsManager(pool *pgxpool.Pool) *MigrationsManager {
 	return &MigrationsManager{pool: pool}
 }
 
-func (m *MigrationsManager) ensureMigrationsTable(ctx context.Context) error {
+func ensureMigrationsTable(ctx context.Context, conn *pgxpool.Conn) error {
 	const createTableSQL = `
 		CREATE TABLE IF NOT EXISTS public.migration_version (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`
-	_, err := m.pool.Exec(ctx, createTableSQL)
+	_, err := conn.Exec(ctx, createTableSQL)
 	return err
 }
 
-func (m *MigrationsManager) getAppliedMigrations(ctx context.Context) (map[string]struct{}, error) {
+func getAppliedMigrations(ctx context.Context, conn *pgxpool.Conn) (map[string]struct{}, error) {
 	const query = `SELECT id FROM public.migration_version`
-	rows, err := m.pool.Query(ctx, query)
+	rows, err := conn.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -110,11 +115,28 @@ func (m *MigrationsManager) getAppliedMigrations(ctx context.Context) (map[strin
 }
 
 func (m *MigrationsManager) ApplyPending(ctx context.Context) error {
-	if err := m.ensureMigrationsTable(ctx); err != nil {
+	conn, err := m.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationsAdvisoryLockKey); err != nil {
+		conn.Release()
+		return fmt.Errorf("acquire migrations advisory lock: %w", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), migrationsUnlockTimeout)
+		defer cancel()
+		if _, unlockErr := conn.Exec(cleanupCtx, "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockKey); unlockErr != nil {
+			_ = conn.Conn().Close(cleanupCtx) // A closed session cannot retain the advisory lock.
+		}
+		conn.Release()
+	}()
+
+	if err := ensureMigrationsTable(ctx, conn); err != nil {
 		return fmt.Errorf("ensure migrations table: %w", err)
 	}
 
-	applied, err := m.getAppliedMigrations(ctx)
+	applied, err := getAppliedMigrations(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("load applied migrations: %w", err)
 	}
@@ -129,7 +151,7 @@ func (m *MigrationsManager) ApplyPending(ctx context.Context) error {
 		}
 
 		err := func() error {
-			tx, err := m.pool.Begin(ctx)
+			tx, err := conn.Begin(ctx)
 			if err != nil {
 				return err
 			}

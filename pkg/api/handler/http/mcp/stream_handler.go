@@ -17,13 +17,9 @@ package mcp
 import (
 	"bufio"
 	"context"
-	"sort"
 	"strings"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/gofiber/fiber/v2"
 )
@@ -83,26 +79,14 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 		return err
 	}
 	principal := identity.PrincipalFromContext(c.UserContext())
-	// The resolved gateway rides the request context; the poll runs on its own
-	// context after the handler returns, so carry it over for the live Store
-	// mode decision (own policy → groups → gateway default).
-	gw, _ := appgateway.FromContext(c.UserContext())
+	streamCtx := c.UserContext()
 	snapshot := func() string {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(streamCtx, 5*time.Second)
 		defer cancel()
-		// Watch the caller's connected accounts, their Store installations AND the
-		// surface the Store actually exposes to them, so connecting an account,
-		// installing a server, and an admin revoking a grant or tightening their
-		// level each push a refresh. Without the surface, a revoked server would
-		// stay in the client's cached tool list (its calls failing) until it
-		// reconnected: the install row is unchanged, only the grant is.
-		// connectionWatchSnapshot (not connectionSnapshot) is used deliberately: it
-		// does not filter by the frozen consumer's forwarded providers, so a server
-		// installed after the stream opened still pushes a refresh when connected.
-		parts := h.connectionWatchSnapshot(ctx, rc, principal)
-		parts = append(parts, h.installSnapshot(ctx, rc, principal)...)
-		parts = append(parts, h.surfaceSnapshot(ctx, rc, principal, gw)...)
-		return strings.Join(parts, "|")
+		if h.surface == nil {
+			return ""
+		}
+		return h.surface.WatchSnapshot(ctx, rc, principal)
 	}
 
 	c.Set(fiber.HeaderContentType, eventStreamContentType)
@@ -120,44 +104,6 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 		streamToolChanges(w, snapshot, timings)
 	})
 	return nil
-}
-
-// surfaceSnapshot fingerprints the registries the Store exposes to the caller
-// right now — the same scoping tools/list applies (installs re-checked against
-// the live grants and the caller's access level). It is what changes when an
-// admin revokes a grant, sets the user or a group to Selected/None, or removes
-// an instance: the install rows stay, the surface shrinks, and the client must
-// re-list. Empty when the Store scoper is not wired or the consumer is not the
-// Store; a transient scoper error reads as "no change" rather than a refresh.
-func (h *Handler) surfaceSnapshot(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	principal *identity.Principal,
-	gw *gatewaydomain.Gateway,
-) []string {
-	if h.gateway == nil || h.gateway.storeScoper == nil || rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return nil
-	}
-	scopeCtx := identity.WithPrincipal(ctx, principal)
-	if gw != nil {
-		scopeCtx = appgateway.WithGateway(scopeCtx, gw)
-	}
-	scoped, err := h.gateway.storeScoper.Scope(scopeCtx, rc)
-	if err != nil || scoped == nil {
-		return nil
-	}
-	parts := make([]string, 0, len(scoped.Registries))
-	for _, reg := range scoped.Registries {
-		if reg == nil {
-			continue
-		}
-		parts = append(parts, "sf:"+reg.ID.String()+"/"+reg.Name)
-	}
-	sort.Strings(parts)
-	return parts
 }
 
 // streamToolChanges holds the stream open, pushing a notification whenever the

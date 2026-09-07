@@ -21,6 +21,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -66,26 +67,26 @@ func TestInstallSnapshot_ReflectsInstalls(t *testing.T) {
 	installs := &fakeStreamInstalls{rows: []*installationdomain.Installation{
 		{GatewayID: gw, PrincipalSub: "ana", CatalogCode: "com.notion/mcp", Status: installationdomain.StatusInstalled, UpdatedAt: now},
 	}}
-	h := NewHandler(nil, nil, nil, WithInstallations(installs))
+	watcher := appmcp.NewSurfaceWatcher(nil, installs)
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: gw}}
 
-	parts := h.installSnapshot(context.Background(), rc, &identity.Principal{Subject: "ana"})
+	parts := watcher.Installations(context.Background(), rc, &identity.Principal{Subject: "ana"})
 	if len(parts) != 1 || !strings.HasPrefix(parts[0], "in:com.notion/mcp:") {
 		t.Fatalf("install must appear in the watched snapshot, got %v", parts)
 	}
 	// A later install of the same code at a new time yields a different string, so
 	// the polling stream sees a change and pushes tools/list_changed.
 	installs.rows[0].UpdatedAt = now.Add(time.Minute)
-	next := h.installSnapshot(context.Background(), rc, &identity.Principal{Subject: "ana"})
+	next := watcher.Installations(context.Background(), rc, &identity.Principal{Subject: "ana"})
 	if next[0] == parts[0] {
 		t.Fatal("a changed install must change the snapshot string")
 	}
 }
 
 func TestInstallSnapshot_EmptyWhenNotWired(t *testing.T) {
-	h := NewHandler(nil, nil, nil) // no WithInstallations
+	watcher := appmcp.NewSurfaceWatcher(nil, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{GatewayID: ids.New[ids.GatewayKind]()}}
-	if parts := h.installSnapshot(context.Background(), rc, &identity.Principal{Subject: "ana"}); parts != nil {
+	if parts := watcher.Installations(context.Background(), rc, &identity.Principal{Subject: "ana"}); parts != nil {
 		t.Fatalf("no installs repo must yield an empty snapshot, got %v", parts)
 	}
 }

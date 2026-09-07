@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -87,13 +86,12 @@ type StoreTool interface {
 }
 
 type storeTool struct {
-	catalog    MCPServerCatalog
-	installer  appstore.Installer
-	registries appstore.RegistryLister
-	grants     storeaccessdomain.Reader
-	modes      appstore.ModeResolver
-	configure  ConfigureGateway
-	connect    ServerConnectGateway
+	catalog   MCPServerCatalog
+	installer appstore.Installer
+	grants    storeaccessdomain.Reader
+	modes     appstore.ModeResolver
+	configure ConfigureGateway
+	connect   ServerConnectGateway
 }
 
 // StoreToolOption tunes NewStoreToolWithInstaller.
@@ -112,15 +110,14 @@ func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
-// registries or grants is nil SEARCH cannot tell an instant install from a
-// request under Selected access and reports everything as a request; when
+// grants is nil SEARCH reports every server as a request under Selected access; when
 // configure is nil an install that needs per-user setup returns the variable
 // list but no hosted-form link; when connect is nil an install that needs the
 // user's account returns requires_auth but no OAuth connect link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
-	registries appstore.RegistryLister,
+	_ appstore.RegistryLister,
 	grants storeaccessdomain.Reader,
 	configure ConfigureGateway,
 	connect ServerConnectGateway,
@@ -130,12 +127,11 @@ func NewStoreToolWithInstaller(
 		return nil, ErrStoreToolUnavailable
 	}
 	t := &storeTool{
-		catalog:    catalog,
-		installer:  installer,
-		registries: registries,
-		grants:     grants,
-		configure:  configure,
-		connect:    connect,
+		catalog:   catalog,
+		installer: installer,
+		grants:    grants,
+		configure: configure,
+		connect:   connect,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -244,7 +240,7 @@ func (t *storeTool) install(
 		PrincipalSub: principal.Subject,
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
-		Groups:       principalGroups(principal),
+		Groups:       principal.Groups(),
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
 		RegistryID:   registryID,
@@ -263,7 +259,10 @@ func (t *storeTool) install(
 	// form writes to that exact instance.
 	configureURL := ""
 	if res.RequiresConfig {
-		configureURL = t.configureLink(ctx, rc, baseURL, res.Code, res.InstanceID, principal)
+		configureURL, err = t.configureLink(ctx, rc, baseURL, res.Code, res.InstanceID, principal)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// A server that needs the user's own account gets the OAuth connect link right
 	// in the install result — the second step of the install, so the user does not
@@ -273,7 +272,10 @@ func (t *storeTool) install(
 	// (an admin must connect the server first).
 	connectURL := ""
 	if res.RequiresAuth && !res.RequiresAdminSetup {
-		connectURL = t.connectLink(ctx, rc, baseURL, res.Code, res.InstanceID)
+		connectURL, err = t.connectLink(ctx, rc, baseURL, res.Code, res.InstanceID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	structured := map[string]any{
 		"code":                 res.Code,
@@ -306,47 +308,41 @@ func linkMarkdown(label, url string) string {
 	return "[" + label + "](" + url + ")"
 }
 
-// connectLink mints an OAuth connect ticket and builds the hosted connect-page
-// URL, or "" when no connect gateway is wired. Non-fatal on failure: the install
-// still stands and the user can connect later.
 func (t *storeTool) connectLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	baseURL, code, instanceID string,
-) string {
+) (string, error) {
 	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
-		return ""
+		return "", nil
 	}
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return ""
+		return "", ErrNoPrincipal
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code, instanceID)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("%w: create connection ticket: %w", ErrStoreToolUnavailable, err)
 	}
 	url, err := buildConnectionURL(baseURL, consumerPath, ticket)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return url
+	return url, nil
 }
 
-// configureLink mints a configure ticket and builds the hosted-form URL, or
-// returns "" when no configure gateway is wired (the caller then falls back to
-// inline config only). A failure to mint is non-fatal: the install still stands.
 func (t *storeTool) configureLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	baseURL, code, instanceID string,
 	principal *identity.Principal,
-) string {
+) (string, error) {
 	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
-		return ""
+		return "", nil
 	}
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return ""
+		return "", ErrNoPrincipal
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	ticket, err := t.configure.CreateTicket(ctx, appoauth.ConfigureTicketRequest{
@@ -355,16 +351,16 @@ func (t *storeTool) configureLink(
 		ConsumerPath: consumerPath,
 		Code:         code,
 		InstanceID:   instanceID,
-		Groups:       principalGroups(principal),
+		Groups:       principal.Groups(),
 	})
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("%w: create configuration ticket: %w", ErrStoreToolUnavailable, err)
 	}
 	url, err := buildConfigureURL(baseURL, consumerPath, ticket)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return url
+	return url, nil
 }
 
 // configVariablesJSON renders the required-config variables for the tool result
@@ -479,26 +475,6 @@ func instanceChoices(res *appstore.InstallResult) (json.RawMessage, error) {
 	})
 }
 
-func principalGroups(principal *identity.Principal) []string {
-	if principal == nil {
-		return nil
-	}
-	switch v := principal.Claims[identity.ClaimGroups].(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
 		text := fmt.Sprintf("%s was already installed.", res.Name)
@@ -609,12 +585,8 @@ const (
 	storeStateRequest   = "request"
 )
 
-// shelf is what SEARCH needs to tell an instant install from a request under
-// Selected access: the gateway's Store grants and which codes have configured
-// instances (registries), by registry id.
-type shelf struct {
-	grants    *storeaccessdomain.Set
-	instances map[string][]ids.RegistryID
+type storeAccessIndex struct {
+	grants *storeaccessdomain.Set
 }
 
 func (t *storeTool) search(
@@ -624,9 +596,9 @@ func (t *storeTool) search(
 ) (json.RawMessage, error) {
 	var args storeSearchArgs
 	if len(arguments) > 0 {
-		// Be lenient: a malformed argument object browses the catalog rather than
-		// failing the call — search is read-only and self-correcting.
-		_ = json.Unmarshal(arguments, &args)
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("%w: decode search arguments: %w", ErrStoreToolUnavailable, err)
+		}
 	}
 	limit := args.Limit
 	if limit <= 0 {
@@ -638,10 +610,17 @@ func (t *storeTool) search(
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
-	sh := t.shelfIndex(ctx, rc)
 	mode := t.effectiveStoreMode(ctx, rc)
+	var access *storeAccessIndex
+	if mode == gatewaydomain.StoreModeCurated {
+		var err error
+		access, err = t.loadStoreAccess(ctx, rc)
+		if err != nil {
+			return nil, err
+		}
+	}
 	principal := identity.PrincipalFromContext(ctx)
-	groups := principalGroups(principal)
+	groups := principal.Groups()
 	subject := ""
 	if principal != nil {
 		subject = principal.Subject
@@ -684,7 +663,7 @@ func (t *storeTool) search(
 		}
 		// The whole catalog is browsable in All and Selected; the state tells the
 		// caller whether install is instant for them or files a request.
-		state := shelfState(sh, entry.Code, mode, groups, subject)
+		state := storeAvailability(access, entry.Code, mode, groups, subject)
 		total++
 		if len(matched) < limit {
 			matched = append(matched, toSearchResult(entry, state))
@@ -696,7 +675,7 @@ func (t *storeTool) search(
 		"total":     total,
 		"returned":  len(matched),
 		"truncated": total > len(matched),
-		"mode":      t.storeMode(ctx),
+		"mode":      mode,
 	}
 	result := map[string]any{
 		"content": []map[string]string{{
@@ -712,45 +691,15 @@ func (t *storeTool) search(
 	return raw, nil
 }
 
-// shelfIndex loads the gateway's grants and configured instances. Nil when
-// neither registries nor grants are wired (a SEARCH-only plane), in which case
-// every server under Selected reads as a request.
-func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) *shelf {
-	if rc == nil || rc.Consumer == nil || (t.registries == nil && t.grants == nil) {
-		return nil
+func (t *storeTool) loadStoreAccess(ctx context.Context, rc *appconsumer.RoutableConsumer) (*storeAccessIndex, error) {
+	if rc == nil || rc.Consumer == nil || t.grants == nil {
+		return nil, nil
 	}
-	sh := &shelf{grants: storeaccessdomain.Index(nil), instances: map[string][]ids.RegistryID{}}
-	if t.grants != nil {
-		if grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID); err == nil {
-			sh.grants = storeaccessdomain.Index(grants)
-		}
+	grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: list Store grants: %w", ErrStoreToolUnavailable, err)
 	}
-	if t.registries != nil {
-		items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
-			GatewayID: rc.Consumer.GatewayID,
-			Page:      1,
-			Size:      storeShelfPageSize,
-		})
-		if err == nil {
-			for _, reg := range items {
-				if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
-					continue
-				}
-				sh.instances[reg.MCPTarget.Code] = append(sh.instances[reg.MCPTarget.Code], reg.ID)
-			}
-		}
-	}
-	return sh
-}
-
-// storeMode is the gateway's own Store mode. It fails closed: when no gateway
-// resolved into the context there is nothing to say the Store may materialise
-// arbitrary catalog servers, so the answer is curated (shelf-only), never open.
-func (t *storeTool) storeMode(ctx context.Context) string {
-	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil {
-		return gw.StoreMode()
-	}
-	return gatewaydomain.StoreModeCurated
+	return &storeAccessIndex{grants: storeaccessdomain.Index(grants)}, nil
 }
 
 // effectiveStoreMode is the Store mode that applies to the calling principal on
@@ -759,32 +708,27 @@ func (t *storeTool) storeMode(ctx context.Context) string {
 // gateway default. Without a policy resolver wired it falls back to the claim /
 // default rule (appstore.EffectiveStoreMode).
 func (t *storeTool) effectiveStoreMode(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
-	if t.modes == nil || rc == nil || rc.Consumer == nil {
+	if rc == nil || rc.Consumer == nil {
 		return appstore.EffectiveStoreMode(ctx)
 	}
-	return t.modes.Mode(ctx, rc.Consumer.GatewayID)
+	principal := identity.PrincipalFromContext(ctx)
+	query := appstore.ModeQuery{GatewayID: rc.Consumer.GatewayID, Fallback: appstore.EffectiveStoreMode(ctx)}
+	if principal != nil {
+		query.Subject = principal.Subject
+		query.Groups = principal.Groups()
+	}
+	return appstore.ResolveMode(ctx, t.modes, query)
 }
 
-const storeShelfPageSize = 500
-
-// shelfState is what installing this server means for the calling principal:
-// "available" when it installs instantly — always under All, or under Selected
-// when a grant names them for the code or for one of its configured instances —
-// and "request" when the install would file an approval request instead.
-func shelfState(sh *shelf, code, mode string, groups []string, subject string) string {
+func storeAvailability(access *storeAccessIndex, code, mode string, groups []string, subject string) string {
 	if mode == gatewaydomain.StoreModeOpen {
 		return storeStateAvailable
 	}
-	if sh == nil {
+	if access == nil {
 		return storeStateRequest
 	}
-	if sh.grants.CodeAllows(code, groups, subject) {
+	if access.grants.CodeAllows(code, groups, subject) || access.grants.AnyInstanceAllows(code, groups, subject) {
 		return storeStateAvailable
-	}
-	for _, id := range sh.instances[code] {
-		if sh.grants.Instance(id).Allows(groups, subject) {
-			return storeStateAvailable
-		}
 	}
 	return storeStateRequest
 }

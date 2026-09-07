@@ -58,7 +58,8 @@ const (
 	DecisionDenied   Decision = "denied"
 )
 
-func (s Status) valid() bool {
+// Valid reports whether the status belongs to the installation lifecycle.
+func (s Status) Valid() bool {
 	switch s {
 	case StatusInstalled, StatusPendingApproval, StatusRevoked:
 		return true
@@ -132,24 +133,12 @@ func newWithStatus(
 	status Status,
 	config map[string]string,
 ) (*Installation, error) {
-	if gatewayID.IsNil() {
-		return nil, fmt.Errorf("%w: gateway id is required", ErrInvalidInstallation)
-	}
-	if strings.TrimSpace(principalSub) == "" {
-		return nil, fmt.Errorf("%w: principal subject is required", ErrInvalidInstallation)
-	}
-	if strings.TrimSpace(catalogCode) == "" {
-		return nil, fmt.Errorf("%w: catalog code is required", ErrInvalidInstallation)
-	}
-	if !status.valid() {
-		return nil, fmt.Errorf("%w: invalid status %q", ErrInvalidInstallation, status)
-	}
 	id, err := ids.NewV7[ids.InstallationKind]()
 	if err != nil {
 		return nil, fmt.Errorf("installation: generate uuid: %w", err)
 	}
 	now := time.Now().UTC()
-	return &Installation{
+	in := &Installation{
 		ID:           id,
 		GatewayID:    gatewayID,
 		PrincipalSub: principalSub,
@@ -159,7 +148,34 @@ func newWithStatus(
 		Config:       config,
 		CreatedAt:    now,
 		UpdatedAt:    now,
-	}, nil
+	}
+	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+	return in, nil
+}
+
+// Validate checks the invariants shared by constructors and persistence adapters.
+func (i *Installation) Validate() error {
+	if i == nil {
+		return fmt.Errorf("%w: installation is required", ErrInvalidInstallation)
+	}
+	if i.ID.IsNil() {
+		return fmt.Errorf("%w: installation id is required", ErrInvalidInstallation)
+	}
+	if i.GatewayID.IsNil() {
+		return fmt.Errorf("%w: gateway id is required", ErrInvalidInstallation)
+	}
+	if strings.TrimSpace(i.PrincipalSub) == "" {
+		return fmt.Errorf("%w: principal subject is required", ErrInvalidInstallation)
+	}
+	if strings.TrimSpace(i.CatalogCode) == "" {
+		return fmt.Errorf("%w: catalog code is required", ErrInvalidInstallation)
+	}
+	if !i.Status.Valid() {
+		return fmt.Errorf("%w: invalid status %q", ErrInvalidInstallation, i.Status)
+	}
+	return nil
 }
 
 // IsActive reports whether the installation currently contributes to the user's
@@ -245,10 +261,8 @@ type DecisionHistory interface {
 	ListDecidedByGateway(ctx context.Context, gatewayID ids.GatewayID, limit int) ([]*Installation, error)
 }
 
-//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=installation_repository_mock.go --case=underscore --with-expecter
-type Repository interface {
-	// Upsert creates or updates the installation for (gateway, principal, code).
-	Upsert(ctx context.Context, in *Installation) error
+// Reader provides principal-scoped installation lookups.
+type Reader interface {
 	// Find returns an installation for (gateway, principal, code), or ErrNotFound.
 	// A principal may hold several instances of one code; Find prefers an ACTIVE
 	// (installed) row, then the earliest, so single-instance callers (the
@@ -265,16 +279,35 @@ type Repository interface {
 	// ListByPrincipal returns everything a principal has installed on a gateway —
 	// the CatalogScoper's read side.
 	ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*Installation, error)
+}
+
+// AdminReader provides gateway-wide installation lookups.
+type AdminReader interface {
 	// ListByCatalogCode returns every principal who installed a catalog entry on a
 	// gateway — the admin "who installed X" read side.
 	ListByCatalogCode(ctx context.Context, gatewayID ids.GatewayID, catalogCode string) ([]*Installation, error)
 	// ListPendingByGateway returns every pending-approval request on a gateway,
 	// oldest first — the admin approval queue.
 	ListPendingByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Installation, error)
+}
+
+// Writer persists and revokes installations.
+type Writer interface {
+	// Upsert creates or updates the installation for (gateway, principal, code).
+	Upsert(ctx context.Context, in *Installation) error
 	// Delete hard-deletes every instance for (gateway, principal, code).
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) error
 	// DeleteByID revokes one instance by its id, scoped to the owning principal:
 	// the row is kept (StatusRevoked) for audit and drops off the Store surface.
 	// Both planes implement it as a soft revoke so behaviour is identical.
 	DeleteByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) error
+}
+
+// Repository combines all installation persistence capabilities.
+//
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=installation_repository_mock.go --case=underscore --with-expecter
+type Repository interface {
+	Reader
+	AdminReader
+	Writer
 }

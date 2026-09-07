@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit mcp-catalog-probe \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -66,13 +66,18 @@ local-dns: ## Point *.gw.neuraltrust.sandbox to 127.0.0.1 via dnsmasq (macOS, re
 
 run-servers: up ## Alias for 'up': start the full stack + admin & proxy in docker
 
-up: ## One command to bring up everything (infra + admin & proxy) in Docker
+env: ## Seed .env and generate SERVER_SECRET_KEY if unset
+	@./scripts/seed-env.sh
+
+up: env ## Bring up Postgres, Redis and all TrustGate planes in Docker
 	@$(info $(M) Bringing up the full TrustGate stack ...)
-	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml build admin
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d
 	@echo ""
 	@echo "  TrustGate is up:"
 	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
 	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
+	@echo "    MCP    -> http://localhost:8082  (healthz: /healthz)"
 	@echo "  Tail logs with 'make logs', tear down with 'make down'."
 
 down: ## Tear down the full stack and remove volumes

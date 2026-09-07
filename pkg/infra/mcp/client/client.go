@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -189,11 +190,13 @@ type Client struct{}
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs *sdk.ClientSession
-	// url is the redacted form of the target URL (query values masked): it only
-	// ever appears in error text, which must never carry a per-user secret.
-	url string
+	cs     *sdk.ClientSession
+	url    string
+	mu     sync.RWMutex
+	closed bool
 }
+
+var errSessionClosed = errors.New("mcp client session is closed")
 
 var _ appmcp.Upstream = (*Session)(nil)
 
@@ -249,7 +252,7 @@ func (c *Client) connect(
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
 		if attempt.unauthorizedResponses.Load() > 0 {
-			err = fmt.Errorf("%w: %v", appmcp.ErrUpstreamUnauthorized, err)
+			err = fmt.Errorf("%w: %w", appmcp.ErrUpstreamUnauthorized, err)
 		}
 		return nil, attempt, err
 	}
@@ -263,11 +266,27 @@ func (s *Session) capabilities() *sdk.ServerCapabilities {
 	return &sdk.ServerCapabilities{}
 }
 
-func (s *Session) SupportsResources() bool { return s.capabilities().Resources != nil }
+func (s *Session) SupportsResources() bool {
+	if err := s.lock(); err != nil {
+		return false
+	}
+	defer s.mu.RUnlock()
+	return s.capabilities().Resources != nil
+}
 
-func (s *Session) SupportsPrompts() bool { return s.capabilities().Prompts != nil }
+func (s *Session) SupportsPrompts() bool {
+	if err := s.lock(); err != nil {
+		return false
+	}
+	defer s.mu.RUnlock()
+	return s.capabilities().Prompts != nil
+}
 
 func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
 	ctx, unauthorized := trackUnauthorized(ctx)
 	var items []*sdk.Tool
 	for t, err := range s.cs.Tools(ctx, nil) {
@@ -280,6 +299,10 @@ func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 }
 
 func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
 	ctx, unauthorized := trackUnauthorized(ctx)
 	params := &sdk.CallToolParams{Name: name}
 	if len(arguments) > 0 {
@@ -293,7 +316,11 @@ func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawM
 }
 
 func (s *Session) ListResources(ctx context.Context) ([]appmcp.Resource, error) {
-	if !s.SupportsResources() {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
+	if s.capabilities().Resources == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
@@ -308,7 +335,11 @@ func (s *Session) ListResources(ctx context.Context) ([]appmcp.Resource, error) 
 }
 
 func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceTemplate, error) {
-	if !s.SupportsResources() {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
+	if s.capabilities().Resources == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
@@ -323,7 +354,11 @@ func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceT
 }
 
 func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
-	if !s.SupportsResources() {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
+	if s.capabilities().Resources == nil {
 		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
@@ -335,7 +370,11 @@ func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage
 }
 
 func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
-	if !s.SupportsPrompts() {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
+	if s.capabilities().Prompts == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
@@ -350,7 +389,11 @@ func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 }
 
 func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
-	if !s.SupportsPrompts() {
+	if err := s.lock(); err != nil {
+		return nil, err
+	}
+	defer s.mu.RUnlock()
+	if s.capabilities().Prompts == nil {
 		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
@@ -362,6 +405,10 @@ func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[stri
 }
 
 func (s *Session) Ping(ctx context.Context) error {
+	if err := s.lock(); err != nil {
+		return err
+	}
+	defer s.mu.RUnlock()
 	ctx, unauthorized := trackUnauthorized(ctx)
 	return mapSessionError(s.cs.Ping(ctx, nil), unauthorized)
 }
@@ -375,12 +422,27 @@ func trackUnauthorized(ctx context.Context) (context.Context, *atomic.Bool) {
 
 func mapSessionError(err error, unauthorized *atomic.Bool) error {
 	if err != nil && unauthorized.Load() {
-		return fmt.Errorf("%w: %v", appmcp.ErrUpstreamUnauthorized, err)
+		return fmt.Errorf("%w: %w", appmcp.ErrUpstreamUnauthorized, err)
 	}
 	return mapRPCError(err)
 }
 
+func (s *Session) lock() error {
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return errSessionClosed
+	}
+	return nil
+}
+
 func (s *Session) Close(context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
 	_ = s.cs.Close()
 }
 
