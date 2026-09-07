@@ -109,6 +109,26 @@ func TestProviderClient_SlackTokenResponse(t *testing.T) {
 			t.Fatalf("error = %v, want ErrInvalidGrant", err)
 		}
 	})
+
+	t.Run("preserves safe invalid grant diagnostics", func(t *testing.T) {
+		t.Parallel()
+		srv := tokenServer(t, map[string]any{
+			"error":             "invalid_grant",
+			"error_description": "refresh token refresh-secret was revoked",
+		})
+		_, err := NewProviderClient(srv.Client()).Refresh(
+			context.Background(),
+			&registrydomain.MCPAuth{ClientID: "id", TokenURL: srv.URL},
+			"refresh-secret",
+		)
+		var invalidGrant *appoauth.InvalidGrantError
+		if !errors.As(err, &invalidGrant) {
+			t.Fatalf("error = %v, want InvalidGrantError", err)
+		}
+		if invalidGrant.Code != "invalid_grant" || invalidGrant.Description != "refresh token [redacted] was revoked" {
+			t.Fatalf("diagnostics = %+v, want redacted provider diagnostics", invalidGrant)
+		}
+	})
 }
 
 func tokenServer(t *testing.T, response map[string]any) *httptest.Server {
