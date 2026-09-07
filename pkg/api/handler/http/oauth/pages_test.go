@@ -185,6 +185,36 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	}
 }
 
+func TestPages_FollowTheSystemTheme(t *testing.T) {
+	t.Parallel()
+	// These are standalone hosted pages, not app surfaces, so they ship both
+	// palettes and let prefers-color-scheme pick — never the app shell's
+	// dark-forced one.
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp"},
+			},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	for _, want := range []string{
+		`color-scheme:light`,
+		`--bg-canvas:#f6f6f9`,
+		`@media (prefers-color-scheme:dark)`,
+		`--bg-canvas:#03020f`,
+		`--brand:#9053ff`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page must ship both palettes, missing %q", want)
+		}
+	}
+	if strings.Contains(body, `class="dark"`) {
+		t.Fatalf("pages must not force the dark palette, body:\n%s", body)
+	}
+}
+
 func TestSingleConnectPage_UsesFocusedCardChrome(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {
