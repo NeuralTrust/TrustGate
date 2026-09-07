@@ -248,7 +248,7 @@ func (f *forwarder) invokeWithFailover(
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
 				reason := failureReason(resp, err)
-				reportFailure(lb, bk, reason)
+				reportFailure(ctx, lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
 				f.logRetry(bk, reason, budget)
@@ -334,9 +334,9 @@ func reportSuccess(lb *loadbalancer.LoadBalancer, bk *domain.Registry) {
 	}
 }
 
-func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
+func reportFailure(ctx context.Context, lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
 	if lb != nil {
-		lb.ReportFailure(bk, reason)
+		lb.ReportFailure(ctx, bk, reason)
 	}
 }
 

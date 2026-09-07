@@ -29,42 +29,29 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// discoveryFanOut bounds how many upstreams are discovered at once. A consumer
-// federating many registries should not open a connection to all of them in one
-// burst, and past a handful the wall time is dominated by the slowest anyway.
 const discoveryFanOut = 8
 
-// negativeTTL is how long a failed discovery is remembered. It is deliberately
-// far shorter than the success TTL: an upstream that comes back should be
-// served again quickly, and all this needs to buy is that a dead one is dialled
-// once per window instead of once per request.
-const negativeTTL = 10 * time.Second
+const (
+	negativeTTL      = 10 * time.Second
+	discoveryTimeout = 15 * time.Second
+)
 
 type DiscoveryCache interface {
 	Get(key string) (any, bool)
 	Set(key string, value any)
 }
 
-// discoveryFailure is a remembered failure, sharing the cache with the results
-// it stands in for. The entry carries its own deadline because the cache has a
-// single TTL sized for successful discoveries.
 type discoveryFailure struct {
 	err   error
 	until time.Time
 }
 
-// discovered is one registry's outcome, kept alongside the registry so a
-// concurrent fan-out can be read back in the order the consumer declared.
 type discovered[T any] struct {
 	registry *registrydomain.Registry
 	items    []T
 	err      error
 }
 
-// discoverAll discovers every registry at once and returns the outcomes in
-// registry order. Order is what decides which upstream wins a name clash and
-// which pending consent is reported, so it must not depend on who answers
-// first.
 func discoverAll[T any](
 	c *composer,
 	ctx context.Context,
@@ -180,29 +167,42 @@ func discoverCached[T any](
 	if items, err, ok := cachedDiscovery[T](c, key); ok {
 		return items, err
 	}
-	// One discovery per key at a time. Without this, a burst arriving after the
-	// entry expires all dials the same upstream, which is exactly when it is
-	// least able to take it.
-	shared, err, _ := c.flight.Do(key, func() (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	result := c.flight.DoChan(key, func() (any, error) {
 		if items, err, ok := cachedDiscovery[T](c, key); ok {
 			return items, err
 		}
-		items, err := askUpstream(c, ctx, rc, reg, list)
+		flightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discoveryTimeout)
+		defer cancel()
+		items, err := askUpstream(c, flightCtx, rc, reg, list)
 		if err != nil {
-			c.rememberFailure(key, err)
+			if !isContextError(err) {
+				c.rememberFailure(key, err)
+			}
 			return nil, err
 		}
 		c.discovery.Set(key, items)
 		return items, nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case completed := <-result:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if completed.Err != nil {
+			return nil, completed.Err
+		}
+		shared := completed.Val
+		items, ok := shared.([]T)
+		if !ok {
+			return nil, fmt.Errorf("mcp discovery: unexpected cached type for %q", kind)
+		}
+		return items, nil
 	}
-	items, ok := shared.([]T)
-	if !ok {
-		return nil, fmt.Errorf("mcp discovery: unexpected cached type for %q", kind)
-	}
-	return items, nil
 }
 
 func askUpstream[T any](
@@ -217,8 +217,6 @@ func askUpstream[T any](
 	})
 }
 
-// cachedDiscovery reports a hit, which is either the tools an upstream served
-// or the failure it answered with while that failure is still recent.
 func cachedDiscovery[T any](c *composer, key string) ([]T, error, bool) {
 	cached, ok := c.discovery.Get(key)
 	if !ok {
@@ -233,10 +231,10 @@ func cachedDiscovery[T any](c *composer, key string) ([]T, error, bool) {
 	return nil, nil, false
 }
 
-// rememberFailure holds on to an unreachable upstream for a few seconds so it
-// is dialled once per window rather than once per request. Consent is left out:
-// it is the user's to resolve, and resolving it should take effect at once.
 func (c *composer) rememberFailure(key string, err error) {
+	if isContextError(err) {
+		return
+	}
 	var consentErr *ConsentRequiredError
 	if errors.As(err, &consentErr) {
 		return
@@ -244,12 +242,12 @@ func (c *composer) rememberFailure(key string, err error) {
 	c.discovery.Set(key, discoveryFailure{err: err, until: time.Now().Add(negativeTTL)})
 }
 
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	// A server whose URL carries per-user placeholders is dialed at a different
-	// upstream per principal, so its discovered tools must be keyed per principal
-	// too — otherwise one user's discovery (against their own account) would be
-	// served to another. This holds even when the auth mode is not per-principal.
 	perPrincipal := perPrincipalAuth(reg) ||
 		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
 	if !perPrincipal {

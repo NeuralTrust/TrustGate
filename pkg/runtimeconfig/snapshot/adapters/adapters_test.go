@@ -137,10 +137,29 @@ func TestGatewayAdapterNotReadyAndReadOnly(t *testing.T) {
 	assert.ErrorIs(t, repo.Save(ctx, &gatewaydomain.Gateway{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Update(ctx, &gatewaydomain.Gateway{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, ids.New[ids.GatewayKind]()), configsync.ErrReadOnly)
-	_, _, err = repo.List(ctx, gatewaydomain.ListFilter{})
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
-	_, err = repo.CountByTenantID(ctx, "acme")
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
+	items, total, err := repo.List(ctx, gatewaydomain.ListFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	assert.Zero(t, total)
+	count, err := repo.CountByTenantID(ctx, "acme")
+	require.NoError(t, err)
+	assert.Zero(t, count)
+}
+
+func TestGatewayAdapterListsAndCountsSnapshotData(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewGatewayRepository(f.store)
+
+	items, total, err := repo.List(context.Background(), gatewaydomain.ListFilter{TenantID: "team-1", SlugContains: "ONE"})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, f.gateway.ID, items[0].ID)
+
+	count, err := repo.CountByTenantID(context.Background(), "team-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 }
 
 func TestConsumerAdapter(t *testing.T) {
@@ -246,6 +265,34 @@ func TestRegistryAdapterList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, total)
 	assert.Empty(t, items)
+}
+
+func TestRegistryAdapterIndexedStoreReads(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewRegistryRepository(f.store)
+	indexed, ok := repo.(interface {
+		ListByGateway(context.Context, ids.GatewayID) ([]*registrydomain.Registry, error)
+		ListByGatewayAndCatalogCode(context.Context, ids.GatewayID, string) ([]*registrydomain.Registry, error)
+		ListByGatewayAndIDs(context.Context, ids.GatewayID, []ids.RegistryID) ([]*registrydomain.Registry, error)
+	})
+	require.True(t, ok)
+
+	items, err := indexed.ListByGateway(context.Background(), f.gateway.ID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	versioned, loaded := f.store.Load()
+	require.True(t, loaded)
+	assert.Same(t, versioned.Snapshot.RegistriesByGateway(f.gateway.ID)[0], items[0])
+
+	byCode, err := indexed.ListByGatewayAndCatalogCode(context.Background(), f.gateway.ID, "missing")
+	require.NoError(t, err)
+	assert.Empty(t, byCode)
+
+	byID, err := indexed.ListByGatewayAndIDs(context.Background(), f.gateway.ID, []ids.RegistryID{f.reg.ID})
+	require.NoError(t, err)
+	require.Len(t, byID, 1)
+	assert.Same(t, items[0], byID[0])
 }
 
 func TestPolicyAdapter(t *testing.T) {

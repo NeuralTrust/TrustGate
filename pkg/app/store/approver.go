@@ -23,7 +23,6 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -37,12 +36,6 @@ var ErrNotShelved = fmt.Errorf("store: server is not on the shelf; connect it fi
 // so the decision cannot be applied to one without guessing. The caller must
 // pass the instance id (from the pending queue). It maps to 409.
 var ErrAmbiguousRequest = fmt.Errorf("store: several instances match; pass instance_id: %w", commonerrors.ErrConflict)
-
-// RegistryShelf is the registry access the approver needs: the gateway's
-// configured instances, to resolve which one a request lands on.
-type RegistryShelf interface {
-	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
-}
 
 // GrantStore is the grant access the approver needs: read a gateway's grants
 // and write the one an approval extends.
@@ -127,7 +120,7 @@ var _ Approver = (*approver)(nil)
 
 type approver struct {
 	catalog    CatalogReader
-	registries RegistryShelf
+	registries RegistryLister
 	installs   installationdomain.Repository
 	grants     GrantStore
 	ensurer    RegistryEnsurer
@@ -156,7 +149,7 @@ func WithApproverHistory(h installationdomain.DecisionHistory) ApproverOption {
 // instance), so their next install is instant and the Access page shows it.
 func NewApprover(
 	catalog CatalogReader,
-	registries RegistryShelf,
+	registries RegistryLister,
 	installs installationdomain.Repository,
 	grants GrantStore,
 	opts ...ApproverOption,

@@ -41,7 +41,7 @@ func TestNewPolicyValidates(t *testing.T) {
 		{gw, PrincipalGroup, "", "open"},
 		{gw, PrincipalUser, "ana", "everything"},
 	} {
-		if _, err := NewPolicy(bad.gw, bad.typ, bad.id, bad.mode); !errors.Is(err, ErrInvalidGrant) {
+		if _, err := NewPolicy(bad.gw, bad.typ, bad.id, bad.mode); !errors.Is(err, ErrInvalidPolicy) {
 			t.Fatalf("%+v must be invalid, got %v", bad, err)
 		}
 	}

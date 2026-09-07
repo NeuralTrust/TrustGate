@@ -19,10 +19,8 @@ import (
 	"errors"
 	"testing"
 
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
@@ -30,17 +28,11 @@ import (
 
 // recordingInstaller captures the request the on-behalf installer produced.
 type recordingInstaller struct {
-	got     *InstallRequest
-	subject string
-	groups  []string
+	got *InstallRequest
 }
 
-func (r *recordingInstaller) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
+func (r *recordingInstaller) Install(_ context.Context, in InstallRequest) (*InstallResult, error) {
 	r.got = &in
-	if p := identity.PrincipalFromContext(ctx); p != nil {
-		r.subject = p.Subject
-		r.groups = principalGroups(p)
-	}
 	return &InstallResult{Code: in.Code, Status: installationdomain.StatusInstalled}, nil
 }
 func (r *recordingInstaller) Instances(context.Context, ids.GatewayID, string, string) ([]*installationdomain.Installation, error) {
@@ -90,8 +82,8 @@ func TestPrincipalInstaller_ActsAsThePrincipalWithTheGatewayDefault(t *testing.T
 	if rec.got.PrincipalSub != "ana" || rec.got.InstalledBy != "admin@corp" || !rec.got.OpenMode {
 		t.Fatalf("request should run as ana under the open default, got %+v", rec.got)
 	}
-	if rec.subject != "ana" || len(rec.groups) != 2 {
-		t.Fatalf("installer must see the principal in context: sub=%q groups=%v", rec.subject, rec.groups)
+	if len(rec.got.Groups) != 2 || rec.got.Groups[0] != "eng" || rec.got.Groups[1] != "Engineering" {
+		t.Fatalf("normalized groups = %v", rec.got.Groups)
 	}
 }
 
@@ -133,11 +125,6 @@ func TestPrincipalInstaller_WithoutGatewayFailsClosedToCurated(t *testing.T) {
 	}
 	if rec.got.OpenMode {
 		t.Fatalf("unknown default must not open the Store")
-	}
-	// Sanity: the context helper the resolver relies on round-trips a gateway.
-	gw := gatewayWithMode(t, gatewaydomain.StoreModeOpen)
-	if got, ok := appgateway.FromContext(appgateway.WithGateway(context.Background(), gw)); !ok || got != gw {
-		t.Fatalf("WithGateway/FromContext mismatch")
 	}
 }
 

@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -63,6 +64,40 @@ func (g *gatedUpstream) ListTools(ctx context.Context) ([]Tool, error) {
 		g.before()
 	}
 	return g.fakeUpstream.ListTools(ctx)
+}
+
+type sharedDiscoveryUpstream struct {
+	*fakeUpstream
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type observedDiscoveryCache struct {
+	*mapCache
+	mu       sync.Mutex
+	gets     int
+	follower chan struct{}
+}
+
+func (c *observedDiscoveryCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	c.gets++
+	if c.gets == 3 {
+		close(c.follower)
+	}
+	c.mu.Unlock()
+	return c.mapCache.Get(key)
+}
+
+func (u *sharedDiscoveryUpstream) ListTools(ctx context.Context) ([]Tool, error) {
+	u.once.Do(func() { close(u.started) })
+	select {
+	case <-u.release:
+		return tools("weather"), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func mcpClient() *consumerdomain.Consumer {
@@ -178,6 +213,75 @@ func TestDiscovery_ConcurrentRequestsDialAnUpstreamOnce(t *testing.T) {
 
 	if got := dialer.count("https://a.example.com/mcp"); got != 1 {
 		t.Fatalf("dialled %d times, want 1: a burst on a cold cache should not stampede the upstream", got)
+	}
+}
+
+func TestDiscovery_CancelledLeaderDoesNotCancelOrPoisonFollower(t *testing.T) {
+	t.Parallel()
+	up := &sharedDiscoveryUpstream{
+		fakeUpstream: &fakeUpstream{},
+		started:      make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	dialer := newCountingDialer(func(string) (Upstream, error) { return up, nil })
+	cache := &observedDiscoveryCache{mapCache: newMapCache(), follower: make(chan struct{})}
+	c := NewComposer(dialer, nil, cache, slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := c.ListTools(leaderCtx, rc)
+		leaderDone <- err
+	}()
+	<-up.started
+
+	followerDone := make(chan error, 1)
+	go func() {
+		got, err := c.ListTools(context.Background(), rc)
+		if err == nil {
+			names := toolNames(got)
+			if len(names) != 1 || names[0] != "weather" {
+				err = fmt.Errorf("tools = %v, want weather", names)
+			}
+		}
+		followerDone <- err
+	}()
+	<-cache.follower
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader error = %v, want context.Canceled", err)
+	}
+	close(up.release)
+	if err := <-followerDone; err != nil {
+		t.Fatalf("follower failed after leader cancellation: %v", err)
+	}
+
+	if _, err := c.ListTools(context.Background(), rc); err != nil {
+		t.Fatalf("cached discovery failed after leader cancellation: %v", err)
+	}
+	if got := dialer.count("https://a.example.com/mcp"); got != 1 {
+		t.Fatalf("dialled %d times, want one shared discovery", got)
+	}
+}
+
+func TestDiscovery_ContextErrorsAreNotNegativeCached(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	dialer := newCountingDialer(func(string) (Upstream, error) {
+		return nil, fmt.Errorf("dial failed: %w", context.DeadlineExceeded)
+	})
+	c := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	for range 2 {
+		if _, err := c.ListTools(context.Background(), rc); err == nil {
+			t.Fatal("expected discovery failure")
+		}
+	}
+	if got := dialer.count("https://a.example.com/mcp"); got != 2 {
+		t.Fatalf("dialled %d times, want context failures retried", got)
 	}
 }
 

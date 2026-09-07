@@ -19,40 +19,20 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
+	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/gofiber/fiber/v2"
 )
 
-// PoliciesHandler serves the per-principal Store access policies of a gateway:
-// which users and groups are on All / Selected / None. The gateway evaluates
-// them live, so a change here applies to the next request.
 type PoliciesHandler struct {
 	policies appstore.PolicyService
 }
 
 func NewPoliciesHandler(policies appstore.PolicyService) *PoliciesHandler {
 	return &PoliciesHandler{policies: policies}
-}
-
-type policyResponse struct {
-	PrincipalType string `json:"principal_type"`
-	PrincipalID   string `json:"principal_id"`
-	Mode          string `json:"mode"`
-}
-
-type listPoliciesResponse struct {
-	Items []policyResponse `json:"items"`
-	Total int              `json:"total"`
-}
-
-// setPolicyRequest replaces one principal's level. An empty mode clears the
-// policy so the gateway default applies again.
-type setPolicyRequest struct {
-	PrincipalType string `json:"principal_type"`
-	PrincipalID   string `json:"principal_id"`
-	Mode          string `json:"mode"`
 }
 
 // List godoc
@@ -62,7 +42,7 @@ type setPolicyRequest struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
-// @Success      200         {object}  listPoliciesResponse
+// @Success      200         {object}  storeresponse.Policies
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/store/access-policies [get]
@@ -75,12 +55,12 @@ func (h *PoliciesHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := listPoliciesResponse{Items: make([]policyResponse, 0, len(policies))}
+	out := storeresponse.Policies{Items: make([]storeresponse.Policy, 0, len(policies))}
 	for _, p := range policies {
 		if p == nil {
 			continue
 		}
-		out.Items = append(out.Items, policyResponse{
+		out.Items = append(out.Items, storeresponse.Policy{
 			PrincipalType: string(p.PrincipalType), PrincipalID: p.PrincipalID, Mode: p.Mode,
 		})
 	}
@@ -96,8 +76,8 @@ func (h *PoliciesHandler) List(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string            true  "Gateway id"  format(uuid)
-// @Param        body        body      setPolicyRequest  true  "The policy"
-// @Success      200         {object}  policyResponse
+// @Param        body        body      storerequest.SetPolicy  true  "The policy"
+// @Success      200         {object}  storeresponse.Policy
 // @Success      204         "Policy cleared"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
@@ -107,7 +87,7 @@ func (h *PoliciesHandler) Set(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	var req setPolicyRequest
+	var req storerequest.SetPolicy
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
@@ -126,7 +106,7 @@ func (h *PoliciesHandler) Set(c *fiber.Ctx) error {
 	if policy == nil {
 		return c.SendStatus(fiber.StatusNoContent)
 	}
-	return httpio.WriteOK(c, policyResponse{
+	return httpio.WriteOK(c, storeresponse.Policy{
 		PrincipalType: string(policy.PrincipalType), PrincipalID: policy.PrincipalID, Mode: policy.Mode,
 	})
 }

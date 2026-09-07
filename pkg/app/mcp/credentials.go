@@ -28,6 +28,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -56,12 +57,18 @@ type CredentialResolver interface {
 	Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error
 }
 
+type CredentialConnectGateway interface {
+	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
+	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
+}
+
 var _ CredentialResolver = (*credentialResolver)(nil)
 
 type credentialResolver struct {
 	exchanger sts.Exchanger
 	vault     vaultdomain.Repository
-	connect   appoauth.ConnectService
+	connect   CredentialConnectGateway
 	provider  appoauth.ProviderClient
 	logger    *slog.Logger
 	refresh   singleflight.Group
@@ -87,7 +94,7 @@ type ccCacheEntry struct {
 func NewCredentialResolver(
 	exchanger sts.Exchanger,
 	vault vaultdomain.Repository,
-	connect appoauth.ConnectService,
+	connect CredentialConnectGateway,
 	provider appoauth.ProviderClient,
 	logger *slog.Logger,
 ) CredentialResolver {
@@ -280,7 +287,7 @@ func (r *credentialResolver) refreshCredential(
 					(rejectedAccessToken == "" && !latest.Expired(vaultRefreshSkew)))
 				if peerRefreshed {
 					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
-						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
+						"provider", provider, "principal_ref", logref.Opaque(subject), "gateway_id", gatewayID.String())
 					return latest, nil
 				}
 				r.markGrantDead(key, cred.RefreshToken)
@@ -400,9 +407,19 @@ var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected creden
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
 // guessed at from the client-side error alone.
-func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, provider, principalSub, reason string, diagnostics ...any) error {
-	attrs := []any{"provider", provider, "subject", principalSub,
-		"gateway_id", rc.Consumer.GatewayID.String(), "reason", reason}
+func (r *credentialResolver) consentRequired(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	provider, principalSub, reason string,
+	diagnostics ...any,
+) error {
+	attrs := []any{
+		"provider", provider,
+		"principal_ref", logref.Opaque(principalSub),
+		"gateway_id", rc.Consumer.GatewayID.String(),
+		"reason", reason,
+	}
 	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	var ticket string

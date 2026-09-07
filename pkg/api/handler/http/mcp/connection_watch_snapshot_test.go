@@ -21,6 +21,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -69,7 +70,7 @@ func TestConnectionWatchSnapshot_ReportsCredentialForServerInstalledAfterStreamO
 	vault := &fakeStreamVault{creds: []*vaultdomain.Credential{
 		{GatewayID: gw, PrincipalSub: "ana", Provider: "com.notion/mcp", UpdatedAt: now},
 	}}
-	h := NewHandler(nil, nil, vault)
+	watcher := appmcp.NewSurfaceWatcher(vault, nil)
 
 	// The frozen consumer only knows Linear; Notion was installed after the stream
 	// opened and is not in this registry set.
@@ -79,21 +80,21 @@ func TestConnectionWatchSnapshot_ReportsCredentialForServerInstalledAfterStreamO
 	}
 	principal := &identity.Principal{Subject: "ana"}
 
-	watch := h.connectionWatchSnapshot(context.Background(), rc, principal)
+	watch := watcher.Connections(context.Background(), rc, principal, true)
 	if len(watch) != 1 || !strings.HasPrefix(watch[0], "cx:com.notion/mcp@") {
 		t.Fatalf("watch snapshot must report the Notion credential regardless of the frozen registry set, got %v", watch)
 	}
 
 	// The frozen-registry-filtered snapshot drops it — that is exactly why the
 	// stream must not use it, and why the two functions must stay distinct.
-	if filtered := h.connectionSnapshot(context.Background(), rc, principal); len(filtered) != 0 {
+	if filtered := watcher.Connections(context.Background(), rc, principal, false); len(filtered) != 0 {
 		t.Fatalf("connectionSnapshot filters by the frozen forwarded set and must drop the Notion credential, got %v", filtered)
 	}
 
 	// A reconnect (new UpdatedAt) changes the watch string, so the polling stream
 	// sees a change and pushes tools/list_changed.
 	vault.creds[0].UpdatedAt = now.Add(time.Minute)
-	if next := h.connectionWatchSnapshot(context.Background(), rc, principal); next[0] == watch[0] {
+	if next := watcher.Connections(context.Background(), rc, principal, true); next[0] == watch[0] {
 		t.Fatal("a reconnected credential must change the watch snapshot string")
 	}
 }
