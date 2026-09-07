@@ -36,6 +36,10 @@ func TestResolveDowngrade(t *testing.T) {
 		{name: "empty target", provider: "openai", target: ""},
 		{name: "allowed contains target", provider: "openai", target: "gpt-4o-mini", allowed: []string{"gpt-4o", "gpt-4o-mini"}, want: "gpt-4o-mini", wantOK: true},
 		{name: "allowed excludes target", provider: "openai", target: "gpt-4o-mini", allowed: []string{"gpt-4o"}},
+		{name: "pattern allow-list admits target", provider: "openai", target: "gpt-4o-mini", allowed: []string{"gpt-*"}, want: "gpt-4o-mini", wantOK: true},
+		{name: "pattern allow-list excludes other family", provider: "openai", target: "claude-3-haiku", allowed: []string{"gpt-*"}},
+		{name: "pattern target is refused", provider: "openai", target: "gpt-*", allowed: []string{"gpt-*"}},
+		{name: "pattern target refused without allow-list", provider: "openai", target: "gpt-*"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -185,3 +185,31 @@ func TestModelAllowlistDataDecisions(t *testing.T) {
 	assert.NotEqual(t, decisionRejected, data.Decision)
 	assert.NotEqual(t, decisionDefaulted, data.Decision)
 }
+
+func TestMatchAnyRejectsPatternSubject(t *testing.T) {
+	matched, ok := matchAny("gpt-5*", []string{"gpt-5*"})
+	assert.False(t, ok, "a pattern must never satisfy the allow-list it came from")
+	assert.Empty(t, matched)
+}
+
+func TestConfigValidateRejectsPatternTargets(t *testing.T) {
+	_, err := parseConfig(map[string]any{
+		"allowed_models":         []any{"gpt-5*"},
+		"behavior_on_disallowed": "substitute",
+		"substitute_with":        "gpt-5*",
+	})
+	require.Error(t, err, "substitute_with is written into the request body, so it must be concrete")
+
+	_, err = parseConfig(map[string]any{
+		"allowed_models": []any{"gpt-5*"},
+		"default_model":  "gpt-5*",
+	})
+	require.Error(t, err, "default_model is written into the request body, so it must be concrete")
+
+	_, err = parseConfig(map[string]any{
+		"allowed_models":         []any{"gpt-5*"},
+		"behavior_on_disallowed": "substitute",
+		"substitute_with":        "gpt-5-mini",
+	})
+	require.NoError(t, err, "a concrete target under a pattern allow-list stays valid")
+}
