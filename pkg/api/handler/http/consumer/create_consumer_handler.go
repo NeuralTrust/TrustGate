@@ -91,6 +91,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		ModelPolicies:   modelPolicies,
 		MCP:             mcp,
 		Identity:        req.Identity.ToDomain(),
+		AuthBinding:     req.AuthBinding.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

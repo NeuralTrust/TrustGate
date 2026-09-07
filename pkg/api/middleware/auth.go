@@ -25,6 +25,7 @@ import (
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -87,6 +88,12 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		authCtx.GatewayID = gw.ID
 		authCtx.GatewaySlug = gw.Slug
 		authCtx.ConsumerID = rc.Consumer.ID
+		if !consumerAdmitsCaller(rc.Consumer, authCtx) {
+			m.debug(c).Debug("caller not bound to consumer",
+				slog.String("consumer_slug", route.ConsumerSlug),
+				slog.String("method", string(authCtx.Method)))
+			return forbidden(c, resolver.ErrForbidden)
+		}
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
@@ -200,4 +207,20 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 		}
 	}
 	return false
+}
+
+// consumerAdmitsCaller applies the consumer's auth binding to a verified
+// caller: a bearer token from a shared IdP must have been issued to one of the
+// consumer's allowed clients. API keys and playground tokens are already bound
+// to exactly one consumer.
+func consumerAdmitsCaller(cons *consumerdomain.Consumer, authCtx *appauth.AuthContext) bool {
+	if cons == nil || authCtx == nil {
+		return false
+	}
+	switch authCtx.Method {
+	case appauth.MethodOAuth2, appauth.MethodOIDC:
+		return cons.AuthBinding.AllowsClient(authCtx.Claims)
+	default:
+		return true
+	}
 }

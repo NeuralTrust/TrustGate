@@ -99,6 +99,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Toolkit:       toolkit,
 		FailMode:      req.ToFailMode(),
 		Identity:      req.Identity.ToDomain(),
+		AuthBinding:   req.AuthBinding.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

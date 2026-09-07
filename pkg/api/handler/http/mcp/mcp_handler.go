@@ -480,7 +480,43 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
+	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
+		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
+	}
 	return rc, nil
+}
+
+// consumerAdmitsPrincipal applies the consumer's auth binding to the verified
+// caller: a bearer token from a shared IdP must have been issued to an allowed
+// client, and a client certificate must carry an allowed subject. API keys are
+// bound to one consumer already, and a missing principal has nothing to bind.
+func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.Principal) bool {
+	if cons == nil {
+		return false
+	}
+	if principal == nil {
+		return true
+	}
+	switch principal.Method {
+	case identity.MethodJWT, identity.MethodIntrospection:
+		return cons.AuthBinding.AllowsClient(principal.Claims)
+	case identity.MethodMTLS:
+		commonName, _ := principal.Claims["common_name"].(string)
+		var dnsNames []string
+		switch v := principal.Claims["dns_names"].(type) {
+		case []string:
+			dnsNames = v
+		case []any:
+			for _, item := range v {
+				if name, ok := item.(string); ok {
+					dnsNames = append(dnsNames, name)
+				}
+			}
+		}
+		return cons.AuthBinding.AllowsCertificate(commonName, dnsNames)
+	default:
+		return true
+	}
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

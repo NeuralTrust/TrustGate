@@ -37,6 +37,29 @@ type CreateConsumerRequest struct {
 	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      string                   `json:"fail_mode,omitempty"`
 	Identity      *IdentityRequest         `json:"identity,omitempty"`
+	AuthBinding   *AuthBindingRequest      `json:"auth_binding,omitempty"`
+}
+
+// AuthBindingRequest narrows which callers of a shared auth (external IdP,
+// mTLS CA) may enter the consumer. Omitted or empty lists accept every caller
+// the auth verifies.
+type AuthBindingRequest struct {
+	// AllowedClientIDs are the azp / client_id values accepted on a bearer JWT.
+	AllowedClientIDs []string `json:"allowed_client_ids,omitempty"`
+	// AllowedCertificateSubjects are the client-certificate common names or SAN
+	// DNS names accepted over mTLS.
+	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects,omitempty"`
+}
+
+// ToDomain maps the request onto the domain binding; nil when omitted.
+func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
+	if r == nil {
+		return nil
+	}
+	return &domain.AuthBinding{
+		AllowedClientIDs:           append([]string(nil), r.AllowedClientIDs...),
+		AllowedCertificateSubjects: append([]string(nil), r.AllowedCertificateSubjects...),
+	}
 }
 
 // IdentityRequest says who the consumer acts for. Omitted, the consumer acts as

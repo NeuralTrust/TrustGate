@@ -528,3 +528,37 @@ func decodeErrorBytes(t *testing.T, body []byte) httpio.ErrorBody {
 	require.NoError(t, json.NewDecoder(strings.NewReader(string(body))).Decode(&eb))
 	return eb
 }
+
+// TestAuthMiddleware_AuthBindingRestrictsClients: a consumer bound to specific
+// client ids admits a bearer token only when the shared IdP issued it to one of
+// them; a token for another application of the same tenant is forbidden even
+// though it verifies against the same auth.
+func TestAuthMiddleware_AuthBindingRestrictsClients(t *testing.T) {
+	t.Parallel()
+	gw, rc := inlineConsumerWithOAuth(t)
+	rc.Consumer.AuthBinding = consumerdomain.AuthBinding{AllowedClientIDs: []string{"app-a"}}
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc})
+
+	cases := map[string]struct {
+		claims map[string]any
+		want   int
+	}{
+		"token issued to an allowed client":  {map[string]any{"sub": "user-1", "azp": "app-a"}, fiber.StatusOK},
+		"token issued to another client":     {map[string]any{"sub": "user-1", "azp": "app-b"}, fiber.StatusForbidden},
+		"token without a client claim":       {map[string]any{"sub": "user-1"}, fiber.StatusForbidden},
+		"client_id claim names the consumer": {map[string]any{"sub": "user-1", "client_id": "app-a"}, fiber.StatusOK},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			verifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{Subject: "user-1", Claims: tc.claims}}
+			app := newAuthTestApp(t, gw, data, verifier, fakeOIDCVerifier{})
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}

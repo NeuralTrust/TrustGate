@@ -49,7 +49,7 @@ const (
 
 const consumerSelectColumns = `
 		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
-		       c.identity, c.created_at, c.updated_at,
+		       c.identity, c.auth_binding, c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
@@ -110,11 +110,15 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal identity: %w", err)
 	}
+	authBindingBytes, err := json.Marshal(c.AuthBinding)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal auth_binding: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, created_at, updated_at
+			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
@@ -122,7 +126,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, c.CreatedAt, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -163,6 +167,10 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal identity: %w", err)
 	}
+	authBindingBytes, err := json.Marshal(c.AuthBinding)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal auth_binding: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
 		   SET name             = $2,
@@ -175,7 +183,8 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		       headers          = $9,
 		       active           = $10,
 		       updated_at       = $11,
-		       identity         = $13
+		       identity         = $13,
+		       auth_binding     = $14
 		 WHERE id = $1 AND gateway_id = $12`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
@@ -183,7 +192,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
 			c.ID, c.Name, string(c.Type), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID, identityBytes,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID, identityBytes, authBindingBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -658,6 +667,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		modelPoliciesRaw []byte
 		toolkitRaw       []byte
 		identityRaw      []byte
+		authBindingRaw   []byte
 		failModeRaw      *string
 		consumerType     string
 		registryIDs      []uuid.UUID
@@ -666,7 +676,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
-		&identityRaw, &c.CreatedAt, &c.UpdatedAt,
+		&identityRaw, &authBindingRaw, &c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &registryWeights, &authIDs,
 	); err != nil {
 		return nil, err
@@ -716,6 +726,11 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	if len(identityRaw) > 0 {
 		if err := json.Unmarshal(identityRaw, &c.Identity); err != nil {
 			return nil, fmt.Errorf("scan identity: %w", err)
+		}
+	}
+	if len(authBindingRaw) > 0 {
+		if err := json.Unmarshal(authBindingRaw, &c.AuthBinding); err != nil {
+			return nil, fmt.Errorf("scan auth_binding: %w", err)
 		}
 	}
 	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)

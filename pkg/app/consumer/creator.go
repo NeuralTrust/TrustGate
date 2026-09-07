@@ -41,6 +41,7 @@ type CreateInput struct {
 	ModelPolicies   domain.ModelPolicies
 	MCP             *domain.MCPPolicy
 	Identity        *domain.Identity
+	AuthBinding     *domain.AuthBinding
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -93,6 +94,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		ModelPolicies:   in.ModelPolicies,
 		MCP:             in.MCP,
 		Identity:        in.Identity,
+		AuthBinding:     in.AuthBinding,
 	})
 	if err != nil {
 		return nil, err
