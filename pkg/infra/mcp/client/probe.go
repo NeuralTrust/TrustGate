@@ -119,7 +119,11 @@ func newStrictProbe(transport http.RoundTripper, supportedVersions []string, imp
 }
 
 func (p *strictProbe) Probe(ctx context.Context, target appmcp.Target) (probeOutcome, error) {
-	client, err := newTargetHTTPClientWithTransport(target.Headers, p.transport)
+	// The probe is the first outbound request of an auto-mode connect, so it is
+	// the first thing that must honour the per-user SSRF restriction: a URL
+	// assembled from a principal's variables gets the restricted dialer here,
+	// not one request later.
+	client, err := newTargetHTTPClientWithTransport(target.Headers, restrictedFor(target, p.transport))
 	if err != nil {
 		return probeOutcome{}, fmt.Errorf("%w: invalid upstream HTTP configuration: %w", appmcp.ErrUnreachable, err)
 	}
