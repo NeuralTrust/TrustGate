@@ -72,13 +72,31 @@ func transportFor(target appmcp.Target) http.RoundTripper {
 // restrictedFor swaps the shared production transport for the SSRF-restricted
 // one when this target's URL came out of per-user variable substitution. It is
 // how the modern era inherits the guarantee the legacy path gets from
-// transportFor. A transport injected by a test is returned untouched: it dials
-// the loopback server the public-address check exists to refuse.
+// transportFor.
+//
+// It fails closed. The restriction lives in the transport's dialer, so it
+// cannot be retrofitted onto an arbitrary RoundTripper; rather than dial a
+// per-user upstream through a transport this package did not build — a future
+// production transport someone forgets to route through here — the request is
+// refused. A restricted target is never reached over an unchecked address.
 func restrictedFor(target appmcp.Target, base http.RoundTripper) http.RoundTripper {
-	if base == sharedHTTPTransport {
-		return transportFor(target)
+	if !target.RestrictPrivateNetwork {
+		return base
 	}
-	return base
+	if base == sharedHTTPTransport {
+		return restrictedUpstreamTransport
+	}
+	return refusingRoundTripper{}
+}
+
+// errUnrestrictedTransport is the fail-closed refusal of restrictedFor.
+var errUnrestrictedTransport = errors.New(
+	"refusing a per-user upstream: no address-restricted transport is available for it")
+
+type refusingRoundTripper struct{}
+
+func (refusingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errUnrestrictedTransport
 }
 
 // errPrivateUpstreamAddress is the dial-time refusal for a restricted target.
