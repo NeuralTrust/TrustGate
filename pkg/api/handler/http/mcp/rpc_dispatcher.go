@@ -57,75 +57,84 @@ type RPCGateway struct {
 	maxContinuationBytes int
 }
 
+// GatewayOption configures optional RPCGateway collaborators without widening
+// the constructor for the common case. Every option is independent, so a caller
+// asks for exactly the capabilities it needs instead of picking the constructor
+// whose fixed parameter list happens to match.
+type GatewayOption func(*RPCGateway)
+
+// WithMaxContinuationBytes caps the mediated continuation payload a tools/call
+// may carry (inputResponses plus requestState). A non-positive value keeps
+// DefaultMaxContinuationBytes.
+func WithMaxContinuationBytes(maxContinuationBytes int) GatewayOption {
+	return func(g *RPCGateway) {
+		if maxContinuationBytes > 0 {
+			g.maxContinuationBytes = maxContinuationBytes
+		}
+	}
+}
+
+// WithAppsListPolicy filters marked secure-Apps metadata out of tool, resource
+// and template listings. A zero policy leaves Apps filtering off, which is the
+// default a gateway is built with.
+func WithAppsListPolicy(list appmcp.AppsListPolicy) GatewayOption {
+	return func(g *RPCGateway) { g.appsListPolicy = list }
+}
+
+// WithAppsPolicies enforces both secure-Apps policies — listing and resource
+// read — and reports Apps outcomes to the recorder. It supersedes
+// WithAppsListPolicy rather than composing with it.
+func WithAppsPolicies(
+	list appmcp.AppsListPolicy,
+	read appmcp.AppsReadPolicy,
+	recorder AppsRecorder,
+) GatewayOption {
+	return func(g *RPCGateway) {
+		g.appsListPolicy = list
+		g.appsReadPolicy = read
+		g.appsRecorder = recorder
+	}
+}
+
+// WithConnections wires the TrustGate connection-management tool, whose
+// per-provider connect tools the gateway appends to a listing.
+func WithConnections(connections appmcp.ConnectionTool) GatewayOption {
+	return func(g *RPCGateway) { g.connections = connections }
+}
+
+// WithStoreTool wires the MCP Store meta-tools (search / install / …).
+func WithStoreTool(store appmcp.StoreTool) GatewayOption {
+	return func(g *RPCGateway) { g.store = store }
+}
+
+// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
+// principal's installed servers.
+func WithStoreScoper(scoper appstore.Scoper) GatewayOption {
+	return func(g *RPCGateway) { g.storeScoper = scoper }
+}
+
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
-func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
-	return NewRPCGatewayWithLimits(composer, plugins, limiter, DefaultMaxContinuationBytes)
-}
-
-// NewRPCGatewayWithLimits wires MCP dispatch with an explicit continuation cap.
-func NewRPCGatewayWithLimits(
+func NewRPCGateway(
 	composer appmcp.Composer,
 	plugins *appmcp.PluginRunner,
 	limiter ratelimitapp.Checker,
-	maxContinuationBytes int,
-) *RPCGateway {
-	return NewRPCGatewayWithAppsPolicies(
-		composer,
-		plugins,
-		limiter,
-		appmcp.AppsListPolicy{},
-		appmcp.AppsReadPolicy{},
-		maxContinuationBytes,
-	)
-}
-
-// NewRPCGatewayWithAppsListPolicy wires MCP dispatch with explicit Apps list and continuation policies.
-func NewRPCGatewayWithAppsListPolicy(
-	composer appmcp.Composer,
-	plugins *appmcp.PluginRunner,
-	limiter ratelimitapp.Checker,
-	appsListPolicy appmcp.AppsListPolicy,
-	maxContinuationBytes int,
-) *RPCGateway {
-	return NewRPCGatewayWithAppsPolicies(
-		composer,
-		plugins,
-		limiter,
-		appsListPolicy,
-		appmcp.AppsReadPolicy{},
-		maxContinuationBytes,
-	)
-}
-
-// NewRPCGatewayWithAppsPolicies wires MCP dispatch with explicit Apps and continuation policies.
-func NewRPCGatewayWithAppsPolicies(
-	composer appmcp.Composer,
-	plugins *appmcp.PluginRunner,
-	limiter ratelimitapp.Checker,
-	appsListPolicy appmcp.AppsListPolicy,
-	appsReadPolicy appmcp.AppsReadPolicy,
-	maxContinuationBytes int,
-	recorders ...AppsRecorder,
+	opts ...GatewayOption,
 ) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	if maxContinuationBytes <= 0 {
-		maxContinuationBytes = DefaultMaxContinuationBytes
-	}
-	var appsRecorder AppsRecorder
-	if len(recorders) > 0 {
-		appsRecorder = recorders[0]
-	}
-	return &RPCGateway{
+	g := &RPCGateway{
 		composer:             composer,
 		plugins:              plugins,
 		limiter:              limiter,
-		appsListPolicy:       appsListPolicy,
-		appsReadPolicy:       appsReadPolicy,
-		appsRecorder:         appsRecorder,
-		maxContinuationBytes: maxContinuationBytes,
+		maxContinuationBytes: DefaultMaxContinuationBytes,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(g)
+		}
+	}
+	return g
 }
 
 func validateContinuationSize(inputResponses json.RawMessage, requestState string, limit int) error {
@@ -143,64 +152,6 @@ func validateContinuationSize(inputResponses json.RawMessage, requestState strin
 		return &InvalidParamsError{Reason: "tools/call inputResponses must be an object"}
 	}
 	return nil
-}
-
-// NewRPCGatewayWithConnections wires the optional TrustGate connection-management tool.
-func NewRPCGatewayWithConnections(
-	composer appmcp.Composer,
-	plugins *appmcp.PluginRunner,
-	limiter ratelimitapp.Checker,
-	connections appmcp.ConnectionTool,
-) *RPCGateway {
-	gateway := NewRPCGateway(composer, plugins, limiter)
-	gateway.connections = connections
-	return gateway
-}
-
-// NewRPCGatewayWithMetaTools wires both the connection-management tool and the
-// MCP Store meta-tools (search / install / …).
-func NewRPCGatewayWithMetaTools(
-	composer appmcp.Composer,
-	plugins *appmcp.PluginRunner,
-	limiter ratelimitapp.Checker,
-	connections appmcp.ConnectionTool,
-	store appmcp.StoreTool,
-) *RPCGateway {
-	gateway := NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
-	gateway.store = store
-	return gateway
-}
-
-// WithAppsPolicies attaches the secure-Apps list and read policies together
-// with their recorder, so a gateway built through the meta-tools constructor
-// enforces Apps exactly as NewRPCGatewayWithAppsPolicies does. Returns the
-// gateway for chaining.
-func (g *RPCGateway) WithAppsPolicies(
-	list appmcp.AppsListPolicy,
-	read appmcp.AppsReadPolicy,
-	recorder AppsRecorder,
-) *RPCGateway {
-	g.appsListPolicy = list
-	g.appsReadPolicy = read
-	g.appsRecorder = recorder
-	return g
-}
-
-// WithMaxContinuationBytes caps the mediated continuation payload a tools/call
-// may carry (inputResponses plus requestState). A non-positive value keeps
-// DefaultMaxContinuationBytes. Returns the gateway for chaining.
-func (g *RPCGateway) WithMaxContinuationBytes(maxContinuationBytes int) *RPCGateway {
-	if maxContinuationBytes > 0 {
-		g.maxContinuationBytes = maxContinuationBytes
-	}
-	return g
-}
-
-// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
-// principal's installed servers. Returns the gateway for chaining.
-func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
-	g.storeScoper = scoper
-	return g
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
