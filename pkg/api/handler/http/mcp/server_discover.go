@@ -35,7 +35,7 @@ func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []strin
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
-				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+				"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, connections),
 			},
 		},
 	}

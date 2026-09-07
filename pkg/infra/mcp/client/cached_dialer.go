@@ -15,6 +15,7 @@
 package client
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -32,7 +33,11 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const sessionIdleTTL = 30 * time.Minute
+const (
+	sessionIdleTTL      = 30 * time.Minute
+	sessionConnectLimit = 30 * time.Second
+	maxCachedSessions   = 1024
+)
 
 func NewCachedDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
 	return newCachedDialer(client, logger)
@@ -43,8 +48,9 @@ func newCachedDialer(client *Client, logger *slog.Logger) *cachedDialer {
 		client:  client,
 		logger:  logger,
 		entries: map[string]*sessionEntry{},
+		lru:     list.New(),
 		now:     time.Now,
-		timeout: responseHeaderTimeout,
+		timeout: sessionConnectLimit,
 		connect: client.ConnectLegacy,
 	}
 }
@@ -55,6 +61,7 @@ type cachedDialer struct {
 
 	mu      sync.Mutex
 	entries map[string]*sessionEntry
+	lru     *list.List
 	now     func() time.Time
 	flight  singleflight.Group
 	timeout time.Duration
@@ -64,8 +71,10 @@ type cachedDialer struct {
 }
 
 type sessionEntry struct {
+	key      string
 	session  *Session
 	lastUsed time.Time
+	element  *list.Element
 }
 
 func (d *cachedDialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {
@@ -80,17 +89,10 @@ func (d *cachedDialer) ConnectLegacy(ctx context.Context, target appmcp.Target) 
 		}
 		return sess, nil
 	}
-	origin, err := canonicalOrigin(target.URL)
+	key, err := sessionCacheKey(target)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
 	}
-	urlFingerprint, err := canonicalURLFingerprint(origin, target.URL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
-	}
-	key := origin + "\x00" + urlFingerprint + "\x00" +
-		string(target.ProtocolMode) + "\x00" + target.PinKey + "\x00" +
-		credentialFingerprint(target.Headers)
 	if sess := d.lookup(key); sess != nil {
 		return newCachedUpstream(d, key, target, sess), nil
 	}
@@ -102,18 +104,30 @@ func (d *cachedDialer) ConnectLegacy(ctx context.Context, target appmcp.Target) 
 }
 
 func (d *cachedDialer) lookup(key string) *Session {
+	now := d.now()
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.evictIdleLocked()
 	e, ok := d.entries[key]
 	if !ok {
+		d.mu.Unlock()
 		return nil
 	}
-	e.lastUsed = d.now()
-	return e.session
+	if e.lastUsed.Before(now.Add(-sessionIdleTTL)) {
+		d.removeLocked(e)
+		d.mu.Unlock()
+		closeSessionsAsync(e.session)
+		return nil
+	}
+	e.lastUsed = now
+	d.lru.MoveToFront(e.element)
+	sess := e.session
+	d.mu.Unlock()
+	return sess
 }
 
 func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target appmcp.Target) (*Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	target = cloneTarget(target)
 	resultChannel := d.flight.DoChan(key, func() (any, error) {
 		if sess := d.lookup(key); sess != nil {
@@ -125,20 +139,14 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target a
 		if err != nil {
 			return nil, err
 		}
-		if winner := d.lookup(key); winner != nil {
-			d.closeSession(ctx, sess)
-			return winner, nil
-		}
 		d.mu.Lock()
-		if entry, ok := d.entries[key]; ok {
-			entry.lastUsed = d.now()
-			winner := entry.session
-			d.mu.Unlock()
+		winner, evicted := d.storeLocked(key, sess, d.now())
+		d.mu.Unlock()
+		closeSessionsAsync(evicted...)
+		if winner != nil {
 			d.closeSession(ctx, sess)
 			return winner, nil
 		}
-		d.entries[key] = &sessionEntry{session: sess, lastUsed: d.now()}
-		d.mu.Unlock()
 		return sess, nil
 	})
 	if d.connectJoined != nil {
@@ -148,15 +156,15 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target a
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case result := <-resultChannel:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if result.Err != nil {
 			return nil, result.Err
 		}
 		sess, ok := result.Val.(*Session)
 		if !ok || sess == nil {
-			return nil, errors.New("mcp cached dialer received an invalid session result")
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, errors.New("mcp cached dialer: unexpected singleflight result type")
 		}
 		return sess, nil
 	}
@@ -168,15 +176,24 @@ func (d *cachedDialer) closeSession(ctx context.Context, sess *Session) {
 	sess.Close(closeCtx)
 }
 
-func closeInBackground(sess *Session) {
-	go sess.Close(context.Background())
+func closeSessionsAsync(sessions ...*Session) {
+	if len(sessions) == 0 {
+		return
+	}
+	go func() {
+		for _, session := range sessions {
+			if session != nil {
+				session.Close(context.Background())
+			}
+		}
+	}()
 }
 
 func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 	d.mu.Lock()
 	var toClose *Session
 	if e, ok := d.entries[key]; ok && e.session == sess {
-		delete(d.entries, key)
+		d.removeLocked(e)
 		toClose = e.session
 	}
 	d.mu.Unlock()
@@ -185,18 +202,71 @@ func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 	}
 }
 
-func (d *cachedDialer) evictIdleLocked() {
-	cutoff := d.now().Add(-sessionIdleTTL)
-	var stale []*Session
-	for key, e := range d.entries {
-		if e.lastUsed.Before(cutoff) {
-			delete(d.entries, key)
-			stale = append(stale, e.session)
+// storeLocked caches sess under key unless a concurrent dial already won the
+// slot, in which case the winner is returned and sess is the caller's to close.
+// Entries idle past sessionIdleTTL and everything over maxCachedSessions are
+// evicted from the tail and returned so the caller can close them off-lock.
+func (d *cachedDialer) storeLocked(key string, sess *Session, now time.Time) (*Session, []*Session) {
+	if existing, ok := d.entries[key]; ok {
+		existing.lastUsed = now
+		d.lru.MoveToFront(existing.element)
+		return existing.session, nil
+	}
+	e := &sessionEntry{key: key, session: sess, lastUsed: now}
+	e.element = d.lru.PushFront(e)
+	d.entries[key] = e
+	cutoff := now.Add(-sessionIdleTTL)
+	var evicted []*Session
+	for back := d.lru.Back(); back != nil; back = d.lru.Back() {
+		oldest, ok := back.Value.(*sessionEntry)
+		if !ok {
+			d.lru.Remove(back)
+			continue
 		}
+		if len(d.entries) <= maxCachedSessions && !oldest.lastUsed.Before(cutoff) {
+			break
+		}
+		d.removeLocked(oldest)
+		evicted = append(evicted, oldest.session)
 	}
-	for _, s := range stale {
-		closeInBackground(s)
+	return nil, evicted
+}
+
+func (d *cachedDialer) removeLocked(e *sessionEntry) {
+	delete(d.entries, e.key)
+	d.lru.Remove(e.element)
+}
+
+// sessionCacheKey identifies one poolable upstream session. Everything that can
+// make two dials answer differently belongs in it: the canonical origin and the
+// URL fingerprint (a catalog server hides per-user values in path and query),
+// the negotiated protocol era, the pin key, the registry revision, the
+// credentials being forwarded, and whether private-network egress is refused.
+func sessionCacheKey(target appmcp.Target) (string, error) {
+	origin, err := canonicalOrigin(target.URL)
+	if err != nil {
+		return "", err
 	}
+	urlFingerprint, err := canonicalURLFingerprint(origin, target.URL)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	for _, part := range []string{
+		origin,
+		urlFingerprint,
+		string(target.ProtocolMode),
+		target.PinKey,
+		target.Revision,
+		credentialFingerprint(target.Headers),
+	} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	if target.RestrictPrivateNetwork {
+		h.Write([]byte{1})
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16]), nil
 }
 
 func credentialFingerprint(headers map[string]string) string {

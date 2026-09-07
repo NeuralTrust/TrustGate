@@ -30,15 +30,11 @@ import (
 )
 
 var (
-	ErrMethodNotFound          = errors.New("mcp: method not found")
+	ErrMethodNotFound          = appmcp.ErrMethodNotFound
 	errMalformedAppsCapability = errors.New("mcp: malformed Apps capability")
 )
 
-type InvalidParamsError struct {
-	Reason string
-}
-
-func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
+type InvalidParamsError = appmcp.InvalidParamsError
 
 // DefaultMaxContinuationBytes caps the multi round-trip payload a client may
 // echo back on tools/call.
@@ -154,20 +150,29 @@ func validateContinuationSize(inputResponses json.RawMessage, requestState strin
 	return nil
 }
 
+// StoreScoper exposes the Store scoper the gateway dispatches with, so the
+// notification stream fingerprints the same surface the dispatcher serves.
+// Nil when no scoper was wired.
+func (g *RPCGateway) StoreScoper() appstore.Scoper {
+	if g == nil {
+		return nil
+	}
+	return g.storeScoper
+}
+
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	return g.DispatchWithBaseURL(ctx, rc, "", method, params)
 }
 
-// DispatchWithBaseURL dispatches an MCP request with the public origin used for user-facing links.
 func (g *RPCGateway) DispatchWithBaseURL(
 	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
+	consumer *appconsumer.RoutableConsumer,
 	baseURL,
 	method string,
 	params json.RawMessage,
 ) (any, error) {
 	span, ctx := g.startSpan(ctx, method, params)
-	result, err := g.dispatch(ctx, rc, baseURL, method, params)
+	result, err := g.dispatch(ctx, consumer, baseURL, method, params)
 	g.finishSpan(span, err)
 	return result, err
 }
@@ -227,11 +232,6 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	case errors.As(err, &rpcErr):
 		span.SetMCPStatus(rpcErr.ResolvedHTTPStatus(), int(rpcErr.Code))
 	case errors.As(err, &consentErr):
-		// Both of these answer HTTP 200 on the wire so MCP clients parse the
-		// JSON-RPC error instead of tearing down the transport. The status the
-		// refusal *means* belongs in telemetry, which is what this records:
-		// otherwise an unconnected upstream showed up as a 502 and buried real
-		// upstream failures among routine consent prompts.
 		span.SetMCPStatus(http.StatusForbidden, codeConsentRequired)
 	case errors.As(err, &notPermitted):
 		span.SetMCPStatus(http.StatusForbidden, codePolicyBlocked)
@@ -245,13 +245,9 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	}
 }
 
-// mcpRequestAttrs derives the operation classification and the parsed
-// tool/prompt/resource identifiers from the JSON-RPC method and params.
 func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, prompt, resourceURI string) {
 	switch method {
-	case "server/discover":
-		return "discovery", "", "", ""
-	case "tools/list":
+	case "server/discover", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		return "discovery", "", "", ""
 	case "tools/call":
 		var p struct {
@@ -259,16 +255,12 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		}
 		_ = json.Unmarshal(params, &p)
 		return "tool", p.Name, "", ""
-	case "resources/list", "resources/templates/list":
-		return "discovery", "", "", ""
 	case "resources/read":
 		var p struct {
 			URI string `json:"uri"`
 		}
 		_ = json.Unmarshal(params, &p)
 		return "resource", "", "", p.URI
-	case "prompts/list":
-		return "discovery", "", "", ""
 	case "prompts/get":
 		var p struct {
 			Name string `json:"name"`
@@ -336,28 +328,10 @@ func (g *RPCGateway) dispatch(
 		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
-			// The gateway's own tools — the Store meta-tools and the per-provider
-			// connect tools appended below — are exactly how a user installs a
-			// server or connects an account. An upstream problem must never hide
-			// them, so these list-time errors degrade to an empty upstream list
-			// rather than failing the whole listing:
-			//   - the synthetic Store consumer carries no registries of its own
-			//     until servers are installed (ErrNoMCPRegistries), and its installed
-			//     servers may be unreachable — either way its meta-tools still list;
-			//   - any consumer whose bound upstreams are all still pending the user's
-			//     connection (ConsentRequiredError) must still be shown the connect
-			//     tools; a tool call, not the listing, is where consent is reported.
-			var consentErr *appmcp.ConsentRequiredError
-			switch {
-			case isStore && errors.Is(err, appmcp.ErrNoMCPRegistries):
-				tools = nil
-			case isStore && errors.Is(err, appmcp.ErrUpstreamUnavailable):
-				tools = nil
-			case errors.As(err, &consentErr):
-				tools = nil
-			default:
+			if !emptySurfaceInsteadOfError(rc, err) {
 				return nil, err
 			}
+			tools = nil
 		}
 		before := len(tools)
 		tools, err = g.filterAppsTools(ctx, rc, tools)
@@ -456,7 +430,10 @@ func (g *RPCGateway) dispatch(
 		}
 		resources, err := g.composer.ListResources(ctx, rc)
 		if err != nil {
-			return nil, err
+			if !emptySurfaceInsteadOfError(rc, err) {
+				return nil, err
+			}
+			resources = nil
 		}
 		before := len(resources)
 		resources, _ = g.appsListPolicy.FilterResources(resources)
@@ -471,7 +448,10 @@ func (g *RPCGateway) dispatch(
 		}
 		templates, err := g.composer.ListResourceTemplates(ctx, rc)
 		if err != nil {
-			return nil, err
+			if !emptySurfaceInsteadOfError(rc, err) {
+				return nil, err
+			}
+			templates = nil
 		}
 		before := len(templates)
 		templates, _ = g.appsListPolicy.FilterResourceTemplates(templates)
@@ -537,7 +517,10 @@ func (g *RPCGateway) dispatch(
 		}
 		prompts, err := g.composer.ListPrompts(ctx, rc)
 		if err != nil {
-			return nil, err
+			if !emptySurfaceInsteadOfError(rc, err) {
+				return nil, err
+			}
+			prompts = nil
 		}
 		if prompts == nil {
 			prompts = []appmcp.Prompt{}
@@ -560,6 +543,23 @@ func (g *RPCGateway) dispatch(
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}
+}
+
+// emptySurfaceInsteadOfError reports whether a list method should answer with an
+// empty surface rather than the upstream error. A consumer still pending consent
+// is skipped (the connect page handles it, and the Store meta-tools must stay
+// reachable so the user can fix it), and the Store consumer — whose registries
+// are whatever the caller installed — has nothing to list when none is
+// installed or none is reachable. Every list method (tools, prompts, resources,
+// resource templates) degrades the same way so a client that lists all four
+// during initialization never sees one of them fail on a pending consent.
+func emptySurfaceInsteadOfError(rc *appconsumer.RoutableConsumer, err error) bool {
+	var consentErr *appmcp.ConsentRequiredError
+	if errors.As(err, &consentErr) {
+		return true
+	}
+	isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
+	return isStore && (errors.Is(err, appmcp.ErrNoMCPRegistries) || errors.Is(err, appmcp.ErrUpstreamUnavailable))
 }
 
 func (g *RPCGateway) filterAppsTools(

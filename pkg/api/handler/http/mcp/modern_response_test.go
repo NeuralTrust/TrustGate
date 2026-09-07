@@ -69,7 +69,7 @@ func TestNormalizeModernResult(t *testing.T) {
 			require.Equal(t, "preserved", metadata["upstream"])
 			serverInfo := metadata[modernServerInfoKey].(map[string]any)
 			require.Equal(t, serverName, serverInfo["name"])
-			require.Equal(t, serverVersion+"+"+surfaceFingerprint(rc, nil), serverInfo["version"])
+			require.Equal(t, serverVersion+"+"+appmcp.SurfaceFingerprint(rc, nil), serverInfo["version"])
 			if wantTTL == nil {
 				require.NotContains(t, normalized, "ttlMs")
 				require.NotContains(t, normalized, "cacheScope")

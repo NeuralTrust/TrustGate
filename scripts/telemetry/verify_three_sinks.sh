@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exhaustive 3-sink verification for TrustGate: metadata OTLP, raw OTLP, postgres.
-# Requires: docker compose (postgres, redis, kafka, otel-collector), built bin/trustgate.
+# Requires: docker compose (postgres, redis, otel-collector), built bin/trustgate.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,12 +13,10 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-# Local verify stack uses compose postgres on 5432 — do not inherit another project's .env DB port.
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
+DB_USER=trustgate
 DB_PASSWORD=postgres
-DB_NAME="${VERIFY_DB_NAME:-agentgateway}"
+DB_NAME="${VERIFY_DB_NAME:-trustgate}"
+export DB_USER DB_PASSWORD DB_NAME
 EVENT_SCHEMA_VERSION="${VERIFY_EVENT_SCHEMA_VERSION:-3}"
 ADMIN_PORT="${VERIFY_ADMIN_PORT:-8095}"
 PROXY_PORT="${VERIFY_PROXY_PORT:-8096}"
@@ -30,7 +28,9 @@ RAW_EVENT="trustgate.${EVENT_SCHEMA_VERSION}.raw"
 OTLP_ENDPOINT="localhost:${OTEL_VERIFY_GRPC_PORT}"
 
 SECRET="${SERVER_SECRET_KEY:-telemetry-verify-secret-0123456789abcdef}"
-SENSIBLE_PG_DSN="${SENSIBLE_PG_DSN:-postgres://postgres:postgres@localhost:5432/${DB_NAME}}"
+PG_USER="${DB_USER:-trustgate}"
+PG_PASSWORD="${DB_PASSWORD:-postgres}"
+SENSIBLE_PG_DSN="${SENSIBLE_PG_DSN:-postgres://${PG_USER}:${PG_PASSWORD}@localhost:5432/${DB_NAME}}"
 
 PASS=0
 FAIL=0
@@ -135,7 +135,6 @@ DB_SSL_MODE=disable
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=8
-KAFKA_BROKERS=localhost:29092
 TELEMETRY_ENABLED=true
 TELEMETRY_EXPORTERS_FILE=config/telemetry.verify.yaml
 SENSIBLE_PG_DSN=${SENSIBLE_PG_DSN}
@@ -244,7 +243,6 @@ post_proxy() {
     -H "X-AG-Gateway-Slug: ${GW_SLUG}" \
     -H "X-AG-API-Key: ${API_KEY}" \
     -d "$payload")"
-  PROXY_BODY="$(cat /tmp/trustgate-verify-proxy-body.json)"
   TRACE_ID="$(python3 - "$headers_file" <<'PY'
 import sys
 trace = ""
@@ -258,7 +256,7 @@ PY
   rm -f "$headers_file"
   if [[ -z "$TRACE_ID" && -n "${GW_ID:-}" ]]; then
     TRACE_ID="$(docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres \
-      psql -U postgres -d "$DB_NAME" -t -A -c \
+      psql -U "$PG_USER" -d "$DB_NAME" -t -A -c \
       "SELECT trace_id FROM trustgate_data WHERE gateway_id = '${GW_ID}' ORDER BY created_at DESC LIMIT 1;" 2>/dev/null | tr -d '[:space:]')"
   fi
 }
@@ -361,10 +359,10 @@ verify_sinks() {
 
 echo "=== TrustGate 3-sink verification ==="
 
-echo "Starting infra (postgres, redis, kafka, otel-collector)..."
-docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml up -d postgres redis zookeeper kafka otel-collector
+echo "Starting infra (postgres, redis, otel-collector)..."
+docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml up -d postgres redis otel-collector
 for _ in $(seq 1 60); do
-  if docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
+  if docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres pg_isready -U "$PG_USER" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
@@ -372,9 +370,9 @@ done
 sleep 5
 
 docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres \
-  psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
+  psql -U "$PG_USER" -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
   || docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres \
-  psql -U postgres -c "CREATE DATABASE ${DB_NAME};"
+  psql -U "$PG_USER" -c "CREATE DATABASE ${DB_NAME};"
 
 write_verify_telemetry_yaml
 
@@ -403,7 +401,7 @@ verify_sinks "PII in request (upstream still 200)" false
 echo ""
 echo "=== Scenario: postgres idempotency ==="
 COUNT="$(docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml exec -T postgres \
-  psql -U postgres -d "$DB_NAME" -t -A -c \
+  psql -U "$PG_USER" -d "$DB_NAME" -t -A -c \
   "SELECT count(*) FROM trustgate_data WHERE trace_id = '$TRACE_ID';")"
 assert "postgres: exactly 1 row per trace_id" "$([[ "$COUNT" == "1" ]] && echo 1 || echo 0)"
 

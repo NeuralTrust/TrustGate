@@ -107,6 +107,23 @@ func TestModeResolverWithoutPoliciesFallsBack(t *testing.T) {
 	}
 }
 
+func TestResolveModeUsesExplicitIdentity(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	resolver := NewModeResolver(&fakePolicies{items: []*storeaccessdomain.Policy{
+		policy(gatewayID, storeaccessdomain.PrincipalGroup, "sre", gatewaydomain.StoreModeNone),
+	}})
+	got := ResolveMode(context.Background(), resolver, ModeQuery{
+		GatewayID: gatewayID,
+		Subject:   "ana",
+		Groups:    []string{"sre"},
+		Fallback:  gatewaydomain.StoreModeOpen,
+	})
+	if got != gatewaydomain.StoreModeNone {
+		t.Fatalf("ResolveMode() = %q, want %q", got, gatewaydomain.StoreModeNone)
+	}
+}
+
 // TestScoperUsesLivePolicy: an install exposed under All disappears the moment
 // the admin sets the principal to Selected without a grant — no re-login.
 func TestScoperUsesLivePolicy(t *testing.T) {

@@ -69,7 +69,7 @@ func normalizeModernResult(
 	}
 	metadata[modernServerInfoKey] = map[string]any{
 		"name":    serverName,
-		"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+		"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, connections),
 	}
 	normalized["_meta"] = metadata
 	if isTask {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -89,6 +88,27 @@ func (s *InstallationsService) Upsert(
 	ctx context.Context,
 	req *snapshotpb.UpsertInstallationRequest,
 ) (*snapshotpb.UpsertInstallationResponse, error) {
+	if _, err := s.upsertInstallation(ctx, req); err != nil {
+		return nil, err
+	}
+	return &snapshotpb.UpsertInstallationResponse{}, nil
+}
+
+func (s *InstallationsService) UpsertCanonical(
+	ctx context.Context,
+	req *snapshotpb.UpsertInstallationRequest,
+) (*snapshotpb.FindInstallationResponse, error) {
+	in, err := s.upsertInstallation(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &snapshotpb.FindInstallationResponse{Found: true, Installation: installationToProto(in)}, nil
+}
+
+func (s *InstallationsService) upsertInstallation(
+	ctx context.Context,
+	req *snapshotpb.UpsertInstallationRequest,
+) (*installationdomain.Installation, error) {
 	in, err := installationFromProto(req.GetInstallation())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: upsert: %v", err)
@@ -102,7 +122,7 @@ func (s *InstallationsService) Upsert(
 	if err := s.repo.Upsert(ctx, in); err != nil {
 		return nil, status.Errorf(codes.Internal, "store installations: upsert: %v", err)
 	}
-	return &snapshotpb.UpsertInstallationResponse{}, nil
+	return in, nil
 }
 
 // Find returns the installation for (gateway, principal, code), reporting a
@@ -111,9 +131,9 @@ func (s *InstallationsService) Find(
 	ctx context.Context,
 	req *snapshotpb.FindInstallationRequest,
 ) (*snapshotpb.FindInstallationResponse, error) {
-	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "find")
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "store installations: find: parse gateway id: %v", err)
+		return nil, err
 	}
 	if err := s.authorizeGateway(ctx, "find", gatewayID); err != nil {
 		return nil, err
@@ -133,9 +153,9 @@ func (s *InstallationsService) ListByPrincipal(
 	ctx context.Context,
 	req *snapshotpb.ListByPrincipalRequest,
 ) (*snapshotpb.ListInstallationsResponse, error) {
-	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "list")
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "store installations: list: parse gateway id: %v", err)
+		return nil, err
 	}
 	if err := s.authorizeGateway(ctx, "list", gatewayID); err != nil {
 		return nil, err
@@ -151,15 +171,94 @@ func (s *InstallationsService) ListByPrincipal(
 	return &snapshotpb.ListInstallationsResponse{Installations: out}, nil
 }
 
+func (s *InstallationsService) FindByID(
+	ctx context.Context,
+	req *snapshotpb.Installation,
+) (*snapshotpb.FindInstallationResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "find by id")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeGateway(ctx, "find by id", gatewayID); err != nil {
+		return nil, err
+	}
+	id, err := parseInstallationID(req.GetId(), "find by id")
+	if err != nil {
+		return nil, err
+	}
+	found, err := s.repo.FindByID(ctx, gatewayID, req.GetPrincipalSub(), id)
+	if errors.Is(err, installationdomain.ErrNotFound) {
+		return &snapshotpb.FindInstallationResponse{Found: false}, nil
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "store installations: find by id: %v", err)
+	}
+	return &snapshotpb.FindInstallationResponse{Found: true, Installation: installationToProto(found)}, nil
+}
+
+func (s *InstallationsService) ListByPrincipalAndCode(
+	ctx context.Context,
+	req *snapshotpb.FindInstallationRequest,
+) (*snapshotpb.ListInstallationsResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "list by principal and code")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeGateway(ctx, "list by principal and code", gatewayID); err != nil {
+		return nil, err
+	}
+	items, err := s.repo.ListByPrincipalAndCode(ctx, gatewayID, req.GetPrincipalSub(), req.GetCatalogCode())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "store installations: list by principal and code: %v", err)
+	}
+	return installationListResponse(items), nil
+}
+
+func (s *InstallationsService) ListByCatalogCode(
+	ctx context.Context,
+	req *snapshotpb.FindInstallationRequest,
+) (*snapshotpb.ListInstallationsResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "list by catalog code")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeGateway(ctx, "list by catalog code", gatewayID); err != nil {
+		return nil, err
+	}
+	items, err := s.repo.ListByCatalogCode(ctx, gatewayID, req.GetCatalogCode())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "store installations: list by catalog code: %v", err)
+	}
+	return installationListResponse(items), nil
+}
+
+func (s *InstallationsService) ListPendingByGateway(
+	ctx context.Context,
+	req *snapshotpb.ListByPrincipalRequest,
+) (*snapshotpb.ListInstallationsResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "list pending by gateway")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeGateway(ctx, "list pending by gateway", gatewayID); err != nil {
+		return nil, err
+	}
+	items, err := s.repo.ListPendingByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "store installations: list pending by gateway: %v", err)
+	}
+	return installationListResponse(items), nil
+}
+
 // Delete removes the installation for (gateway, principal, code), mapping a
 // missing row to a NotFound status the client re-raises as ErrNotFound.
 func (s *InstallationsService) Delete(
 	ctx context.Context,
 	req *snapshotpb.DeleteInstallationRequest,
 ) (*snapshotpb.DeleteInstallationResponse, error) {
-	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "delete")
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "store installations: delete: parse gateway id: %v", err)
+		return nil, err
 	}
 	if err := s.authorizeGateway(ctx, "delete", gatewayID); err != nil {
 		return nil, err
@@ -169,6 +268,30 @@ func (s *InstallationsService) Delete(
 			return nil, status.Error(codes.NotFound, "store installations: delete: not found")
 		}
 		return nil, status.Errorf(codes.Internal, "store installations: delete: %v", err)
+	}
+	return &snapshotpb.DeleteInstallationResponse{}, nil
+}
+
+func (s *InstallationsService) DeleteByID(
+	ctx context.Context,
+	req *snapshotpb.Installation,
+) (*snapshotpb.DeleteInstallationResponse, error) {
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "delete by id")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeGateway(ctx, "delete by id", gatewayID); err != nil {
+		return nil, err
+	}
+	id, err := parseInstallationID(req.GetId(), "delete by id")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.DeleteByID(ctx, gatewayID, req.GetPrincipalSub(), id); err != nil {
+		if errors.Is(err, installationdomain.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "store installations: delete by id: not found")
+		}
+		return nil, status.Errorf(codes.Internal, "store installations: delete by id: %v", err)
 	}
 	return &snapshotpb.DeleteInstallationResponse{}, nil
 }
@@ -185,9 +308,9 @@ func (s *InstallationsService) EnsureRegistry(
 	if s.ensurer == nil {
 		return nil, status.Error(codes.Unimplemented, "store installations: registry materialisation is not available here")
 	}
-	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
+	gatewayID, err := parseGatewayID(req.GetGatewayId(), "ensure registry")
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "store installations: ensure registry: parse gateway id: %v", err)
+		return nil, err
 	}
 	if err := s.authorizeGateway(ctx, "ensure registry", gatewayID); err != nil {
 		return nil, err
@@ -241,20 +364,41 @@ func (s *InstallationsService) authorizeGateway(ctx context.Context, op string, 
 // installer is the principal. An installed_by that names someone else would let
 // a data plane forge a provisioned-by-admin row.
 func validateDataPlaneInstallation(in *installationdomain.Installation) error {
-	principal := strings.TrimSpace(in.PrincipalSub)
-	if principal == "" {
-		return status.Error(codes.InvalidArgument, "store installations: upsert: principal subject is required")
+	if err := in.Validate(); err != nil {
+		return status.Errorf(codes.InvalidArgument, "store installations: upsert: %v", err)
 	}
-	if strings.TrimSpace(in.CatalogCode) == "" {
-		return status.Error(codes.InvalidArgument, "store installations: upsert: catalog code is required")
-	}
-	switch in.Status {
-	case installationdomain.StatusInstalled, installationdomain.StatusPendingApproval, installationdomain.StatusRevoked:
-	default:
-		return status.Errorf(codes.InvalidArgument, "store installations: upsert: invalid status %q", in.Status)
-	}
-	if installedBy := strings.TrimSpace(in.InstalledBy); installedBy != "" && installedBy != principal {
+	if in.InstalledBy != "" && in.InstalledBy != in.PrincipalSub {
 		return status.Error(codes.PermissionDenied, "store installations: upsert: installed_by must be the principal")
 	}
 	return nil
+}
+
+func parseGatewayID(raw, op string) (ids.GatewayID, error) {
+	gatewayID, err := ids.Parse[ids.GatewayKind](raw)
+	if err != nil {
+		return ids.GatewayID{}, status.Errorf(codes.InvalidArgument, "store installations: %s: parse gateway id: %v", op, err)
+	}
+	if gatewayID.IsNil() {
+		return ids.GatewayID{}, status.Errorf(codes.InvalidArgument, "store installations: %s: gateway id is required", op)
+	}
+	return gatewayID, nil
+}
+
+func parseInstallationID(raw, op string) (ids.InstallationID, error) {
+	id, err := ids.Parse[ids.InstallationKind](raw)
+	if err != nil {
+		return ids.InstallationID{}, status.Errorf(codes.InvalidArgument, "store installations: %s: parse installation id: %v", op, err)
+	}
+	if id.IsNil() {
+		return ids.InstallationID{}, status.Errorf(codes.InvalidArgument, "store installations: %s: installation id is required", op)
+	}
+	return id, nil
+}
+
+func installationListResponse(items []*installationdomain.Installation) *snapshotpb.ListInstallationsResponse {
+	out := make([]*snapshotpb.Installation, 0, len(items))
+	for _, in := range items {
+		out = append(out, installationToProto(in))
+	}
+	return &snapshotpb.ListInstallationsResponse{Installations: out}
 }

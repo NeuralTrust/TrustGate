@@ -37,8 +37,9 @@ import (
 )
 
 var (
-	ErrInvalidGrant = fmt.Errorf("store grant: invalid grant: %w", commonerrors.ErrValidation)
-	ErrNotFound     = fmt.Errorf("store grant: not found: %w", commonerrors.ErrNotFound)
+	ErrInvalidGrant  = fmt.Errorf("store grant: invalid grant: %w", commonerrors.ErrValidation)
+	ErrInvalidPolicy = fmt.Errorf("store policy: invalid policy: %w", commonerrors.ErrValidation)
+	ErrNotFound      = fmt.Errorf("store grant: not found: %w", commonerrors.ErrNotFound)
 )
 
 // Grant says which principals may use a catalog server on a gateway.
@@ -185,6 +186,23 @@ func (g *Grant) AddUser(subject string) bool {
 		}
 	}
 	g.Users = normalizeSubjects(append(g.Users, sub))
+	g.UpdatedAt = time.Now().UTC()
+	return true
+}
+
+// AddGroup names one more group key on the grant; a no-op when already named.
+// Returns whether the grant changed.
+func (g *Grant) AddGroup(key string) bool {
+	k := strings.TrimSpace(key)
+	if g == nil || k == "" {
+		return false
+	}
+	for _, existing := range g.Groups {
+		if existing == k {
+			return false
+		}
+	}
+	g.Groups = normalizeSubjects(append(g.Groups, k))
 	g.UpdatedAt = time.Now().UTC()
 	return true
 }

@@ -278,27 +278,37 @@ func isHealthy(health map[string]bool, backendID string) bool {
 	return !ok || healthy
 }
 
-func (lb *LoadBalancer) ReportFailure(b *registry.Registry, err error) {
-	lb.UpdateBackendHealth(b, false, err)
+func (lb *LoadBalancer) ReportFailure(ctx context.Context, b *registry.Registry, err error) {
+	lb.UpdateBackendHealth(ctx, b, false, err)
 }
 
-func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, err error) {
+func (lb *LoadBalancer) UpdateBackendHealth(ctx context.Context, b *registry.Registry, healthy bool, err error) {
 	hc := b.HealthChecks()
 	if hc == nil || !hc.Passive {
 		return
 	}
-	ctx := context.Background()
 	key := healthKey(b.ID.String())
 	failuresKey := key + ":failures"
 	redisClient := lb.cache.RedisClient()
 	if redisClient == nil {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	healthCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
 
 	if !healthy {
-		failures, _ := redisClient.Incr(ctx, failuresKey).Result()
+		failures, incrErr := redisClient.Incr(healthCtx, failuresKey).Result()
+		if incrErr != nil {
+			lb.logger.ErrorContext(healthCtx, "failed to increment backend failures", slog.Any("error", incrErr))
+			return
+		}
 		if hc.Interval > 0 {
-			redisClient.Expire(ctx, failuresKey, time.Duration(hc.Interval)*time.Second)
+			if expireErr := redisClient.Expire(healthCtx, failuresKey, time.Duration(hc.Interval)*time.Second).Err(); expireErr != nil {
+				lb.logger.ErrorContext(healthCtx, "failed to expire backend failures", slog.Any("error", expireErr))
+			}
 		}
 		if failures >= int64(hc.Threshold) {
 			status := HealthStatus{
@@ -307,19 +317,21 @@ func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, 
 				LastError: err,
 				Failures:  int(failures),
 			}
-			if cacheErr := cacheHealthStatus(ctx, redisClient, key, &status); cacheErr != nil {
+			if cacheErr := cacheHealthStatus(healthCtx, redisClient, key, &status); cacheErr != nil {
 				lb.logger.Error("failed to cache health status", slog.Any("error", cacheErr))
 			}
 		}
 	} else {
-		redisClient.Del(ctx, failuresKey)
+		if delErr := redisClient.Del(healthCtx, failuresKey).Err(); delErr != nil {
+			lb.logger.ErrorContext(healthCtx, "failed to clear backend failures", slog.Any("error", delErr))
+		}
 		status := HealthStatus{
 			Healthy:   true,
 			LastCheck: time.Now(),
 			LastError: nil,
 			Failures:  0,
 		}
-		if cacheErr := cacheHealthStatus(ctx, redisClient, key, &status); cacheErr != nil {
+		if cacheErr := cacheHealthStatus(healthCtx, redisClient, key, &status); cacheErr != nil {
 			lb.logger.Error("failed to cache health status", slog.Any("error", cacheErr))
 		}
 	}

@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
+	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -26,37 +28,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// GrantsHandler serves the MCP Store access grants: who may use which catalog
-// server (or which configured instance of it) on a gateway. It is the Access
-// page's read/write surface.
 type GrantsHandler struct {
 	grants appstore.GrantService
 }
 
 func NewGrantsHandler(grants appstore.GrantService) *GrantsHandler {
 	return &GrantsHandler{grants: grants}
-}
-
-// grantResponse is one grant. registry_id is absent for a code-level grant.
-type grantResponse struct {
-	CatalogCode string   `json:"catalog_code"`
-	RegistryID  string   `json:"registry_id,omitempty"`
-	Groups      []string `json:"groups"`
-	Users       []string `json:"users"`
-}
-
-type listGrantsResponse struct {
-	Items []grantResponse `json:"items"`
-	Total int             `json:"total"`
-}
-
-// setGrantRequest replaces one grant. Omit registry_id for a code-level grant;
-// empty groups and users clear the grant.
-type setGrantRequest struct {
-	CatalogCode string   `json:"catalog_code"`
-	RegistryID  string   `json:"registry_id"`
-	Groups      []string `json:"groups"`
-	Users       []string `json:"users"`
 }
 
 // List godoc
@@ -66,7 +43,7 @@ type setGrantRequest struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
-// @Success      200         {object}  listGrantsResponse
+// @Success      200         {object}  storeresponse.Grants
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/store/grants [get]
@@ -79,7 +56,7 @@ func (h *GrantsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := listGrantsResponse{Items: make([]grantResponse, 0, len(grants))}
+	out := storeresponse.Grants{Items: make([]storeresponse.Grant, 0, len(grants))}
 	for _, g := range grants {
 		if g == nil {
 			continue
@@ -98,8 +75,8 @@ func (h *GrantsHandler) List(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string           true  "Gateway id"  format(uuid)
-// @Param        body        body      setGrantRequest  true  "The grant"
-// @Success      200         {object}  grantResponse
+// @Param        body        body      storerequest.SetGrant  true  "The grant"
+// @Success      200         {object}  storeresponse.Grant
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/store/grants [put]
@@ -108,7 +85,7 @@ func (h *GrantsHandler) Set(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	var req setGrantRequest
+	var req storerequest.SetGrant
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
@@ -136,8 +113,8 @@ func (h *GrantsHandler) Set(c *fiber.Ctx) error {
 	return httpio.WriteOK(c, toGrantResponse(grant))
 }
 
-func toGrantResponse(g *storeaccessdomain.Grant) grantResponse {
-	out := grantResponse{
+func toGrantResponse(g *storeaccessdomain.Grant) storeresponse.Grant {
+	out := storeresponse.Grant{
 		CatalogCode: g.CatalogCode,
 		Groups:      nonNil(g.Groups),
 		Users:       nonNil(g.Users),

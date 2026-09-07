@@ -31,10 +31,6 @@ import (
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
-// registryListPageSize bounds the per-gateway registry scan used to find the
-// shelf registry for a catalog code. Registries per gateway are few (tens).
-const registryListPageSize = 500
-
 // Instance caps. A principal may legitimately hold a handful of instances of one
 // code (several Snowflake schemas) and a few dozen servers overall; anything
 // beyond is abuse (request spam, surface bloat) and is refused. Revoked rows do
@@ -591,51 +587,6 @@ func (i *installer) Uninstall(
 	default:
 		return ErrAmbiguousInstance
 	}
-}
-
-// findRegistriesByCode returns every configured instance (registry) of a
-// catalog code on a gateway, oldest first so the first one is the canonical
-// instance a nil-bound install resolves to. Empty when none exist.
-func findRegistriesByCode(
-	ctx context.Context,
-	lister RegistryLister,
-	gatewayID ids.GatewayID,
-	code string,
-) ([]*registrydomain.Registry, error) {
-	items, _, err := lister.List(ctx, registrydomain.ListFilter{
-		GatewayID: gatewayID,
-		Page:      1,
-		Size:      registryListPageSize,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("store: list registries: %w", err)
-	}
-	out := make([]*registrydomain.Registry, 0, 1)
-	for _, reg := range items {
-		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
-			out = append(out, reg)
-		}
-	}
-	sortRegistries(out)
-	return out, nil
-}
-
-// findRegistryByCode returns the canonical instance of a catalog code (the
-// oldest registry carrying it), or (nil, nil) when none exists.
-func findRegistryByCode(
-	ctx context.Context,
-	lister RegistryLister,
-	gatewayID ids.GatewayID,
-	code string,
-) (*registrydomain.Registry, error) {
-	all, err := findRegistriesByCode(ctx, lister, gatewayID, code)
-	if err != nil {
-		return nil, err
-	}
-	if len(all) == 0 {
-		return nil, nil
-	}
-	return all[0], nil
 }
 
 // sortRegistries orders instances deterministically: creation time, then id.

@@ -23,7 +23,6 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -37,12 +36,6 @@ var ErrNotShelved = fmt.Errorf("store: server is not on the shelf; connect it fi
 // so the decision cannot be applied to one without guessing. The caller must
 // pass the instance id (from the pending queue). It maps to 409.
 var ErrAmbiguousRequest = fmt.Errorf("store: several instances match; pass instance_id: %w", commonerrors.ErrConflict)
-
-// RegistryShelf is the registry access the approver needs: the gateway's
-// configured instances, to resolve which one a request lands on.
-type RegistryShelf interface {
-	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
-}
 
 // GrantStore is the grant access the approver needs: read a gateway's grants
 // and write the one an approval extends.
@@ -75,7 +68,29 @@ type ApproveRequest struct {
 	Code         string
 	InstanceID   string
 	ApprovedBy   string
+	// GrantToGroup, when set, grants the server to this group key (one of the
+	// requester's groups) instead of to the requester alone — the "Grant access
+	// to" choice on approve. The requester is covered through their membership.
+	GrantToGroup string
 }
+
+// DecidedRequest is one row of the approval history: a request an admin
+// approved or denied.
+type DecidedRequest struct {
+	GatewayID    ids.GatewayID
+	InstanceID   string
+	PrincipalSub string
+	Code         string
+	Name         string
+	RegistryID   ids.RegistryID
+	Decision     installationdomain.Decision
+	DecidedBy    string
+	DecidedAt    time.Time
+	RequestedAt  time.Time
+}
+
+// ErrHistoryUnavailable: this plane has no durable decision history to read.
+var ErrHistoryUnavailable = fmt.Errorf("store: approval history unavailable: %w", commonerrors.ErrNotFound)
 
 type DenyRequest struct {
 	GatewayID    ids.GatewayID
@@ -96,16 +111,20 @@ type Approver interface {
 	Approve(ctx context.Context, in ApproveRequest) error
 	// Deny marks the request revoked, keeping the row for audit.
 	Deny(ctx context.Context, in DenyRequest) error
+	// ListDecided returns the requests already approved or denied on a gateway,
+	// newest decision first. ErrHistoryUnavailable without a durable store.
+	ListDecided(ctx context.Context, gatewayID ids.GatewayID) ([]DecidedRequest, error)
 }
 
 var _ Approver = (*approver)(nil)
 
 type approver struct {
 	catalog    CatalogReader
-	registries RegistryShelf
+	registries RegistryLister
 	installs   installationdomain.Repository
 	grants     GrantStore
 	ensurer    RegistryEnsurer
+	history    installationdomain.DecisionHistory
 }
 
 // ApproverOption tunes NewApprover.
@@ -119,12 +138,18 @@ func WithApproverEnsurer(e RegistryEnsurer) ApproverOption {
 	return func(a *approver) { a.ensurer = e }
 }
 
+// WithApproverHistory lets ListDecided read the decided requests (the durable
+// installation store implements it; data-plane proxies do not).
+func WithApproverHistory(h installationdomain.DecisionHistory) ApproverOption {
+	return func(a *approver) { a.history = h }
+}
+
 // NewApprover wires the Store approval service. grants is where an approval
 // lands: approving adds the requester to the grant on the requested code (or
 // instance), so their next install is instant and the Access page shows it.
 func NewApprover(
 	catalog CatalogReader,
-	registries RegistryShelf,
+	registries RegistryLister,
 	installs installationdomain.Repository,
 	grants GrantStore,
 	opts ...ApproverOption,
@@ -162,6 +187,41 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 			Code:         in.CatalogCode,
 			Name:         name,
 			InstalledBy:  in.InstalledBy,
+			RequestedAt:  in.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+const decidedHistoryLimit = 200
+
+func (a *approver) ListDecided(ctx context.Context, gatewayID ids.GatewayID) ([]DecidedRequest, error) {
+	if a.history == nil {
+		return nil, ErrHistoryUnavailable
+	}
+	rows, err := a.history.ListDecidedByGateway(ctx, gatewayID, decidedHistoryLimit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list decided requests: %w", err)
+	}
+	out := make([]DecidedRequest, 0, len(rows))
+	for _, in := range rows {
+		if in == nil || in.Decision == "" {
+			continue
+		}
+		name := in.CatalogCode
+		if entry, ok := a.catalog.GetByCode(in.CatalogCode); ok {
+			name = displayName(entry, in.CatalogCode)
+		}
+		out = append(out, DecidedRequest{
+			GatewayID:    in.GatewayID,
+			InstanceID:   in.ID.String(),
+			PrincipalSub: in.PrincipalSub,
+			Code:         in.CatalogCode,
+			Name:         name,
+			RegistryID:   in.RegistryID,
+			Decision:     in.Decision,
+			DecidedBy:    in.DecidedBy,
+			DecidedAt:    in.DecidedAt,
 			RequestedAt:  in.CreatedAt,
 		})
 	}
@@ -206,29 +266,35 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 	// added to the grant on the requested code (or, for a request bound to one
 	// instance, on that instance) so their next install is instant and the
 	// Access page reflects it. Grants are the only governance there is.
-	if err := a.grantRequester(ctx, in.GatewayID, code, existing.RegistryID, existing.PrincipalSub); err != nil {
+	if err := a.grantRequester(ctx, in.GatewayID, code, existing.RegistryID, existing.PrincipalSub, in.GrantToGroup); err != nil {
 		return err
 	}
 
-	existing.Status = installationdomain.StatusInstalled
-	existing.UpdatedAt = time.Now().UTC()
+	existing.Decide(installationdomain.DecisionApproved, in.ApprovedBy, time.Now().UTC())
 	return a.installs.Upsert(ctx, existing)
 }
 
-// grantRequester adds the principal to the grant the request asked for, unless
-// a grant already covers them (the code-level grant, or the instance's own).
+// grantRequester adds the principal — or, when the admin chose a group, that
+// group — to the grant the request asked for, unless the grant already covers
+// them (the code-level grant, or the instance's own).
 func (a *approver) grantRequester(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	code string,
 	registryID ids.RegistryID,
 	subject string,
+	group string,
 ) error {
 	grants, err := loadGrantSet(ctx, a.grants, gatewayID)
 	if err != nil {
 		return err
 	}
-	if grants.InstanceAllows(code, registryID, nil, subject) {
+	group = strings.TrimSpace(group)
+	if group != "" {
+		if grants.InstanceAllows(code, registryID, []string{group}, "") {
+			return nil
+		}
+	} else if grants.InstanceAllows(code, registryID, nil, subject) {
 		return nil
 	}
 	var grant *storeaccessdomain.Grant
@@ -245,7 +311,11 @@ func (a *approver) grantRequester(
 		copied := *grant
 		grant = &copied
 	}
-	grant.AddUser(subject)
+	if group != "" {
+		grant.AddGroup(group)
+	} else {
+		grant.AddUser(subject)
+	}
 	if err := a.grants.Upsert(ctx, grant); err != nil {
 		return fmt.Errorf("store: grant requester: %w", err)
 	}
@@ -260,8 +330,7 @@ func (a *approver) Deny(ctx context.Context, in DenyRequest) error {
 	if existing.Status == installationdomain.StatusRevoked {
 		return nil // already denied — idempotent
 	}
-	existing.Status = installationdomain.StatusRevoked
-	existing.UpdatedAt = time.Now().UTC()
+	existing.Decide(installationdomain.DecisionDenied, in.DeniedBy, time.Now().UTC())
 	return a.installs.Upsert(ctx, existing)
 }
 

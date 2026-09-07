@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -26,13 +27,16 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const defaultGracefulStopTimeout = 5 * time.Second
+
 // Server wraps a *grpc.Server and its listener, implementing the shared
 // server.Server Run/Shutdown lifecycle contract so the control-plane gRPC
 // listener slots into the shared serve loop.
 type Server struct {
-	srv    *grpc.Server
-	lis    net.Listener
-	logger *slog.Logger
+	srv                 *grpc.Server
+	lis                 net.Listener
+	logger              *slog.Logger
+	gracefulStopTimeout time.Duration
 }
 
 // NewServer builds the control-plane ConfigSync gRPC listener with TLS (when
@@ -70,8 +74,11 @@ func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, ins
 	snapshotpb.RegisterConfigSyncServer(gsrv, svc)
 	if installations != nil {
 		snapshotpb.RegisterStoreInstallationsServer(gsrv, installations)
+		if operations, ok := installations.(installationOperationsServer); ok {
+			registerInstallationOperationsServer(gsrv, operations)
+		}
 	}
-	return &Server{srv: gsrv, lis: lis, logger: logger}, nil
+	return &Server{srv: gsrv, lis: lis, logger: logger, gracefulStopTimeout: defaultGracefulStopTimeout}, nil
 }
 
 // Run serves until Shutdown is called, mapping the graceful-stop signal to a
@@ -87,6 +94,19 @@ func (s *Server) Run() error {
 
 // Shutdown gracefully drains in-flight RPCs and stops the listener.
 func (s *Server) Shutdown() error {
-	s.srv.GracefulStop()
+	done := make(chan struct{})
+	go func() {
+		s.srv.GracefulStop()
+		close(done)
+	}()
+	timer := time.NewTimer(s.gracefulStopTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		s.logger.Warn("config-sync gRPC graceful shutdown timed out", slog.String("component", component))
+		s.srv.Stop()
+		<-done
+	}
 	return nil
 }
