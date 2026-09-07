@@ -74,9 +74,10 @@ type singleConnectView struct {
 	// Description is the catalog one-liner for the server, shown under the
 	// headline so the card says what the user is connecting to.
 	Description string
-	// AccessLabel names what Items lists: the OAuth scopes the gateway asks
-	// for, or — when the server declares none — the tools it advertises.
-	// Empty when the catalog knows neither.
+	// AccessLabel names what Items lists: the scopes the upstream granted
+	// (linked), the scopes the catalog declares the gateway will ask for
+	// (not linked), or — when neither is known — the tools the server
+	// advertises. Empty when none of the three is available.
 	AccessLabel string
 	Items       []string
 	ItemsMore   int
@@ -92,11 +93,13 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		Flash:     flash,
 		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
 	}
+	var granted []string
 	for _, p := range page.Providers {
 		if p.Code != page.Code {
 			continue
 		}
 		decorated := decorateProvider(catalog, p)
+		granted = p.Scopes
 		view.ServerName = decorated.DisplayName
 		view.Provider = p.Provider
 		view.LogoURL = decorated.LogoURL
@@ -112,7 +115,7 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 	if catalog != nil {
 		if server, ok := lookupCatalogServer(catalog, page.Code, view.Provider); ok {
 			view.Description = strings.TrimSpace(server.Description)
-			view.AccessLabel, view.Items, view.ItemsMore = accessSummary(server, view.Linked)
+			view.AccessLabel, view.Items, view.ItemsMore = accessSummary(server, granted, view.Linked)
 		}
 	}
 	return renderHTML(c, singleConnectPageTmpl, view)
@@ -122,18 +125,30 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 // tools does not turn the consent card into a wall of chips.
 const maxAccessItems = 4
 
-// accessSummary describes what connecting grants. OAuth scopes are the
-// authorization truth and win when the catalog has them; otherwise the
-// advertised tools stand in as a capability preview. Returns an empty label
-// when the catalog knows neither.
-func accessSummary(server domaincatalog.MCPServer, linked bool) (label string, items []string, more int) {
-	if server.OAuth != nil && len(server.OAuth.Scopes) > 0 {
+// accessSummary describes what the connection grants, and only ever claims
+// what the gateway can actually stand behind.
+//
+// Once linked, that is the scope set the upstream returned with the token, so
+// "granted" is literally true. Before linking there is no grant yet, so the
+// catalog's declared scopes stand in as what the gateway will ask for — those
+// are the values the install prefills onto the registry's auth config and the
+// values applyCatalogScopes forces on the non-DCR path, but an operator can
+// edit them afterwards, so this is a declaration and is labelled as one.
+// With neither in hand, the advertised tools stand in as a capability preview.
+func accessSummary(server domaincatalog.MCPServer, granted []string, linked bool) (label string, items []string, more int) {
+	declared := []string(nil)
+	if server.OAuth != nil {
+		declared = server.OAuth.Scopes
+	}
+	switch {
+	case linked && len(granted) > 0:
+		label = "Access granted"
+		items = granted
+	case !linked && len(declared) > 0:
 		label = "Access requested"
-		if linked {
-			label = "Access granted"
-		}
-		items = server.OAuth.Scopes
-	} else if len(server.Tools) > 0 {
+		items = declared
+	}
+	if len(items) == 0 && len(server.Tools) > 0 {
 		label = "Tools the agent can call"
 		items = make([]string, 0, len(server.Tools))
 		for _, t := range server.Tools {
