@@ -67,6 +67,31 @@ func TestModelPolicies_Validate(t *testing.T) {
 			policies: ModelPolicies{reg: {Allowed: []string{"gpt-4o", "gpt-4o"}}},
 			wantErr:  true,
 		},
+		{
+			name:     "literal default under a pattern allow-list is valid",
+			policies: ModelPolicies{reg: {Allowed: []string{"gpt-*"}, Default: "gpt-4o-mini"}},
+			wantErr:  false,
+		},
+		{
+			name:     "default outside every pattern",
+			policies: ModelPolicies{reg: {Allowed: []string{"gpt-*"}, Default: "claude-3"}},
+			wantErr:  true,
+		},
+		{
+			name:     "a pattern default is rejected",
+			policies: ModelPolicies{reg: {Allowed: []string{"gpt-*"}, Default: "gpt-*"}},
+			wantErr:  true,
+		},
+		{
+			name:     "bare wildcard entry is rejected",
+			policies: ModelPolicies{reg: {Allowed: []string{"*"}}},
+			wantErr:  true,
+		},
+		{
+			name:     "padded entry is rejected",
+			policies: ModelPolicies{reg: {Allowed: []string{" gpt-* "}}},
+			wantErr:  true,
+		},
 	}
 
 	for _, tc := range tests {
