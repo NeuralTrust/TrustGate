@@ -449,8 +449,7 @@ func orgFromToken(token map[string]any) string {
 }
 
 func orgFromClaims(claims map[string]any) string {
-	org, _ := claims[identity.ClaimOrg].(string)
-	return strings.TrimSpace(org)
+	return identity.StringClaim(claims, identity.ClaimOrg)
 }
 
 // groupsFromToken reads the principal's IdP group memberships from the token so
@@ -463,7 +462,7 @@ func groupsFromToken(token map[string]any) []string {
 }
 
 func groupsFromClaims(claims map[string]any) []string {
-	return stringSliceClaim(claims[identity.ClaimGroups])
+	return identity.GroupsFromClaims(claims)
 }
 
 // checkTokenGateway refuses a platform token whose gateway claim names a
@@ -492,8 +491,7 @@ func checkTokenGateway(verified map[string]any, token map[string]any, gatewayID 
 }
 
 func gatewayFromClaims(claims map[string]any) string {
-	v, _ := claims[identity.ClaimGateway].(string)
-	return strings.TrimSpace(v)
+	return identity.StringClaim(claims, identity.ClaimGateway)
 }
 
 // storeAccessFromToken reads the per-principal MCP Store access level the
@@ -506,8 +504,7 @@ func storeAccessFromToken(token map[string]any) string {
 }
 
 func storeAccessFromClaims(claims map[string]any) string {
-	v, _ := claims[identity.ClaimStoreAccess].(string)
-	return strings.TrimSpace(v)
+	return identity.StringClaim(claims, identity.ClaimStoreAccess)
 }
 
 // firstClaimOf parses the id_token, then the access_token, without
@@ -528,40 +525,6 @@ func firstClaimOf[T any](token map[string]any, pick func(claims map[string]any) 
 	}
 	var zero T
 	return zero
-}
-
-// stringSliceClaim coerces a claim that may be a JSON array of strings or a
-// single space-delimited string into a slice, dropping blanks.
-func stringSliceClaim(v any) []string {
-	switch t := v.(type) {
-	case []string:
-		return trimmedStrings(t)
-	case []any:
-		out := make([]string, 0, len(t))
-		for _, item := range t {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return trimmedStrings(out)
-	case string:
-		return trimmedStrings(strings.Fields(t))
-	default:
-		return nil
-	}
-}
-
-func trimmedStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, v := range values {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func subjectFromToken(token map[string]any) string {

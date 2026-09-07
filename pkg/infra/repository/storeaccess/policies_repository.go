@@ -16,6 +16,7 @@ package storeaccess
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const selectPolicyColumns = `
@@ -73,7 +75,7 @@ func (r *PolicyRepository) UpsertPolicy(ctx context.Context, p *domain.Policy) e
 			    updated_at = EXCLUDED.updated_at`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, p.GatewayID, string(p.PrincipalType), p.PrincipalID, p.Mode, created, now); err != nil {
-			return mapPgError(err)
+			return mapPolicyPgError(err)
 		}
 		return nil
 	})
@@ -85,7 +87,7 @@ func (r *PolicyRepository) DeletePolicy(ctx context.Context, gatewayID ids.Gatew
 		 WHERE gateway_id = $1 AND principal_type = $2 AND principal_id = $3`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query, gatewayID, string(principalType), principalID); err != nil {
-			return mapPgError(err)
+			return mapPolicyPgError(err)
 		}
 		return nil
 	})
@@ -107,7 +109,7 @@ func (r *PolicyRepository) ListPolicies(ctx context.Context, page, size int) ([]
 	}
 	var total int
 	if err := r.conn.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM store_access_policies`).Scan(&total); err != nil {
-		return nil, 0, mapPgError(err)
+		return nil, 0, mapPolicyPgError(err)
 	}
 	const query = selectPolicyColumns + `
 		ORDER BY gateway_id, principal_type, principal_id
@@ -122,7 +124,7 @@ func (r *PolicyRepository) ListPolicies(ctx context.Context, page, size int) ([]
 func (r *PolicyRepository) queryPolicies(ctx context.Context, query string, args ...any) ([]*domain.Policy, error) {
 	rows, err := r.conn.Pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, mapPgError(err)
+		return nil, mapPolicyPgError(err)
 	}
 	defer rows.Close()
 	out := make([]*domain.Policy, 0)
@@ -138,7 +140,18 @@ func (r *PolicyRepository) queryPolicies(ctx context.Context, query string, args
 		out = append(out, &p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, mapPgError(err)
+		return nil, mapPolicyPgError(err)
 	}
 	return out, nil
+}
+
+func mapPolicyPgError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		return fmt.Errorf("%w: unknown gateway", domain.ErrInvalidPolicy)
+	}
+	return fmt.Errorf("store access policy repository: %w", err)
 }

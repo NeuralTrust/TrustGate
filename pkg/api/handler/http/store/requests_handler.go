@@ -21,9 +21,10 @@ package store
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
+	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -31,7 +32,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// RequestsHandler serves the Store install-approval queue.
 type RequestsHandler struct {
 	approver appstore.Approver
 }
@@ -40,55 +40,7 @@ func NewRequestsHandler(approver appstore.Approver) *RequestsHandler {
 	return &RequestsHandler{approver: approver}
 }
 
-// pendingRequestResponse is one row in the admin approval queue. InstanceID is
-// what approve/deny should be called with: it identifies the exact request even
-// when the principal holds other instances of the same code.
-type pendingRequestResponse struct {
-	InstanceID   string    `json:"instance_id"`
-	PrincipalSub string    `json:"principal_sub"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	InstalledBy  string    `json:"installed_by,omitempty"`
-	RequestedAt  time.Time `json:"requested_at"`
-}
-
-// decidedRequestResponse is one row of the approval history.
-type decidedRequestResponse struct {
-	InstanceID   string    `json:"instance_id"`
-	PrincipalSub string    `json:"principal_sub"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	RegistryID   string    `json:"registry_id,omitempty"`
-	Decision     string    `json:"decision"`
-	DecidedBy    string    `json:"decided_by,omitempty"`
-	DecidedAt    time.Time `json:"decided_at"`
-	RequestedAt  time.Time `json:"requested_at"`
-}
-
-type listHistoryResponse struct {
-	Items []decidedRequestResponse `json:"items"`
-	Total int                      `json:"total"`
-}
-
-type listRequestsResponse struct {
-	Items []pendingRequestResponse `json:"items"`
-	Total int                      `json:"total"`
-}
-
-// decideRequest is the shared body of approve/deny: which install request.
-// instance_id targets one exact instance (preferred); code alone is accepted for
-// backward compatibility and resolves only when the principal holds exactly one
-// live instance of it (409 otherwise).
-type decideRequest struct {
-	PrincipalSub string `json:"principal_sub"`
-	Code         string `json:"code"`
-	InstanceID   string `json:"instance_id"`
-	// GrantToGroup (approve only): grant the server to this group of the
-	// requester instead of to the requester alone.
-	GrantToGroup string `json:"grant_to_group"`
-}
-
-func (r decideRequest) validate() error {
+func validateDecision(r storerequest.Decide) error {
 	if strings.TrimSpace(r.PrincipalSub) == "" {
 		return fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation)
 	}
@@ -105,7 +57,7 @@ func (r decideRequest) validate() error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
-// @Success      200         {object}  listRequestsResponse
+// @Success      200         {object}  storeresponse.PendingRequests
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/store/requests [get]
@@ -118,12 +70,12 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := listRequestsResponse{
-		Items: make([]pendingRequestResponse, 0, len(pending)),
+	out := storeresponse.PendingRequests{
+		Items: make([]storeresponse.PendingRequest, 0, len(pending)),
 		Total: len(pending),
 	}
 	for _, p := range pending {
-		out.Items = append(out.Items, pendingRequestResponse{
+		out.Items = append(out.Items, storeresponse.PendingRequest{
 			InstanceID:   p.InstanceID,
 			PrincipalSub: p.PrincipalSub,
 			Code:         p.Code,
@@ -142,7 +94,7 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
-// @Success      200         {object}  listHistoryResponse
+// @Success      200         {object}  storeresponse.History
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/store/requests/history [get]
@@ -155,9 +107,9 @@ func (h *RequestsHandler) History(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	out := listHistoryResponse{Items: make([]decidedRequestResponse, 0, len(decided)), Total: len(decided)}
+	out := storeresponse.History{Items: make([]storeresponse.DecidedRequest, 0, len(decided)), Total: len(decided)}
 	for _, d := range decided {
-		row := decidedRequestResponse{
+		row := storeresponse.DecidedRequest{
 			InstanceID:   d.InstanceID,
 			PrincipalSub: d.PrincipalSub,
 			Code:         d.Code,
@@ -183,7 +135,7 @@ func (h *RequestsHandler) History(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string         true  "Gateway id"  format(uuid)
-// @Param        body        body      decideRequest  true  "Which install request"
+// @Param        body        body      storerequest.Decide  true  "Which install request"
 // @Success      204         "Approved"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
@@ -215,7 +167,7 @@ func (h *RequestsHandler) Approve(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string         true  "Gateway id"  format(uuid)
-// @Param        body        body      decideRequest  true  "Which install request"
+// @Param        body        body      storerequest.Decide  true  "Which install request"
 // @Success      204         "Denied"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
@@ -237,7 +189,7 @@ func (h *RequestsHandler) Deny(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (h *RequestsHandler) parseDecide(c *fiber.Ctx) (gatewayID ids.GatewayID, req decideRequest, err error) {
+func (h *RequestsHandler) parseDecide(c *fiber.Ctx) (gatewayID ids.GatewayID, req storerequest.Decide, err error) {
 	gid, err := httpio.ParseGatewayID(c)
 	if err != nil {
 		return gid, req, err
@@ -245,13 +197,12 @@ func (h *RequestsHandler) parseDecide(c *fiber.Ctx) (gatewayID ids.GatewayID, re
 	if err := c.BodyParser(&req); err != nil {
 		return gid, req, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
 	}
-	if err := req.validate(); err != nil {
+	if err := validateDecision(req); err != nil {
 		return gid, req, err
 	}
 	return gid, req, nil
 }
 
-// callerActor is the acting admin, for audit (email, else user id).
 func callerActor(c *fiber.Ctx) string {
 	if email, ok := c.Locals(string(infracontext.UserEmailContextKey)).(string); ok && email != "" {
 		return email

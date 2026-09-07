@@ -446,3 +446,13 @@ func TestGeminiUsage_EncodeRebuildsDisjointWireCounts(t *testing.T) {
 		u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount+u.ToolUsePromptTokenCount,
 		u.TotalTokenCount, "the re-encoded payload must satisfy Gemini's own arithmetic")
 }
+
+func TestGeminiEncodeRequestRejectsMalformedToolArguments(t *testing.T) {
+	adapter := &GeminiAdapter{}
+	_, err := adapter.EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+		Role:      "assistant",
+		ToolCalls: []CanonicalToolCall{{Name: "lookup", Arguments: "{"}},
+	}}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "lookup")
+}

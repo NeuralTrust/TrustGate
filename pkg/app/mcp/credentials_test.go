@@ -40,6 +40,28 @@ import (
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
 
+func TestCredentialResolver_LogsOpaquePrincipalReference(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	gw := ids.New[ids.GatewayKind]()
+	resolver := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "ticket"}, nil, logger).(*credentialResolver)
+	reg := regWithAuth(gw, &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeForwarded, Provider: "provider", Registration: registrydomain.RegistrationAuto,
+	})
+
+	err := resolver.consentRequired(context.Background(), mcpConsumer(gw), reg, "provider", "alice@example.com", "expired")
+	if err == nil {
+		t.Fatal("consentRequired returned nil")
+	}
+	logged := output.String()
+	if strings.Contains(logged, "alice@example.com") {
+		t.Fatalf("log contains raw principal subject: %s", logged)
+	}
+	if !strings.Contains(logged, "principal_ref=") {
+		t.Fatalf("log does not contain an opaque principal reference: %s", logged)
+	}
+}
+
 type stubExchanger struct {
 	token     *sts.Token
 	err       error

@@ -103,7 +103,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 	if principalSub == "" {
 		return nil, fmt.Errorf("principal subject is required: %w", commonerrors.ErrValidation)
 	}
-	regs, _, err := p.registries.List(ctx, registrydomain.ListFilter{GatewayID: gatewayID, Page: 1, Size: registryListPageSize})
+	regs, err := listRegistriesByGateway(ctx, p.registries, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list registries: %w", err)
 	}

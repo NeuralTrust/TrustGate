@@ -17,17 +17,18 @@ package mcp
 import (
 	"context"
 	"errors"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+const upstreamCloseTimeout = 5 * time.Second
+
 type credentialRefresher interface {
 	Refresh(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error
 }
 
-// invokeUpstream refreshes a rejected forwarded credential and retries once.
-// The retry is bounded so revoked grants cannot create an authentication loop.
 func invokeUpstream[T any](
 	c *composer,
 	ctx context.Context,
@@ -44,6 +45,10 @@ func invokeUpstream[T any](
 	if !errors.Is(err, ErrUpstreamUnauthorized) || c.creds == nil {
 		return out, err
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		var zero T
+		return zero, ctxErr
+	}
 	refresher, ok := c.creds.(credentialRefresher)
 	if !ok {
 		return out, err
@@ -55,6 +60,10 @@ func invokeUpstream[T any](
 		}
 		var zero T
 		return zero, refreshErr
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		var zero T
+		return zero, ctxErr
 	}
 	return invokeTarget(c, ctx, target, invoke)
 }
@@ -70,6 +79,12 @@ func invokeTarget[T any](
 		var zero T
 		return zero, err
 	}
-	defer up.Close(ctx)
+	closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), upstreamCloseTimeout)
+	defer cancelClose()
+	defer up.Close(closeCtx)
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
 	return invoke(up)
 }

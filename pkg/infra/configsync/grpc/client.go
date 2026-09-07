@@ -48,9 +48,12 @@ type Client struct {
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
 
-	mu          sync.Mutex
-	stream      snapshotpb.ConfigSync_SyncClient
-	lastApplied string
+	mu                  sync.Mutex
+	stream              snapshotpb.ConfigSync_SyncClient
+	streamCancelCurrent context.CancelFunc
+	lastApplied         string
+	recvMu              sync.Mutex
+	sendMu              sync.Mutex
 }
 
 // NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
@@ -156,33 +159,76 @@ func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, 
 
 // Watch blocks for the next VersionNotice on the Sync stream, reopening the
 // stream (and re-sending Hello) when it is not yet established or has broken.
-func (c *Client) Watch(_ context.Context) (string, error) {
-	stream, err := c.ensureStream()
+func (c *Client) Watch(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	c.recvMu.Lock()
+	defer c.recvMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	stream, err := c.ensureStream(ctx)
 	if err != nil {
 		return "", err
 	}
 	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			c.resetStream()
-			return "", streamErr("watch recv", err)
+		type recvResult struct {
+			msg *snapshotpb.ServerMessage
+			err error
 		}
-		if notice := msg.GetNotice(); notice != nil {
-			return notice.GetVersion(), nil
+		result := make(chan recvResult, 1)
+		go func() {
+			msg, err := stream.Recv()
+			result <- recvResult{msg: msg, err: err}
+		}()
+		select {
+		case <-ctx.Done():
+			c.resetStream(stream)
+			<-result
+			return "", ctx.Err()
+		case received := <-result:
+			if received.err != nil {
+				c.resetStream(stream)
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				return "", streamErr("watch recv", received.err)
+			}
+			if notice := received.msg.GetNotice(); notice != nil {
+				return notice.GetVersion(), nil
+			}
 		}
 	}
 }
 
 // Ack reports the applied version to the control plane over the Sync stream.
-func (c *Client) Ack(_ context.Context, appliedVersion string) error {
-	stream, err := c.ensureStream()
+func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stream, err := c.ensureStream(ctx)
 	if err != nil {
 		return err
 	}
 	ack := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Ack{Ack: &snapshotpb.Ack{AppliedVersion: appliedVersion}}}
-	if err := stream.Send(ack); err != nil {
-		c.resetStream()
-		return fmt.Errorf("configsync: ack send: %w", err)
+	result := make(chan error, 1)
+	go func() { result <- stream.Send(ack) }()
+	select {
+	case <-ctx.Done():
+		c.resetStream(stream)
+		<-result
+		return ctx.Err()
+	case err := <-result:
+		if err != nil {
+			c.resetStream(stream)
+			return fmt.Errorf("configsync: ack send: %w", err)
+		}
 	}
 	c.mu.Lock()
 	c.lastApplied = appliedVersion
@@ -190,31 +236,57 @@ func (c *Client) Ack(_ context.Context, appliedVersion string) error {
 	return nil
 }
 
-func (c *Client) ensureStream() (snapshotpb.ConfigSync_SyncClient, error) {
+func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if c.stream != nil {
 		return c.stream, nil
 	}
-	stream, err := c.cli.Sync(c.streamCtx)
+	streamCtx, streamCancel := context.WithCancel(c.streamCtx)
+	stream, err := c.cli.Sync(streamCtx)
 	if err != nil {
+		streamCancel()
 		return nil, streamErr("open sync stream", err)
 	}
 	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
 		InstanceId:         c.instanceID,
 		LastAppliedVersion: c.lastApplied,
 	}}}
-	if err := stream.Send(hello); err != nil {
+	helloResult := make(chan error, 1)
+	go func() { helloResult <- stream.Send(hello) }()
+	select {
+	case <-ctx.Done():
+		streamCancel()
+		<-helloResult
+		return nil, ctx.Err()
+	case err := <-helloResult:
+		if err == nil {
+			break
+		}
+		streamCancel()
 		return nil, streamErr("send hello", err)
 	}
 	c.stream = stream
+	c.streamCancelCurrent = streamCancel
 	return stream, nil
 }
 
-func (c *Client) resetStream() {
+func (c *Client) resetStream(stream snapshotpb.ConfigSync_SyncClient) {
 	c.mu.Lock()
+	if c.stream != stream {
+		c.mu.Unlock()
+		return
+	}
+	cancel := c.streamCancelCurrent
 	c.stream = nil
+	c.streamCancelCurrent = nil
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // streamErr wraps a broken Sync-stream error under op, tagging it with

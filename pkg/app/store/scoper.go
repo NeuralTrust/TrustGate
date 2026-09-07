@@ -151,11 +151,7 @@ func (s *scoper) installedRegistries(
 	active []*installationdomain.Installation,
 	countByCode map[string]int,
 ) ([]*registrydomain.Registry, error) {
-	items, _, err := s.registries.List(ctx, registrydomain.ListFilter{
-		GatewayID: gatewayID,
-		Page:      1,
-		Size:      registryListPageSize,
-	})
+	items, err := listRegistriesForInstalls(ctx, s.registries, gatewayID, active)
 	if err != nil {
 		return nil, fmt.Errorf("store scoper: list registries: %w", err)
 	}
@@ -171,10 +167,15 @@ func (s *scoper) installedRegistries(
 	for _, regs := range byCode {
 		sortRegistries(regs)
 	}
-	groups := principalGroups(principal)
+	groups := principal.Groups()
 	// Under All every install stands; under Selected an install only stays
 	// exposed while a grant still names the principal for its code or instance.
-	enforceGrants := resolveMode(ctx, s.modes, gatewayID) != gatewaydomain.StoreModeOpen
+	enforceGrants := ResolveMode(ctx, s.modes, ModeQuery{
+		GatewayID: gatewayID,
+		Subject:   principal.Subject,
+		Groups:    groups,
+		Fallback:  EffectiveStoreMode(ctx),
+	}) != gatewaydomain.StoreModeOpen
 	var grants *storeaccessdomain.Set
 	if enforceGrants {
 		if grants, err = loadGrantSet(ctx, s.grants, gatewayID); err != nil {
@@ -223,28 +224,6 @@ func resolveInstance(
 		return regs[0]
 	}
 	return nil
-}
-
-// principalGroups reads the principal's IdP group memberships from its claims
-// (a []string or a JSON-decoded []any), or nil when absent.
-func principalGroups(principal *identity.Principal) []string {
-	if principal == nil || principal.Claims == nil {
-		return nil
-	}
-	switch v := principal.Claims[identity.ClaimGroups].(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 // configuredRegistry is the single-instance exposure of an install that carries

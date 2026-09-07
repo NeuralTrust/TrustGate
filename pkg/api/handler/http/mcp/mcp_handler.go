@@ -15,16 +15,10 @@
 package mcp
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strings"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -35,9 +29,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -95,27 +87,17 @@ const (
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
-	vault      vaultdomain.Repository
-	installs   installationdomain.Repository
+	surface    appmcp.SurfaceWatcher
 	timings    streamTimings
 }
 
-// HandlerOption configures optional Handler collaborators.
 type HandlerOption func(*Handler)
 
-// WithInstallations lets the notification stream also watch the caller's Store
-// installations, so a self-service install pushes tools/list_changed the same
-// way connecting an account does. Omitted, the stream watches credentials only
-// and a new install is seen by the client only on its next reconnect.
-func WithInstallations(installs installationdomain.Repository) HandlerOption {
-	return func(h *Handler) { h.installs = installs }
-}
-
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, vault vaultdomain.Repository, opts ...HandlerOption) *Handler {
+func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		gateway:    gateway,
 		roleScoper: roleScoper,
-		vault:      vault,
+		surface:    surface,
 		timings:    defaultStreamTimings,
 	}
 	for _, opt := range opts {
@@ -183,7 +165,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	if req.Method != "ping" {
 		if rt := trace.FromContext(c.UserContext()); rt != nil {
-			stampRequestIdentity(c, rt, rc, h.vault)
+			stampRequestIdentity(c, rt, rc, h.surface)
 		}
 	}
 
@@ -215,7 +197,7 @@ func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
 }
 
-func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, vault vaultdomain.Repository) {
+func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, surface appmcp.SurfaceWatcher) {
 	if rt == nil {
 		return
 	}
@@ -224,8 +206,8 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 		return
 	}
 	email := p.Email()
-	if email == "" && vault != nil && rc != nil && rc.Consumer != nil {
-		email = appmcp.ConnectedAccountEmail(c.UserContext(), vault, rc.Consumer.GatewayID, p.Subject)
+	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
+		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
 	}
 	rt.SetPrincipalIdentity(p.Subject, string(p.Method), email)
 }
@@ -265,7 +247,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion + "+" + surfaceFingerprint(rc, h.connectedProviders(c, rc)),
+			"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, h.connectedProviders(c, rc)),
 		},
 		// instructions steer the connected agent: TrustGate is the governed path
 		// for MCP tools, so the agent should obtain capabilities through this
@@ -300,162 +282,10 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 // on the gateway does not invalidate this surface.
 func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
 	ctx := c.UserContext()
-	return h.connectionSnapshot(ctx, rc, identity.PrincipalFromContext(ctx))
-}
-
-// connectionSnapshot takes its context and principal as arguments because the
-// notification stream keeps polling it long after the request context that
-// opened the stream is gone.
-func (h *Handler) connectionSnapshot(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	principal *identity.Principal,
-) []string {
-	if h.vault == nil || rc == nil || rc.Consumer == nil {
+	if h.surface == nil {
 		return nil
 	}
-	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return nil
-	}
-	federated := forwardedProviders(rc)
-	if len(federated) == 0 {
-		return nil
-	}
-	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
-	if err != nil {
-		return nil
-	}
-	parts := make([]string, 0, len(creds))
-	for _, cred := range creds {
-		if cred == nil {
-			continue
-		}
-		if _, ok := federated[cred.Provider]; !ok {
-			continue
-		}
-		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	return parts
-}
-
-// connectionWatchSnapshot fingerprints every credential the caller has stored on
-// this gateway, so the notification stream pushes tools/list_changed whenever an
-// account is connected, reconnected, or refreshed.
-//
-// Unlike connectionSnapshot it does NOT filter by the consumer's forwarded
-// providers: the stream's routable consumer is frozen when the stream opens, so
-// its registry set does not include a server installed later in the same
-// session. Gating on that frozen set would silently drop the credential for a
-// just-installed server (install Notion, then connect it) and never push a
-// refresh — the client would keep its stale, Notion-less tool list. The
-// tools/list the client issues in response resolves a fresh consumer and decides
-// what actually federates, so watching every credential here is safe and only
-// ever costs a redundant re-list. Sorted so an unstable repository order does not
-// read as a change.
-func (h *Handler) connectionWatchSnapshot(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	principal *identity.Principal,
-) []string {
-	if h.vault == nil || rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return nil
-	}
-	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
-	if err != nil {
-		return nil
-	}
-	parts := make([]string, 0, len(creds))
-	for _, cred := range creds {
-		if cred == nil {
-			continue
-		}
-		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	sort.Strings(parts)
-	return parts
-}
-
-// installSnapshot fingerprints the caller's Store installations, so the stream
-// pushes tools/list_changed when a self-service install (or uninstall, or a
-// status change) alters which catalog servers are on the surface — the same way
-// connectionSnapshot handles a newly-connected account. Empty when installations
-// are not wired (a plane without the Store).
-func (h *Handler) installSnapshot(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	principal *identity.Principal,
-) []string {
-	if h.installs == nil || rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return nil
-	}
-	installs, err := h.installs.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
-	if err != nil {
-		return nil
-	}
-	parts := make([]string, 0, len(installs))
-	for _, in := range installs {
-		if in == nil {
-			continue
-		}
-		parts = append(parts, "in:"+in.CatalogCode+":"+string(in.Status)+"@"+in.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	sort.Strings(parts)
-	return parts
-}
-
-func forwardedProviders(rc *appconsumer.RoutableConsumer) map[string]struct{} {
-	providers := make(map[string]struct{})
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
-			continue
-		}
-		if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
-			continue
-		}
-		providers[reg.MCPTarget.Auth.Provider] = struct{}{}
-	}
-	return providers
-}
-
-// surfaceFingerprint summarises everything that decides which tools a virtual
-// MCP exposes: the bound MCP registries, when each was last changed, the
-// toolkit that filters them, and the caller's connected accounts. It rides in
-// serverInfo.version as semver build metadata, so a client that caches a
-// server's tool list keyed on its reported version re-lists after the consumer
-// is reconfigured or the user connects an account. Without it every virtual MCP
-// reports a constant "1.0" forever and a newly attached registry stays
-// invisible until the client is reinstalled.
-func surfaceFingerprint(rc *appconsumer.RoutableConsumer, connections []string) string {
-	if rc == nil || rc.Consumer == nil {
-		return "0"
-	}
-	parts := make([]string, 0, len(rc.Registries))
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() {
-			continue
-		}
-		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
-	for _, e := range rc.Consumer.Toolkit() {
-		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
-	}
-	// None of these lists has a guaranteed order across replicas or reloads —
-	// the role-derived toolkit is a union, the vault answers in its own order —
-	// so sort them all: the same configuration must always fingerprint the same.
-	sort.Strings(parts)
-	sort.Strings(entries)
-	linked := append([]string(nil), connections...)
-	sort.Strings(linked)
-	material := append(append(parts, entries...), linked...)
-	sum := sha256.Sum256([]byte(strings.Join(material, "|")))
-	return hex.EncodeToString(sum[:6])
+	return h.surface.Connections(ctx, rc, identity.PrincipalFromContext(ctx), false)
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {

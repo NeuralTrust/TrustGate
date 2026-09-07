@@ -37,8 +37,9 @@ import (
 )
 
 var (
-	ErrInvalidGrant = fmt.Errorf("store grant: invalid grant: %w", commonerrors.ErrValidation)
-	ErrNotFound     = fmt.Errorf("store grant: not found: %w", commonerrors.ErrNotFound)
+	ErrInvalidGrant  = fmt.Errorf("store grant: invalid grant: %w", commonerrors.ErrValidation)
+	ErrInvalidPolicy = fmt.Errorf("store policy: invalid policy: %w", commonerrors.ErrValidation)
+	ErrNotFound      = fmt.Errorf("store grant: not found: %w", commonerrors.ErrNotFound)
 )
 
 // Grant says which principals may use a catalog server on a gateway.

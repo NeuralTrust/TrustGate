@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -89,30 +88,23 @@ func (p *principalInstaller) InstallFor(ctx context.Context, in OnBehalfInstallR
 	if code == "" {
 		return nil, fmt.Errorf("code is required: %w", commonerrors.ErrValidation)
 	}
-	groups := make([]string, 0, len(in.Groups))
-	for _, g := range in.Groups {
-		if g = strings.TrimSpace(g); g != "" {
-			groups = append(groups, g)
-		}
-	}
-
-	// Act as the principal: the mode resolver reads the subject and groups from
-	// the context principal, and the gateway default from the context gateway.
-	asUser := identity.WithPrincipal(ctx, &identity.Principal{
-		Subject: sub,
-		Method:  identity.MethodJWT,
-		Claims:  map[string]any{identity.ClaimGroups: groups},
-	})
+	groups := identity.GroupsFromClaim(in.Groups)
+	fallback := gatewaydomain.StoreModeCurated
 	if p.gateways != nil {
 		gw, err := p.gateways.FindByID(ctx, in.GatewayID)
 		if err != nil {
 			return nil, fmt.Errorf("store: load gateway: %w", err)
 		}
 		if gw != nil {
-			asUser = appgateway.WithGateway(asUser, gw)
+			fallback = gw.StoreMode()
 		}
 	}
-	mode := resolveMode(asUser, p.modes, in.GatewayID)
+	mode := ResolveMode(ctx, p.modes, ModeQuery{
+		GatewayID: in.GatewayID,
+		Subject:   sub,
+		Groups:    groups,
+		Fallback:  fallback,
+	})
 	if mode == gatewaydomain.StoreModeNone {
 		return nil, ErrStoreClosed
 	}
@@ -120,7 +112,7 @@ func (p *principalInstaller) InstallFor(ctx context.Context, in OnBehalfInstallR
 	if actor == "" {
 		actor = sub
 	}
-	return p.installer.Install(asUser, InstallRequest{
+	return p.installer.Install(ctx, InstallRequest{
 		GatewayID:    in.GatewayID,
 		PrincipalSub: sub,
 		Code:         code,
