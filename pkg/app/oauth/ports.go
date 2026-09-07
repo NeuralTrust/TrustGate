@@ -43,6 +43,18 @@ var ErrUpstreamNotDiscoverable = errors.New(
 
 var ErrInvalidGrant = errors.New("oauth provider: grant is no longer valid")
 
+// InvalidGrantError preserves provider diagnostics while supporting errors.Is.
+type InvalidGrantError struct {
+	Code        string
+	Description string
+}
+
+// Error returns the grant failure without exposing provider response text.
+func (e *InvalidGrantError) Error() string { return ErrInvalidGrant.Error() }
+
+// Unwrap identifies the failure as ErrInvalidGrant.
+func (e *InvalidGrantError) Unwrap() error { return ErrInvalidGrant }
+
 type UpstreamAuthServer struct {
 	Issuer                string   `json:"issuer"`
 	AuthorizationEndpoint string   `json:"authorization_endpoint"`
