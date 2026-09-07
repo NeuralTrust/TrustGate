@@ -71,6 +71,15 @@ type singleConnectView struct {
 	NeedsReconnect bool
 	Found          bool
 	ResumeURL      template.URL
+	// Description is the catalog one-liner for the server, shown under the
+	// headline so the card says what the user is connecting to.
+	Description string
+	// AccessLabel names what Items lists: the OAuth scopes the gateway asks
+	// for, or — when the server declares none — the tools it advertises.
+	// Empty when the catalog knows neither.
+	AccessLabel string
+	Items       []string
+	ItemsMore   int
 }
 
 // renderSingleConnectPage renders the focused, one-server connect page. It picks
@@ -100,7 +109,46 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 	if view.ServerName == "" {
 		view.ServerName = serverDisplayName(catalog, page.Code)
 	}
+	if catalog != nil {
+		if server, ok := lookupCatalogServer(catalog, page.Code, view.Provider); ok {
+			view.Description = strings.TrimSpace(server.Description)
+			view.AccessLabel, view.Items, view.ItemsMore = accessSummary(server, view.Linked)
+		}
+	}
 	return renderHTML(c, singleConnectPageTmpl, view)
+}
+
+// maxAccessItems caps the access list so a server with dozens of scopes or
+// tools does not turn the consent card into a wall of chips.
+const maxAccessItems = 4
+
+// accessSummary describes what connecting grants. OAuth scopes are the
+// authorization truth and win when the catalog has them; otherwise the
+// advertised tools stand in as a capability preview. Returns an empty label
+// when the catalog knows neither.
+func accessSummary(server domaincatalog.MCPServer, linked bool) (label string, items []string, more int) {
+	if server.OAuth != nil && len(server.OAuth.Scopes) > 0 {
+		label = "Access requested"
+		if linked {
+			label = "Access granted"
+		}
+		items = server.OAuth.Scopes
+	} else if len(server.Tools) > 0 {
+		label = "Tools the agent can call"
+		items = make([]string, 0, len(server.Tools))
+		for _, t := range server.Tools {
+			if name := strings.TrimSpace(t.Name); name != "" {
+				items = append(items, name)
+			}
+		}
+	}
+	if len(items) == 0 {
+		return "", nil, 0
+	}
+	if len(items) > maxAccessItems {
+		return label, items[:maxAccessItems], len(items) - maxAccessItems
+	}
+	return label, items, 0
 }
 
 // serverDisplayName resolves a friendly name for a catalog code for the header

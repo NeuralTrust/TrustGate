@@ -196,9 +196,9 @@ body.dotted{
     0 28px 56px -20px rgb(0 0 0 / .72);
 }
 .card-hero{
-  position:relative;display:flex;align-items:center;justify-content:center;height:124px;
+  position:relative;display:flex;align-items:center;justify-content:center;height:104px;
   background:
-    radial-gradient(54% 78% at 50% 46%,rgb(144 83 255 / .20) 0%,rgb(144 83 255 / .05) 54%,transparent 78%),
+    radial-gradient(52% 84% at 50% 48%,rgb(144 83 255 / .20) 0%,rgb(144 83 255 / .05) 54%,transparent 78%),
     var(--bg-muted);
 }
 .card-hero::after,.card-foot::before{
@@ -216,7 +216,7 @@ body.dotted{
   box-shadow:0 0 5px rgb(144 83 255 / .45);
 }
 .mark-tile{
-  position:relative;width:56px;height:56px;flex:none;overflow:hidden;
+  position:relative;width:52px;height:52px;flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
   border-radius:16px;background:var(--bg-inverse);
   box-shadow:
@@ -224,7 +224,7 @@ body.dotted{
     0 2px 4px rgb(0 0 0 / .28),
     0 14px 26px -10px rgb(0 0 0 / .7);
 }
-.mark-tile img{width:32px;height:32px;object-fit:contain;display:block}
+.mark-tile img{width:30px;height:30px;object-fit:contain;display:block}
 .mark-tile.nt{
   background:var(--bg-canvas);
   box-shadow:
@@ -233,26 +233,47 @@ body.dotted{
     0 14px 26px -10px rgb(0 0 0 / .7);
 }
 .mark-tile.nt svg{width:100%;height:100%;display:block}
-.card-body{padding:32px 34px 30px;text-align:center}
+.card-body{padding:24px 28px 22px}
 h1.title{
-  font-size:1.25rem;line-height:1.625rem;font-weight:600;letter-spacing:-.02em;
-  margin:0 0 12px;text-wrap:balance;
+  font-size:1.125rem;line-height:1.75rem;font-weight:600;letter-spacing:-.014em;
+  margin:0 0 4px;text-wrap:balance;
 }
 p.lede{
-  margin:0 auto;max-width:38ch;color:var(--fg-muted);
-  font-size:.875rem;line-height:1.5rem;letter-spacing:-.002em;text-wrap:pretty;
+  margin:0;color:var(--fg-muted);
+  font-size:.8125rem;line-height:1.25rem;letter-spacing:-.002em;text-wrap:pretty;
 }
-.card-body .flash{margin:20px 0 0;text-align:left}
+.card-body .flash{margin:18px 0 0}
+/* What the connection grants — the substance of a consent screen. */
+.access{margin-top:20px}
+.eyebrow{
+  display:block;margin:0 0 9px;color:var(--fg-disabled);
+  font-size:.6875rem;line-height:1rem;font-weight:500;letter-spacing:.07em;text-transform:uppercase;
+}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  font-family:var(--font-mono);font-size:.6875rem;line-height:1rem;font-weight:400;
+  padding:4px 7px;border-radius:var(--radius-sm);
+  background:var(--bg-surface-hover);border:1px solid var(--stroke);color:var(--fg-secondary);
+}
+.chip.more{
+  font-family:var(--font-sans);background:transparent;border-color:transparent;
+  color:var(--fg-disabled);padding:4px 2px;
+}
+.note{
+  display:flex;gap:8px;margin:16px 0 0;
+  color:var(--fg-disabled);font-size:.75rem;line-height:1.125rem;
+}
+.note svg{flex:none;margin-top:1px}
 .account{
-  display:inline-flex;align-items:center;gap:7px;margin-top:20px;padding:6px 12px;
+  display:inline-flex;align-items:center;gap:7px;margin-top:18px;padding:5px 11px;
   background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-full);
   color:var(--fg-secondary);font-size:.8125rem;line-height:1.125rem;
 }
 .account svg{flex:none;color:var(--fg-success)}
 .account.danger svg{color:var(--fg-danger)}
 .card-foot{
-  position:relative;display:flex;flex-direction:column;gap:8px;align-items:stretch;
-  padding:20px 34px 22px;background:var(--bg-muted);
+  position:relative;display:flex;flex-direction:column;gap:6px;align-items:stretch;
+  padding:18px 28px 20px;background:var(--bg-muted);
 }
 .card-foot form{display:flex;width:100%}
 a.btn.block,button.btn.block{
@@ -279,7 +300,7 @@ a.btn.ghost,button.btn.ghost{
 }
 a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
 .card-foot .btn.ghost,.card-foot .btn.ghost-danger{
-  height:30px;font-weight:400;font-size:.8125rem;text-decoration:none;
+  height:26px;font-weight:400;font-size:.8125rem;text-decoration:none;
 }
 .card-foot .btn.ghost:hover,.card-foot .btn.ghost-danger:hover{
   text-decoration:underline;text-underline-offset:2px;
@@ -287,7 +308,7 @@ a.btn.ghost:hover,button.btn.ghost:hover{color:var(--fg-default)}
 .card-foot .btn.ghost-danger{color:var(--fg-danger)}
 .secured{
   display:flex;align-items:center;justify-content:center;gap:7px;
-  margin-top:6px;color:var(--fg-disabled);
+  margin-top:4px;color:var(--fg-disabled);
   font-size:.75rem;line-height:1rem;letter-spacing:.004em;
 }
 /* The mark goes monochrome here: the gradient tile turns to mud below ~20px. */
@@ -301,6 +322,8 @@ const brandGlyph = `<svg width="17" height="10" viewBox="3 8 27 16" fill="curren
 const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
 
 const securedByFooter = `<div class="secured">` + brandGlyph + `Secured by NeuralTrust TrustGate</div>`
+
+const lockGlyph = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
 
 const alertGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
 
@@ -402,19 +425,22 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 {{if not .Found}}
   <h1 class="title">Connect your {{.ServerName}} account</h1>
   <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
-{{else if .Linked}}
-  <h1 class="title">{{.ServerName}} is connected</h1>
-  <p class="lede">TrustGate uses this connection whenever your agent calls {{.ServerName}}. Credentials never reach the agent.</p>
-{{else if .NeedsReconnect}}
-  <h1 class="title">Reconnect your {{.ServerName}} account</h1>
-  <p class="lede">{{.ServerName}} expired or revoked the stored credentials. Sign in again to restore access.</p>
 {{else}}
-  <h1 class="title">Connect your {{.ServerName}} account</h1>
-  <p class="lede">TrustGate connects to {{.ServerName}} on your behalf. Credentials are encrypted in the gateway vault and never reach the agent.</p>
+  {{if .Linked}}<h1 class="title">{{.ServerName}} is connected</h1>
+  {{else if .NeedsReconnect}}<h1 class="title">Reconnect your {{.ServerName}} account</h1>
+  {{else}}<h1 class="title">Connect your {{.ServerName}} account</h1>{{end}}
+  {{if .Description}}<p class="lede">{{.Description}}</p>
+  {{else if .NeedsReconnect}}<p class="lede">{{.ServerName}} expired or revoked the stored credentials.</p>
+  {{else}}<p class="lede">TrustGate connects to {{.ServerName}} on your behalf.</p>{{end}}
+  {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
+  {{if .AccessLabel}}<div class="access">
+    <span class="eyebrow">{{.AccessLabel}}</span>
+    <div class="chips">{{range .Items}}<span class="chip">{{.}}</span>{{end}}{{if .ItemsMore}}<span class="chip more">+{{.ItemsMore}} more</span>{{end}}</div>
+  </div>{{end}}
+  {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
+  {{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}
+  <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
-{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-{{if .Found}}{{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
-{{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}{{end}}
 </div>
 <div class="card-foot">
 {{if .Found}}
