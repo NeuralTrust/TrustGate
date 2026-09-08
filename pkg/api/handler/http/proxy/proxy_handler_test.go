@@ -34,6 +34,7 @@ import (
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -564,6 +565,43 @@ func TestHandle_RejectionStampsStatusReasonOnTrace(t *testing.T) {
 	}
 	if got := rt.StatusReason(); got != "model_not_allowed" {
 		t.Fatalf("trace status reason = %q, want model_not_allowed", got)
+	}
+}
+
+func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("%w: %q (tried openai, vertex)",
+			routingdomain.ErrNoRegistryServesModel, "gemini-3-flash-preview")).
+		Once()
+
+	rt := trace.New("trace-no-registry", trace.Metadata{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+		return c.Next()
+	})
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	eb := decodeError(t, resp.Body)
+	if eb.Error != "model_not_supported" {
+		t.Fatalf("error = %q, want model_not_supported", eb.Error)
+	}
+	if !strings.Contains(eb.Message, "gemini-3-flash-preview") {
+		t.Fatalf("message = %q, want the requested model named", eb.Message)
+	}
+	if !strings.Contains(eb.Message, "openai") || !strings.Contains(eb.Message, "vertex") {
+		t.Fatalf("message = %q, want the probed providers listed", eb.Message)
 	}
 }
 

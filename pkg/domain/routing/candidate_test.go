@@ -258,3 +258,42 @@ func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 		t.Fatal("zero intent must keep the original set")
 	}
 }
+
+func TestCandidate_PolicyAllowsModel(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	cases := []struct {
+		name    string
+		allowed []string
+		model   string
+		want    bool
+	}{
+		{"no allow-list leaves the choice to the provider", nil, "anything", true},
+		{"listed model", []string{"gpt-4.1"}, "gpt-4.1", true},
+		{"unlisted model", []string{"gpt-4.1"}, "gpt-4o", false},
+		{"empty allow-list denies everything", []string{}, "gpt-4.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := routing.Candidate{Registry: reg, Allowed: tc.allowed}
+			if got := c.PolicyAllowsModel(tc.model); got != tc.want {
+				t.Errorf("PolicyAllowsModel(%q) = %v, want %v", tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCandidate_DefersModelChoice(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	if !(routing.Candidate{Registry: reg}).DefersModelChoice() {
+		t.Error("a candidate without an allow-list must defer the model choice to its provider")
+	}
+	if (routing.Candidate{Registry: reg, Allowed: []string{}}).DefersModelChoice() {
+		t.Error("an empty allow-list is an explicit operator restriction, not a deferral")
+	}
+	if (routing.Candidate{Registry: reg, Allowed: []string{"gpt-4.1"}}).DefersModelChoice() {
+		t.Error("an allow-list is an explicit operator restriction, not a deferral")
+	}
+}
