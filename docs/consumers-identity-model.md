@@ -483,3 +483,8 @@ Invariants checked in this audit:
 - Product decision: consumers whose users sign in use the NeuralTrust login
   only. The gateway still accepts an interactive company IdP through the API,
   but the app does not offer one.
+- Product decision: the *My app identifies its users* source is not offered in
+  the app until the client library exists — the pattern is only fit to hand out
+  through an SDK, not as raw connections URLs. The gateway keeps serving it, and
+  a consumer already set to it stays editable. Spec:
+  `trustgate-sdk-spec.md`; flag: `APP_IDENTITY_SOURCE_ENABLED` in the app.
