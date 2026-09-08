@@ -114,7 +114,7 @@ func TestSyncer_Sync(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger, nil, nil)
+	s := NewSyncer(repo, client, logger, nil, nil, nil)
 
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
@@ -179,7 +179,7 @@ func TestSyncer_Sync_SkipsBedrockModelsOnAlternativeEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestSyncer_Sync_SkipsGeographyScopedBedrockProfiles(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestSyncer_Sync_PropagatesClientError(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger, nil, nil)
+	s := NewSyncer(repo, client, logger, nil, nil, nil)
 
 	if err := s.Sync(context.Background()); err == nil {
 		t.Fatal("expected error from failing client")
@@ -274,7 +274,7 @@ func TestSyncer_Sync_InvalidatesPricingCache(t *testing.T) {
 	defer srv.Close()
 
 	pricing := &pricingCacheSpy{}
-	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, pricing)
+	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, pricing, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestSyncer_Sync_CarriesCacheRatesThrough(t *testing.T) {
 
 	repo := newFakeRepo()
 	s := NewSyncer(repo, modelsdev.NewClient(srv.URL),
-		slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
