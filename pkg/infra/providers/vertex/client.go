@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -255,6 +256,9 @@ func resolveModel(reqBody []byte, config *providers.Config) (string, error) {
 	if model == "" {
 		return "", fmt.Errorf("model is required for Vertex AI requests")
 	}
+	if err := modelmatch.RequireConcrete("model", model); err != nil {
+		return "", err
+	}
 
 	if len(config.AllowedModels) > 0 && !isModelAllowed(model, config.AllowedModels) {
 		return "", fmt.Errorf("model %q is not in the allowed models list", model)
@@ -277,12 +281,8 @@ func resolveAction(options map[string]any, stream bool) string {
 }
 
 func isModelAllowed(model string, allowed []string) bool {
-	for _, m := range allowed {
-		if m == model {
-			return true
-		}
-	}
-	return false
+	_, ok := modelmatch.MatchAny(model, allowed)
+	return ok
 }
 
 // The global endpoint is the only location reached through an unprefixed host.
