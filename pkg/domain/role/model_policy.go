@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 type ModelPolicy struct {
@@ -68,16 +69,21 @@ func (p ModelPolicy) validate(registryID ids.RegistryID) error {
 	}
 	seen := make(map[string]struct{}, len(p.Allowed))
 	for _, model := range p.Allowed {
-		if model == "" {
-			return fmt.Errorf("%w: empty model in allow-list for registry %s", ErrInvalidModelPolicy, registryID)
+		if err := modelmatch.ValidateEntry(model); err != nil {
+			return fmt.Errorf("%w: %w for registry %s", ErrInvalidModelPolicy, err, registryID)
 		}
 		if _, dup := seen[model]; dup {
 			return fmt.Errorf("%w: duplicate model %q for registry %s", ErrInvalidModelPolicy, model, registryID)
 		}
 		seen[model] = struct{}{}
 	}
+	if p.Default != "" {
+		if err := modelmatch.RequireConcrete("default model", p.Default); err != nil {
+			return fmt.Errorf("%w: %w for registry %s", ErrInvalidModelPolicy, err, registryID)
+		}
+	}
 	if p.Default != "" && len(p.Allowed) > 0 {
-		if _, ok := seen[p.Default]; !ok {
+		if _, ok := modelmatch.MatchAny(p.Default, p.Allowed); !ok {
 			return fmt.Errorf("%w: default model %q not in allow-list for registry %s", ErrInvalidModelPolicy, p.Default, registryID)
 		}
 	}

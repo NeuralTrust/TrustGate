@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 type LBPoolMember struct {
@@ -163,6 +164,9 @@ func (l *LBConfig) validateSmartRoutingTiers() error {
 				ErrInvalidLBConfig, i, tier.RegistryID)
 		}
 		model := tier.RouteModel()
+		if err := modelmatch.RequireConcrete(fmt.Sprintf("smart_routing.tiers[%d].model", i), model); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidLBConfig, err)
+		}
 		if model == "" {
 			if len(models) > 1 {
 				return fmt.Errorf(
@@ -192,24 +196,23 @@ func validateLBPoolMember(index int, member LBPoolMember, inline ModelPolicies) 
 		return fmt.Errorf("%w: members[%d].weight %d is out of range [%d,%d]",
 			ErrInvalidLBConfig, index, *member.Weight, DefaultRegistryWeight, MaxRegistryWeight)
 	}
-	allowed := make(map[string]struct{}, len(policy.Allowed))
-	for _, model := range policy.Allowed {
-		allowed[model] = struct{}{}
-	}
 	seen := make(map[string]struct{}, len(member.Models))
 	for _, model := range member.Models {
 		if model == "" {
 			return fmt.Errorf("%w: members[%d].models contains empty model", ErrInvalidLBConfig, index)
 		}
+		if err := modelmatch.RequireConcrete(fmt.Sprintf("members[%d].models", index), model); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidLBConfig, err)
+		}
 		if _, dup := seen[model]; dup {
 			return fmt.Errorf("%w: members[%d].models duplicate %q", ErrInvalidLBConfig, index, model)
 		}
 		seen[model] = struct{}{}
-		if _, ok := allowed[model]; !ok {
+		if _, ok := modelmatch.MatchAny(model, policy.Allowed); !ok {
 			return fmt.Errorf("%w: members[%d].model %q is not allowed by model_policies", ErrInvalidLBConfig, index, model)
 		}
 	}
-	return validateLBPoolMemberModel(index, member, seen, allowed)
+	return validateLBPoolMemberModel(index, member, seen, policy.Allowed)
 }
 
 // An open allow-list permits every model, so a pinned model is only checked against a non-empty one.
@@ -217,7 +220,7 @@ func validateLBPoolMemberModel(
 	index int,
 	member LBPoolMember,
 	memberModels map[string]struct{},
-	allowed map[string]struct{},
+	allowed []string,
 ) error {
 	model := member.RouteModel()
 	if model == "" {
@@ -226,6 +229,9 @@ func validateLBPoolMemberModel(
 		}
 		return nil
 	}
+	if err := modelmatch.RequireConcrete(fmt.Sprintf("members[%d].model", index), model); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidLBConfig, err)
+	}
 	if len(memberModels) > 0 {
 		if _, ok := memberModels[model]; !ok {
 			return fmt.Errorf("%w: members[%d].model %q is not listed in members[%d].models",
@@ -233,7 +239,7 @@ func validateLBPoolMemberModel(
 		}
 	}
 	if len(allowed) > 0 {
-		if _, ok := allowed[model]; !ok {
+		if _, ok := modelmatch.MatchAny(model, allowed); !ok {
 			return fmt.Errorf("%w: members[%d].model %q is not allowed by model_policies",
 				ErrInvalidLBConfig, index, model)
 		}
