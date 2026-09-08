@@ -58,6 +58,7 @@ func TestExclusionReasonFor(t *testing.T) {
 		allowed []string
 		model   string
 		listing exclusionListing
+		probed  bool
 		want    exclusionReason
 	}{
 		{
@@ -86,10 +87,17 @@ func TestExclusionReasonFor(t *testing.T) {
 			want:    exclusionCatalogAbsent,
 		},
 		{
-			name:    "no allow-list and no authoritative catalog",
+			name:    "no allow-list, no authoritative catalog, never probed",
 			model:   "nope-9",
 			listing: exclusionListing{},
 			want:    exclusionUnexplained,
+		},
+		{
+			name:    "no allow-list, no authoritative catalog, the provider itself rejected it",
+			model:   "nope-9",
+			listing: exclusionListing{},
+			probed:  true,
+			want:    exclusionProviderRejected,
 		},
 		{
 			name:    "a glob request ref is never read as an allow-list miss",
@@ -107,7 +115,11 @@ func TestExclusionReasonFor(t *testing.T) {
 				f.listing = tc.listing
 			}
 			rc := exclusionConsumer(domainconsumer.ModelPolicies{reg.ID: {Allowed: tc.allowed}}, reg)
-			if got := f.exclusionReasonFor(context.Background(), rc, reg, tc.model); got != tc.want {
+			probed := map[ids.RegistryID]struct{}{}
+			if tc.probed {
+				probed[reg.ID] = struct{}{}
+			}
+			if got := f.exclusionReasonFor(context.Background(), rc, reg, tc.model, probed); got != tc.want {
 				t.Fatalf("exclusionReasonFor(%q) = %v, want %v", tc.model, got, tc.want)
 			}
 		})
@@ -122,7 +134,7 @@ func TestModelExclusions_CoversFallbackBackendsWithoutRepeating(t *testing.T) {
 	rc.Registries = []*registrydomain.Registry{bound}
 	rc.FallbackBackends = []*registrydomain.Registry{bound, rescue}
 
-	got := (&forwarder{}).modelExclusions(context.Background(), rc, "nope-9")
+	got := (&forwarder{}).modelExclusions(context.Background(), rc, "nope-9", nil)
 
 	if len(got) != 2 {
 		t.Fatalf("got %d exclusions, want one per distinct registry: %+v", len(got), got)
@@ -134,7 +146,7 @@ func TestModelExclusions_CoversFallbackBackendsWithoutRepeating(t *testing.T) {
 
 func TestModelExclusions_NilConsumerYieldsNothing(t *testing.T) {
 	t.Parallel()
-	if got := (&forwarder{}).modelExclusions(context.Background(), nil, "nope-9"); got != nil {
+	if got := (&forwarder{}).modelExclusions(context.Background(), nil, "nope-9", nil); got != nil {
 		t.Fatalf("got %+v, want no exclusions for a nil consumer", got)
 	}
 }
