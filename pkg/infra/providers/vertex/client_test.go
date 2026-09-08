@@ -82,6 +82,10 @@ func TestResolveModel(t *testing.T) {
 		{name: "model allowed", reqBody: `{}`, model: "gemini-2.5-flash", allowed: []string{"gemini-2.5-flash"}, wantModel: "gemini-2.5-flash"},
 		{name: "config priority over body", reqBody: `{"model": "body"}`, model: "config", wantModel: "config"},
 		{name: "empty allowed means all allowed", reqBody: `{}`, model: "any", allowed: []string{}, wantModel: "any"},
+		{name: "pattern allow-list admits the family", reqBody: `{"model": "gemini-2.0-flash"}`, allowed: []string{"gemini-*"}, wantModel: "gemini-2.0-flash"},
+		{name: "pattern allow-list denies other family", reqBody: `{"model": "gpt-4o"}`, allowed: []string{"gemini-*"}, wantErr: true},
+		{name: "a pattern never authorizes itself", reqBody: `{"model": "gemini-*"}`, allowed: []string{"gemini-*"}, wantErr: true},
+		{name: "a pattern default never reaches the url", reqBody: `{}`, defaultMdl: "gemini-*", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,6 +117,12 @@ func TestIsModelAllowed(t *testing.T) {
 	assert.True(t, isModelAllowed("a", []string{"a", "b"}))
 	assert.False(t, isModelAllowed("c", []string{"a", "b"}))
 	assert.False(t, isModelAllowed("a", []string{}))
+}
+
+func TestIsModelAllowedWildcard(t *testing.T) {
+	assert.True(t, isModelAllowed("gemini-2.0-flash", []string{"gemini-*"}))
+	assert.False(t, isModelAllowed("gpt-4o", []string{"gemini-*"}))
+	assert.False(t, isModelAllowed("gemini-*", []string{"gemini-*"}))
 }
 
 func TestBuildRequestURL(t *testing.T) {

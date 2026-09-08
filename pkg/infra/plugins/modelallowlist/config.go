@@ -72,6 +72,9 @@ func (c *config) validate() error {
 		if c.SubstituteWith == "" {
 			return fmt.Errorf("model_allowlist: substitute_with is required when behavior_on_disallowed is substitute")
 		}
+		if err := modelmatch.RequireConcrete("substitute_with", c.SubstituteWith); err != nil {
+			return fmt.Errorf("model_allowlist: %w", err)
+		}
 		if _, ok := matchAny(c.SubstituteWith, c.AllowedModels); !ok {
 			return fmt.Errorf("model_allowlist: substitute_with %q does not match allowed_models", c.SubstituteWith)
 		}
@@ -79,6 +82,9 @@ func (c *config) validate() error {
 		return fmt.Errorf("model_allowlist: substitute_with must not be set when behavior_on_disallowed is %q", c.Behavior)
 	}
 	if c.DefaultModel != "" {
+		if err := modelmatch.RequireConcrete("default_model", c.DefaultModel); err != nil {
+			return fmt.Errorf("model_allowlist: %w", err)
+		}
 		if _, ok := matchAny(c.DefaultModel, c.AllowedModels); !ok {
 			return fmt.Errorf("model_allowlist: default_model %q does not match allowed_models", c.DefaultModel)
 		}
@@ -87,12 +93,7 @@ func (c *config) validate() error {
 }
 
 func matchAny(model string, patterns []string) (string, bool) {
-	for _, p := range patterns {
-		if matchGlob(p, model) {
-			return p, true
-		}
-	}
-	return "", false
+	return modelmatch.MatchAny(model, patterns)
 }
 
 func matchGlob(pattern, s string) bool {
