@@ -76,7 +76,7 @@ func backendFor(gatewayID ids.GatewayID, provider string) *registrydomain.Regist
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: gatewayID,
-		Name:      "test-backend",
+		Name:      "registry-" + provider,
 		Type:      registrydomain.TypeLLM,
 		LLMTarget: &registrydomain.LLMTarget{
 			Provider: provider,
