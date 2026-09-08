@@ -174,21 +174,10 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 		uniqueName("idp-b"), idpB.issuer, idpB.jwksURL(),
 		"mcp-"+strings.ToLower(uniqueName("aud")), "client-"+strings.ToLower(uniqueName("b")), "mcp.write"))
 
-	roleID := CreateRole(t, gatewayID, map[string]any{
-		"name": uniqueName("mcp-role"),
-		"oidc_mapping": map[string]any{
-			"match": "any",
-			"claims": []map[string]any{
-				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
-			},
-		},
-	})
-	AttachRoleRegistry(t, gatewayID, roleID, registryID)
 	consumerID := CreateConsumer(t, gatewayID, map[string]any{
-		"name":         uniqueName("mcp-rb-consumer"),
-		"type":         "mcp",
-		"routing_mode": "role_based",
-		"roles":        []string{roleID},
+		"name":       uniqueName("mcp-consumer"),
+		"type":       "mcp",
+		"registries": []map[string]any{{"id": registryID}},
 	})
 	AttachAuth(t, gatewayID, consumerID, authA)
 

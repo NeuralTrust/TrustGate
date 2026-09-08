@@ -355,10 +355,32 @@ definitions:
         minimum: 1
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest:
+    description: |-
+      AuthBindingRequest narrows which callers of a shared auth (external IdP,
+      mTLS CA) may enter the consumer. Omitted or empty lists accept every caller
+      the auth verifies.
+    properties:
+      allowed_certificate_subjects:
+        description: |-
+          AllowedCertificateSubjects are the client-certificate common names or SAN
+          DNS names accepted over mTLS.
+        items:
+          type: string
+        type: array
+      allowed_client_ids:
+        description: AllowedClientIDs are the azp / client_id values accepted on a
+          bearer JWT.
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
         type: boolean
+      auth_binding:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
       fail_mode:
         type: string
       fallback:
@@ -367,6 +389,8 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      identity:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest'
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest'
       model_policies:
@@ -379,12 +403,6 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
         type: array
-      roles:
-        items:
-          type: string
-        type: array
-      routing_mode:
-        type: string
       toolkit:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest'
@@ -422,6 +440,25 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest:
+    description: |-
+      IdentityRequest says who the consumer acts for. Omitted, the consumer acts as
+      the application itself.
+    properties:
+      acts_for_users:
+        description: ActsForUsers turns on per-user behaviour on an MCP consumer.
+        type: boolean
+      end_user_header:
+        description: EndUserHeader lets an LLM consumer forward an end-user id for
+          attribution.
+        type: boolean
+      source:
+        description: |-
+          Source is how end users are known: platform (they sign in) or app (the
+          application names them through the X-NeuralTrust-End-User header).
+          Defaults to platform.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest:
     properties:
@@ -532,6 +569,12 @@ definitions:
     properties:
       active:
         type: boolean
+      auth_binding:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest'
+        description: |-
+          AuthBinding replaces the whole binding. Omit to keep it; send empty lists
+          to clear it.
       fail_mode:
         type: string
       fallback:
@@ -540,6 +583,11 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      identity:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.IdentityRequest'
+        description: Identity replaces who the consumer acts for. Omit to keep it
+          as it is.
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest'
       model_policies:
@@ -556,8 +604,6 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
         type: array
-      routing_mode:
-        type: string
       toolkit:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest'
@@ -565,10 +611,26 @@ definitions:
       type:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse:
+    description: |-
+      AuthBindingResponse narrows which callers of a shared auth may enter the
+      consumer; empty lists accept every caller the auth verifies.
+    properties:
+      allowed_certificate_subjects:
+        items:
+          type: string
+        type: array
+      allowed_client_ids:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse:
     properties:
       active:
         type: boolean
+      auth_binding:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse'
       auth_ids:
         items:
           type: string
@@ -587,6 +649,8 @@ definitions:
         type: object
       id:
         type: string
+      identity:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse'
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse'
       model_policies:
@@ -603,12 +667,6 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.RegistryWeightResponse'
         type: array
-      role_ids:
-        items:
-          type: string
-        type: array
-      routing_mode:
-        type: string
       slug:
         type: string
       toolkit:
@@ -666,6 +724,16 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse:
+    description: IdentityResponse says who the consumer acts for.
+    properties:
+      acts_for_users:
+        type: boolean
+      end_user_header:
+        type: boolean
+      source:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse:
     properties:
@@ -870,6 +938,55 @@ definitions:
       error:
         type: string
       message:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse:
+    description: EndUserConnectionResponse is one upstream connection state of an
+      end user.
+    properties:
+      account_ref:
+        type: string
+      code:
+        type: string
+      expires_at:
+        type: string
+      provider:
+        type: string
+      registry:
+        type: string
+      status:
+        description: connected | needs_reconnect | not_connected
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse:
+    description: EndUserConnectionsResponse lists an end user's connection states.
+    properties:
+      connections:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse'
+        type: array
+      end_user:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest:
+    description: EndUserLinkRequest names the end user (and optionally the server)
+      to link.
+    properties:
+      end_user:
+        type: string
+      provider:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse:
+    description: EndUserLinkResponse is the link the application shows its user.
+    properties:
+      connect_url:
+        type: string
+      expires_at:
+        type: string
+      provider:
+        type: string
+      ticket:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.CreatePolicyRequest:
@@ -1503,120 +1620,6 @@ definitions:
       status_code:
         type: integer
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest:
-    properties:
-      mcp_policies:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest'
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest'
-        type: array
-      name:
-        type: string
-      oidc_mapping:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest:
-    properties:
-      fail_mode:
-        type: string
-      toolkit:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest'
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest:
-    properties:
-      allowed:
-        items:
-          type: string
-        type: array
-      default:
-        type: string
-      registry_id:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest:
-    properties:
-      expose_as:
-        type: string
-      prompt:
-        type: string
-      registry_id:
-        type: string
-      resource:
-        type: string
-      tool:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest:
-    properties:
-      mcp_policies:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest'
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest'
-        type: array
-      name:
-        type: string
-      oidc_mapping:
-        items:
-          type: integer
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse'
-        type: array
-      page:
-        type: integer
-      size:
-        type: integer
-      total:
-        type: integer
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse:
-    properties:
-      allowed:
-        items:
-          type: string
-        type: array
-      default:
-        type: string
-      registry_id:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse:
-    properties:
-      created_at:
-        type: string
-      gateway_id:
-        type: string
-      id:
-        type: string
-      mcp_policies:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies'
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse'
-        type: array
-      name:
-        type: string
-      oidc_mapping:
-        items:
-          type: integer
-        type: array
-      registry_ids:
-        items:
-          type: string
-        type: array
-      updated_at:
-        type: string
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthField:
     properties:
       default: {}
@@ -2060,15 +2063,6 @@ definitions:
     - StagePostRequest
     - StagePreResponse
     - StagePostResponse
-  github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies:
-    properties:
-      fail_mode:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.FailMode'
-      toolkit:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.ToolkitEntry'
-        type: array
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig:
     properties:
       class:
@@ -2461,9 +2455,9 @@ info:
     name: NeuralTrust
     url: https://neuraltrust.ai/contact
   description: Administrative API for managing gateways and their registries, policies,
-    consumers, roles and auth credentials.
+    consumers and auth credentials.
   title: TrustGate Admin API
-  version: "1.0"
+  version: '1.0'
 paths:
   /__/version:
     get:
@@ -2471,82 +2465,13 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_version.Info'
       summary: Build version
       tags:
       - system
-  /{consumer_slug}/v1/chat/completions:
-    post:
-      consumes:
-      - application/json
-      description: 'Forwards an OpenAI Chat Completions request to the selected provider.
-        Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
-        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline
-        consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or
-        Authorization: Bearer ag_….'
-      parameters:
-      - description: Consumer slug
-        in: path
-        name: consumer_slug
-        required: true
-        type: string
-      - description: API key for inline consumers
-        in: header
-        name: X-AG-API-Key
-        type: string
-      - description: API key for inline consumers (Anthropic-compatible clients)
-        in: header
-        name: x-api-key
-        type: string
-      - description: Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC
-          consumers
-        in: header
-        name: Authorization
-        type: string
-      - description: Gateway slug when using header-based gateway discovery
-        in: header
-        name: X-AG-Gateway-Slug
-        type: string
-      - description: OpenAI Chat Completions request body
-        in: body
-        name: body
-        required: true
-        schema:
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      summary: Proxy chat completion
-      tags:
-      - proxy
   /health:
     get:
       description: Reports whether the process is alive. Canonical path is /healthz;
@@ -2554,7 +2479,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             additionalProperties:
@@ -2570,7 +2495,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             additionalProperties:
@@ -2585,13 +2510,13 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             additionalProperties:
               type: string
             type: object
-        "503":
+        '503':
           description: Service Unavailable
           schema:
             additionalProperties:
@@ -2612,15 +2537,15 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "500":
+        '500':
           description: Internal Server Error
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2648,15 +2573,15 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.ListGatewayResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2685,23 +2610,23 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2755,19 +2680,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2796,23 +2721,23 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2840,21 +2765,21 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2881,19 +2806,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -2928,23 +2853,23 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3003,19 +2928,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ListConsumerResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3044,23 +2969,23 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3088,21 +3013,21 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3129,19 +3054,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3154,8 +3079,7 @@ paths:
       consumes:
       - application/json
       description: Updates an existing consumer. The optional `registries` field replaces
-        the whole registry association set, so switching a role_based consumer to
-        inline routing and attaching its registries happens in a single atomic request.
+        the whole registry association set in the same atomic request.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3178,23 +3102,23 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3229,17 +3153,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3272,17 +3196,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3316,17 +3240,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3360,17 +3284,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3404,17 +3328,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3455,115 +3379,23 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach a registry to a consumer
-      tags:
-      - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}:
-    delete:
-      description: Removes the association between a role and a consumer (idempotent).
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: role_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Detach a role from a consumer
-      tags:
-      - consumers
-    post:
-      description: Associates a role with a role_based consumer (idempotent). Returns
-        409 for inline consumers.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: role_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Attach a role to a consumer
       tags:
       - consumers
   /v1/gateways/{gateway_id}/policies:
@@ -3623,19 +3455,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.ListPolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3664,23 +3496,23 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3708,21 +3540,21 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3749,19 +3581,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3796,23 +3628,23 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3843,23 +3675,23 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3888,19 +3720,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3927,19 +3759,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -3988,20 +3820,20 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: 'Mutually exclusive variants: flat (items/page/size/total)
             or grouped (view/groups/total_groups/total_instances)'
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4030,29 +3862,118 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
+        '201':
           description: Created
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a backend
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/test-connection:
+    post:
+      consumes:
+      - application/json
+      description: Validates connectivity and credentials against the provider's API
+        with a lightweight, auth-only request. Test either a stored registry (registry_id)
+        or an inline candidate configuration (provider + auth). Always returns 200;
+        inspect "ok" and "stage" for the outcome.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Connection to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '404':
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '422':
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Test a backend connection
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/validate-openapi:
+    post:
+      consumes:
+      - application/json
+      description: Fetches and compiles an OpenAPI 3 document into an MCP tool preview
+        without creating a registry. Always returns 200 for validation outcomes; inspect
+        ok and stage.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: OpenAPI source
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIRequest'
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Validate an OpenAPI document
       tags:
       - registries
   /v1/gateways/{gateway_id}/registries/{id}:
@@ -4074,21 +3995,21 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4115,19 +4036,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4162,23 +4083,23 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4209,23 +4130,23 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/pkg_api_handler_http_registry.ListRegistryToolsResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "502":
+        '502':
           description: Bad Gateway
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4234,427 +4155,10 @@ paths:
       summary: List an MCP backend's tools
       tags:
       - registries
-  /v1/gateways/{gateway_id}/registries/test-connection:
-    post:
-      consumes:
-      - application/json
-      description: Validates connectivity and credentials against the provider's API
-        with a lightweight, auth-only request. Test either a stored registry (registry_id)
-        or an inline candidate configuration (provider + auth). Always returns 200;
-        inspect "ok" and "stage" for the outcome.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Connection to test
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Test a backend connection
-      tags:
-      - registries
-  /v1/gateways/{gateway_id}/registries/validate-openapi:
-    post:
-      consumes:
-      - application/json
-      description: Fetches and compiles an OpenAPI 3 document into an MCP tool preview
-        without creating a registry. Always returns 200 for validation outcomes; inspect
-        ok and stage.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: OpenAPI source
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Validate an OpenAPI document
-      tags:
-      - registries
-  /v1/gateways/{gateway_id}/roles:
-    get:
-      description: Returns a paginated list of roles in a gateway.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: 'Substring match on name (alias: name)'
-        in: query
-        name: search
-        type: string
-      - description: Alias of search
-        in: query
-        name: name
-        type: string
-      - description: Sort field (name, created_at, updated_at)
-        in: query
-        name: sort
-        type: string
-      - description: Sort order (asc, desc)
-        in: query
-        name: order
-        type: string
-      - description: Page number (1-based)
-        in: query
-        name: page
-        type: integer
-      - description: Page size
-        in: query
-        name: size
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: List roles
-      tags:
-      - roles
-    post:
-      consumes:
-      - application/json
-      description: Creates a new role in a gateway. model_policies cannot be set on
-        create; bind registries first, then update the role.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role to create
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Create a role
-      tags:
-      - roles
-  /v1/gateways/{gateway_id}/roles/{id}:
-    delete:
-      description: Deletes a role from a gateway.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Delete a role
-      tags:
-      - roles
-    get:
-      description: Returns a role by id within a gateway.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Get a role
-      tags:
-      - roles
-    put:
-      consumes:
-      - application/json
-      description: Updates a role. model_policies may only reference registries already
-        attached to the role.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Role fields to update
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Update a role
-      tags:
-      - roles
-  /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}:
-    delete:
-      description: Removes the association between a registry and a role (idempotent).
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: role_id
-        required: true
-        type: string
-      - description: Registry id
-        format: uuid
-        in: path
-        name: registry_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Detach a registry from a role
-      tags:
-      - roles
-    post:
-      description: Associates a registry with a role (idempotent).
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Role id
-        format: uuid
-        in: path
-        name: role_id
-        required: true
-        type: string
-      - description: Registry id
-        format: uuid
-        in: path
-        name: registry_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Attach a registry to a role
-      tags:
-      - roles
   /v1/gateways/{id}:
     delete:
       description: Deletes a gateway and cascades the deletion to every resource that
-        belongs to it (consumers, roles, policies, auths, registries and vault credentials).
+        belongs to it (consumers, policies, auths, registries and vault credentials).
       parameters:
       - description: Gateway id
         format: uuid
@@ -4665,17 +4169,17 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        '204':
           description: No Content
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4696,19 +4200,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4739,27 +4243,27 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
+        '409':
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4775,11 +4279,11 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/pkg_api_handler_http_catalog.ListMCPServersResponse'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4814,7 +4318,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             additionalProperties:
@@ -4822,7 +4326,7 @@ paths:
                 $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse'
               type: array
             type: object
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4845,19 +4349,19 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
+        '404':
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "500":
+        '500':
           description: Internal Server Error
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4874,11 +4378,11 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog'
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4893,7 +4397,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             additionalProperties:
@@ -4901,7 +4405,7 @@ paths:
                 $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ProviderResponse'
               type: array
             type: object
-        "401":
+        '401':
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
@@ -4937,16 +4441,16 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/pkg_api_handler_http_tenant.RestampEntitlementsResponse'
-        "400":
+        '400':
           description: Bad Request
           schema:
             additionalProperties: true
             type: object
-        "422":
+        '422':
           description: Unprocessable Entity
           schema:
             additionalProperties: true
@@ -4956,9 +4460,163 @@ paths:
       summary: Re-stamp plan entitlements across a tenant
       tags:
       - tenants
+  /{consumer_slug}/v1/chat/completions:
+    post:
+      consumes:
+      - application/json
+      description: 'Forwards an OpenAI Chat Completions request to the selected provider.
+        Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
+        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline
+        consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or
+        Authorization: Bearer ag_….'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: API key for inline consumers (Anthropic-compatible clients)
+        in: header
+        name: x-api-key
+        type: string
+      - description: Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC
+          consumers
+        in: header
+        name: Authorization
+        type: string
+      - description: Gateway slug when using header-based gateway discovery
+        in: header
+        name: X-AG-Gateway-Slug
+        type: string
+      - description: OpenAI Chat Completions request body
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '403':
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '404':
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '502':
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Proxy chat completion
+      tags:
+      - proxy
+  /{slug}/connections:
+    get:
+      description: For an MCP consumer whose application identifies its end users
+        (identity.source = app). Reports, per connectable server, whether the named
+        end user is connected, needs to reconnect, or has not connected. Authenticated
+        with the consumer's API key.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: End-user id the application uses
+        in: query
+        name: end_user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '409':
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Read an application's end-user connection states
+      tags:
+      - connections
+  /{slug}/connections/links:
+    post:
+      consumes:
+      - application/json
+      description: For an MCP consumer whose application identifies its end users
+        (identity.source = app). Returns the URL the application shows that user to
+        connect their own account on one of the consumer's servers (or on any of them
+        when provider is omitted). Authenticated with the consumer's API key.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: End user to link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest'
+      produces:
+      - application/json
+      responses:
+        '201':
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '409':
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '429':
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Mint a connect link for an application's end user
+      tags:
+      - connections
 securityDefinitions:
   BearerAuth:
     in: header
     name: Authorization
     type: apiKey
-swagger: "2.0"
+swagger: '2.0'

@@ -38,7 +38,6 @@ type AuthContext struct {
 	Subject     string
 	Claims      map[string]any
 	Scopes      []string
-	RoleIDs     []ids.RoleID
 }
 
 type authContextKey struct{}

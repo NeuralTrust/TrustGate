@@ -21,12 +21,18 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 var ErrAPIKeyConnectUnauthorized = errors.New("oauth api-key connect: unauthorized")
+
+// ErrAPIKeyConnectEndUsers: the consumer's application identifies its own end
+// users, so upstream accounts are linked per end user through the connections
+// API, never to the shared API-key principal this page would use.
+var ErrAPIKeyConnectEndUsers = fmt.Errorf("oauth api-key connect: this application identifies its own users; link accounts per user through the connections API: %w", commonerrors.ErrConflict)
 
 //go:generate mockery --name=APIKeyConnectService --dir=. --output=./mocks --filename=oauth_api_key_connect_service_mock.go --case=underscore --with-expecter
 type APIKeyConnectService interface {
@@ -139,6 +145,9 @@ func (s *apiKeyConnectService) findTarget(
 	target, ok := data.MatchSlug(slug)
 	if !ok || !validMCPConsumer(target, gatewayID) {
 		return nil, nil, ErrAPIKeyConnectUnauthorized
+	}
+	if target.Consumer.Identity.AppUsers() {
+		return nil, nil, ErrAPIKeyConnectEndUsers
 	}
 	return data, target, nil
 }

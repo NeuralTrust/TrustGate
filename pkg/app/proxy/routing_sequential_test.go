@@ -22,14 +22,12 @@ import (
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
-	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -454,52 +452,4 @@ func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *te
 		assert.Equal(t, []string{"openai"}, *invoked,
 			"a pool alias selects configured members, not by provider catalog")
 	})
-}
-
-func TestForward_SequentialChain_RoleBasedConsumerSkipsRegistriesThatCannotServe(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	vertex := backendFor(gatewayID, "vertex")
-	role := &roledomain.Role{
-		ID:          ids.New[ids.RoleKind](),
-		GatewayID:   gatewayID,
-		Name:        "analyst",
-		RegistryIDs: []ids.RegistryID{openai.ID, vertex.ID},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-		},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{
-		openai.ID: openai,
-		vertex.ID: vertex,
-	})
-
-	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
-		"openai:gemini-3-flash-preview": appcatalog.VerdictAbsent,
-		"vertex:gemini-3-flash-preview": appcatalog.VerdictListed,
-	}}
-
-	invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
-		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
-	})
-	fwd := newSequentialForwarder(t, invoker, listing)
-
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Data:      data,
-		RoleIDs:   []ids.RoleID{role.ID},
-		Request:   &infracontext.RequestContext{Body: chatBody("gemini-3-flash-preview")},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, 200, res.StatusCode)
-	assert.Equal(t, []string{"vertex"}, *invoked,
-		"a role-based consumer must not be handed a registry whose provider cannot serve the model")
 }

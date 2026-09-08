@@ -1,6 +1,6 @@
 # Consumers & identity — target model
 
-Status: design (pre-implementation) · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
+Status: gateway and app implemented (see §10) · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
 
 Companion to `plan-b-mcp-store-and-identity.md`, which built the Store. This memo
 answers the question that memo left open: now that people are served by the
@@ -385,3 +385,94 @@ App: `features/identity` role components/actions/hooks, `routingMode`/`roleIds` 
   value for both the Store and their own consumers.
 - **App-supplied users and Access.** Left out on purpose; revisit if a customer
   wants to map its `user_id`s to platform users.
+
+## 10. Implementation status (gateway)
+
+Shipped on `claude/composio-mcp-gateway-auth-tyd2z1`, in this order:
+
+1. **Roles removed** (§8). `routing_mode`, `role_ids`, the roles admin API, the
+   role scoper, the roles snapshot slice and the `roles` / `role_registry` /
+   `consumer_role` tables are gone (migration `20260909120000`). Every consumer
+   routes inline. Bearer tokens resolve through OIDC only when the consumer
+   carries OIDC auths and no OAuth2 auth.
+2. **Consumer identity** (§4.1, §4.2). `identity: {acts_for_users, source,
+   end_user_header}` on the consumer (migration `20260909130000`). The Store
+   scoper scopes any `acts_for_users` + `source = platform` consumer over its own
+   registries with the live Access mode (All / Selected / None); a
+   hand-configured server without a catalog code stays exposed under Selected
+   since grants key on the code. `ValidateAuth` enforces the credential shape
+   per identity (platform users → oauth2 or the built-in IdP; app users → api_key
+   or mtls). The Store consumer is `acts_for_users = true, source = platform`.
+3. **Auth binding** (§4.4 item 6, generalised). `auth_binding:
+   {allowed_client_ids, allowed_certificate_subjects}` on the consumer
+   (migration `20260909140000`), enforced after consumer resolution on the proxy
+   plane (oauth2 / oidc: `azp` else `client_id`) and the MCP plane (JWT,
+   introspection, mTLS common name or SAN). This is the per-consumer half of
+   "trust anchors live in gateway Settings, keys stay per consumer": the anchor
+   verifies, the binding says which application may enter.
+4. **App-identified end users** (§4.5) and **LLM attribution** (§4.3). On an
+   MCP consumer with `source = app`, `X-NeuralTrust-End-User` is required; the
+   request runs as `app:<consumer_id>:<end_user>`, so the vault, the connect
+   flow and the surface watcher are per end user without touching Access. The
+   connections API lives on the MCP plane next to the consumer, authenticated
+   with its API key: `POST /{slug}/connections/links {end_user, provider?}` →
+   `{connect_url, ticket, expires_at}` and `GET /{slug}/connections?end_user=`
+   → per-server `connected | needs_reconnect | not_connected`. An LLM consumer
+   with `end_user_header` records the header as `end_user` in traces and
+   telemetry (`trustgate.end_user`).
+
+Not done on the gateway: merging the `oauth2` / `oidc` storage types behind the
+two UI flavours (§4.4), and moving the trust-anchor forms to gateway Settings —
+that is presentation; the gateway already keeps auths at gateway level and
+binds them per consumer. Resolved open questions: the attribution header is
+`X-NeuralTrust-End-User`; app-supplied users stay outside Access.
+
+### App (NeuralTrust/app, branch `claude/access-page`)
+
+- **Consumers.** Routing mode and roles are gone from types, mappers, actions,
+  the create panel and the Routing tab. General gains the *Identity* section:
+  MCP → *Acts on behalf of end users* with the source choice *Users sign in* /
+  *My app identifies its users* (the latter shows `X-NeuralTrust-End-User` and a
+  curl snippet of the connections endpoints for that consumer); LLM → *Accept
+  end-user attribution header*. The Auth tab is *API key | OAuth*: an API-keys
+  list with *Issue key*, masked keys, created date, *Rotate* and *Revoke*; under
+  OAuth the trusted-IdP picker plus *Allowed client IDs* (or *Allowed
+  certificate subjects* for mTLS) bound to `auth_binding`. The gateway's
+  identity ↔ credential rule is mirrored in the UI (the disallowed method is
+  disabled with a hint).
+- **Identity → Settings.** The Roles UI is deleted. Gateway trust anchors live
+  in Settings → Agent Gateway → *Machine identity*: only `oauth2` / `oidc` /
+  `mtls` auths are listed (API keys are per consumer), and the create form
+  offers *External IdP (JWT)* (Issuer, Audience; Advanced: JWKS, algorithms,
+  subject claim, scopes), *External IdP (users)* (plus client, endpoints,
+  session, userinfo) and *mTLS*. The old `/gateway/identity` route redirects to
+  that tab.
+- Not done: the Access *Applications* tab listing acts-for-users consumers, and a
+  per-user note on the Connect tab for acts-for-users consumers.
+
+## 11. MCP flow matrix (audit)
+
+Every MCP consumer is one row of identity × credential. What the gateway does at
+each step, and where it is enforced:
+
+| Identity | Credential | Who is the principal | Upstream connections | Access rules | Enforced |
+|---|---|---|---|---|---|
+| Acts as the application | API key | the key (`sub` = auth name) | one shared account per key; linked on the API-key connect page `/{slug}/connect` or via the consent error | no | `resolveMCPConsumer`, `apiKeyConnectService` |
+| Acts as the application | Trusted IdP (JWT) or mTLS | the token's `azp`/`sub` or the certificate CN | shared per principal, same page | no | `consumerAdmitsPrincipal` applies the auth binding |
+| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | yes: mode All / Selected / None over the consumer's registries | `scoper.scopeConsumerRegistries`, `emptySurfaceInsteadOfError` |
+| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | yes | same; `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
+| My app identifies its users (app) | API key or mTLS + `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | header required (400), user login refused (403), API-key connect page refused (409), oauth2 auths refused at attach |
+
+Invariants checked in this audit:
+
+- The credential shape follows the identity at attach time and on every
+  identity change (`ValidateAuth` / `ValidateAuthConfig`, 409), and the UI only
+  offers what the gateway accepts.
+- A per-user surface is never computed without a principal: the scoper and the
+  surface watcher skip when the subject is empty.
+- The end-user swap only happens after the caller proved it is the application
+  (API key or certificate); a platform session cannot impersonate an end user.
+- Per-user credentials are keyed by the principal subject everywhere (vault,
+  consent tickets, connect page, statuses, stream fingerprint), so the three
+  subjects (`auth name`, platform `sub`, `app:…`) never share an account.
+- The Store is the platform-users row with the catalog as its server set.

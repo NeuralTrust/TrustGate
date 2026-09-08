@@ -37,7 +37,6 @@ type InvalidateGatewayDataEventSubscriber struct {
 	loadBalancerCache *cache.TTLMap
 	authCache         *cache.TTLMap
 	consumerPathCache *cache.TTLMap
-	roleCache         *cache.TTLMap
 	registryCache     *cache.TTLMap
 	policyCache       *cache.TTLMap
 }
@@ -54,7 +53,6 @@ func NewInvalidateGatewayDataEventSubscriber(
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 		authCache:         c.GetTTLMap(cache.AuthTTLName),
 		consumerPathCache: c.GetTTLMap(cache.ConsumerPathTTLName),
-		roleCache:         c.GetTTLMap(cache.RoleTTLName),
 		registryCache:     c.GetTTLMap(cache.RegistryTTLName),
 		policyCache:       c.GetTTLMap(cache.PolicyTTLName),
 	}
@@ -80,9 +78,6 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(_ context.Context, evt ev
 	}
 	if s.consumerPathCache != nil {
 		s.consumerPathCache.Clear()
-	}
-	if s.roleCache != nil {
-		s.roleCache.Clear()
 	}
 	if s.registryCache != nil {
 		s.registryCache.Clear()

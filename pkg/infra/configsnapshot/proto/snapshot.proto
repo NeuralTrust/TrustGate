@@ -27,7 +27,9 @@ message Snapshot {
   repeated Registry registries = 4;
   repeated Policy policies = 5;
   repeated Auth auths = 6;
-  repeated Role roles = 7;
+  // Field 7 carried role_based routing roles; the concept was removed.
+  reserved 7;
+  reserved "roles";
   repeated Provider providers = 8;
   repeated CatalogModel catalog_models = 9;
   repeated StoreGrant store_grants = 10;
@@ -65,10 +67,6 @@ message Policy {
 message Auth {
   bytes json = 1;
   string key_hash = 2;
-}
-
-message Role {
-  bytes json = 1;
 }
 
 message Provider {

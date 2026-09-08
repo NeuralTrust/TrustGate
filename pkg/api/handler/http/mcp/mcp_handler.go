@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -85,20 +86,18 @@ const (
 )
 
 type Handler struct {
-	gateway    *RPCGateway
-	roleScoper appmcp.RoleScoper
-	surface    appmcp.SurfaceWatcher
-	timings    streamTimings
+	gateway *RPCGateway
+	surface appmcp.SurfaceWatcher
+	timings streamTimings
 }
 
 type HandlerOption func(*Handler)
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
+func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{
-		gateway:    gateway,
-		roleScoper: roleScoper,
-		surface:    surface,
-		timings:    defaultStreamTimings,
+		gateway: gateway,
+		surface: surface,
+		timings: defaultStreamTimings,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -133,11 +132,6 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
-	if err != nil {
-		skipMetrics(c)
-		return err
-	}
-	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
 		skipMetrics(c)
 		return err
@@ -451,24 +445,6 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 	return id
 }
 
-func (h *Handler) scopeByRoles(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
-	if rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
-		return rc, nil
-	}
-	data, ok := appconsumer.DataFromContext(c.UserContext())
-	if !ok || data == nil {
-		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
-	}
-	scoped, err := h.roleScoper.Scope(c.UserContext(), rc, data)
-	if err != nil {
-		if errors.Is(err, appmcp.ErrNoRoleAccess) {
-			return nil, fiber.NewError(fiber.StatusForbidden, err.Error())
-		}
-		return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	return scoped, nil
-}
-
 func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	authID, ok := appconsumer.AuthIDFromContext(c.UserContext())
 	if !ok {
@@ -505,7 +481,92 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
+	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
+		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
+	}
+	if rc.Consumer.Identity.AppUsers() {
+		if !machineCredential(identity.PrincipalFromContext(c.UserContext())) {
+			return nil, fiber.NewError(fiber.StatusForbidden,
+				"this application identifies its own users; call it with its API key or client certificate, not a user login")
+		}
+		endUser := c.Get(consumerdomain.EndUserHeader)
+		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
+			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext()), endUser))
+		c.SetUserContext(ctx)
+		if rt := trace.FromContext(ctx); rt != nil {
+			rt.SetEndUser(strings.TrimSpace(endUser))
+		}
+	}
 	return rc, nil
+}
+
+// machineCredential reports whether the caller authenticated as the application
+// itself (API key or client certificate). A consumer whose application names
+// its own end users must be called that way: a platform login reaching it
+// through the built-in identity provider would be discarded by the end-user
+// swap, so it is refused instead.
+func machineCredential(p *identity.Principal) bool {
+	return p != nil && (p.Method == identity.MethodAPIKey || p.Method == identity.MethodMTLS)
+}
+
+// endUserPrincipal is the principal a request runs as when the application
+// names its end user: the consumer-namespaced subject that keys the user's
+// upstream connections, with the application's own credential kept in the
+// claims for audit. Access rules never see it; the application is the boundary.
+func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, endUser string) *identity.Principal {
+	endUser = strings.TrimSpace(endUser)
+	p := &identity.Principal{
+		Subject: consumerdomain.EndUserSubject(cons.ID, endUser),
+		Method:  identity.MethodAPIKey,
+		Claims: map[string]any{
+			"end_user":    endUser,
+			"consumer_id": cons.ID.String(),
+		},
+	}
+	if app != nil {
+		if app.Method != "" {
+			p.Method = app.Method
+		}
+		if app.Subject != "" {
+			p.Claims["app_subject"] = app.Subject
+		}
+	}
+	return p
+}
+
+// consumerAdmitsPrincipal applies the consumer's auth binding to the verified
+// caller: a bearer token from a shared IdP must have been issued to an allowed
+// client, and a client certificate must carry an allowed subject. API keys are
+// bound to one consumer already, and a missing principal has nothing to bind.
+func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.Principal) bool {
+	if cons == nil {
+		return false
+	}
+	if principal == nil {
+		return true
+	}
+	switch principal.Method {
+	case identity.MethodJWT, identity.MethodIntrospection:
+		return cons.AuthBinding.AllowsClient(principal.Claims)
+	case identity.MethodMTLS:
+		commonName, _ := principal.Claims["common_name"].(string)
+		var dnsNames []string
+		switch v := principal.Claims["dns_names"].(type) {
+		case []string:
+			dnsNames = v
+		case []any:
+			for _, item := range v {
+				if name, ok := item.(string); ok {
+					dnsNames = append(dnsNames, name)
+				}
+			}
+		}
+		return cons.AuthBinding.AllowsCertificate(commonName, dnsNames)
+	default:
+		return true
+	}
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

@@ -21,17 +21,67 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
-func ValidateAuthType(consType Type, mode RoutingMode, authType authdomain.Type) error {
+// ValidateAuthType rejects auth types a consumer of the given type cannot use.
+// Every other combination is allowed: an API key, a bearer JWT validated against
+// an external IdP (oauth2 / oidc) or a client certificate all identify the
+// application; who the application acts for is the consumer's Identity, not
+// its auth (see Identity).
+func ValidateAuthType(consType Type, authType authdomain.Type) error {
 	if consType == TypeMCP && authType == authdomain.TypeOIDC {
 		return fmt.Errorf(
 			"%w: an MCP consumer cannot use an oidc auth; interactive MCP clients need the gateway to broker the login, which requires an oauth2 auth with a pre-registered client",
 			commonerrors.ErrConflict,
 		)
 	}
-	if mode == RoutingModeRoleBased && !authType.IsIdentityProvider() {
+	return nil
+}
+
+// ValidateAuth rejects an auth type the consumer cannot use given its type and
+// identity. A consumer acting for platform users is entered by people who sign
+// in, so only an oauth2 auth (or none, which leaves the built-in identity
+// provider) fits; a consumer whose application names its own end users
+// authenticates as a machine, so only an API key or a client certificate fits.
+func ValidateAuth(c *Consumer, authType authdomain.Type) error {
+	if c == nil {
+		return nil
+	}
+	if err := ValidateAuthType(c.Type, authType); err != nil {
+		return err
+	}
+	switch {
+	case c.Identity.PlatformUsers():
+		if authType != authdomain.TypeOAuth2 {
+			return fmt.Errorf(
+				"%w: a consumer that acts for platform users needs its users to sign in, so it can only use an oauth2 auth (or none, for the built-in identity provider), not %s",
+				commonerrors.ErrConflict, authType,
+			)
+		}
+	case c.Identity.AppUsers():
+		if authType != authdomain.TypeAPIKey && authType != authdomain.TypeMTLS {
+			return fmt.Errorf(
+				"%w: a consumer whose application identifies its end users authenticates as a machine, so it can only use an api_key or mtls auth, not %s",
+				commonerrors.ErrConflict, authType,
+			)
+		}
+	}
+	return nil
+}
+
+// ValidateAuthConfig is ValidateAuth plus the checks that need the auth's
+// configuration: a consumer whose users sign in can only use an identity
+// provider that can broker that login (an oauth2 config with a registered
+// client), not a validation-only one.
+func ValidateAuthConfig(c *Consumer, au *authdomain.Auth) error {
+	if c == nil || au == nil {
+		return nil
+	}
+	if err := ValidateAuth(c, au.Type); err != nil {
+		return err
+	}
+	if c.Identity.PlatformUsers() && au.Type == authdomain.TypeOAuth2 && !au.Config.OAuth2.Interactive() {
 		return fmt.Errorf(
-			"%w: a role_based consumer requires an identity-provider auth (oauth2 or oidc), got %q",
-			commonerrors.ErrConflict, authType,
+			"%w: users sign in through this consumer's identity provider, so it needs a client registered at the provider (client_id); a token-validation-only provider cannot broker the login",
+			commonerrors.ErrConflict,
 		)
 	}
 	return nil

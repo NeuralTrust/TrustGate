@@ -103,7 +103,7 @@ func TestStreamPushesListChangedOverRealConnection(t *testing.T) {
 	})
 	vault := &streamVault{}
 
-	handler := NewHandler(nil, nil, appmcp.NewSurfaceWatcher(vault, nil))
+	handler := NewHandler(nil, appmcp.NewSurfaceWatcher(vault, nil))
 	handler.timings = streamTimings{
 		poll:      10 * time.Millisecond,
 		keepAlive: 20 * time.Millisecond,

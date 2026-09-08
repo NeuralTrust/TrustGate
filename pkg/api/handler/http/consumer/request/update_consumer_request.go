@@ -23,13 +23,12 @@ import (
 )
 
 type UpdateConsumerRequest struct {
-	Name        *string            `json:"name,omitempty"`
-	Type        *string            `json:"type,omitempty"`
-	RoutingMode *string            `json:"routing_mode,omitempty"`
-	LBConfig    *LBConfigRequest   `json:"lb_config,omitempty"`
-	Headers     *map[string]string `json:"headers,omitempty"`
-	Active      *bool              `json:"active,omitempty"`
-	Fallback    *FallbackRequest   `json:"fallback,omitempty"`
+	Name     *string            `json:"name,omitempty"`
+	Type     *string            `json:"type,omitempty"`
+	LBConfig *LBConfigRequest   `json:"lb_config,omitempty"`
+	Headers  *map[string]string `json:"headers,omitempty"`
+	Active   *bool              `json:"active,omitempty"`
+	Fallback *FallbackRequest   `json:"fallback,omitempty"`
 	// Registries replaces the whole registry association set: registries absent
 	// from the list are detached. Omit the field to leave the associations as
 	// they are; send an empty list to detach every registry.
@@ -37,6 +36,11 @@ type UpdateConsumerRequest struct {
 	ModelPolicies *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      *string                   `json:"fail_mode,omitempty"`
+	// Identity replaces who the consumer acts for. Omit to keep it as it is.
+	Identity *IdentityRequest `json:"identity,omitempty"`
+	// AuthBinding replaces the whole binding. Omit to keep it; send empty lists
+	// to clear it.
+	AuthBinding *AuthBindingRequest `json:"auth_binding,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -68,14 +72,6 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	}
 	t := domain.Type(strings.ToUpper(strings.TrimSpace(*r.Type)))
 	return &t
-}
-
-func (r UpdateConsumerRequest) ToRoutingMode() *domain.RoutingMode {
-	if r.RoutingMode == nil || strings.TrimSpace(*r.RoutingMode) == "" {
-		return nil
-	}
-	mode := domain.NewRoutingMode(*r.RoutingMode)
-	return &mode
 }
 
 func (r UpdateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {

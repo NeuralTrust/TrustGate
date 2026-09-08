@@ -123,6 +123,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideAPIKeyConnectService); err != nil {
 		return err
 	}
+	if err := c.Provide(provideEndUserConnectionsService); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		exchanger sts.Exchanger,
 		vault vaultdomain.Repository,
@@ -157,9 +160,6 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideRPCGateway); err != nil {
 		return err
 	}
-	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
-		return err
-	}
 	return c.Provide(provideMCPHandler)
 }
 
@@ -169,10 +169,9 @@ func MCP(c *container.Container) error {
 type mcpHandlerParams struct {
 	dig.In
 
-	Gateway    *mcphttp.RPCGateway
-	RoleScoper appmcp.RoleScoper
-	Vault      vaultdomain.Repository
-	Installs   installationdomain.Repository `optional:"true"`
+	Gateway  *mcphttp.RPCGateway
+	Vault    vaultdomain.Repository
+	Installs installationdomain.Repository `optional:"true"`
 }
 
 func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
@@ -180,7 +179,7 @@ func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
 	// dispatcher applies to tools/list, so an admin revoking a grant pushes
 	// tools/list_changed to the affected user's clients.
 	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs, appmcp.WithSurfaceScoper(p.Gateway.StoreScoper()))
-	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, surface)
+	return mcphttp.NewHandler(p.Gateway, surface)
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the
@@ -433,4 +432,13 @@ func MCPVaultRedis(c *container.Container) error {
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
+}
+
+func provideEndUserConnectionsService(
+	apiKeys appauth.APIKeyFinder,
+	consumers appconsumer.DataFinder,
+	connect appoauth.ConnectService,
+	limiter appoauth.ConnectAttemptLimiter,
+) appoauth.EndUserConnectionsService {
+	return appoauth.NewEndUserConnectionsService(apiKeys, consumers, connect, limiter)
 }

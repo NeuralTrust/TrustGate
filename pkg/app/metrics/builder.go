@@ -79,6 +79,7 @@ func (b *Builder) Build(
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
+		EndUser:          meta.EndUser,
 		Retention:        retention(meta, startTime),
 	}
 

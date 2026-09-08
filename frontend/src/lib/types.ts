@@ -216,7 +216,6 @@ export interface TestConnectionResult {
 }
 
 export type ConsumerType = "LLM" | "MCP" | "A2A";
-export type RoutingMode = "inline" | "role_based";
 export type Algorithm =
   | "round-robin"
   | "random"
@@ -303,13 +302,11 @@ export interface Consumer {
   name: string;
   type: ConsumerType;
   slug: string;
-  routing_mode: RoutingMode;
   lb_config?: LBConfig | null;
   headers?: Record<string, string>;
   active: boolean;
   registry_ids: string[];
   registry_weights?: RegistryWeight[];
-  role_ids: string[];
   auth_ids: string[];
   fallback?: Fallback | null;
   model_policies?: ModelPolicy[];
@@ -360,11 +357,6 @@ export interface AuthConfig {
   mtls?: MtlsConfig;
 }
 
-// Auth types that can drive role-based (identity-provider) consumer routing.
-export function isIdentityProviderAuth(type: AuthType): boolean {
-  return type === "oauth2" || type === "oidc";
-}
-
 export interface Auth {
   id: string;
   gateway_id: string;
@@ -377,51 +369,6 @@ export interface Auth {
   // returned once, at creation.
   key_prefix?: string;
   key_suffix?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export type OidcMatch = "any" | "all";
-export type OidcClaimOp = "equals" | "contains_any" | "contains_all";
-
-export interface OidcClaim {
-  path: string;
-  op: OidcClaimOp;
-  values: string[];
-}
-
-export interface OidcMapping {
-  match: OidcMatch;
-  claims: OidcClaim[];
-}
-
-export interface RoleModelPolicy {
-  registry_id: string;
-  allowed?: string[];
-  default?: string;
-}
-
-export interface RoleToolkitEntry {
-  registry_id: string;
-  tool?: string;
-  prompt?: string;
-  resource?: string;
-  expose_as?: string;
-}
-
-export interface RoleMcpPolicies {
-  toolkit?: RoleToolkitEntry[];
-  fail_mode?: string;
-}
-
-export interface Role {
-  id: string;
-  gateway_id: string;
-  name: string;
-  model_policies?: RoleModelPolicy[];
-  mcp_policies?: RoleMcpPolicies | null;
-  oidc_mapping?: OidcMapping | null;
-  registry_ids: string[];
   created_at: string;
   updated_at: string;
 }
