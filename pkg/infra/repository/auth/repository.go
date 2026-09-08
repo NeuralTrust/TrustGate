@@ -234,10 +234,10 @@ func (r *Repository) ListEnabledByGatewayAndType(
 		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
-		   AND type = $2
+		   AND type = ANY($2::text[])
 		   AND enabled = TRUE
 		 ORDER BY created_at DESC, id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, string(authType))
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, storedTypeNames(authType))
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: list enabled by gateway and type: %w", err)
 	}
@@ -266,11 +266,11 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
-	typeParam := string(filter.Type)
+	typeParam := storedTypeNames(filter.Type)
 
 	var total int
 	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled).Scan(&total); err != nil {
@@ -282,7 +282,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
 		 LIMIT $5 OFFSET $6`
@@ -326,7 +326,7 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 	); err != nil {
 		return nil, err
 	}
-	a.Type = domain.Type(authType)
+	a.Type = domain.NormalizeType(domain.Type(authType))
 	if keyHash != nil {
 		a.KeyHash = *keyHash
 	}
@@ -399,4 +399,19 @@ func mapPgDeleteError(err error) error {
 		}
 	}
 	return err
+}
+
+// storedTypeNames expands a canonical type into every value a persisted row may
+// carry for it, so a filter written against the canonical type still matches
+// rows stored under a deprecated alias before the migration runs.
+func storedTypeNames(t domain.Type) []string {
+	if t == "" {
+		return []string{}
+	}
+	stored := domain.StoredTypes(t)
+	names := make([]string, 0, len(stored))
+	for _, s := range stored {
+		names = append(names, string(s))
+	}
+	return names
 }

@@ -67,6 +67,12 @@ func oauth2Auth(t *testing.T, cfg authdomain.OAuth2Config) *authdomain.Auth {
 	if c.JWKSURL == "" {
 		c.JWKSURL = c.Issuer + "/jwks"
 	}
+	// These fixtures stand for a provider the gateway can broker a login
+	// against, which is what advertisement is gated on. A case that needs a
+	// validation-only provider sets ClientID empty explicitly.
+	if c.ClientID == "" {
+		c.ClientID = "gateway-client"
+	}
 	return &authdomain.Auth{Config: authdomain.Config{OAuth2: &c}}
 }
 
@@ -298,10 +304,41 @@ func TestRegisterClientRejectsUnsafeRedirects(t *testing.T) {
 
 func TestRegisterClientUnavailable(t *testing.T) {
 	t.Parallel()
-	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"}),
-	}}, nil, nil, newMemFlowStore())
+	// Registration is unavailable precisely because nothing here can broker a
+	// login: the only provider has no registered client of its own.
+	validateOnly := oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"})
+	validateOnly.Config.OAuth2.ClientID = ""
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}}, nil, nil, newMemFlowStore())
 	if _, err := svc.RegisterClient(context.Background(), RegisterRequest{}); !errors.Is(err, ErrRegistrationUnavailable) {
 		t.Fatalf("expected ErrRegistrationUnavailable, got %v", err)
+	}
+}
+
+// A provider with no registered client can verify tokens a client brought
+// itself, but the gateway cannot run an authorization-code flow against it.
+// Advertising it as an authorization server would send clients into an
+// /authorize that always fails, so it is left out of the metadata while
+// staying attached and usable.
+func TestProtectedResourceMetadataOmitsValidationOnlyProvider(t *testing.T) {
+	t.Parallel()
+	validateOnly := oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
+	validateOnly.Config.OAuth2.ClientID = ""
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}}
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/dev")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 0 {
+		t.Fatalf("a validation-only provider must not be advertised, got %v", meta.AuthorizationServers)
+	}
+	// Its scopes still describe what the resource requires.
+	if len(meta.ScopesSupported) == 0 {
+		t.Fatal("expected the provider's required scopes to remain advertised")
+	}
+
+	if _, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com"); !errors.Is(err, ErrNoAuthorizationServer) {
+		t.Fatalf("err = %v, want ErrNoAuthorizationServer", err)
 	}
 }

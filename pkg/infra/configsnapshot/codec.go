@@ -150,7 +150,13 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	if data.Policies, err = decodeJSON[*snapshotpb.Policy, policydomain.Policy](msg.GetPolicies(), "policy", func(m *snapshotpb.Policy) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
 	}
-	if data.Auths, err = decodeJSON[*snapshotpb.Auth, authdomain.Auth](msg.GetAuths(), "auth", func(m *snapshotpb.Auth) []byte { return m.GetJson() }, func(m *snapshotpb.Auth, a *authdomain.Auth) { a.KeyHash = m.GetKeyHash() }); err != nil {
+	if data.Auths, err = decodeJSON[*snapshotpb.Auth, authdomain.Auth](msg.GetAuths(), "auth", func(m *snapshotpb.Auth) []byte { return m.GetJson() }, func(m *snapshotpb.Auth, a *authdomain.Auth) {
+		// A snapshot published before the types were unified carries the
+		// deprecated type; canonicalizing on read keeps a mixed-version fleet
+		// from resolving the same auth differently per reader.
+		a.Type = authdomain.NormalizeType(a.Type)
+		a.KeyHash = m.GetKeyHash()
+	}); err != nil {
 		return readmodel.Data{}, err
 	}
 	if data.Providers, err = decodeJSON[*snapshotpb.Provider, catalogdomain.Provider](msg.GetProviders(), "provider", func(m *snapshotpb.Provider) []byte { return m.GetJson() }, nil); err != nil {
