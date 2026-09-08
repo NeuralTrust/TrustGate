@@ -295,12 +295,17 @@ func (s *metadataService) fetchJSON(ctx context.Context, url string) (map[string
 	return doc, nil
 }
 
+// issuersOf returns the issuers the gateway can actually broker a login
+// against. A validation-only provider is deliberately skipped: it stays a
+// usable credential for a client that already holds a token, but advertising
+// it as an authorization server sends the client into an /authorize that
+// cannot succeed.
 func issuersOf(auths []*authdomain.Auth) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, a := range auths {
 		cfg := a.Config.OAuth2
-		if cfg == nil || cfg.Issuer == "" {
+		if cfg == nil || cfg.Issuer == "" || !cfg.Interactive() {
 			continue
 		}
 		if _, ok := seen[cfg.Issuer]; ok {

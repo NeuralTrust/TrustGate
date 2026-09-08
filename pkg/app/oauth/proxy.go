@@ -51,7 +51,7 @@ type authProxy struct {
 	// verifier checks the platform token returned by the built-in default
 	// identity provider before any claim in it is trusted. Nil means the
 	// claims are read unverified (logged once).
-	verifier appauth.OIDCVerifier
+	verifier appauth.JWTVerifier
 	// defaultIdPSessionMaxAge is the absolute lifetime of a session brokered
 	// through the built-in default identity provider.
 	defaultIdPSessionMaxAge time.Duration
@@ -76,7 +76,7 @@ type ProxyOption func(*authProxy)
 // WithIdPTokenVerifier verifies the access token the built-in default identity
 // provider returns at callback (signature against its JWKS, issuer, audience,
 // expiry) before the subject, org, groups or store_access claims are trusted.
-func WithIdPTokenVerifier(v appauth.OIDCVerifier) ProxyOption {
+func WithIdPTokenVerifier(v appauth.JWTVerifier) ProxyOption {
 	return func(p *authProxy) { p.verifier = v }
 }
 
@@ -422,11 +422,11 @@ func (p *authProxy) verifiedPlatformClaims(ctx context.Context, auth *authdomain
 	if len(algorithms) == 0 {
 		algorithms = []string{"RS256"}
 	}
-	verified, err := p.verifier.Verify(ctx, raw, authdomain.OIDCConfig{
-		Issuer:            cfg.Issuer,
-		Audiences:         cfg.Audiences,
-		JWKSURL:           cfg.JWKSURL,
-		AllowedAlgorithms: algorithms,
+	verified, err := p.verifier.Verify(ctx, raw, authdomain.OAuth2Config{
+		Issuer:     cfg.Issuer,
+		Audiences:  cfg.Audiences,
+		JWKSURL:    cfg.JWKSURL,
+		Algorithms: algorithms,
 	})
 	if err != nil {
 		slog.Warn("oauth: platform token failed verification", "issuer", cfg.Issuer, "error", err)

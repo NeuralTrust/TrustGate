@@ -25,18 +25,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
-// OAuth2TokenValidator adapts the shared OIDC verifier to the MCP-plane
+// OAuth2TokenValidator adapts the shared JWT verifier to the MCP-plane
 // JWTValidator port: it resolves key material via OIDC discovery when the
 // config has no explicit JWKS URL and yields an identity.Principal carrying
 // the raw token for downstream exchange/passthrough.
 type OAuth2TokenValidator struct {
-	verifier  appauth.OIDCVerifier
+	verifier  appauth.JWTVerifier
 	discovery *discovery
 }
 
 var _ appauth.JWTValidator = (*OAuth2TokenValidator)(nil)
 
-func NewOAuth2TokenValidator(verifier appauth.OIDCVerifier, client *http.Client) *OAuth2TokenValidator {
+func NewOAuth2TokenValidator(verifier appauth.JWTVerifier, client *http.Client) *OAuth2TokenValidator {
 	return &OAuth2TokenValidator{verifier: verifier, discovery: newDiscovery(client)}
 }
 
@@ -45,24 +45,28 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		return nil, fmt.Errorf("%w: no oauth2 config", ErrInvalidToken)
 	}
 	jwksURL := strings.TrimSpace(cfg.JWKSURL)
-	if jwksURL == "" {
+	if jwksURL == "" && !cfg.HasInlineKeys() {
 		discovered, err := v.discovery.jwksURI(ctx, cfg.Issuer)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		jwksURL = discovered
 	}
-	verified, err := v.verifier.Verify(ctx, raw, domain.OIDCConfig{
-		Issuer:            cfg.Issuer,
-		Audiences:         cfg.Audiences,
-		JWKSURL:           jwksURL,
-		AllowedAlgorithms: cfg.Algorithms,
-	})
+	verifyCfg := *cfg
+	verifyCfg.JWKSURL = jwksURL
+	// An explicit subject claim stays with the verifier so a token missing it is
+	// rejected here exactly as it is on the proxy plane: falling back to sub
+	// would hand an operator who pinned identity to a claim the pairwise Entra
+	// subject instead, silently. Scopes are enforced once the principal exists,
+	// so the caller sees a principal-shaped error.
+	verifyCfg.RequiredScopes = nil
+
+	verified, err := v.verifier.Verify(ctx, raw, verifyCfg)
 	if err != nil {
 		return nil, err
 	}
 	principal := &identity.Principal{
-		Subject:  subjectOf(verified),
+		Subject:  subjectFor(verified, cfg.SubjectClaim),
 		Method:   identity.MethodJWT,
 		Issuer:   cfg.Issuer,
 		Claims:   verified.Claims,
@@ -73,6 +77,13 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		return nil, fmt.Errorf("%w: missing required scopes", ErrMissingRequiredScope)
 	}
 	return principal, nil
+}
+
+func subjectFor(verified *appauth.VerifiedClaims, subjectClaim string) string {
+	if strings.TrimSpace(subjectClaim) != "" {
+		return verified.Subject
+	}
+	return subjectOf(verified)
 }
 
 // subjectOf prefers the Entra `oid` claim over `sub`: Entra subjects are
