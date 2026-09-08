@@ -54,10 +54,11 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 	}
 	verifyCfg := *cfg
 	verifyCfg.JWKSURL = jwksURL
-	// The subject claim is applied below, where a missing claim falls back to the
-	// Entra-aware derivation instead of failing, and scopes are enforced once the
-	// principal exists so the caller sees a principal-shaped error.
-	verifyCfg.SubjectClaim = ""
+	// An explicit subject claim stays with the verifier so a token missing it is
+	// rejected here exactly as it is on the proxy plane: falling back to sub
+	// would hand an operator who pinned identity to a claim the pairwise Entra
+	// subject instead, silently. Scopes are enforced once the principal exists,
+	// so the caller sees a principal-shaped error.
 	verifyCfg.RequiredScopes = nil
 
 	verified, err := v.verifier.Verify(ctx, raw, verifyCfg)
