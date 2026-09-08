@@ -49,9 +49,14 @@ func (f *fakeRegistries) List(context.Context, registrydomain.ListFilter) ([]*re
 type fakeGrants struct {
 	items   []*storeaccessdomain.Grant
 	upserts []*storeaccessdomain.Grant
+	// err makes the grant store unreadable, to prove which paths consult it.
+	err error
 }
 
 func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.items, nil
 }
 

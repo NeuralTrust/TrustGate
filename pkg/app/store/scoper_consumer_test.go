@@ -28,9 +28,9 @@ import (
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
-// actsForUsersConsumer is a custom MCP consumer whose users sign in, bound to
-// two catalog-backed servers and one hand-configured server without a code.
-func actsForUsersConsumer(gw ids.GatewayID) (*appconsumer.RoutableConsumer, *registrydomain.Registry, *registrydomain.Registry, *registrydomain.Registry) {
+// customConsumer is a custom MCP consumer bound to two catalog-backed servers
+// and one hand-configured server without a code.
+func customConsumer(gw ids.GatewayID, identity consumerdomain.Identity) (*appconsumer.RoutableConsumer, *registrydomain.Registry) {
 	github := githubRegistry()
 	linear := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), MCPTarget: &registrydomain.MCPTarget{Code: "linear"}}
 	custom := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), Name: "Internal", MCPTarget: &registrydomain.MCPTarget{URL: "https://internal/mcp"}}
@@ -39,11 +39,11 @@ func actsForUsersConsumer(gw ids.GatewayID) (*appconsumer.RoutableConsumer, *reg
 			ID:        ids.New[ids.ConsumerKind](),
 			GatewayID: gw,
 			Type:      consumerdomain.TypeMCP,
-			Identity:  consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
+			Identity:  identity,
 		},
 		Registries: []*registrydomain.Registry{github, linear, custom},
 	}
-	return rc, github, linear, custom
+	return rc, linear
 }
 
 // withModePrincipal is a principal on a gateway whose Store default is the given
@@ -60,81 +60,66 @@ func withModePrincipal(sub, mode string, groups ...string) context.Context {
 	return appgateway.WithGateway(ctx, gw)
 }
 
-func TestScoperLeavesApplicationConsumersUntouched(t *testing.T) {
+// Access governs the Store, not a consumer. A consumer's surface is the set of
+// servers an admin bound to it — the same for every caller it admits — so no
+// access mode and no grant narrows it. Two places deciding one surface would
+// mean an admin could bind a server the consumer's own users cannot see.
+func TestScoperNeverScopesACustomConsumer(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	rc, _, _, _ := actsForUsersConsumer(gw)
-	rc.Consumer.Identity = consumerdomain.Identity{}
-	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, &fakeGrants{})
-	scoped, err := sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeNone), rc)
+	identities := map[string]consumerdomain.Identity{
+		"acts as the application": {},
+		"users sign in":           {ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
+		"the app names its users": {ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
+	}
+	modes := []string{
+		gatewaydomain.StoreModeOpen,
+		gatewaydomain.StoreModeCurated,
+		gatewaydomain.StoreModeNone,
+	}
+
+	for name, identity := range identities {
+		for _, mode := range modes {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				rc, linear := customConsumer(gw, identity)
+				// A grant that names somebody else entirely, and one that names
+				// this person: neither may change the answer.
+				other, err := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"sales"}, nil)
+				if err != nil {
+					t.Fatalf("grant: %v", err)
+				}
+				mine, err := storeaccessdomain.New(gw, "linear", linear.ID, nil, []string{"ana"})
+				if err != nil {
+					t.Fatalf("grant: %v", err)
+				}
+				sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{},
+					&fakeGrants{items: []*storeaccessdomain.Grant{other, mine}})
+
+				scoped, err := sc.Scope(withModePrincipal("ana", mode, "eng"), rc)
+				if err != nil {
+					t.Fatalf("Scope: %v", err)
+				}
+				if scoped != rc {
+					t.Fatalf("the consumer must be returned untouched, got a scoped copy with %d registries",
+						len(scoped.Registries))
+				}
+			})
+		}
+	}
+}
+
+// The grant store is not even read for a consumer: nothing about Access is on
+// that path, so an Access outage cannot affect an application's surface.
+func TestScoperReadsNoGrantsForACustomConsumer(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	rc, _ := customConsumer(gw, consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform})
+	grants := &fakeGrants{err: context.DeadlineExceeded}
+	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, grants)
+
+	scoped, err := sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeCurated), rc)
 	if err != nil {
 		t.Fatalf("Scope: %v", err)
 	}
 	if scoped != rc {
-		t.Fatal("a consumer acting as the application is never scoped per principal")
-	}
-	rc.Consumer.Identity = consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp}
-	if scoped, _ = sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeNone), rc); scoped != rc {
-		t.Fatal("app-identified end users are the application's boundary, not Access's")
-	}
-}
-
-func TestScoperOpenExposesEveryConsumerRegistry(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	rc, _, _, _ := actsForUsersConsumer(gw)
-	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, &fakeGrants{})
-	scoped, err := sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeOpen), rc)
-	if err != nil {
-		t.Fatalf("Scope: %v", err)
-	}
-	if len(scoped.Registries) != 3 {
-		t.Fatalf("under All the consumer's whole server set stands, got %d", len(scoped.Registries))
-	}
-}
-
-func TestScoperNoneEmptiesTheSurface(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	rc, _, _, _ := actsForUsersConsumer(gw)
-	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, &fakeGrants{})
-	scoped, err := sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeNone), rc)
-	if err != nil {
-		t.Fatalf("Scope: %v", err)
-	}
-	if len(scoped.Registries) != 0 {
-		t.Fatalf("under None nothing is exposed, got %d", len(scoped.Registries))
-	}
-	if len(rc.Registries) != 3 {
-		t.Fatal("the shared consumer must not be mutated")
-	}
-}
-
-func TestScoperCuratedKeepsOnlyGrantedRegistries(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	rc, github, linear, custom := actsForUsersConsumer(gw)
-	byCode, err := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
-	if err != nil {
-		t.Fatalf("grant: %v", err)
-	}
-	byInstance, err := storeaccessdomain.New(gw, "linear", linear.ID, nil, []string{"ana"})
-	if err != nil {
-		t.Fatalf("grant: %v", err)
-	}
-	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, &fakeGrants{items: []*storeaccessdomain.Grant{byCode, byInstance}})
-
-	scoped, err := sc.Scope(withModePrincipal("ana", gatewaydomain.StoreModeCurated, "eng"), rc)
-	if err != nil {
-		t.Fatalf("Scope: %v", err)
-	}
-	if len(scoped.Registries) != 3 || scoped.Registries[0] != github || scoped.Registries[1] != linear || scoped.Registries[2] != custom {
-		t.Fatalf("expected github (group grant by code), linear (user grant by instance) and the code-less custom server, got %+v", scoped.Registries)
-	}
-
-	// Another person, outside the group and not named, keeps only the server
-	// Access cannot govern: the hand-configured one without a catalog code.
-	scoped, err = sc.Scope(withModePrincipal("bob", gatewaydomain.StoreModeCurated, "sales"), rc)
-	if err != nil {
-		t.Fatalf("Scope: %v", err)
-	}
-	if len(scoped.Registries) != 1 || scoped.Registries[0] != custom {
-		t.Fatalf("bob has no grant on the catalog-backed servers, got %+v", scoped.Registries)
+		t.Fatal("the consumer must be returned untouched")
 	}
 }
