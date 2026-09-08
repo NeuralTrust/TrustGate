@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -163,6 +164,29 @@ func TestResolveModel(t *testing.T) {
 
 	t.Run("no model returns empty", func(t *testing.T) {
 		assert.Equal(t, "", c.resolveModel([]byte(`{}`), &providers.Config{}))
+	})
+}
+
+func TestRequireModel(t *testing.T) {
+	c := &client{}
+
+	t.Run("concrete model passes", func(t *testing.T) {
+		model, err := c.requireModel([]byte(`{"messages":[]}`), &providers.Config{Model: "anthropic.claude-sonnet-4-20250514-v1:0"})
+		require.NoError(t, err)
+		assert.Equal(t, "anthropic.claude-sonnet-4-20250514-v1:0", model)
+	})
+
+	t.Run("no model is an error", func(t *testing.T) {
+		_, err := c.requireModel([]byte(`{}`), &providers.Config{})
+		require.Error(t, err)
+	})
+
+	t.Run("a pattern never reaches the invoke path", func(t *testing.T) {
+		_, err := c.requireModel([]byte(`{"messages":[]}`), &providers.Config{DefaultModel: "anthropic.claude-*"})
+		require.ErrorIs(t, err, modelmatch.ErrPatternNotModel)
+
+		_, err = c.requireModel([]byte(`{"model":"anthropic.claude-*"}`), &providers.Config{})
+		require.ErrorIs(t, err, modelmatch.ErrPatternNotModel)
 	})
 }
 
