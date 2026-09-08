@@ -488,3 +488,100 @@ Invariants checked in this audit:
   through an SDK, not as raw connections URLs. The gateway keeps serving it, and
   a consumer already set to it stays editable. Spec:
   `trustgate-sdk-spec.md`; flag: `APP_IDENTITY_SOURCE_ENABLED` in the app.
+
+## 12. Upstream MCP authentication for a machine consumer
+
+The open question this section closes: an **MCP consumer that acts as the
+application itself** — called with an API key, a client certificate, or a
+bearer token validated against an IdP — reaches upstream MCP servers that want
+credentials of their own. **How, and where, do we authenticate against those
+upstreams?**
+
+### 12.1 Where: on the server, never on the consumer
+
+The upstream credential belongs to the **registry** (the MCP server entry),
+`mcp_target.auth` (`pkg/domain/registry/mcp_target.go`), and is applied per
+request by `credentialResolver.Apply` (`pkg/app/mcp/credentials.go`). The
+consumer's own credential never travels upstream; it only decides **which
+upstream modes are usable** and **whose identity the upstream sees**.
+
+Six modes exist, and what each needs from the caller is what makes it usable or
+not for a machine consumer:
+
+| Upstream mode | What the upstream receives | What it needs from the caller |
+|---|---|---|
+| `none` | nothing | nothing |
+| `static` | a header + secret the admin configured | nothing |
+| `client_credentials` | a token the gateway mints as an OAuth client | nothing |
+| `forwarded` | the access token of an account linked per principal (vault) | a principal **subject**, plus one linking step |
+| `passthrough` | the caller's own token, audience-checked | the caller's **raw bearer token** |
+| `exchange` · impersonation / delegation | a token the gateway mints asserting the caller's subject | a principal **subject** |
+| `exchange` · OBO / token_exchange | a token the IdP mints from the caller's token | the caller's **raw bearer token** |
+
+### 12.2 How each consumer credential fares
+
+The machine principal is built by the auth chain
+(`pkg/api/middleware/auth_chain.go`): an API key resolves to
+`Principal{Subject: auth.Name, Method: api_key}` with **no raw token**; an IdP
+JWT resolves to the token's own subject **with** the raw token.
+
+| Consumer credential | `none` / `static` / `client_credentials` | `forwarded` | `exchange` impersonation / delegation | `passthrough`, `exchange` OBO / token_exchange |
+|---|---|---|---|---|
+| **API key** | works | works — one shared account linked to the key's principal | works (minted from `auth.Name`) | **impossible**: no token to reuse |
+| **Client certificate (mTLS)** | works | works — same, keyed by the certificate principal | works | **impossible** |
+| **IdP JWT (validated)** | works | works — keyed by the token's `sub` | works | works |
+
+So the answer is: **a machine consumer authenticates upstream either with a
+credential the server owns (`static`, `client_credentials`), with one shared
+account linked once (`forwarded`), or with a gateway-minted assertion
+(`exchange` impersonation/delegation). Reusing the caller's token is only
+available behind an identity provider.**
+
+### 12.3 The linking step for `forwarded`, without a person in the loop
+
+A machine consumer has no browser, but `forwarded` needs an account. Two paths
+already exist and both link to the *application's* principal, so the account is
+shared by every call the application makes:
+
+1. **The connect page** — `GET/POST /{slug}/connect`
+   (`pkg/app/oauth/api_key_connect.go`): a human pastes the consumer's API key
+   and the gateway mints a ticket for `auth.Name` covering every forwarded
+   provider of that consumer. One-time, out of band.
+2. **The `trustgate_connect_<provider>` tool** (`pkg/app/mcp/connection_tool.go`),
+   exposed on the consumer's own tool list: calling it returns a connect URL for
+   the current principal. This is also what the first tool call answers with —
+   `ConsentRequiredError` carries a `connect_url` — so the failure is
+   self-describing.
+
+For a consumer whose *application* identifies its end users the same linking is
+per end user and goes through the connections API instead; the connect page
+refuses it with 409 (`ErrAPIKeyConnectEndUsers`), see §11.
+
+### 12.4 What was actually missing (and the decisions)
+
+- **The impossible pair failed at request time with a misleading message.** An
+  API-key consumer reaching a `passthrough` upstream got
+  `ErrNoPrincipal` — "requires an authenticated user identity" — when it *was*
+  authenticated. Fixed: `MCPAuth.NeedsCallerToken()` names the two modes that
+  reuse the caller's token, and the resolver answers with
+  `ErrUpstreamNeedsCallerToken`, which states the fix (give the upstream its own
+  credential, link an account, or call the consumer with an IdP token).
+- **Still open — config-time enforcement.** The pair is a configuration error,
+  so it should be refused when the consumer is bound to the server (or when the
+  server's mode changes), not on the first tool call. The invariant: a
+  `NeedsCallerToken` upstream requires the consumer to hold at least one
+  oauth2/oidc auth. Not implemented: it needs a decision on whether to reject
+  (409, and existing setups may break) or to surface it as a warning.
+- **Still open — `passthrough` and `exchange` are invisible in the app.** The
+  registry panels offer `none | static | forwarded` for a custom MCP server and
+  `none | static | client_credentials` for an OpenAPI source
+  (`features/registry/components/CustomMcpSidePanel.tsx`). The two modes that
+  make an IdP-JWT consumer worth having are API-only.
+- **Still open — nothing shows the admin the upstream state of a machine
+  consumer.** The Connect tab explains the consumer's own credential but never
+  says which of its bound servers still need an upstream account, nor points at
+  the connect page. The data exists (`ProviderStatus`, `/{slug}/connect`).
+- **Operational wart.** The machine principal's subject is the API key's
+  **name** (unique per gateway), so renaming that auth orphans its vault
+  credentials and silently forces a reconnect. Keying on the auth id would be
+  stable; changing it needs a migration of existing vault rows.
