@@ -60,6 +60,7 @@ const (
 	errCodeInvalidRequest       = "invalid_request"
 	errCodeInvalidModel         = "invalid_model"
 	errCodeModelNotAllowed      = "model_not_allowed"
+	errCodeModelNotSupported    = "model_not_supported"
 	errCodeProviderCredential   = "provider_credential_error"
 	errCodeBackendError         = "backend_error"
 	errCodeRateLimitUnavailable = "rate_limit_unavailable"
@@ -438,6 +439,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
+	case errors.Is(err, routingdomain.ErrNoRegistryServesModel):
+		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeModelNotSupported, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
