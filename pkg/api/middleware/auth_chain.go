@@ -118,10 +118,14 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
 	}
-	if token := bearerToken(c); token != "" {
+	// An api key presented as a bearer token is an api key, not a token to hand
+	// to the IdP validators: most MCP clients can only send Authorization, and
+	// the proxy plane has always accepted that form. A bearer without the api-key
+	// marker keeps its precedence over the key headers.
+	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
 		return r.resolveBearer(c.UserContext(), token, scope)
 	}
-	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
+	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
 	return Identity{}, resolver.ErrUnauthenticated

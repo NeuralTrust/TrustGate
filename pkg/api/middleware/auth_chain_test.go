@@ -39,9 +39,15 @@ import (
 type fakeAPIKeyFinder struct {
 	auth *authdomain.Auth
 	err  error
+	// expect, when set, is the exact key the lookup must receive — the store
+	// matches on a digest, so a stray space or newline is a different key.
+	expect string
 }
 
-func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, _ string) (*authdomain.Auth, error) {
+func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	if f.expect != "" && rawKey != f.expect {
+		return nil, authdomain.ErrNotFound
+	}
 	return f.auth, f.err
 }
 
@@ -682,4 +688,43 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 
 	_, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
+// Most MCP clients can only send a credential as Authorization: Bearer, and the
+// proxy plane has always accepted an api key that way. The MCP chain used to
+// hand it to the OAuth2 validators instead and answer 401.
+func TestChain_APIKeyPresentedAsBearerAuthenticates(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "prod", true)
+	require.NoError(t, err)
+	raw := apiKey.RawKey
+	require.NotEmpty(t, raw, "the generated key is returned once, in plain")
+
+	for _, tt := range []struct {
+		name   string
+		header map[string]string
+	}{
+		{name: "X-AG-API-Key", header: map[string]string{"X-AG-API-Key": raw}},
+		{name: "x-api-key", header: map[string]string{"x-api-key": raw}},
+		{name: "bearer", header: map[string]string{"Authorization": "Bearer " + raw}},
+		{name: "untrimmed", header: map[string]string{"X-AG-API-Key": raw + "\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{auth: apiKey, expect: raw},
+				fakeCredentialFinder{},
+				fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeMTLSValidator{},
+				nil, nil, nil, false,
+			)
+
+			id, err := resolveChain(t, resolver, tt.header)
+			require.NoError(t, err)
+			require.Equal(t, apiKey.ID, id.AuthID)
+			require.NotNil(t, id.Principal)
+			require.Equal(t, "prod", id.Principal.Subject)
+		})
+	}
 }
