@@ -31,6 +31,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -75,11 +76,23 @@ func (m *memConnectStore) SaveClientIfAbsent(_ context.Context, key string, c oa
 	return &c, nil
 }
 
+// SaveTicket keeps the ticket as the real store does — as JSON — so a field
+// whose zero value does not survive the round trip fails here and not only in
+// Redis. `providers` was exactly that: an empty snapshot came back as nil,
+// which reads as an unpinned ticket and is rejected.
 func (m *memConnectStore) SaveTicket(_ context.Context, id string, t oauth.ConnectTicket) error {
 	if m.saveTicketErr != nil {
 		return m.saveTicketErr
 	}
-	m.tickets[id] = t
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	var stored oauth.ConnectTicket
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return err
+	}
+	m.tickets[id] = stored
 	return nil
 }
 
@@ -924,4 +937,59 @@ func unsignedConnectJWT(t *testing.T, claims jwt.MapClaims) string {
 		t.Fatalf("sign jwt: %v", err)
 	}
 	return raw
+}
+
+// An application whose upstreams all carry their own credential has nothing to
+// link, and an admin can still land on its connect page. The ticket's provider
+// snapshot is empty, not absent — an absent one means "any provider" and is
+// refused for an api-key ticket, which turned a valid key into a 401.
+func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "internal-mcp", "", &registrydomain.MCPTarget{
+		URL:  "https://up.example.com/mcp",
+		Auth: &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer shared"},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: consumerID, GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+			AuthIDs: []ids.AuthID{authID},
+		},
+		Auths: []*authdomain.Auth{{
+			ID: authID, GatewayID: gw, Name: "prod", Type: authdomain.TypeAPIKey, Enabled: true,
+		}},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store, &memVaultRepo{}, &stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(), nil, nil, nil, nil,
+	)
+	ctx := context.Background()
+
+	ticketID, err := svc.CreateAPIKeyTicket(ctx, gw, "prod", "/dev/mcp", consumerID, authID, nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKeyTicket: %v", err)
+	}
+
+	page, err := svc.Page(ctx, ticketID)
+	if err != nil {
+		t.Fatalf("Page: %v (a consumer with no forwarded registry must still reach its connect page)", err)
+	}
+	if len(page.Providers) != 0 {
+		t.Fatalf("providers = %+v, want none to connect", page.Providers)
+	}
+
+	// Still pinned to nothing: the ticket cannot be used to connect a provider
+	// that gets added to the consumer later.
+	if _, err := svc.Start(ctx, "https://gw", ticketID, "github"); !errors.Is(err, oauth.ErrProviderNotFound) {
+		t.Fatalf("Start error = %v, want oauth.ErrProviderNotFound", err)
+	}
 }

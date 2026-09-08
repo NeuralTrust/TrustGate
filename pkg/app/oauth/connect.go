@@ -113,7 +113,14 @@ func (s *connectService) CreateAPIKeyTicket(
 	authID ids.AuthID,
 	providers []string,
 ) (string, error) {
-	providerSnapshot := append([]string(nil), providers...)
+	// A non-nil snapshot is what marks the ticket as pinned to a provider list;
+	// nil means "any forwarded provider of the consumer". An empty list must stay
+	// empty and not degrade into nil — appending nothing to a nil slice yields
+	// nil, which serialises as `"providers":null` and comes back as unpinned,
+	// which routable() then rejects: a valid api key answered with a 401 for
+	// every consumer that has no forwarded registry at all.
+	providerSnapshot := make([]string, 0, len(providers))
+	providerSnapshot = append(providerSnapshot, providers...)
 	ticket := ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
