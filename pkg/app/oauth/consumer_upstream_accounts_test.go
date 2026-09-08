@@ -166,7 +166,7 @@ func TestConsumerUpstreamAccounts_LinkMintsATicketForTheApplication(t *testing.T
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 
-	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
 	require.NoError(t, err)
 	require.NotEmpty(t, link.Ticket)
 	require.Equal(t, "/assistant/mcp", link.ConsumerPath)
@@ -178,6 +178,60 @@ func TestConsumerUpstreamAccounts_LinkMintsATicketForTheApplication(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, page.Providers, 1)
 	require.Equal(t, "com.notion/mcp", page.Providers[0].Provider)
+}
+
+// Authorizing from one server's row must authorize that server and no other:
+// the ticket carries only its provider, and the connect page it opens offers
+// only that one, so an admin who meant to link Notion cannot be walked through
+// Linear as well.
+func TestConsumerUpstreamAccounts_LinkNarrowsToOneServer(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	notion := mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))
+	linear := mcpRegistry(t, gw, "linear", forwardedAuthCfg("app.linear/mcp"))
+	internal := mcpRegistry(t, gw, "internal", &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer shared",
+	})
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{notion, linear, internal})
+	ctx := context.Background()
+
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, notion.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"com.notion/mcp"}, link.Providers)
+
+	page, err := f.connect.Page(ctx, link.Ticket)
+	require.NoError(t, err)
+	require.Len(t, page.Providers, 1, "the page must offer only the server the row asked for")
+	require.Equal(t, "com.notion/mcp", page.Providers[0].Provider)
+
+	// Unnarrowed, the same call still covers every server that forwards one.
+	all, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"app.linear/mcp", "com.notion/mcp"}, all.Providers)
+}
+
+func TestConsumerUpstreamAccounts_LinkRefusesServersItCannotAuthorize(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	internal := mcpRegistry(t, gw, "internal", &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer shared",
+	})
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp")), internal})
+	ctx := context.Background()
+
+	// A server that carries its own credential has no account to link, and an
+	// empty ticket would open a page offering nothing.
+	_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, internal.ID)
+	require.ErrorIs(t, err, oauth.ErrUpstreamAccountNotForwarded)
+
+	// A registry the consumer is not bound to is not this application's to
+	// authorize, even when it exists on the gateway.
+	_, err = f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.New[ids.RegistryKind]())
+	require.ErrorIs(t, err, commonerrors.ErrNotFound)
 }
 
 func TestConsumerUpstreamAccounts_RefusesConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
@@ -198,7 +252,7 @@ func TestConsumerUpstreamAccounts_RefusesConsumersWithoutAccountsOfTheirOwn(t *t
 		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
 			consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
 			[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-		_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
+		_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
 		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
 	})
 }
@@ -218,7 +272,7 @@ func TestConsumerUpstreamAccounts_NeedNoAPIKey(t *testing.T) {
 	require.Equal(t, consumerdomain.AppSubject(f.consumerID), state.PrincipalSub)
 	require.True(t, state.NeedsLinking())
 
-	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
 	require.NoError(t, err)
 	require.NotEmpty(t, link.Ticket)
 }
@@ -256,6 +310,6 @@ func TestConsumerUpstreamAccounts_UnknownConsumer(t *testing.T) {
 	_, err := f.accounts.State(ctx, f.gatewayID, ids.New[ids.ConsumerKind]())
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 
-	_, err = f.accounts.Link(ctx, f.gatewayID, ids.New[ids.ConsumerKind]())
+	_, err = f.accounts.Link(ctx, f.gatewayID, ids.New[ids.ConsumerKind](), ids.RegistryID{})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 }

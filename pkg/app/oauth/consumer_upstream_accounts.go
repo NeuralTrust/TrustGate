@@ -35,6 +35,12 @@ var (
 	ErrUpstreamAccountsNotMachine = fmt.Errorf(
 		"consumer upstream accounts: only an MCP consumer that acts as the application itself holds accounts of its own: %w",
 		commonerrors.ErrConflict)
+	// ErrUpstreamAccountNotForwarded: the registry is bound to the consumer but
+	// carries its own credential (or needs none, or wants the caller's token), so
+	// there is no account of the application's to link on it.
+	ErrUpstreamAccountNotForwarded = fmt.Errorf(
+		"consumer upstream accounts: this server does not forward a stored credential, so it has no account to authorize: %w",
+		commonerrors.ErrConflict)
 )
 
 // UpstreamAccount is one MCP server bound to a consumer and what that server
@@ -97,7 +103,10 @@ type ConsumerConnectLink struct {
 //go:generate mockery --name=ConsumerUpstreamAccounts --dir=. --output=./mocks --filename=oauth_consumer_upstream_accounts_mock.go --case=underscore --with-expecter
 type ConsumerUpstreamAccounts interface {
 	State(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*ConsumerUpstreamState, error)
-	Link(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*ConsumerConnectLink, error)
+	// Link mints the connect ticket. A nil registryID covers every server of the
+	// application that forwards a credential; naming one narrows the ticket to
+	// that server alone, which is how a row authorizes just itself.
+	Link(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*ConsumerConnectLink, error)
 }
 
 var _ ConsumerUpstreamAccounts = (*consumerUpstreamAccounts)(nil)
@@ -171,13 +180,21 @@ func (s *consumerUpstreamAccounts) Link(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumerID ids.ConsumerID,
+	registryID ids.RegistryID,
 ) (*ConsumerConnectLink, error) {
 	data, rc, err := s.resolve(ctx, gatewayID, consumerID)
 	if err != nil {
 		return nil, err
 	}
 	path := appconsumer.MCPPath(rc.Consumer.Slug)
-	providers := forwardedProviderIDs(data.EffectiveRegistries(rc))
+	registries := data.EffectiveRegistries(rc)
+	if !registryID.IsNil() {
+		registries, err = onlyRegistry(registries, registryID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	providers := forwardedProviderIDs(registries)
 	// No auth id: the admin holds no api key of this application, and the link
 	// does not need one — the accounts are the consumer's.
 	ticket, err := s.connect.CreateAppTicket(
@@ -219,6 +236,31 @@ func (s *consumerUpstreamAccounts) resolve(
 		return nil, nil, ErrUpstreamAccountsNotMachine
 	}
 	return data, rc, nil
+}
+
+// onlyRegistry narrows the application's servers to the one named, so the
+// ticket it mints covers that server alone. A registry the consumer is not
+// bound to is not found; one that carries its own credential has nothing to
+// authorize, which is a conflict rather than an empty ticket — an empty
+// provider snapshot would mint a link whose page offers nothing.
+//
+// Two bound servers may still share one provider, and then a ticket for either
+// covers both: the account is keyed by provider, so that is what "the same
+// account" means, not a leak.
+func onlyRegistry(
+	registries []*registrydomain.Registry,
+	registryID ids.RegistryID,
+) ([]*registrydomain.Registry, error) {
+	for _, reg := range registries {
+		if reg == nil || reg.ID != registryID {
+			continue
+		}
+		if forwardedAuth(reg) == nil {
+			return nil, ErrUpstreamAccountNotForwarded
+		}
+		return []*registrydomain.Registry{reg}, nil
+	}
+	return nil, fmt.Errorf("registry %s is not bound to this consumer: %w", registryID, commonerrors.ErrNotFound)
 }
 
 func routableByID(data *appconsumer.Data, consumerID ids.ConsumerID) *appconsumer.RoutableConsumer {

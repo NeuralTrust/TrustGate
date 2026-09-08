@@ -1497,7 +1497,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts/link": {
             "post": {
-                "description": "Returns a single-consumer connect ticket an admin can open to link the application's own accounts on the servers that forward a stored credential — the same page the api-key self-service flow uses, without needing one of the application's credentials. The ticket is pinned to this consumer and to the providers bound to it, revalidated on redemption, audited, and short-lived.",
+                "description": "Returns a connect ticket an admin can open to link the application's own accounts on the servers that forward a stored credential — the same page the api-key self-service flow uses, without needing one of the application's credentials. Naming a registry narrows the ticket to that one server; omitting it covers every server of the application that forwards a credential. The ticket is pinned to this consumer and to those providers, revalidated on redemption, audited, and short-lived.",
                 "produces": [
                     "application/json"
                 ],
@@ -1521,6 +1521,13 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Authorize only this bound MCP server",
+                        "name": "registry_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1543,13 +1550,13 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "The consumer does not exist, or the registry is not bound to it",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     },
                     "409": {
-                        "description": "The consumer acts for users, so it holds no account of its own",
+                        "description": "The consumer acts for users, or the named server carries its own credential",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
