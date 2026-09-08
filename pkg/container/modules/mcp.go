@@ -126,6 +126,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideEndUserConnectionsService); err != nil {
 		return err
 	}
+	if err := c.Provide(provideConsumerUpstreamAccounts); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		exchanger sts.Exchanger,
 		vault vaultdomain.Repository,
@@ -447,6 +450,16 @@ func MCPVaultRedis(c *container.Container) error {
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
+}
+
+// provideConsumerUpstreamAccounts serves the console's "connect this
+// application's upstream accounts": an admin holds no api key, only its hash, so
+// the self-service page at /{slug}/connect is not reachable from the console.
+func provideConsumerUpstreamAccounts(
+	consumers appconsumer.DataFinder,
+	connect appoauth.ConnectService,
+) (appoauth.ConsumerUpstreamAccounts, error) {
+	return appoauth.NewConsumerUpstreamAccounts(consumers, connect)
 }
 
 func provideEndUserConnectionsService(

@@ -980,3 +980,23 @@ func TestCredentialResolver_RefreshPersistFailureIsLogged(t *testing.T) {
 		t.Fatalf("persistence failure log = %s", logged.String())
 	}
 }
+
+// Fail-open exists so one broken upstream does not take down the surface. When
+// nothing was reachable there is no surface left to protect, so the caller must
+// get the real cause — here, an upstream that reuses the caller's token, which
+// is a configuration error the message names — instead of a bare "unreachable".
+func TestComposeSurfacesTheCauseWhenNothingWasReachable(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("%w: %w", ErrUpstreamUnavailable,
+		fmt.Errorf("registry %q: %w", "notion", ErrUpstreamNeedsCallerToken))
+
+	if !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+		t.Fatal("the actionable configuration error must survive the wrap")
+	}
+	if !errors.Is(err, ErrUpstreamUnavailable) {
+		t.Fatal("the transport-level classification must survive too")
+	}
+	if !strings.Contains(err.Error(), "notion") {
+		t.Fatalf("error = %q, want the registry named", err)
+	}
+}

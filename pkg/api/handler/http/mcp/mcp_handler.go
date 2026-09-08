@@ -200,6 +200,11 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 		return
 	}
 	email := p.Email()
+	// A caller authenticated as the application carries no email of its own, so
+	// the trace falls back to the account its linked upstream credential belongs
+	// to. That is deliberate (TestHandler_StampsVaultEmailOnAPIKeyTrace): it
+	// answers "whose account did the upstream see", which for a shared service
+	// account is the only identity in play. It is not a claim about who called.
 	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
 		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
 	}

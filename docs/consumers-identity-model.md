@@ -91,13 +91,15 @@ different set of registries. It is needed for exactly two things:
 1. **Per-user connections.** Each person links their own account and the gateway
    forwards *their* credentials (forwarded auth). This exists: consent-required
    error → connect page → vault.
-2. **Who may use what inside the app.** Which users or groups may reach each of
-   the app's servers. That is precisely what Access governs for the Store — the
-   same scoper applied to the *consumer's* registries instead of the whole catalog.
+2. **Who may use what inside the app.** ~~Which users or groups may reach each of
+   the app's servers.~~ **Decided against** (see §15): the consumer's servers are
+   what an admin bound to it, the same for everyone it admits. Access governs the
+   Store, where the person picks from a catalog; a consumer is already the
+   decision, and two places deciding one surface would let an admin bind a server
+   its own users cannot see.
 
 So an MCP consumer is: **servers + tools, authentication, and one identity switch**
-— *"Acts on behalf of end users"* — which turns on per-user connections and, when
-the user is a platform identity, Access rules. No Roles, no claim rules, no
+— *"Acts on behalf of end users"* — which turns on per-user connections. No Roles, no claim rules, no
 per-role registries. Groups arrive from the directory exactly as they do for the
 Store.
 
@@ -397,10 +399,8 @@ Shipped on `claude/composio-mcp-gateway-auth-tyd2z1`, in this order:
    carries OIDC auths and no OAuth2 auth.
 2. **Consumer identity** (§4.1, §4.2). `identity: {acts_for_users, source,
    end_user_header}` on the consumer (migration `20260909130000`). The Store
-   scoper scopes any `acts_for_users` + `source = platform` consumer over its own
-   registries with the live Access mode (All / Selected / None); a
-   hand-configured server without a catalog code stays exposed under Selected
-   since grants key on the code. `ValidateAuth` enforces the credential shape
+   scoper scopes the Store only; a custom consumer is returned untouched
+   whatever its identity (§15). `ValidateAuth` enforces the credential shape
    per identity (platform users → oauth2 or the built-in IdP; app users → api_key
    or mtls). The Store consumer is `acts_for_users = true, source = platform`.
 3. **Auth binding** (§4.4 item 6, generalised). `auth_binding:
@@ -459,8 +459,8 @@ each step, and where it is enforced:
 |---|---|---|---|---|---|
 | Acts as the application | API key | the key (`sub` = auth name) | one shared account per key; linked on the API-key connect page `/{slug}/connect` or via the consent error | no | `resolveMCPConsumer`, `apiKeyConnectService` |
 | Acts as the application | Trusted IdP (JWT) or mTLS | the token's `azp`/`sub` or the certificate CN | shared per principal, same page | no | `consumerAdmitsPrincipal` applies the auth binding |
-| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | yes: mode All / Selected / None over the consumer's registries | `scoper.scopeConsumerRegistries`, `emptySurfaceInsteadOfError` |
-| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | yes | same; `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
+| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | no — the consumer's servers are what the admin bound (§15) | `emptySurfaceInsteadOfError` |
+| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | no | `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
 | My app identifies its users (app) | API key or mTLS + `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | header required (400), user login refused (403), API-key connect page refused (409), oauth2 auths refused at attach |
 
 Invariants checked in this audit:
@@ -625,3 +625,204 @@ precedent to follow is installs: let the data plane write through the
 control plane over the config-sync bridge, keeping Redis as a read cache on the
 request path (the credential resolver reads on every tool call, so the hot path
 cannot become a synchronous round trip).
+
+## 14. An MCP consumer with an API key, reframed
+
+§12 answered "which upstream modes work". It did not answer the question underneath,
+which is what actually confuses everyone: **for a machine consumer, who is the
+identity that owns the upstream account?** This section replaces the
+machine-consumer parts of §12.4 and is grounded in a full trace of the code
+(22 agents, every claim adversarially reviewed; the specific facts below were
+re-verified by hand).
+
+### 14.1 Three things we have been treating as one
+
+| Concept | What it is for | What it is today |
+|---|---|---|
+| **Call credential** | proves "I am this application" on each request | an `auths` row of type `api_key`; a consumer may hold several, and rotation issues a new one |
+| **Application identity** | the stable thing an upstream account should belong to | *nothing* — there is no such concept on the request path |
+| **Upstream account** | what the third-party MCP server authorizes | a vault row keyed by `(gateway_id, principal_sub, provider)` |
+
+The whole difficulty comes from the middle row being missing. `resolveAPIKey`
+sets `Principal{Subject: auth.Name}` (`pkg/api/middleware/auth_chain.go:309`),
+so the **display label of a credential** is the durable identity. That string
+keys: the credential vault (`pkg/app/mcp/credentials.go:195`), connect tickets
+and provider statuses (`pkg/app/oauth/api_key_connect.go:124`), per-user URL
+variables, Store installs and grants, the per-principal discovery cache
+(`pkg/app/mcp/discovery.go:260`), the upstream session pin
+(`pkg/app/mcp/target.go:92`), the `sub` of any JWT we mint for an upstream
+(`pkg/app/identity/sts/exchanger.go:149`), and the principal in traces/OTLP.
+
+That has consequences nobody chose:
+
+- **Names are no longer unique.** Migration `20260729110000` dropped
+  `auths_gateway_name_unique`, so two enabled API keys on one gateway can share
+  a name — and therefore one set of upstream accounts, *across different
+  consumers*, since the vault key has no consumer column. The migration's own
+  description justifies the drop with "credentials resolve by id/key_hash",
+  which is true for inbound auth and false for the upstream vault.
+- **And it is load-bearing, not an oversight.** The app's rotate flow
+  deliberately issues the replacement key under the *same name* so the linked
+  upstream account survives
+  (`features/consumers/lib/consumerApiKeys.ts:167-199`). Keying the vault on the
+  auth id — §12.4's proposed fix — would break rotation as designed.
+- **Renaming orphans; deleting strands.** Nothing rewrites `principal_sub` on
+  rename, and deleting an auth touches no vault row
+  (`pkg/app/auth/deleter.go:64-86`). The upstream OAuth grant stays live and,
+  with no gateway-wide vault listing and a ticket-gated `Delete`, becomes
+  unrevokable through TrustGate — until someone creates a key with the same
+  name, which re-adopts it, refresh token included.
+
+### 14.2 What is actually broken today (verified)
+
+1. **Revoking the last API key opens the consumer up.** Disabling the only
+   credential of an MCP consumer is refused with 409
+   (`pkg/app/auth/guard.go:63-80`), but `associator.DetachAuth`
+   (`pkg/app/consumer/associator.go:130-139`) has no such guard, and the app's
+   Revoke is detach-then-delete
+   (`features/consumers/lib/consumerApiKeys.ts:140-163`). A zero-auth MCP
+   consumer then satisfies `defaultIdPUsable = defaultIdPEnabled && !hasOAuth2
+   && !hasEnabledAuth` (`auth_chain.go:164`), so the built-in provider is added
+   to its scope and **any platform login on the gateway can enter it** — the
+   exact outcome the comment three lines above says must not happen.
+   `MCP_DEFAULT_IDP_ISSUER` is set in both the dev and prod overlays, so this is
+   live. The reversible operation is blocked and the destructive one is not.
+2. **A valid key gets a 401 on the connect page when the consumer has no
+   `forwarded` registry.** `forwardedProviderIDs` returns an empty non-nil
+   slice; `append([]string(nil), providers...)` makes it nil; the `*[]string`
+   field marshals as `"providers":null`, decodes back as a nil pointer, and
+   `routable()` rejects the ticket (`pkg/app/oauth/connect.go:116,386-392,458`).
+   The console shows that authorize step for *every* API-key MCP consumer, so
+   this is the default experience for anyone whose upstreams are `static`/`none`.
+3. **The guarded path and the cheap path are inverted.** The human connect page
+   is rate-limited twice, pins its ticket to consumer+auth+provider snapshot,
+   and is audited. The `trustgate_connect_*` tool and the `ConsentRequiredError`
+   both mint an **unpinned, unrate-limited, unaudited** ticket
+   (`connection_tool.go:136`, `credentials.go:451`; audit needs ConsumerID+AuthID,
+   `connect_auditor.go:86`). Tickets are not single-use, last 15 minutes, and
+   also authorize `POST /oauth/disconnect/*` — and the `connect_url` is built
+   from the request's `Host`.
+4. **`Authorization: Bearer ag_...` does not authenticate on the MCP plane.**
+   `Resolve` returns from the bearer branch without falling through to the
+   API-key branch (`auth_chain.go:120-123`), and the key header is read
+   untrimmed. The proxy plane accepts both forms and trims
+   (`pkg/api/resolver/api_key_source.go:29-48`). Two planes, two notions of
+   where an API key lives.
+5. **Fail-open discards the actionable error.** With the default fail-open
+   policy, a machine caller against a `passthrough`/OBO upstream never sees
+   `ErrUpstreamNeedsCallerToken`: the registry is skipped and, if it is the only
+   one, the caller gets "upstream MCP server unreachable"
+   (`composer.go:206-239`). The better diagnostic only appears fail-closed.
+6. **Machine traffic is attributed to a person.** With no principal email, every
+   MCP request resolves one from the linked upstream account's `AccountRef`
+   (`mcp_handler.go:200-206` → `request_identity.go:26-58`), so
+   `principal_email` in traces becomes whichever human walked the connect page.
+7. **The product barely mentions any of this.** Nothing before Create names
+   upstream credentials; the only mention is the post-create screen and the
+   Connect tab. `connect.apiKeyNote` points at "the General tab", which the UI
+   labels "Auth". `passthrough`/`exchange` instances render as "No
+   authentication", and saving such a registry from the custom panel degrades
+   its mode to `none` (`mcpCatalog.ts:96-99,617-627` +
+   `pkg/app/registry/updater.go:159-161`).
+
+### 14.2b What is fixed now, and what is not
+
+Fixed in this branch (gateway + app):
+
+1. **The promotion is closed.** The built-in provider now also requires a
+   matched consumer whose users sign in, so a machine application with no
+   credential is unreachable rather than open to any platform login
+   (`pathScope`, `wantsSignIn`). Existing credential-less MCP consumers are
+   backfilled as sign-in consumers by
+   `20260909150000_backfill_signin_identity_for_credentialless_mcp`, so their
+   behaviour is unchanged. `DetachAuth` is deliberately *not* guarded: the app's
+   own credential-swap edits detach before they attach, so a guard there would
+   break them, and the promotion is closed at the source instead.
+2. **The dead ticket.** An empty provider snapshot stays empty rather than
+   degrading into absent, and the test fixture round-trips tickets through JSON
+   so this class of bug fails in a unit test.
+3. **Bearer-form api keys.** The MCP plane accepts `Authorization: Bearer ag_…`
+   and `x-api-key`, trimmed, through the same helper the proxy plane uses.
+4. **Fail-open no longer swallows the cause** when nothing was reachable, so
+   `ErrUpstreamNeedsCallerToken` reaches the caller with the registry named.
+5. **The product says it.** `GET`/`POST
+   /v1/gateways/{gid}/consumers/{id}/upstream-accounts[/link]` report which
+   bound servers want the application's own account and mint the pinned, audited
+   connect ticket for it; the console's Connect tab lists them, shows each
+   account's state, and authorizes them in one click — no api key needed, which
+   is what made this unreachable from the console before.
+6. **`passthrough`/`exchange` in the UI** read as "caller's own token" instead
+   of "no authentication", and saving such a registry no longer strips its
+   credential (the payload omits `auth` while the mode is one the panel cannot
+   express).
+
+Deliberately still open:
+
+- **The in-band ticket paths** (`trustgate_connect_*` and the consent error)
+  remain unpinned, unrate-limited and unaudited, and tickets stay reusable for
+  their 15 minutes and also authorise disconnect. Pinning them is easy; the rest
+  touches the tool-call hot path, where a limiter outage would turn a consent
+  prompt into a failed call, so it wants its own change.
+- **The email on machine traces** is intentional
+  (`TestHandler_StampsVaultEmailOnAPIKeyTrace`): it answers whose account the
+  upstream saw. Documented at the call site rather than changed.
+- **`app:<consumer_id>` as the machine principal** (§14.3), which is the change
+  that actually removes the class of problem rather than papering over it.
+
+### 14.3 The model this should be
+
+**The upstream account belongs to the application, not to one of its keys.**
+
+- Machine principal subject becomes the consumer, namespaced the way end users
+  already are: `app:<consumer_id>` next to today's
+  `app:<consumer_id>:<end_user>`. The call credential stays what it is — proof
+  of "I am this application" — and stops being an identity.
+- Then, by construction: rotating, renaming, adding or deleting keys never
+  touches a linked account; two keys of one consumer share the account *by
+  design*; two consumers never cross; and deleting the consumer can revoke its
+  upstream accounts because they are enumerable by prefix.
+- Migration is the same shape as the split-vault read fix (§13): write the new
+  subject, read new-then-old for a window, backfill, drop the fallback. Both
+  vault stores need it (Postgres and Redis).
+- It also unblocks what §12.4 listed as open: an admin-side "connected accounts"
+  view per application, real revocation, and an audit trail that names the
+  consumer instead of a label.
+
+What stays unchanged: an upstream whose credential the server owns (`static`,
+`client_credentials`) needs none of this, and remains the right default for a
+machine consumer. What `forwarded` buys is *one shared service account per
+application*, and the product should say exactly that.
+
+## 15. Access governs the Store, not a consumer
+
+Product decision, replacing what §4, §10 and §11 first said: **no access mode and
+no grant narrows a consumer's surface.** A consumer's servers are the ones an
+admin bound to it, identical for every caller it admits, whatever its identity.
+`scoper.Scope` now returns any non-Store consumer untouched
+(`pkg/app/store/scoper.go`), and the grant store is not even read on that path,
+so an Access outage cannot affect an application.
+
+The reasoning: Access exists for the **self-service catalog**, where a person
+picks servers themselves and there is no per-application configuration to read —
+mode (All / Selected / None) plus grants are how an admin bounds that choice. A
+consumer is the opposite: someone already decided, deliberately, which servers
+this application routes to. Layering Access on top puts two places in charge of
+one surface, and the failure it produces is silent and confusing — an admin
+binds a server to a consumer and the consumer's own users do not see it, because
+a grant elsewhere does not name them.
+
+What this means in practice:
+
+- **Governance of a login consumer is admission, not scoping.** Who can enter it
+  at all is the question — its credential, and for the built-in NeuralTrust login
+  the auth binding. Everyone admitted sees the whole set. If per-person subsets
+  of one application are ever wanted, the answer is more consumers (each with its
+  own server set), not Access inside one.
+- **The Store keeps everything.** Live mode resolution (own policy → most
+  permissive group → gateway default), grants by catalog code or instance,
+  install approvals, and the re-check at request time rather than only at install
+  time. §7 and §8 stand as written.
+- **The Portal is unaffected**: it previews the Store, and the app's Access page
+  only ever granted catalog servers and instances — never consumers. The
+  Applications tab there is a directory of consumers, not a place they are
+  governed.
