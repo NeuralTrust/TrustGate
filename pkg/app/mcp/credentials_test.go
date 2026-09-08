@@ -201,6 +201,66 @@ func TestCredentialResolver_Passthrough(t *testing.T) {
 			t.Fatalf("error = %v, want ErrNoPrincipal", err)
 		}
 	})
+
+	// A machine caller IS authenticated, it just carries no token to forward:
+	// naming that says which configuration to change instead of sending the
+	// integrator looking for a missing user identity.
+	t.Run("names the misconfiguration for a caller authenticated as the application", func(t *testing.T) {
+		t.Parallel()
+		ctx := principalCtx(&identity.Principal{Subject: "prod-key", Method: identity.MethodAPIKey})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		if !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+			t.Fatalf("error = %v, want ErrUpstreamNeedsCallerToken", err)
+		}
+		if errors.Is(err, ErrNoPrincipal) {
+			t.Fatal("an api-key caller is authenticated; the error must not claim a missing identity")
+		}
+	})
+}
+
+// The exchange patterns split on the same line: impersonation and delegation are
+// minted from the subject, so a machine caller is served; on-behalf-of and
+// token-exchange present the caller's own token to the IdP and cannot be.
+func TestCredentialResolver_Exchange_MachineCaller(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	machine := principalCtx(&identity.Principal{Subject: "prod-key", Method: identity.MethodAPIKey})
+
+	t.Run("mints for impersonation", func(t *testing.T) {
+		t.Parallel()
+		ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
+		r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
+		reg := regWithAuth(gw, &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation, Audience: "aud",
+		})
+		target := Target{}
+		if err := r.Apply(machine, mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if target.Headers["Authorization"] != "Bearer minted" {
+			t.Fatalf("Authorization = %q", target.Headers["Authorization"])
+		}
+	})
+
+	for _, cfg := range []*registrydomain.MCPAuth{
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://up/.default"},
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange, Audience: "api://up"},
+	} {
+		t.Run("refuses "+string(cfg.Pattern)+" with the configuration to change", func(t *testing.T) {
+			t.Parallel()
+			ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
+			r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
+			reg := regWithAuth(gw, cfg)
+			target := Target{}
+			if err := r.Apply(machine, mcpConsumer(gw), reg, &target); !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+				t.Fatalf("error = %v, want ErrUpstreamNeedsCallerToken", err)
+			}
+			if ex.key != "" {
+				t.Fatal("the exchange must not be attempted without a caller token")
+			}
+		})
+	}
 }
 
 func TestCredentialResolver_Exchange_InjectsAndIsolatesCacheKey(t *testing.T) {
