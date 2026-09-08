@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,6 +57,13 @@ type SubscriptionSourceRecorder interface {
 
 const (
 	maxTransientAuthorizationFailures = 3
+
+	// admissionHandoverGrace bounds the wait for an admission token that a
+	// delivery in flight is about to return. Only a handle whose worker is
+	// mid-handover waits (see subscriptionHandle.handingOver); one that is
+	// merely backed up is failed straight away, so a queue full of work never
+	// delays fan-out to the other subscribers of the same listener.
+	admissionHandoverGrace = 25 * time.Millisecond
 
 	subscriptionSourceLifecycleUnsupported = "unsupported"
 	subscriptionSourceLifecycleOpenFailed  = "open_failed"
@@ -187,7 +195,12 @@ type subscriptionHandle struct {
 	err                     error
 	workerTransientFailures int
 	emitTransientFailures   int
-	listeners               map[*subscriptionListener]struct{}
+	// handingOver is set while an event is being handed to the consumer and
+	// cleared once the admission token is back. A consumer reads the event the
+	// instant the send completes, before the worker can return the token, so
+	// without this a caught-up consumer looks full and is dropped as too slow.
+	handingOver atomic.Bool
+	listeners   map[*subscriptionListener]struct{}
 }
 
 type timerSubscriptionWaiter struct{}
@@ -892,9 +905,7 @@ func (m *SubscriptionMultiplexer) fanOut(listener *subscriptionListener, event S
 			event:    event,
 			bindings: bindings,
 		}
-		select {
-		case handle.admission <- struct{}{}:
-		default:
+		if !handle.acquireAdmission() {
 			m.recordQueue(listener.ctx, event.Kind, subscriptionSourceQueueFull)
 			m.terminateHandle(handle, ErrSubscriptionSlowConsumer, false)
 			continue
@@ -944,12 +955,15 @@ func (m *SubscriptionMultiplexer) runAuthorizationWorker(handle *subscriptionHan
 			}
 			m.recordFanOut(work.listener.ctx, work.event.Kind, subscriptionSourceFanOutAuthorized)
 			work.event.Source = work.listener.key
+			handle.handingOver.Store(true)
 			select {
 			case handle.events <- work.event:
 				handle.releaseAdmission()
+				handle.handingOver.Store(false)
 				m.recordQueue(work.listener.ctx, work.event.Kind, subscriptionSourceQueueEnqueued)
 			case <-handle.workerCtx.Done():
 				handle.releaseAdmission()
+				handle.handingOver.Store(false)
 				return
 			}
 		}
@@ -978,6 +992,31 @@ func (m *SubscriptionMultiplexer) authorizeWork(
 		}
 	}
 	return matched, nil
+}
+
+// acquireAdmission reserves one in-flight slot. A full queue whose consumer has
+// just taken an event waits for the token that delivery is returning; a full
+// queue with no handover in flight is a consumer that is genuinely behind, and
+// reporting false there is what marks it too slow.
+func (h *subscriptionHandle) acquireAdmission() bool {
+	select {
+	case h.admission <- struct{}{}:
+		return true
+	default:
+	}
+	if !h.handingOver.Load() {
+		return false
+	}
+	grace := time.NewTimer(admissionHandoverGrace)
+	defer grace.Stop()
+	select {
+	case h.admission <- struct{}{}:
+		return true
+	case <-h.workerCtx.Done():
+		return false
+	case <-grace.C:
+		return false
+	}
 }
 
 func (h *subscriptionHandle) releaseAdmission() {
