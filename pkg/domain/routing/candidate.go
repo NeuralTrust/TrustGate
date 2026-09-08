@@ -20,6 +20,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 type Candidate struct {
@@ -31,15 +32,14 @@ type Candidate struct {
 }
 
 func (c Candidate) PolicyAllowsModel(model string) bool {
+	if modelmatch.IsPattern(model) {
+		return false
+	}
 	if c.Allowed == nil {
 		return true
 	}
-	for _, m := range c.Allowed {
-		if m == model {
-			return true
-		}
-	}
-	return false
+	_, ok := modelmatch.MatchAny(model, c.Allowed)
+	return ok
 }
 
 func (c Candidate) DefersModelChoice() bool {

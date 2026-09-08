@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 const (
@@ -41,6 +43,9 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 	}
 	if !ok || modelRaw == nil {
 		if defaultModel != "" {
+			if modelmatch.IsPattern(defaultModel) {
+				return body, "", fmt.Errorf("%w: default %q is a pattern, not a model", ErrModelNotAllowed, defaultModel)
+			}
 			b, err := json.Marshal(defaultModel)
 			if err != nil {
 				return body, defaultModel, nil
@@ -99,6 +104,9 @@ func ExtractModel(body []byte) (string, error) {
 }
 
 func CheckAllowedModel(model string, allowedModels []string) error {
+	if modelmatch.IsPattern(model) {
+		return fmt.Errorf("%w: %q is a pattern, not a model", ErrModelNotAllowed, model)
+	}
 	if len(allowedModels) == 0 {
 		return nil
 	}
@@ -112,12 +120,8 @@ func CheckAllowedModel(model string, allowedModels []string) error {
 }
 
 func isAllowed(model string, allowed []string) bool {
-	for _, m := range allowed {
-		if m == model {
-			return true
-		}
-	}
-	return false
+	_, ok := modelmatch.MatchAny(model, allowed)
+	return ok
 }
 
 func OverrideModel(body []byte, model string) []byte {

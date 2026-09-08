@@ -1853,6 +1853,19 @@ definitions:
       secret:
         type: boolean
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide:
+    properties:
+      docs_url:
+        type: string
+      note:
+        type: string
+      steps:
+        items:
+          type: string
+        type: array
+      summary:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth:
     properties:
       authorize_url:
@@ -1920,6 +1933,8 @@ definitions:
         type: string
       code:
         type: string
+      config_guide:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide'
       description:
         type: string
       display_name:
@@ -2513,6 +2528,57 @@ paths:
       summary: Build version
       tags:
       - system
+  /__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models:
+    get:
+      description: 'Returns the model catalog narrowed to what this registry''s credentials
+        can actually invoke, resolved from this data plane''s own network: AWS Bedrock
+        registries are checked against the AWS control plane, every other provider
+        against its authenticated models listing. It answers the same shape as the
+        admin catalog endpoint, and exists because on a hybrid deployment only this
+        plane can reach a provider endpoint that lives inside the customer''s network.
+        Authorized by a control-plane-minted diagnostics token bound to the gateway.
+        A registry that has not reached this plane''s config snapshot yet answers
+        404, so the caller can fall back to the unnarrowed catalog.'
+      parameters:
+      - description: Control-plane-minted diagnostics JWT
+        in: header
+        name: X-AG-Diagnostics-Token
+        required: true
+        type: string
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: List a registry's available models from the data plane
+      tags:
+      - diagnostics
   /__diagnostics/gateways/{gateway_id}/registries/test-connection:
     post:
       consumes:
@@ -4871,12 +4937,14 @@ paths:
       - catalog
   /v1/models-catalog:
     get:
-      description: Returns the catalog of supported models, optionally filtered by
-        provider. When gateway_id and registry_id are supplied for an AWS Bedrock
-        registry, the list is narrowed to the models those credentials can invoke
-        serverless (on-demand base models and system-defined inference profiles),
-        excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed
-        ids and unreachable AWS endpoints are ignored and yield the full catalog.
+      description: 'Returns the catalog of supported models, optionally filtered by
+        provider. When gateway_id and registry_id are supplied, the list is narrowed
+        to the models that registry''s credentials can actually use: AWS Bedrock registries
+        are checked against the AWS control plane (on-demand base models and system-defined
+        inference profiles), and every other provider is checked against its authenticated
+        models listing (so org-restricted API keys and Azure deployments are respected).
+        Malformed ids, providers without a listing, and unreachable provider endpoints
+        are ignored and yield the full catalog.'
       parameters:
       - description: Filter by provider id
         in: query

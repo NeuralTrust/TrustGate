@@ -26,6 +26,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -208,7 +209,7 @@ func isNativeModelID(id string) bool {
 	if id == "" || strings.EqualFold(id, "auto") {
 		return false
 	}
-	if strings.HasPrefix(id, "@") {
+	if strings.HasPrefix(id, "@") || modelmatch.IsPattern(id) {
 		return false
 	}
 	return !strings.HasPrefix(strings.ToLower(id), "pool:")

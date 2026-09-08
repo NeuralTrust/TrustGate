@@ -17,37 +17,14 @@
 // downgrade, and the stateless cost cap decision engine.
 package llmcost
 
-import "strings"
+import (
+	"strings"
 
-// GlobMatch reports whether s matches pattern, where '*' matches any run of
-// characters (including the empty string).
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
+)
+
 func GlobMatch(pattern, s string) bool {
-	var (
-		p, str       int
-		star         = -1
-		strBacktrack int
-	)
-	for str < len(s) {
-		switch {
-		case p < len(pattern) && pattern[p] == s[str]:
-			p++
-			str++
-		case p < len(pattern) && pattern[p] == '*':
-			star = p
-			strBacktrack = str
-			p++
-		case star != -1:
-			p = star + 1
-			strBacktrack++
-			str = strBacktrack
-		default:
-			return false
-		}
-	}
-	for p < len(pattern) && pattern[p] == '*' {
-		p++
-	}
-	return p == len(pattern)
+	return modelmatch.Matches(pattern, s)
 }
 
 // BestMatch returns the value whose key best matches s. An exact key wins over
