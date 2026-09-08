@@ -273,6 +273,34 @@ func (t *MCPTarget) Validate() error {
 	return nil
 }
 
+// NeedsCallerToken reports whether the mode can only authenticate an upstream
+// call by reusing the caller's own bearer token: passthrough forwards it, and
+// the on-behalf-of and token-exchange patterns present it to the IdP as the
+// subject token. A consumer called with an API key or a client certificate
+// never carries one, so these modes are only reachable for a consumer entered
+// with a token from an identity provider.
+func (a *MCPAuth) NeedsCallerToken() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Mode {
+	case MCPAuthModePassthrough:
+		return true
+	case MCPAuthModeExchange:
+		return a.Pattern == ExchangeOBO || a.Pattern == ExchangeTokenExchange
+	default:
+		return false
+	}
+}
+
+// NeedsLinkedAccount reports whether the mode reads a credential linked per
+// principal from the vault, so the first call fails with a connect link until
+// somebody links an account for that principal (a person for a consumer whose
+// users sign in, one shared service account for a machine consumer).
+func (a *MCPAuth) NeedsLinkedAccount() bool {
+	return a != nil && a.Mode == MCPAuthModeForwarded
+}
+
 func (a *MCPAuth) Validate() error {
 	switch a.Mode {
 	case MCPAuthModeNone, "":

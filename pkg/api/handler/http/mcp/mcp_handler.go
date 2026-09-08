@@ -344,7 +344,8 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		return writeRPCError(c, id, codeMethodNotFound, err.Error())
 	case errors.Is(err, sts.ErrInteractionRequired):
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrAudienceMismatch),
+	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrUpstreamNeedsCallerToken),
+		errors.Is(err, appmcp.ErrAudienceMismatch),
 		errors.Is(err, sts.ErrNoUserIdentity):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound):

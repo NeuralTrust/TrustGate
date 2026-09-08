@@ -40,6 +40,17 @@ import (
 
 var ErrNoPrincipal = errors.New("mcp: downstream auth mode requires an authenticated user identity")
 
+// ErrUpstreamNeedsCallerToken: the upstream is configured to reuse the caller's
+// own bearer token (passthrough, or an on-behalf-of / token-exchange), and this
+// caller has none — it authenticated as the application itself, with an API key
+// or a client certificate. Configuration, not something a retry fixes: give the
+// upstream a credential of its own (static or client_credentials), link an
+// account for the application (forwarded), or call this consumer with a token
+// from an identity provider.
+var ErrUpstreamNeedsCallerToken = errors.New(
+	"mcp: this upstream reuses the caller's own token, but the caller authenticated as the application (api key or client certificate) and carries none; " +
+		"give the upstream its own credential (static or client_credentials), link an account for the application (forwarded), or call this consumer with an identity-provider token")
+
 var ErrAudienceMismatch = errors.New("mcp: inbound token audience does not match the upstream's expected audience")
 
 type ConsentRequiredError struct {
@@ -140,8 +151,12 @@ func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.Routable
 
 func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomain.MCPAuth, target *Target) error {
 	principal := identity.PrincipalFromContext(ctx)
-	if principal == nil || principal.RawToken == "" {
+	if principal == nil {
 		return ErrNoPrincipal
+	}
+	if principal.RawToken == "" {
+		// Authenticated, just not with a token this mode can forward.
+		return ErrUpstreamNeedsCallerToken
 	}
 	if !principal.HasAudience(cfg.ExpectedAudience) {
 		return ErrAudienceMismatch
@@ -154,6 +169,12 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
 		return ErrNoPrincipal
+	}
+	// Impersonation and delegation are minted from the subject, so a machine
+	// caller is fine; on-behalf-of and token-exchange present the caller's own
+	// token to the IdP and cannot be served without one.
+	if cfg.NeedsCallerToken() && principal.RawToken == "" {
+		return ErrUpstreamNeedsCallerToken
 	}
 	cacheKey := fmt.Sprintf("%s|%s|%s", principal.Subject, reg.ID, rc.Consumer.GatewayID)
 	token, err := r.exchanger.Exchange(ctx, principal, rc.Consumer.GatewayID, cfg, cacheKey)
