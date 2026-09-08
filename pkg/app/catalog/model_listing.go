@@ -137,14 +137,7 @@ func (a *modelListing) load(ctx context.Context, providerCode string) listedMode
 			slog.String("error", err.Error()))
 		return listedModels{}
 	}
-	const maxInt = int(^uint(0) >> 1)
-	slugCapacity := len(models)
-	if slugCapacity > maxInt/2 {
-		slugCapacity = maxInt
-	} else {
-		slugCapacity *= 2
-	}
-	slugs := make(map[string]struct{}, slugCapacity)
+	slugs := make(map[string]struct{}, len(models))
 	for _, model := range models {
 		if !model.Enabled {
 			continue
