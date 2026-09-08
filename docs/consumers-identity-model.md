@@ -91,13 +91,15 @@ different set of registries. It is needed for exactly two things:
 1. **Per-user connections.** Each person links their own account and the gateway
    forwards *their* credentials (forwarded auth). This exists: consent-required
    error → connect page → vault.
-2. **Who may use what inside the app.** Which users or groups may reach each of
-   the app's servers. That is precisely what Access governs for the Store — the
-   same scoper applied to the *consumer's* registries instead of the whole catalog.
+2. **Who may use what inside the app.** ~~Which users or groups may reach each of
+   the app's servers.~~ **Decided against** (see §15): the consumer's servers are
+   what an admin bound to it, the same for everyone it admits. Access governs the
+   Store, where the person picks from a catalog; a consumer is already the
+   decision, and two places deciding one surface would let an admin bind a server
+   its own users cannot see.
 
 So an MCP consumer is: **servers + tools, authentication, and one identity switch**
-— *"Acts on behalf of end users"* — which turns on per-user connections and, when
-the user is a platform identity, Access rules. No Roles, no claim rules, no
+— *"Acts on behalf of end users"* — which turns on per-user connections. No Roles, no claim rules, no
 per-role registries. Groups arrive from the directory exactly as they do for the
 Store.
 
@@ -397,10 +399,8 @@ Shipped on `claude/composio-mcp-gateway-auth-tyd2z1`, in this order:
    carries OIDC auths and no OAuth2 auth.
 2. **Consumer identity** (§4.1, §4.2). `identity: {acts_for_users, source,
    end_user_header}` on the consumer (migration `20260909130000`). The Store
-   scoper scopes any `acts_for_users` + `source = platform` consumer over its own
-   registries with the live Access mode (All / Selected / None); a
-   hand-configured server without a catalog code stays exposed under Selected
-   since grants key on the code. `ValidateAuth` enforces the credential shape
+   scoper scopes the Store only; a custom consumer is returned untouched
+   whatever its identity (§15). `ValidateAuth` enforces the credential shape
    per identity (platform users → oauth2 or the built-in IdP; app users → api_key
    or mtls). The Store consumer is `acts_for_users = true, source = platform`.
 3. **Auth binding** (§4.4 item 6, generalised). `auth_binding:
@@ -459,8 +459,8 @@ each step, and where it is enforced:
 |---|---|---|---|---|---|
 | Acts as the application | API key | the key (`sub` = auth name) | one shared account per key; linked on the API-key connect page `/{slug}/connect` or via the consent error | no | `resolveMCPConsumer`, `apiKeyConnectService` |
 | Acts as the application | Trusted IdP (JWT) or mTLS | the token's `azp`/`sub` or the certificate CN | shared per principal, same page | no | `consumerAdmitsPrincipal` applies the auth binding |
-| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | yes: mode All / Selected / None over the consumer's registries | `scoper.scopeConsumerRegistries`, `emptySurfaceInsteadOfError` |
-| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | yes | same; `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
+| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | no — the consumer's servers are what the admin bound (§15) | `emptySurfaceInsteadOfError` |
+| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | no | `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
 | My app identifies its users (app) | API key or mTLS + `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | header required (400), user login refused (403), API-key connect page refused (409), oauth2 auths refused at attach |
 
 Invariants checked in this audit:
@@ -792,3 +792,37 @@ What stays unchanged: an upstream whose credential the server owns (`static`,
 `client_credentials`) needs none of this, and remains the right default for a
 machine consumer. What `forwarded` buys is *one shared service account per
 application*, and the product should say exactly that.
+
+## 15. Access governs the Store, not a consumer
+
+Product decision, replacing what §4, §10 and §11 first said: **no access mode and
+no grant narrows a consumer's surface.** A consumer's servers are the ones an
+admin bound to it, identical for every caller it admits, whatever its identity.
+`scoper.Scope` now returns any non-Store consumer untouched
+(`pkg/app/store/scoper.go`), and the grant store is not even read on that path,
+so an Access outage cannot affect an application.
+
+The reasoning: Access exists for the **self-service catalog**, where a person
+picks servers themselves and there is no per-application configuration to read —
+mode (All / Selected / None) plus grants are how an admin bounds that choice. A
+consumer is the opposite: someone already decided, deliberately, which servers
+this application routes to. Layering Access on top puts two places in charge of
+one surface, and the failure it produces is silent and confusing — an admin
+binds a server to a consumer and the consumer's own users do not see it, because
+a grant elsewhere does not name them.
+
+What this means in practice:
+
+- **Governance of a login consumer is admission, not scoping.** Who can enter it
+  at all is the question — its credential, and for the built-in NeuralTrust login
+  the auth binding. Everyone admitted sees the whole set. If per-person subsets
+  of one application are ever wanted, the answer is more consumers (each with its
+  own server set), not Access inside one.
+- **The Store keeps everything.** Live mode resolution (own policy → most
+  permissive group → gateway default), grants by catalog code or instance,
+  install approvals, and the re-check at request time rather than only at install
+  time. §7 and §8 stand as written.
+- **The Portal is unaffected**: it previews the Store, and the app's Access page
+  only ever granted catalog servers and instances — never consumers. The
+  Applications tab there is a directory of consumers, not a place they are
+  governed.
