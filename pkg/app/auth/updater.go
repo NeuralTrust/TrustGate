@@ -85,7 +85,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		existing.Name = *in.Name
 	}
 	if in.Type != nil {
-		existing.Type = *in.Type
+		// Canonicalized on the way in, like create: a caller may still send the
+		// deprecated alias, but no row is written under it.
+		existing.Type = domain.NormalizeType(*in.Type)
 	}
 	if in.Enabled != nil {
 		existing.Enabled = *in.Enabled

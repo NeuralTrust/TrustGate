@@ -229,7 +229,7 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOIDC,
-			config:    Config{OIDC: &OIDCConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "issuer-without-scheme", Audiences: []string{"gateway"}}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -237,11 +237,11 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOIDC,
-			config: Config{OIDC: &OIDCConfig{
-				Issuer:            "https://issuer",
-				Audiences:         []string{"gateway"},
-				JWKSURL:           "https://issuer/.well-known/jwks.json",
-				AllowedAlgorithms: []string{"HS256"},
+			config: Config{OAuth2: &OAuth2Config{
+				Issuer:     "https://issuer",
+				Audiences:  []string{"gateway"},
+				JWKSURL:    "https://issuer/.well-known/jwks.json",
+				Algorithms: []string{"HS256"},
 			}},
 			wantErr: ErrInvalidConfig,
 		},
@@ -287,11 +287,13 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			Audiences: []string{"trustgate"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
-		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{
-			Issuer:            "https://issuer",
-			Audiences:         []string{"gateway"},
-			JWKSURL:           "https://issuer/.well-known/jwks.json",
-			AllowedAlgorithms: []string{"RS256"},
+		// The deprecated alias validates as oauth2 and is canonicalized on the
+		// way in, so a caller still pinned to it keeps working.
+		"oidc alias": {TypeOIDC, Config{OAuth2: &OAuth2Config{
+			Issuer:     "https://issuer",
+			Audiences:  []string{"gateway"},
+			JWKSURL:    "https://issuer/.well-known/jwks.json",
+			Algorithms: []string{"RS256"},
 		}}},
 	}
 	for name, tc := range cases {
@@ -311,7 +313,7 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.OAuth2 != nil || c.OIDC != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }

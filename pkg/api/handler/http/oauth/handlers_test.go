@@ -120,7 +120,9 @@ func oauth2Auth(issuer, clientID string) *authdomain.Auth {
 
 func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(oauth2Auth("https://idp.example.com", ""))
+	// This case is about resource path scoping, so the provider is one the
+	// gateway can broker against; advertisement is gated on that.
+	app := newTestApp(oauth2Auth("https://idp.example.com", "mcp-public-client"))
 
 	for path, wantResource := range map[string]string{
 		"/.well-known/oauth-protected-resource":            "http://gw.example.com",

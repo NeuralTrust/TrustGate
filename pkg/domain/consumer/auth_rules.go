@@ -21,21 +21,6 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
-// ValidateAuthType rejects auth types a consumer of the given type cannot use.
-// Every other combination is allowed: an API key, a bearer JWT validated against
-// an external IdP (oauth2 / oidc) or a client certificate all identify the
-// application; who the application acts for is the consumer's Identity, not
-// its auth (see Identity).
-func ValidateAuthType(consType Type, authType authdomain.Type) error {
-	if consType == TypeMCP && authType == authdomain.TypeOIDC {
-		return fmt.Errorf(
-			"%w: an MCP consumer cannot use an oidc auth; interactive MCP clients need the gateway to broker the login, which requires an oauth2 auth with a pre-registered client",
-			commonerrors.ErrConflict,
-		)
-	}
-	return nil
-}
-
 // ValidateAuth rejects an auth type the consumer cannot use given its type and
 // identity. A consumer acting for platform users is entered by people who sign
 // in, so only an oauth2 auth (or none, which leaves the built-in identity
@@ -44,9 +29,6 @@ func ValidateAuthType(consType Type, authType authdomain.Type) error {
 func ValidateAuth(c *Consumer, authType authdomain.Type) error {
 	if c == nil {
 		return nil
-	}
-	if err := ValidateAuthType(c.Type, authType); err != nil {
-		return err
 	}
 	switch {
 	case c.Identity.PlatformUsers():
