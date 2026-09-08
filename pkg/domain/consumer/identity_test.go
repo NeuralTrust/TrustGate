@@ -182,3 +182,24 @@ func TestEndUserSubject_IsNamespacedByConsumer(t *testing.T) {
 		t.Fatal("app-identified subjects carry the app: prefix so they cannot collide with token subjects")
 	}
 }
+
+func TestValidateAuthConfig_PlatformUsersNeedAnInteractiveIdP(t *testing.T) {
+	t.Parallel()
+	platform := &Consumer{Type: TypeMCP, Identity: Identity{ActsForUsers: true, Source: IdentitySourcePlatform}}
+	validateOnly := &authdomain.Auth{Type: authdomain.TypeOAuth2, Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{Issuer: "https://idp", JWKSURL: "https://idp/jwks"}}}
+	interactive := &authdomain.Auth{Type: authdomain.TypeOAuth2, Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{Issuer: "https://idp", ClientID: "gateway"}}}
+	if err := ValidateAuthConfig(platform, validateOnly); !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("a validation-only IdP cannot broker a login, got %v", err)
+	}
+	if err := ValidateAuthConfig(platform, interactive); err != nil {
+		t.Fatalf("an IdP with a registered client brokers the login, got %v", err)
+	}
+	// Applications validating their own tokens keep using validation-only IdPs.
+	app := &Consumer{Type: TypeMCP}
+	if err := ValidateAuthConfig(app, validateOnly); err != nil {
+		t.Fatalf("an application consumer may use a validation-only IdP, got %v", err)
+	}
+	if err := ValidateAuthConfig(nil, validateOnly); err != nil {
+		t.Fatalf("nil consumer is a no-op, got %v", err)
+	}
+}

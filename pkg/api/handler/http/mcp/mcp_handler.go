@@ -485,6 +485,10 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 	}
 	if rc.Consumer.Identity.AppUsers() {
+		if !machineCredential(identity.PrincipalFromContext(c.UserContext())) {
+			return nil, fiber.NewError(fiber.StatusForbidden,
+				"this application identifies its own users; call it with its API key or client certificate, not a user login")
+		}
 		endUser := c.Get(consumerdomain.EndUserHeader)
 		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
 			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -496,6 +500,15 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		}
 	}
 	return rc, nil
+}
+
+// machineCredential reports whether the caller authenticated as the application
+// itself (API key or client certificate). A consumer whose application names
+// its own end users must be called that way: a platform login reaching it
+// through the built-in identity provider would be discarded by the end-user
+// swap, so it is refused instead.
+func machineCredential(p *identity.Principal) bool {
+	return p != nil && (p.Method == identity.MethodAPIKey || p.Method == identity.MethodMTLS)
 }
 
 // endUserPrincipal is the principal a request runs as when the application

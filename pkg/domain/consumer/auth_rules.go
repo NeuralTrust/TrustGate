@@ -66,3 +66,23 @@ func ValidateAuth(c *Consumer, authType authdomain.Type) error {
 	}
 	return nil
 }
+
+// ValidateAuthConfig is ValidateAuth plus the checks that need the auth's
+// configuration: a consumer whose users sign in can only use an identity
+// provider that can broker that login (an oauth2 config with a registered
+// client), not a validation-only one.
+func ValidateAuthConfig(c *Consumer, au *authdomain.Auth) error {
+	if c == nil || au == nil {
+		return nil
+	}
+	if err := ValidateAuth(c, au.Type); err != nil {
+		return err
+	}
+	if c.Identity.PlatformUsers() && au.Type == authdomain.TypeOAuth2 && !au.Config.OAuth2.Interactive() {
+		return fmt.Errorf(
+			"%w: users sign in through this consumer's identity provider, so it needs a client registered at the provider (client_id); a token-validation-only provider cannot broker the login",
+			commonerrors.ErrConflict,
+		)
+	}
+	return nil
+}

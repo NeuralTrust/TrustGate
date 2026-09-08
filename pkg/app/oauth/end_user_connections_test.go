@@ -192,3 +192,18 @@ func TestEndUserConnections_InvalidEndUser(t *testing.T) {
 	_, err := svc.Link(ctx, gatewayID, "assistant", "ag_secret", "  ", "")
 	require.True(t, errors.Is(err, consumerdomain.ErrInvalidEndUser))
 }
+
+func TestAPIKeyConnect_RefusesAppIdentifiedConsumers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	consumers := appconsumermocks.NewDataFinder(t)
+	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
+
+	svc := oauth.NewAPIKeyConnectService(appauthmocks.NewAPIKeyFinder(t), consumers, oauthmocks.NewConnectService(t), oauth.NewNoopConnectAttemptLimiter())
+	err := svc.ValidateTarget(ctx, gatewayID, "assistant")
+	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectEndUsers)
+	require.ErrorIs(t, err, commonerrors.ErrConflict)
+}

@@ -51,3 +51,12 @@ func TestEndUserPrincipal(t *testing.T) {
 		t.Fatalf("unexpected bare principal %+v", bare)
 	}
 }
+
+func TestMachineCredential(t *testing.T) {
+	if !machineCredential(&identity.Principal{Method: identity.MethodAPIKey}) || !machineCredential(&identity.Principal{Method: identity.MethodMTLS}) {
+		t.Fatal("an API key or a client certificate is the application's own credential")
+	}
+	if machineCredential(&identity.Principal{Method: identity.MethodJWT}) || machineCredential(nil) {
+		t.Fatal("a user login (JWT / session) is not the application's credential")
+	}
+}

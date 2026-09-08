@@ -155,6 +155,15 @@ func (c *OAuth2Config) validate() error {
 	return nil
 }
 
+// Interactive reports whether this identity provider can broker a user login:
+// the gateway needs a client registered at the provider (client_id) to run the
+// authorization-code flow. A validation-only config (issuer + JWKS, no client)
+// can verify tokens an application obtained by itself, but nobody can sign in
+// through it.
+func (c *OAuth2Config) Interactive() bool {
+	return c != nil && strings.TrimSpace(c.ClientID) != ""
+}
+
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used
 // for identity providers that publish no authorization-server metadata (e.g.
 // GitHub): authorize_url and token_url must be provided together, be http(s)
