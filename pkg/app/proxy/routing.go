@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -39,13 +40,17 @@ import (
 type routedBackend struct {
 	lb           *loadbalancer.LoadBalancer
 	route        routingdomain.Route
+	chain        []routingdomain.Route
 	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
 	baseline     *trace.RouteBaseline
 }
 
-func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
+func (f *forwarder) resolveRouting(
+	ctx context.Context,
+	in ForwardInput,
+) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
 	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		f.logRejectedIntent(in.Consumer, ref, err)
@@ -81,7 +86,48 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}
+	if intent.IsShortModel() {
+		candidates = f.filterCandidatesByProviderListing(ctx, candidates, intent.Model)
+	}
 	return intent, candidates, nil
+}
+
+func (f *forwarder) filterCandidatesByProviderListing(
+	ctx context.Context,
+	candidates *routingdomain.CandidateSet,
+	model string,
+) *routingdomain.CandidateSet {
+	if f.listing == nil {
+		return candidates
+	}
+	served := candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		if !c.DefersModelChoice() {
+			return true
+		}
+		if f.listing.Lists(ctx, c.Registry.Provider(), model) != appcatalog.VerdictAbsent {
+			return true
+		}
+		f.logSkippedRegistry(c.Registry, model)
+		return false
+	})
+	if served.Len() == 0 {
+		return candidates
+	}
+	return served
+}
+
+func (f *forwarder) logSkippedRegistry(reg *domain.Registry, model string) {
+	if f.logger == nil {
+		return
+	}
+	f.logger.Debug("registry skipped: provider catalog does not list model",
+		slog.String("registry_id", reg.ID.String()),
+		slog.String("provider", reg.Provider()),
+		slog.String("model", model),
+	)
 }
 
 func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string {
@@ -257,11 +303,18 @@ func (f *forwarder) routeBackend(
 			excluded: make(map[routingdomain.RouteKey]struct{}),
 		}, nil
 	}
-	if intent.IsQualified() || intent.IsShortModel() {
+	if intent.IsQualified() {
 		return routedBackend{
 			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
 			excluded: make(map[routingdomain.RouteKey]struct{}),
 			pinned:   true,
+		}, nil
+	}
+	if chain := candidateChain(candidates); intent.IsShortModel() && len(chain) > 0 {
+		return routedBackend{
+			route:    chain[0],
+			chain:    chain,
+			excluded: make(map[routingdomain.RouteKey]struct{}),
 		}, nil
 	}
 	if len(rc.Registries) == 0 {
@@ -286,6 +339,58 @@ func (f *forwarder) routeBackend(
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
 	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
+}
+
+func candidateChain(candidates *routingdomain.CandidateSet) []routingdomain.Route {
+	all := candidates.Candidates()
+	chain := make([]routingdomain.Route, 0, len(all))
+	for _, c := range all {
+		chain = append(chain, routingdomain.RouteForRegistry(c.Registry))
+	}
+	return chain
+}
+
+func nextChainRoute(
+	chain []routingdomain.Route,
+	excluded map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
+	for i := range chain {
+		if _, seen := excluded[chain[i].Key()]; seen {
+			continue
+		}
+		return &chain[i]
+	}
+	return nil
+}
+
+func noRegistryServesModelError(model string, chain []routingdomain.Route, last failoverState) error {
+	err := fmt.Errorf("%w: %q (tried %s)",
+		routingdomain.ErrNoRegistryServesModel, model, strings.Join(chainProviders(chain), ", "))
+	if last.resp == nil {
+		return err
+	}
+	detail := adapter.ProviderErrorMessage(last.resp.Body)
+	if detail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: last provider response: %s", err, detail)
+}
+
+func chainProviders(chain []routingdomain.Route) []string {
+	out := make([]string, 0, len(chain))
+	seen := make(map[string]struct{}, len(chain))
+	for _, route := range chain {
+		if route.Registry == nil {
+			continue
+		}
+		provider := route.Registry.Provider()
+		if _, dup := seen[provider]; dup {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	return out
 }
 
 func smartRoutingBaseline(
