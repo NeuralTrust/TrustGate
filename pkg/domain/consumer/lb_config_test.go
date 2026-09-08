@@ -256,3 +256,80 @@ func TestLBPoolMember_RouteWeight(t *testing.T) {
 }
 
 func ptrInt(v int) *int { return &v }
+
+func TestLBConfig_ValidateWildcardPolicies(t *testing.T) {
+	t.Parallel()
+	registryID := ids.New[ids.RegistryKind]()
+	policies := ModelPolicies{
+		registryID: {Allowed: []string{"gpt-*"}},
+	}
+	tests := []struct {
+		name    string
+		members []LBPoolMember
+		wantErr bool
+	}{
+		{
+			name:    "literal member model under a pattern allow-list",
+			members: []LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-4o"}}},
+		},
+		{
+			name:    "pinned literal member model under a pattern allow-list",
+			members: []LBPoolMember{{RegistryID: registryID, Model: "gpt-4o-mini", Models: []string{"gpt-4o-mini"}}},
+		},
+		{
+			name:    "member model outside every pattern",
+			members: []LBPoolMember{{RegistryID: registryID, Models: []string{"claude-3"}}},
+			wantErr: true,
+		},
+		{
+			name:    "a pattern in members.models is rejected",
+			members: []LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-*"}}},
+			wantErr: true,
+		},
+		{
+			name:    "a pattern in members.model is rejected",
+			members: []LBPoolMember{{RegistryID: registryID, Model: "gpt-*", Models: []string{"gpt-4o"}}},
+			wantErr: true,
+		},
+		{
+			name:    "pinned model not listed in members.models",
+			members: []LBPoolMember{{RegistryID: registryID, Model: "gpt-4o", Models: []string{"gpt-4o-mini"}}},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &LBConfig{Enabled: true, Members: tc.members}
+			err := cfg.Validate(policies)
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidLBConfig) {
+					t.Fatalf("err = %v, want ErrInvalidLBConfig", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLBConfig_ValidateSmartRoutingTierRejectsPattern(t *testing.T) {
+	t.Parallel()
+	registryID := ids.New[ids.RegistryKind]()
+	policies := ModelPolicies{registryID: {Allowed: []string{"gpt-*"}}}
+
+	cfg := &LBConfig{
+		Enabled:   true,
+		Algorithm: algorithm.SmartRouting,
+		Members:   []LBPoolMember{{RegistryID: registryID, Model: "gpt-4o", Models: []string{"gpt-4o"}}},
+		SmartRouting: &registry.SmartRoutingConfig{
+			Tiers: []registry.SmartRoutingTier{{RegistryID: registryID, Model: "gpt-*"}},
+		},
+	}
+	if err := cfg.Validate(policies); !errors.Is(err, ErrInvalidLBConfig) {
+		t.Fatalf("err = %v, want ErrInvalidLBConfig", err)
+	}
+}
