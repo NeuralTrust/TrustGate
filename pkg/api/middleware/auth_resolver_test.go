@@ -409,7 +409,7 @@ func newAuthTestAppWithResolver(
 	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
 	idp := resolver.NewOIDCIdentityResolver(appauth.NewOIDCFinder(oidcVerifier), oidcVerifier)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp, nil),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		slog.Default(),

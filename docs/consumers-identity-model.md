@@ -476,3 +476,10 @@ Invariants checked in this audit:
   consent tickets, connect page, statuses, stream fingerprint), so the three
   subjects (`auth name`, platform `sub`, `app:…`) never share an account.
 - The Store is the platform-users row with the catalog as its server set.
+- Client certificates authenticate on both planes: the MCP plane through the
+  auth chain, the LLM proxy plane through `MTLSIdentityResolver` (TLS handshake
+  or `X-Forwarded-Client-Cert` from a peer in `TRUST_XFCC_FROM`); the binding's
+  allowed subjects apply on both.
+- Product decision: consumers whose users sign in use the NeuralTrust login
+  only. The gateway still accepts an interactive company IdP through the API,
+  but the app does not offer one.
