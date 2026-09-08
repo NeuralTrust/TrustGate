@@ -18,7 +18,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -38,7 +37,7 @@ func (r *APIKeyIdentityResolver) Resolve(
 	if rawKey == "" {
 		return nil, ErrUnauthenticated
 	}
-	if rc == nil || rc.Consumer == nil || rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased {
+	if rc == nil || rc.Consumer == nil {
 		return nil, ErrForbidden
 	}
 	hash := authdomain.HashAPIKey(rawKey)

@@ -22,7 +22,6 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
@@ -55,11 +54,6 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}
 	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) registrydomain.Repository {
 		return adapters.NewRegistryRepository(store)
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) roledomain.Repository {
-		return adapters.NewRoleRepository(store)
 	}); err != nil {
 		return err
 	}
@@ -100,9 +94,6 @@ func provideSnapshotServices(c *container.Container) error {
 		return err
 	}
 	if err := provideRegistryServices(c); err != nil {
-		return err
-	}
-	if err := provideRoleServices(c); err != nil {
 		return err
 	}
 	if err := provideConsumerServices(c); err != nil {

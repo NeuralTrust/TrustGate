@@ -26,7 +26,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
@@ -42,7 +41,6 @@ type Data struct {
 	Registries    []registrydomain.Registry
 	Policies      []policydomain.Policy
 	Auths         []authdomain.Auth
-	Roles         []roledomain.Role
 	Providers     []catalogdomain.Provider
 	CatalogModels []CatalogModel
 	StoreGrants   []storeaccessdomain.Grant
@@ -76,10 +74,6 @@ type Snapshot struct {
 	authsEnabledByAge   []*authdomain.Auth
 	authsEnabledGateway map[ids.GatewayID][]*authdomain.Auth
 
-	rolesByID      map[ids.RoleID]*roledomain.Role
-	rolesByGateway map[ids.GatewayID]map[ids.RoleID]*roledomain.Role
-	rolesOrdered   map[ids.GatewayID][]*roledomain.Role
-
 	providersOrdered      []*catalogdomain.Provider
 	catalogByProviderSlug map[string]*catalogdomain.Model
 	catalogByProviderCode map[string][]*catalogdomain.Model
@@ -110,9 +104,6 @@ func Build(data Data) *Snapshot {
 		authsByGateway:         make(map[ids.GatewayID]map[ids.AuthID]*authdomain.Auth),
 		authsByAPIKeyHash:      make(map[string]*authdomain.Auth),
 		authsEnabledGateway:    make(map[ids.GatewayID][]*authdomain.Auth),
-		rolesByID:              make(map[ids.RoleID]*roledomain.Role, len(data.Roles)),
-		rolesByGateway:         make(map[ids.GatewayID]map[ids.RoleID]*roledomain.Role),
-		rolesOrdered:           make(map[ids.GatewayID][]*roledomain.Role),
 		catalogByProviderSlug:  make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
 		catalogByProviderCode:  make(map[string][]*catalogdomain.Model),
 		catalogAll:             make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
@@ -125,7 +116,6 @@ func Build(data Data) *Snapshot {
 	s.buildRegistries()
 	s.buildPolicies()
 	s.buildAuths()
-	s.buildRoles()
 	s.buildCatalog()
 	s.buildStoreGrants()
 
@@ -275,26 +265,6 @@ func (s *Snapshot) buildAuths() {
 	})
 	for _, a := range byGateway {
 		s.authsEnabledGateway[a.GatewayID] = append(s.authsEnabledGateway[a.GatewayID], a)
-	}
-}
-
-func (s *Snapshot) buildRoles() {
-	ordered := make([]*roledomain.Role, len(s.data.Roles))
-	for i := range s.data.Roles {
-		ordered[i] = &s.data.Roles[i]
-	}
-	sort.SliceStable(ordered, func(a, b int) bool {
-		return recencyDescIDAsc(ordered[a].CreatedAt, ordered[a].ID.String(), ordered[b].CreatedAt, ordered[b].ID.String())
-	})
-	for _, r := range ordered {
-		s.rolesByID[r.ID] = r
-		byID, ok := s.rolesByGateway[r.GatewayID]
-		if !ok {
-			byID = make(map[ids.RoleID]*roledomain.Role)
-			s.rolesByGateway[r.GatewayID] = byID
-		}
-		byID[r.ID] = r
-		s.rolesOrdered[r.GatewayID] = append(s.rolesOrdered[r.GatewayID], r)
 	}
 }
 
@@ -500,34 +470,6 @@ func (s *Snapshot) AuthsEnabledByGatewayAndType(gatewayID ids.GatewayID, authTyp
 		}
 	}
 	return out
-}
-
-func (s *Snapshot) RoleByID(id ids.RoleID) (*roledomain.Role, bool) {
-	r, ok := s.rolesByID[id]
-	return r, ok
-}
-
-func (s *Snapshot) RolesByIDs(gatewayID ids.GatewayID, roleIDs []ids.RoleID) []*roledomain.Role {
-	byID := s.rolesByGateway[gatewayID]
-	if byID == nil {
-		return nil
-	}
-	out := make([]*roledomain.Role, 0, len(roleIDs))
-	seen := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		if r, ok := byID[id]; ok {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func (s *Snapshot) RolesByGateway(gatewayID ids.GatewayID) []*roledomain.Role {
-	return s.rolesOrdered[gatewayID]
 }
 
 func (s *Snapshot) Providers() []*catalogdomain.Provider {

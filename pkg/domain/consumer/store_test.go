@@ -57,14 +57,11 @@ func TestBuildStoreConsumer(t *testing.T) {
 	if c.Type != TypeMCP {
 		t.Fatalf("store type = %v, want MCP", c.Type)
 	}
-	if c.RoutingMode != RoutingModeInline {
-		t.Fatalf("store routing mode = %v, want inline", c.RoutingMode)
-	}
 	if !c.Active {
 		t.Fatal("store consumer must be active")
 	}
-	if len(c.AuthIDs) != 0 || len(c.RegistryIDs) != 0 || len(c.RoleIDs) != 0 {
-		t.Fatalf("store consumer must carry no auths/registries/roles, got %+v", c)
+	if len(c.AuthIDs) != 0 || len(c.RegistryIDs) != 0 {
+		t.Fatalf("store consumer must carry no auths/registries, got %+v", c)
 	}
 }
 

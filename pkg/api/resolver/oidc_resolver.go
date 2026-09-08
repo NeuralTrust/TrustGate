@@ -20,7 +20,6 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -43,7 +42,7 @@ func (r *OIDCIdentityResolver) Resolve(
 	if err != nil {
 		return nil, err
 	}
-	if rc == nil || rc.Consumer == nil || rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
+	if rc == nil || rc.Consumer == nil {
 		return nil, ErrForbidden
 	}
 	a, err := r.finder.FindOIDCAuth(c.UserContext(), rc.Auths, token)

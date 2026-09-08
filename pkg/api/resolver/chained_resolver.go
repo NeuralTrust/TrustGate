@@ -20,7 +20,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -60,11 +59,10 @@ func (r ChainedIdentityResolver) Resolve(
 	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
 		return nil, ErrUnauthenticated
 	}
-	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
-		return r.oauth2.Resolve(c, gw, rc)
+	// A bearer token is verified against the consumer's OAuth2 auths; consumers
+	// that only carry OIDC auths keep resolving through the OIDC verifier.
+	if hasAttachedAuthType(rc, authdomain.TypeOIDC) && !hasAttachedAuthType(rc, authdomain.TypeOAuth2) {
+		return r.oidc.Resolve(c, gw, rc)
 	}
-	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeOIDC) {
-		return nil, ErrForbidden
-	}
-	return r.oidc.Resolve(c, gw, rc)
+	return r.oauth2.Resolve(c, gw, rc)
 }

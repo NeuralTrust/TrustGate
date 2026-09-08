@@ -71,6 +71,7 @@ const (
 	attrPrincipalSubject     = "trustgate.principal.subject"
 	attrPrincipalMethod      = "trustgate.principal.method"
 	attrPrincipalEmail       = "trustgate.principal.email"
+	attrEndUser              = "trustgate.end_user"
 	attrSessionID            = "trustgate.session_id"
 	attrTurnID               = "trustgate.turn_id"
 	attrIP                   = "trustgate.ip"
@@ -196,6 +197,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	appendStr(attrPrincipalSubject, evt.PrincipalSubject)
 	appendStr(attrPrincipalMethod, evt.PrincipalMethod)
 	appendStr(attrPrincipalEmail, evt.PrincipalEmail)
+	appendStr(attrEndUser, evt.EndUser)
 	appendStr(attrSessionID, evt.SessionID)
 	appendStr(attrTurnID, evt.TurnID)
 	appendStr(attrIP, evt.IP)

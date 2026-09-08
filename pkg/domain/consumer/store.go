@@ -51,18 +51,20 @@ func IsStoreSlug(slug string) bool {
 // BuildStoreConsumer returns the synthetic Store consumer for a gateway. It is
 // built as a struct literal (bypassing New) because it is a well-known,
 // non-persisted surface with a fixed slug and sentinel ID; its GatewayID is
-// stamped per request from the addressed gateway. It carries no registries,
-// auths or roles: the Store's surface is the gateway-implemented meta-tools, and
-// having no auth of its own means it is reachable only through the built-in
-// default identity provider (platform login), like an inline no-auth consumer.
+// stamped per request from the addressed gateway. It carries no registries or
+// auths: the Store's surface is the gateway-implemented meta-tools plus whatever
+// the caller installed, and having no auth of its own means it is reachable only
+// through the built-in default identity provider (platform login). It acts for
+// platform users, so Access rules scope it per principal like any other
+// acts-for-users consumer.
 func BuildStoreConsumer(gatewayID ids.GatewayID) *Consumer {
 	return &Consumer{
-		ID:          StoreConsumerID(),
-		GatewayID:   gatewayID,
-		Name:        StoreConsumerName,
-		Type:        TypeMCP,
-		Slug:        StoreSlug,
-		RoutingMode: RoutingModeInline,
-		Active:      true,
+		ID:        StoreConsumerID(),
+		GatewayID: gatewayID,
+		Name:      StoreConsumerName,
+		Type:      TypeMCP,
+		Slug:      StoreSlug,
+		Active:    true,
+		Identity:  Identity{ActsForUsers: true, Source: IdentitySourcePlatform},
 	}
 }

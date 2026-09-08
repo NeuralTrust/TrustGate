@@ -167,7 +167,7 @@ func TestOpenAPIUpstreamCallsTrustGateAdminHealthz(t *testing.T) {
 
 	tools, err := upstream.ListTools(context.Background())
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(tools), 50)
+	require.GreaterOrEqual(t, len(tools), 40)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)

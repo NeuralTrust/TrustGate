@@ -30,7 +30,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"golang.org/x/sync/errgroup"
@@ -55,7 +54,6 @@ type Compiler struct {
 	registries RegistryReader
 	policies   PolicyReader
 	auths      AuthReader
-	roles      RoleReader
 	catalog    CatalogReader
 	// grants is optional: the MCP Store's access grants ride the snapshot when a
 	// reader is wired (WithStoreGrants). Without one the snapshot carries no
@@ -99,7 +97,6 @@ func NewCompiler(
 	registries RegistryReader,
 	policies PolicyReader,
 	auths AuthReader,
-	roles RoleReader,
 	catalog CatalogReader,
 	logger *slog.Logger,
 	opts ...CompilerOption,
@@ -113,7 +110,6 @@ func NewCompiler(
 		registries: registries,
 		policies:   policies,
 		auths:      auths,
-		roles:      roles,
 		catalog:    catalog,
 		logger:     logger,
 	}
@@ -237,7 +233,6 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.Registries = append(dst.Registries, gwData.Registries...)
 	dst.Policies = append(dst.Policies, gwData.Policies...)
 	dst.Auths = append(dst.Auths, gwData.Auths...)
-	dst.Roles = append(dst.Roles, gwData.Roles...)
 	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
 	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 }
@@ -314,7 +309,6 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		registries    []*registrydomain.Registry
 		policies      []*policydomain.Policy
 		auths         []*authdomain.Auth
-		roles         []*roledomain.Role
 		grants        []*storeaccessdomain.Grant
 		storePolicies []*storeaccessdomain.Policy
 	)
@@ -343,12 +337,6 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		})
 		return err
 	})
-	g.Go(func() (err error) {
-		roles, err = listAll(gctx, "roles", func(ctx context.Context, page int) ([]*roledomain.Role, int, error) {
-			return c.roles.List(ctx, roledomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
-		})
-		return err
-	})
 	if c.grants != nil {
 		g.Go(func() (err error) {
 			grants, err = listAll(gctx, "store grants", func(ctx context.Context, page int) ([]*storeaccessdomain.Grant, int, error) {
@@ -374,7 +362,6 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	groupByGateway(byGateway, registries, func(x *registrydomain.Registry) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x registrydomain.Registry) { data.Registries = append(data.Registries, x) })
 	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) { data.Policies = append(data.Policies, x) })
 	groupByGateway(byGateway, auths, func(x *authdomain.Auth) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x authdomain.Auth) { data.Auths = append(data.Auths, x) })
-	groupByGateway(byGateway, roles, func(x *roledomain.Role) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x roledomain.Role) { data.Roles = append(data.Roles, x) })
 	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
 	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
 		data.StorePolicies = append(data.StorePolicies, x)
@@ -486,17 +473,6 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 		return err
 	}
 	data.Auths = append(data.Auths, auths...)
-
-	roles, err := c.roles.ListByGateway(ctx, gatewayID)
-	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
-		return fmt.Errorf("configsnapshot: list roles for gateway %s: %w", gatewayID, err)
-	}
-	for _, r := range roles {
-		if r == nil {
-			continue
-		}
-		data.Roles = append(data.Roles, *r)
-	}
 
 	if c.grants != nil {
 		grants, err := c.grants.ListByGateway(ctx, gatewayID)
@@ -617,7 +593,6 @@ func sortData(data *readmodel.Data) {
 	sort.SliceStable(data.Registries, func(i, j int) bool { return data.Registries[i].ID.String() < data.Registries[j].ID.String() })
 	sort.SliceStable(data.Policies, func(i, j int) bool { return data.Policies[i].ID.String() < data.Policies[j].ID.String() })
 	sort.SliceStable(data.Auths, func(i, j int) bool { return data.Auths[i].ID.String() < data.Auths[j].ID.String() })
-	sort.SliceStable(data.Roles, func(i, j int) bool { return data.Roles[i].ID.String() < data.Roles[j].ID.String() })
 	sort.SliceStable(data.StoreGrants, func(i, j int) bool {
 		a, b := data.StoreGrants[i], data.StoreGrants[j]
 		if a.GatewayID != b.GatewayID {

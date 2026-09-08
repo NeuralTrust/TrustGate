@@ -20,7 +20,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -42,7 +41,7 @@ func (r *OAuth2IdentityResolver) Resolve(
 	if err != nil {
 		return nil, err
 	}
-	if rc == nil || rc.Consumer == nil || rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased {
+	if rc == nil || rc.Consumer == nil {
 		return nil, ErrForbidden
 	}
 	var invalidCredential bool

@@ -36,7 +36,7 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 
 // Handle godoc
 // @Summary      Update a consumer
-// @Description  Updates an existing consumer. The optional `registries` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.
+// @Description  Updates an existing consumer. The optional `registries` field replaces the whole registry association set in the same atomic request.
 // @Tags         consumers
 // @Accept       json
 // @Produce      json
@@ -90,7 +90,6 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:     gatewayID,
 		Name:          req.Name,
 		Type:          req.ToType(),
-		RoutingMode:   req.ToRoutingMode(),
 		LBConfig:      lbConfig,
 		Headers:       req.Headers,
 		Active:        req.Active,
@@ -99,6 +98,8 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		ModelPolicies: modelPolicies,
 		Toolkit:       toolkit,
 		FailMode:      req.ToFailMode(),
+		Identity:      req.Identity.ToDomain(),
+		AuthBinding:   req.AuthBinding.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

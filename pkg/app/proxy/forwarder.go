@@ -49,7 +49,6 @@ type ForwardInput struct {
 	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
-	RoleIDs   []ids.RoleID
 	Request   *infracontext.RequestContext
 }
 
@@ -330,9 +329,6 @@ func (f *forwarder) nextCandidate(
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
-	if isRoleBased(rc) {
-		return nil, false
-	}
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
 	}

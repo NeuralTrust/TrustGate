@@ -18,8 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"net/textproto"
 	"net/url"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -120,6 +122,15 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	stampConsumerTrace(c, consumer)
+	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if endUser != "" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			rt.SetEndUser(endUser)
+		}
+	}
 
 	if route.Capability == apiresolver.CapabilityModels {
 		return h.handleModels(c, route, consumer, authCtx)
@@ -131,7 +142,6 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		RoleIDs:   authCtx.RoleIDs,
 		Request:   reqCtx,
 	})
 	if err != nil {
@@ -274,7 +284,6 @@ func (h *ForwardedHandler) handleModels(
 	in := appproxy.ListModelsInput{
 		Consumer: consumer,
 		Data:     data,
-		RoleIDs:  authCtx.RoleIDs,
 	}
 	id := apiresolver.ModelsIDFromRest(route.Rest)
 	if id == "" {
@@ -305,29 +314,40 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	}
 }
 
+// endUserAttribution returns the end-user id an LLM consumer that opted in
+// forwarded, validated; empty when the consumer did not opt in (the header is
+// ignored) or the application sent none. A malformed value on an opted-in
+// consumer is rejected rather than silently dropped from the audit trail.
+func endUserAttribution(rc *appconsumer.RoutableConsumer, header string) (string, error) {
+	if rc == nil || rc.Consumer == nil || !rc.Consumer.Identity.EndUserHeader {
+		return "", nil
+	}
+	endUser := strings.TrimSpace(header)
+	if endUser == "" {
+		return "", nil
+	}
+	if err := domainconsumer.ValidateEndUser(endUser); err != nil {
+		return "", fmt.Errorf("%w: %s", appproxy.ErrInvalidRequestPayload, err.Error())
+	}
+	return endUser, nil
+}
+
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
 	if rc == nil || rc.Consumer == nil || authCtx == nil {
 		return false
 	}
 	// Playground tokens are validated upstream (signature, purpose, and
 	// consumer-slug binding in the playground identity resolver), so they are
-	// authorized for the matched consumer regardless of routing mode.
+	// authorized for the matched consumer.
 	if authCtx.Method == appauth.MethodPlayground {
 		return true
 	}
-	switch rc.Consumer.RoutingMode {
-	case "", domainconsumer.RoutingModeInline:
-		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
-	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
-	default:
-		return false
-	}
+	return isCredentialAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 }
 
-func isInlineAuthMethod(method appauth.Method) bool {
+func isCredentialAuthMethod(method appauth.Method) bool {
 	switch method {
-	case appauth.MethodAPIKey, appauth.MethodOAuth2:
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOIDC:
 		return true
 	default:
 		return false
@@ -340,22 +360,6 @@ func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 	}
 	for _, id := range rc.Consumer.AuthIDs {
 		if id == authID {
-			return true
-		}
-	}
-	return false
-}
-
-func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) bool {
-	if rc == nil || rc.Consumer == nil {
-		return false
-	}
-	effective := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		effective[id] = struct{}{}
-	}
-	for _, id := range rc.Consumer.RoleIDs {
-		if _, ok := effective[id]; ok {
 			return true
 		}
 	}
