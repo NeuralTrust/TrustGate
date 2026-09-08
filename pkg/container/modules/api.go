@@ -169,6 +169,11 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
+	if err := c.Provide(func(cfg *config.Config) *resolver.MTLSIdentityResolver {
+		return resolver.NewMTLSIdentityResolver(mtls.NewValidator(), mtls.NewXFCCExtractor(), cfg.Server.TrustXFCCFrom)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}

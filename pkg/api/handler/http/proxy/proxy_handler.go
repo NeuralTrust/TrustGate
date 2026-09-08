@@ -347,7 +347,7 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 
 func isCredentialAuthMethod(method appauth.Method) bool {
 	switch method {
-	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOIDC:
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOIDC, appauth.MethodMTLS:
 		return true
 	default:
 		return false

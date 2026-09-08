@@ -416,7 +416,7 @@ func newAuthTestAppWithResolver(
 		slog.Default(),
 	)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(playground, apiKey, oauth2),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2, nil),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		slog.Default(),

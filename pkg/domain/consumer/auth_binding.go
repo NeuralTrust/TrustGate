@@ -94,6 +94,27 @@ func (b AuthBinding) AllowsCertificate(commonName string, dnsNames []string) boo
 	return false
 }
 
+// AllowsCertificateClaims applies AllowsCertificate to the claims an mTLS
+// principal carries (common_name, dns_names).
+func (b AuthBinding) AllowsCertificateClaims(claims map[string]any) bool {
+	if len(b.AllowedCertificateSubjects) == 0 {
+		return true
+	}
+	commonName, _ := claims["common_name"].(string)
+	var dnsNames []string
+	switch v := claims["dns_names"].(type) {
+	case []string:
+		dnsNames = v
+	case []any:
+		for _, item := range v {
+			if name, ok := item.(string); ok {
+				dnsNames = append(dnsNames, name)
+			}
+		}
+	}
+	return b.AllowsCertificate(commonName, dnsNames)
+}
+
 // ClientOfClaims returns the client an access token was issued to: the azp
 // claim, else client_id, else empty.
 func ClientOfClaims(claims map[string]any) string {
