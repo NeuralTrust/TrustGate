@@ -61,6 +61,24 @@ type playgroundVerifierParams struct {
 	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
 }
 
+// diagnosticsVerifier builds the verifier every data-plane diagnostics probe
+// authenticates with: RS256 against the control plane's issuer keys, or HS256
+// against the local SERVER_SECRET_KEY on installs that share it. On DB-less
+// data planes the config-sync snapshot is a second, live key source, so the
+// control plane can introduce or rotate keys without the customer touching any
+// config.
+func diagnosticsVerifier(p playgroundVerifierParams) (jwt.ProxyTokenVerifier, error) {
+	static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+	if err != nil {
+		return nil, err
+	}
+	var snapshotKeys jwt.PlaygroundKeySource
+	if p.Store != nil {
+		snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
+	}
+	return jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys)), nil
+}
+
 func API(c *container.Container) error {
 	if err := c.Provide(o11y.NewSDK); err != nil {
 		return err
@@ -195,16 +213,25 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(p playgroundVerifierParams, tester appregistry.ConnectionTester) (*diagnosticshttp.TestConnectionHandler, error) {
-		static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+		verifier, err := diagnosticsVerifier(p)
 		if err != nil {
 			return nil, err
 		}
-		var snapshotKeys jwt.PlaygroundKeySource
-		if p.Store != nil {
-			snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
-		}
-		verifier := jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys))
 		return diagnosticshttp.NewTestConnectionHandler(verifier, tester), nil
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		p playgroundVerifierParams,
+		finder appregistry.Finder,
+		catalog appcatalog.Service,
+		availability appcatalog.RegistryAvailability,
+	) (*diagnosticshttp.ListRegistryModelsHandler, error) {
+		verifier, err := diagnosticsVerifier(p)
+		if err != nil {
+			return nil, err
+		}
+		return diagnosticshttp.NewListRegistryModelsHandler(verifier, finder, catalog, availability), nil
 	}); err != nil {
 		return err
 	}

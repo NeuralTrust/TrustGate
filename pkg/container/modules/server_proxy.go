@@ -58,11 +58,12 @@ func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 
 type proxyRouterParams struct {
 	dig.In
-	Transport     *middleware.Transport `name:"proxy"`
-	HealthHandler *apihandler.HealthHandler
-	ProxyHandler  *proxyhttp.ForwardedHandler
-	Diagnostics   *diagnosticshttp.TestConnectionHandler
-	OpsMetrics    *o11y.Provider
+	Transport      *middleware.Transport `name:"proxy"`
+	HealthHandler  *apihandler.HealthHandler
+	ProxyHandler   *proxyhttp.ForwardedHandler
+	Diagnostics    *diagnosticshttp.TestConnectionHandler
+	RegistryModels *diagnosticshttp.ListRegistryModelsHandler
+	OpsMetrics     *o11y.Provider
 }
 
 type proxyServerParams struct {
@@ -79,7 +80,8 @@ func ServerProxy(c *container.Container) error {
 	if err := c.Provide(
 		func(p proxyRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneProxy)
-			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics)
+			return router.NewProxyRouter(
+				p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics, p.RegistryModels)
 		},
 		dig.Name("proxy"),
 	); err != nil {
