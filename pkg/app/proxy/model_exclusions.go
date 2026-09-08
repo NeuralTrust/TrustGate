@@ -33,6 +33,7 @@ const (
 	exclusionUnexplained exclusionReason = iota
 	exclusionAllowList
 	exclusionCatalogAbsent
+	exclusionProviderRejected
 )
 
 func (r exclusionReason) String() string {
@@ -41,6 +42,8 @@ func (r exclusionReason) String() string {
 		return "restricted by its model allow-list"
 	case exclusionCatalogAbsent:
 		return "not in the provider catalog"
+	case exclusionProviderRejected:
+		return "its provider does not serve it"
 	default:
 		return "not eligible for this request"
 	}
@@ -55,6 +58,7 @@ func (f *forwarder) modelExclusions(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	model string,
+	probed map[ids.RegistryID]struct{},
 ) []registryExclusion {
 	if rc == nil || rc.Consumer == nil {
 		return nil
@@ -74,7 +78,10 @@ func (f *forwarder) modelExclusions(
 			if label == "" {
 				continue
 			}
-			out = append(out, registryExclusion{label: label, reason: f.exclusionReasonFor(ctx, rc, reg, model)})
+			out = append(out, registryExclusion{
+				label:  label,
+				reason: f.exclusionReasonFor(ctx, rc, reg, model, probed),
+			})
 		}
 	}
 	return out
@@ -85,6 +92,7 @@ func (f *forwarder) exclusionReasonFor(
 	rc *appconsumer.RoutableConsumer,
 	reg *domain.Registry,
 	model string,
+	probed map[ids.RegistryID]struct{},
 ) exclusionReason {
 	policy, _ := rc.Consumer.ModelPolicies.For(reg.ID)
 	candidate := routingdomain.Candidate{Allowed: policy.Allowed}
@@ -96,6 +104,9 @@ func (f *forwarder) exclusionReasonFor(
 	}
 	if f.listing != nil && f.listing.Lists(ctx, reg.Provider(), model) == appcatalog.VerdictAbsent {
 		return exclusionCatalogAbsent
+	}
+	if _, tried := probed[reg.ID]; tried {
+		return exclusionProviderRejected
 	}
 	return exclusionUnexplained
 }
@@ -133,8 +144,9 @@ func (f *forwarder) noRegistryServesModelError(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	model string,
+	probed map[ids.RegistryID]struct{},
 ) error {
-	exclusions := f.modelExclusions(ctx, rc, model)
+	exclusions := f.modelExclusions(ctx, rc, model, probed)
 	if len(exclusions) == 0 {
 		return fmt.Errorf("%w: %q", routingdomain.ErrNoRegistryServesModel, model)
 	}

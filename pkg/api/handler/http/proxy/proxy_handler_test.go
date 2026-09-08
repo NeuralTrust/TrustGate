@@ -676,7 +676,7 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	}
 	if !strings.Contains(eb.Message, "restricted by its model allow-list") ||
 		!strings.Contains(eb.Message, "not in the provider catalog") {
-		t.Fatalf("message = %q, want the reason each registry was ruled out", eb.Message)
+		t.Fatalf("message = %q, want the forwarder's message relayed whole, not truncated", eb.Message)
 	}
 }
 
