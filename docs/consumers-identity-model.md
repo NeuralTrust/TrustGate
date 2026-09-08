@@ -585,3 +585,43 @@ refuses it with 409 (`ErrAPIKeyConnectEndUsers`), see §11.
   **name** (unique per gateway), so renaming that auth orphans its vault
   credentials and silently forces a reconnect. Keying on the auth id would be
   stable; changing it needs a migration of existing vault rows.
+
+## 13. One principal, two credential stores (the Portal's "Not connected")
+
+Reported: Linear connected and working from Cursor, while the Portal's *My
+access* showed it **Not connected** — and Airtable and Notion with it, all three
+listed as installed.
+
+The cause is topological, not per-provider. A deployed gateway runs three
+processes (`k8s/base/deployment/*`): `admin` (control plane, Postgres) and
+`mcp` / `proxy`, which are DB-less data planes
+(`CONFIG_SYNC_DATA_PLANE_ENABLED`). The two planes were wired to **different
+credential stores** (`pkg/container/modules/modules.go`):
+
+- the control plane got the **Postgres** vault (`MCPVaultPostgres`),
+- each data plane got the **Redis** vault (`MCPVaultRedis`).
+
+The connect flow — the thing that stores a person's upstream account — runs on
+the MCP plane, so every account linked from an MCP client lands in **Redis**.
+The Portal preview is an admin-API read (`/v1/gateways/{id}/store/principal` →
+`store.principalPreview.fillConnection`) served by the control plane, which
+looked only in **Postgres** and therefore reported every user as never
+connected. Installs did not have the same fate because the DB-less plane
+forwards them to the control plane over the config-sync gRPC bridge
+(`configsyncgrpc.NewInstallationsClient`), so they land in Postgres — which is
+exactly why the Portal could show a server installed and unconnected at once.
+
+Fixed by composing the control-plane vault: Postgres for what that plane writes,
+with the shared Redis vault behind it for reads
+(`vault.NewFallbackRepository`). Both planes take their Redis coordinates from
+the same ConfigMap, so it is the same store the data plane wrote to. A delete
+removes the credential from **both** stores — revoking from the control plane
+must not leave a live copy on the data plane — and writes stay on Postgres.
+
+Still open, and worth doing properly: **credentials should live in one durable
+store.** Today, in a deployed topology, the Postgres vault holds nothing and
+Redis is the real store — which is why `vault.WarnIfVolatile` exists. The
+precedent to follow is installs: let the data plane write through the
+control plane over the config-sync bridge, keeping Redis as a read cache on the
+request path (the credential resolver reads on every tool call, so the hot path
+cannot become a synchronous round trip).
