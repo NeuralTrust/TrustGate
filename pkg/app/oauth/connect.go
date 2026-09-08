@@ -104,7 +104,7 @@ func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.G
 	})
 }
 
-func (s *connectService) CreateAPIKeyTicket(
+func (s *connectService) CreateAppTicket(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub,
@@ -126,8 +126,12 @@ func (s *connectService) CreateAPIKeyTicket(
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 		ConsumerID:   consumerID.String(),
-		AuthID:       authID.String(),
 		Providers:    &providerSnapshot,
+	}
+	// A nil auth id must stay an empty string, not the zero uuid: it is what
+	// marks the ticket as standing on the consumer alone.
+	if !authID.IsNil() {
+		ticket.AuthID = authID.String()
 	}
 	id, err := s.mintTicket(ctx, ticket)
 	if err != nil {
@@ -389,11 +393,10 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 			rc.Registries = []*registrydomain.Registry{reg}
 		}
 	}
-	if apiKeyConnectTicket(ticket) &&
+	if appConnectTicket(ticket) &&
 		(ticket.Providers == nil ||
 			ticket.ConsumerID == "" ||
-			ticket.AuthID == "" ||
-			!currentAPIKeyIdentity(ticket, rc, gatewayID)) {
+			!currentAppIdentity(ticket, rc, gatewayID)) {
 		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
 	return gatewayID, data, rc, nil
@@ -423,12 +426,19 @@ func (s *connectService) storeRegistry(ctx context.Context, gatewayID ids.Gatewa
 	return nil
 }
 
-func apiKeyConnectTicket(ticket *ConnectTicket) bool {
+func appConnectTicket(ticket *ConnectTicket) bool {
 	return ticket != nil &&
 		(ticket.Providers != nil || ticket.ConsumerID != "" || ticket.AuthID != "")
 }
 
-func currentAPIKeyIdentity(
+// currentAppIdentity revalidates an application connect ticket against the
+// gateway as it stands now, since anything could have changed in the fifteen
+// minutes it lives: the consumer must still be that same active machine MCP
+// consumer, and a ticket minted from an api key (the self-service page) needs
+// that key to still be an enabled key of it, so revoking a leaked key kills
+// the tickets it spawned. A ticket an admin minted carries no key — its
+// authority was the admin API — and stands on the consumer alone.
+func currentAppIdentity(
 	ticket *ConnectTicket,
 	rc *appconsumer.RoutableConsumer,
 	gatewayID ids.GatewayID,
@@ -436,6 +446,12 @@ func currentAPIKeyIdentity(
 	if ticket == nil || rc == nil || rc.Consumer == nil ||
 		rc.Consumer.ID.String() != ticket.ConsumerID {
 		return false
+	}
+	if !validMCPConsumer(rc, gatewayID) || rc.Consumer.Identity.ActsForUsers {
+		return false
+	}
+	if ticket.AuthID == "" {
+		return true
 	}
 	for _, auth := range rc.Auths {
 		if auth != nil && auth.ID.String() == ticket.AuthID {

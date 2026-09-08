@@ -123,9 +123,9 @@ func (c *Consumer) ActsForUsers() bool {
 // MaxEndUserLength bounds the opaque end-user id an application may send.
 const MaxEndUserLength = 256
 
-// endUserSubjectPrefix namespaces app-identified end users so their vault
-// subject can never collide with a platform user's token subject.
-const endUserSubjectPrefix = "app:"
+// appSubjectPrefix namespaces an application and the end users it names, so
+// neither can collide with a platform user's token subject.
+const appSubjectPrefix = "app:"
 
 // ValidateEndUser checks an end-user id from the end-user header: present,
 // bounded and printable. The gateway never interprets it.
@@ -149,5 +149,21 @@ func ValidateEndUser(id string) error {
 // connections by for an end user an application named: namespaced by the
 // consumer so two applications naming "user_123" never share a connection.
 func EndUserSubject(consumerID ids.ConsumerID, endUser string) string {
-	return endUserSubjectPrefix + consumerID.String() + ":" + strings.TrimSpace(endUser)
+	return AppSubject(consumerID) + ":" + strings.TrimSpace(endUser)
+}
+
+// AppSubject is the principal subject the gateway keys an application's own
+// upstream accounts by: the consumer itself, namespaced the same way the end
+// users it names are (app:<consumer_id>:<end_user>).
+//
+// The credential a caller presents — an api key, a client certificate, a
+// client-credentials token — proves "I am this application"; it is not the
+// identity. It cannot be: consumer_auth is a many-to-many table, so one api
+// key can serve several consumers, and a key's name is editable and not
+// unique per gateway. Keying by the consumer is what makes the account belong
+// to the application: rotating, renaming, adding or removing a credential
+// never touches a linked account, two credentials of one application share
+// the account by design, and two applications never cross.
+func AppSubject(consumerID ids.ConsumerID) string {
+	return appSubjectPrefix + consumerID.String()
 }

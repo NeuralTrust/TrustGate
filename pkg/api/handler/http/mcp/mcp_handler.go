@@ -200,6 +200,13 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 		return
 	}
 	email := p.Email()
+	// "Who called" is the credential presented, which on a consumer acting as
+	// the application is not the subject the request runs as: that one names the
+	// application, and the trace records it as the consumer already.
+	subject := p.Subject
+	if credential, ok := p.Claims[identity.ClaimCredentialSubject].(string); ok && credential != "" {
+		subject = credential
+	}
 	// A caller authenticated as the application carries no email of its own, so
 	// the trace falls back to the account its linked upstream credential belongs
 	// to. That is deliberate (TestHandler_StampsVaultEmailOnAPIKeyTrace): it
@@ -208,7 +215,7 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
 		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
 	}
-	rt.SetPrincipalIdentity(p.Subject, string(p.Method), email)
+	rt.SetPrincipalIdentity(subject, string(p.Method), email)
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {
@@ -490,7 +497,8 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 	}
-	if rc.Consumer.Identity.AppUsers() {
+	switch {
+	case rc.Consumer.Identity.AppUsers():
 		if !machineCredential(identity.PrincipalFromContext(c.UserContext())) {
 			return nil, fiber.NewError(fiber.StatusForbidden,
 				"this application identifies its own users; call it with its API key or client certificate, not a user login")
@@ -504,6 +512,9 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		if rt := trace.FromContext(ctx); rt != nil {
 			rt.SetEndUser(strings.TrimSpace(endUser))
 		}
+	case !rc.Consumer.ActsForUsers() && machineCredential(identity.PrincipalFromContext(c.UserContext())):
+		ctx := identity.WithPrincipal(c.UserContext(), appPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())))
+		c.SetUserContext(ctx)
 	}
 	return rc, nil
 }
@@ -539,6 +550,46 @@ func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, en
 			p.Claims["app_subject"] = app.Subject
 		}
 	}
+	return p
+}
+
+// appPrincipal is the principal a request runs as on a consumer that acts as
+// the application itself and was entered with a credential the application
+// holds: the consumer-namespaced subject its upstream accounts hang off. The
+// credential's own subject stays in the claims, so an audit trail still names
+// the api key or the certificate that was used.
+//
+// The swap happens here, after the auth binding has been applied to the real
+// caller, because only the request path knows which consumer is being entered:
+// an api key is a many-to-many row, so the credential alone cannot say whose
+// application this is.
+//
+// It is deliberately limited to an api key or a client certificate — a shared
+// credential, where callers already share whatever it opens. A bearer token
+// keeps its own subject: on a consumer that admits tokens from an external IdP
+// the token may well be one person's, and collapsing those onto one subject
+// would hand every holder the account the first of them linked. A
+// client-credentials token needs nothing from this either, since its subject is
+// the application's client id already.
+func appPrincipal(cons *consumerdomain.Consumer, caller *identity.Principal) *identity.Principal {
+	p := &identity.Principal{Subject: consumerdomain.AppSubject(cons.ID), Method: identity.MethodAPIKey}
+	if caller != nil {
+		// Everything but the subject is carried over: an upstream that forwards
+		// or exchanges the caller's own token still needs it, and the claims are
+		// what an audit trail reads.
+		copied := *caller
+		p = &copied
+		p.Subject = consumerdomain.AppSubject(cons.ID)
+	}
+	claims := make(map[string]any, len(p.Claims)+2)
+	for k, v := range p.Claims {
+		claims[k] = v
+	}
+	claims["consumer_id"] = cons.ID.String()
+	if caller != nil && caller.Subject != "" {
+		claims[identity.ClaimCredentialSubject] = caller.Subject
+	}
+	p.Claims = claims
 	return p
 }
 
