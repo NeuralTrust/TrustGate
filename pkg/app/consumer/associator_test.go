@@ -363,7 +363,10 @@ func TestAssociator_AttachAuth_Success(t *testing.T) {
 	}
 }
 
-func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
+// Attaching a provider stored under the deprecated alias to an MCP consumer is
+// accepted: the alias is oauth2. Capability gates what the gateway advertises
+// as an authorization server, not whether a credential may be attached.
+func TestAssociator_AttachAuth_MCPAcceptsAliasedIdP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	consumerID := ids.New[ids.ConsumerKind]()
@@ -377,13 +380,13 @@ func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
 		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {

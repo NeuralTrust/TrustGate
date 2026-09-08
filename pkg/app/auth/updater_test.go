@@ -207,14 +207,18 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 }
 
 func oidcConfig() domain.Config {
-	return domain.Config{OIDC: &domain.OIDCConfig{
+	return domain.Config{OAuth2: &domain.OAuth2Config{
 		Issuer:    "https://idp.example.com",
 		Audiences: []string{"api://gateway"},
 		JWKSURL:   "https://idp.example.com/jwks",
 	}}
 }
 
-func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
+// Setting the deprecated alias on an auth an MCP consumer references no longer
+// breaks that consumer: the alias canonicalizes to oauth2, which is the type
+// MCP takes. Before unification the same request was a 409, so this pins the
+// behaviour change rather than leaving it to the type guard.
+func TestUpdater_Update_AliasedTypeKeepsMCPConsumerValid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
@@ -226,35 +230,47 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 		ID:   ids.New[ids.ConsumerKind](),
 		Slug: "mcp-cons",
 		Type: consumerdomain.TypeMCP,
-	}}, nil).Once()
+	}}, nil).Maybe()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+		return a.Type == domain.TypeOAuth2
+	})).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
 
 	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appauth.UpdateInput{
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
 		Type:      ptr(domain.TypeOIDC),
 		Config:    ptr(oidcConfig()),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc breaks the MCP consumer referencing this auth)", err)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
+// Sending the deprecated alias for an auth that is already oauth2 is accepted
+// and stores the canonical type. It is no longer a type change at all, so the
+// reference guard does not run — that path is covered by
+// TestUpdater_Update_AliasedTypeKeepsMCPConsumerValid.
+func TestUpdater_Update_AliasedTypeIsCanonicalizedOnWrite(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.Type == domain.TypeOIDC
+		// Canonicalized on the way in: no row is ever written under the alias.
+		return a.Type == domain.TypeOAuth2
 	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Once()
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Maybe()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().

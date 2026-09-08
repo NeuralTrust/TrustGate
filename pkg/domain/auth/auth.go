@@ -42,20 +42,50 @@ type Type string
 const (
 	TypeAPIKey Type = "api_key"
 	TypeOAuth2 Type = "oauth2"
-	TypeOIDC   Type = "oidc"
 	TypeMTLS   Type = "mtls"
+
+	// TypeOIDC is the deprecated wire and storage alias of TypeOAuth2. It is
+	// never the canonical type of an auth: NormalizeType maps it away on the
+	// way in, and StoredTypes expands to it on the way out so rows written
+	// before the two types were unified stay reachable.
+	TypeOIDC Type = "oidc"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeMTLS:
 		return true
 	}
 	return false
+}
+
+// NormalizeType maps the deprecated "oidc" type onto TypeOAuth2 and returns
+// every other type unchanged.
+func NormalizeType(t Type) Type {
+	if t == TypeOIDC {
+		return TypeOAuth2
+	}
+	return t
+}
+
+// StoredTypes returns every type value a persisted row may carry for the
+// canonical type t, so a query filtering on t also matches rows written under
+// a deprecated alias.
+func StoredTypes(t Type) []Type {
+	if NormalizeType(t) == TypeOAuth2 {
+		return []Type{TypeOAuth2, TypeOIDC}
+	}
+	return []Type{t}
+}
+
+// IdentityProviderTypes returns every auth type that carries an identity
+// provider, deprecated aliases included.
+func IdentityProviderTypes() []Type {
+	return []Type{TypeOAuth2, TypeOIDC}
 }
 
 func (t Type) IsIdentityProvider() bool {
@@ -93,7 +123,9 @@ func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, 
 		ID:        id,
 		GatewayID: gatewayID,
 		Name:      name,
-		Type:      authType,
+		// Canonicalized here so a caller posting the deprecated alias never
+		// creates a row under it, and every plane sees one type.
+		Type:      NormalizeType(authType),
 		Enabled:   enabled,
 		Config:    config,
 		CreatedAt: now,
