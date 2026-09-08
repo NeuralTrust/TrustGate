@@ -21,11 +21,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// serverDiscoveryResult is the legacy-era answer: no era-specific extension is
+// advertised, and the cache envelope and serverInfo are written here because no
+// modern normalization pass runs over a legacy result.
 func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []string) map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
-		"capabilities":      configuredCapabilities(rc),
+		"capabilities":      configuredCapabilities(rc, false),
 		// Reconnect is the only refresh signal until the stateless gateway can emit list_changed.
 		"ttlMs":      discoverCacheTTLMs,
 		"cacheScope": "private",
@@ -38,33 +41,121 @@ func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []strin
 	}
 }
 
-func configuredCapabilities(rc *appconsumer.RoutableConsumer) map[string]any {
+// serverDiscoveryResultWith is the modern-era answer. The cache envelope and
+// serverInfo are left to normalizeModernResult, which owns both for every
+// modern result.
+func serverDiscoveryResultWith(rc *appconsumer.RoutableConsumer, mrtr, tasks, listChanged bool) map[string]any {
+	capabilities := configuredCapabilities(rc, mrtr)
+	addListChanged(capabilities, listChanged)
+	addTasksExtension(capabilities, tasks)
+	return map[string]any{
+		"supportedVersions": append([]string(nil), supportedProtocolVersions...),
+		"capabilities":      capabilities,
+	}
+}
+
+// addListChanged merges the notification advertisement into each kind already
+// advertised. It has to run after configuredCapabilities and mutate in place:
+// addCapability replaces the whole per-kind map on every call, so a listChanged
+// written inside that loop would be wiped by the next entry for the same kind.
+//
+// A kind the consumer cannot see stays absent, and resources.subscribe is never
+// written — TrustGate honours no per-URI subscription.
+func addListChanged(capabilities map[string]any, listChanged bool) {
+	if !listChanged {
+		return
+	}
+	for kind := range notificationKindsByCapability {
+		existing, ok := capabilities[kind].(map[string]any)
+		if !ok {
+			continue
+		}
+		existing["listChanged"] = true
+	}
+}
+
+// addTasksExtension advertises the extension only when tools are actually
+// visible to this consumer: the extension exists to carry a long-running
+// tools/call, so advertising it on a prompts-only surface would promise a
+// capability the consumer can never reach.
+func addTasksExtension(capabilities map[string]any, tasks bool) {
+	if !tasks {
+		return
+	}
+	if _, ok := capabilities["tools"]; !ok {
+		return
+	}
+	capabilities[appmcp.CapabilityKindExtensions] = map[string]any{
+		appmcp.MetaKeyTasksExtension: map[string]any{},
+	}
+}
+
+func addAppsExtension(capabilities map[string]any, advertise bool) {
+	if !advertise {
+		return
+	}
+	extensions, _ := capabilities[appmcp.CapabilityKindExtensions].(map[string]any)
+	if extensions == nil {
+		extensions = make(map[string]any)
+		capabilities[appmcp.CapabilityKindExtensions] = extensions
+	}
+	extensions[appmcp.MCPAppsExtensionIdentifier] = map[string]any{
+		"mimeTypes": []string{appmcp.MCPAppsHTMLMIMEType},
+	}
+}
+
+func configuredCapabilities(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
 	capabilities := make(map[string]any)
 	if rc == nil || rc.Consumer == nil {
 		return capabilities
 	}
 	toolkit := rc.Consumer.Toolkit()
 	if toolkit == nil {
-		addCapability(capabilities, "tools")
-		addCapability(capabilities, "prompts")
-		addCapability(capabilities, "resources")
+		addCapability(capabilities, "tools", mrtr)
+		addCapability(capabilities, "prompts", false)
+		addCapability(capabilities, "resources", false)
 		return capabilities
 	}
 	for _, entry := range toolkit {
 		switch {
 		case entry.Tool != "":
-			addCapability(capabilities, "tools")
+			addCapability(capabilities, "tools", mrtr)
 		case entry.Prompt != "":
-			addCapability(capabilities, "prompts")
+			addCapability(capabilities, "prompts", false)
 		case entry.Resource != "":
-			addCapability(capabilities, "resources")
+			addCapability(capabilities, "resources", false)
 		}
 	}
 	return capabilities
 }
 
-func addCapability(capabilities map[string]any, kind string) {
+func addCapability(capabilities map[string]any, kind string, mrtr bool) {
+	if mrtr && kind == "tools" {
+		capabilities[kind] = map[string]any{"inputRequests": map[string]any{}}
+		return
+	}
 	capabilities[kind] = map[string]any{}
+}
+
+// mrtrEndToEnd reports whether continuation can survive the whole path: a
+// mediation secret must be configured and at least one bound registry must
+// speak the modern protocol.
+func mrtrEndToEnd(signer *appmcp.TicketSigner, rc *appconsumer.RoutableConsumer) bool {
+	return signer.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
+}
+
+// tasksEndToEnd reports whether TrustGate can actually mediate a task for this
+// consumer. It is answered from configuration and already-known registry state:
+// discovery never dials an upstream to find out.
+func tasksEndToEnd(tasks TasksSupport, rc *appconsumer.RoutableConsumer) bool {
+	return tasks.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
+}
+
+// subscriptionsEndToEnd reports whether a lease could actually be served for this
+// consumer. Like tasks, it is decided from configuration and known registry
+// state: discovery never dials an upstream to find out.
+func subscriptionsEndToEnd(subs SubscriptionsSupport, rc *appconsumer.RoutableConsumer) bool {
+	return subs.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
 }
 
 func recordServerDiscovery(c *fiber.Ctx) {
@@ -74,6 +165,8 @@ func recordServerDiscovery(c *fiber.Ctx) {
 	}
 	span := requestTrace.StartSpan(trace.SpanMCP, "server/discover")
 	span.SetMCPRequest("server/discover", "discovery", "", "", "")
+	stampMCPProtocol(span, c.UserContext())
+	span.SetMCPTargets(0)
 	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }

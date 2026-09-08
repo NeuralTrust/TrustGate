@@ -29,11 +29,21 @@ type credentialRefresher interface {
 	Refresh(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error
 }
 
+type upstreamReplayPolicy uint8
+
+const (
+	upstreamNoReplay upstreamReplayPolicy = iota
+	upstreamReplaySafe
+)
+
+// invokeUpstream refreshes a rejected forwarded credential and retries once.
+// The retry is bounded so revoked grants cannot create an authentication loop.
 func invokeUpstream[T any](
 	c *composer,
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
+	replayPolicy upstreamReplayPolicy,
 	invoke func(Upstream) (T, error),
 ) (T, error) {
 	target, err := c.target(ctx, rc, reg)
@@ -41,7 +51,7 @@ func invokeUpstream[T any](
 		var zero T
 		return zero, err
 	}
-	out, err := invokeTarget(c, ctx, target, invoke)
+	out, invoked, err := invokeTarget(c, ctx, target, invoke)
 	if !errors.Is(err, ErrUpstreamUnauthorized) || c.creds == nil {
 		return out, err
 	}
@@ -61,11 +71,15 @@ func invokeUpstream[T any](
 		var zero T
 		return zero, refreshErr
 	}
+	if invoked && replayPolicy != upstreamReplaySafe {
+		return out, err
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		var zero T
 		return zero, ctxErr
 	}
-	return invokeTarget(c, ctx, target, invoke)
+	out, _, err = invokeTarget(c, ctx, target, invoke)
+	return out, err
 }
 
 func invokeTarget[T any](
@@ -73,18 +87,19 @@ func invokeTarget[T any](
 	ctx context.Context,
 	target Target,
 	invoke func(Upstream) (T, error),
-) (T, error) {
+) (T, bool, error) {
 	up, err := c.dialer.Connect(ctx, target)
 	if err != nil {
 		var zero T
-		return zero, err
+		return zero, false, err
 	}
 	closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), upstreamCloseTimeout)
 	defer cancelClose()
 	defer up.Close(closeCtx)
 	if err := ctx.Err(); err != nil {
 		var zero T
-		return zero, err
+		return zero, false, err
 	}
-	return invoke(up)
+	out, err := invoke(up)
+	return out, true, err
 }

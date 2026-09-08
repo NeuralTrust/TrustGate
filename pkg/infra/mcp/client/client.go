@@ -32,30 +32,22 @@ import (
 const (
 	clientName    = "trustgate"
 	clientVersion = "1.0"
-
-	responseHeaderTimeout = 30 * time.Second
 )
 
-// legacyProtocolVersions are offered, newest first, when an upstream rejects
-// the initialize handshake with HTTP 400. The SDK only ever offers 2025-11-25
-// on its own legacy path, so that revision is already covered by the first
-// attempt and is absent here.
-var legacyProtocolVersions = []string{
-	"2025-06-18",
-	"2025-03-26",
-	"2024-11-05",
-}
-
-// upstreamTransport dials any address: a fixed registry URL was configured by
-// an admin and is trusted as much as any other admin-set upstream.
-var upstreamTransport = newUpstreamTransport(nil)
+// legacyHandshakeFallbackVersions are offered, newest first, when an upstream
+// rejects the initialize handshake with HTTP 400. The SDK only ever offers
+// legacyProtocolVersions[0] on its own legacy path, so that revision is already
+// covered by the first attempt and is skipped here.
+var legacyHandshakeFallbackVersions = legacyProtocolVersions[1:]
 
 // restrictedUpstreamTransport serves targets whose URL came out of per-user
 // variable substitution (Target.RestrictPrivateNetwork). Its dialer resolves the
 // host itself and refuses every non-public address, then connects to the very
 // address it checked — so neither an IP literal that slipped past validation
 // nor a hostname that rebinds to 10.0.0.5 between check and dial can reach the
-// gateway's network.
+// gateway's network. Fixed registry URLs keep sharedHTTPTransport: they were
+// configured by an admin and are trusted as much as any other admin-set
+// upstream.
 var restrictedUpstreamTransport = newUpstreamTransport(dialPublicOnly)
 
 func newUpstreamTransport(dial func(context.Context, string, string) (net.Conn, error)) http.RoundTripper {
@@ -75,7 +67,37 @@ func transportFor(target appmcp.Target) http.RoundTripper {
 	if target.RestrictPrivateNetwork {
 		return restrictedUpstreamTransport
 	}
-	return upstreamTransport
+	return sharedHTTPTransport
+}
+
+// restrictedFor swaps the shared production transport for the SSRF-restricted
+// one when this target's URL came out of per-user variable substitution. It is
+// how the modern era inherits the guarantee the legacy path gets from
+// transportFor.
+//
+// It fails closed. The restriction lives in the transport's dialer, so it
+// cannot be retrofitted onto an arbitrary RoundTripper; rather than dial a
+// per-user upstream through a transport this package did not build — a future
+// production transport someone forgets to route through here — the request is
+// refused. A restricted target is never reached over an unchecked address.
+func restrictedFor(target appmcp.Target, base http.RoundTripper) http.RoundTripper {
+	if !target.RestrictPrivateNetwork {
+		return base
+	}
+	if base == sharedHTTPTransport {
+		return restrictedUpstreamTransport
+	}
+	return refusingRoundTripper{}
+}
+
+// errUnrestrictedTransport is the fail-closed refusal of restrictedFor.
+var errUnrestrictedTransport = errors.New(
+	"refusing a per-user upstream: no address-restricted transport is available for it")
+
+type refusingRoundTripper struct{}
+
+func (refusingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errUnrestrictedTransport
 }
 
 // errPrivateUpstreamAddress is the dial-time refusal for a restricted target.
@@ -190,8 +212,11 @@ type Client struct{}
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs     *sdk.ClientSession
-	url    string
+	cs *sdk.ClientSession
+	// origin is the canonical scheme://host:port of the target: it is the only
+	// form that appears in error text, which must never carry the per-user
+	// secret a catalog server hides in a query variable.
+	origin string
 	mu     sync.RWMutex
 	closed bool
 }
@@ -201,53 +226,83 @@ var errSessionClosed = errors.New("mcp client session is closed")
 var _ appmcp.Upstream = (*Session)(nil)
 
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
-	cs, attempt, err := c.connect(ctx, target, false, "")
-	if err == nil {
-		return &Session{cs: cs, url: redactURL(target.URL)}, nil
+	return c.ConnectLegacy(ctx, target)
+}
+
+func (c *Client) ConnectLegacy(ctx context.Context, target appmcp.Target) (*Session, error) {
+	origin, err := canonicalOrigin(target.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
 	}
-	if ctx.Err() != nil ||
-		!attempt.discoverLegacyCandidate.Load() ||
-		!attempt.initializeBadRequest.Load() {
-		return nil, wrapUnreachable(target.URL, err)
+	cs, attempt, err := c.connect(ctx, target, "")
+	if err == nil {
+		return &Session{cs: cs, origin: origin}, nil
+	}
+	// A 400 on initialize is the one failure an older revision can fix. Anything
+	// else — auth, transport, a cancelled context — is final, and retrying it
+	// would only multiply the load on an upstream that already said no.
+	if ctx.Err() != nil || !attempt.initializeBadRequest.Load() {
+		return nil, wrapUnreachable(origin, connectCategory(err, ""), err)
 	}
 
 	legacyErr := err
-	for _, protocolVersion := range legacyProtocolVersions {
-		cs, attempt, err = c.connect(ctx, target, true, protocolVersion)
+	offered := ""
+	for _, protocolVersion := range legacyHandshakeFallbackVersions {
+		cs, attempt, err = c.connect(ctx, target, protocolVersion)
 		if err == nil {
-			return &Session{cs: cs, url: redactURL(target.URL)}, nil
+			return &Session{cs: cs, origin: origin}, nil
 		}
-		legacyErr = fmt.Errorf("legacy handshake fallback (protocolVersion %s): %w", protocolVersion, err)
+		legacyErr, offered = err, protocolVersion
 		if ctx.Err() != nil || !attempt.initializeBadRequest.Load() {
 			break
 		}
 	}
-	return nil, wrapUnreachable(target.URL, legacyErr)
+	return nil, wrapUnreachable(origin, connectCategory(legacyErr, offered), legacyErr)
 }
 
+// connectCategory names a connect failure with a label the gateway owns. It
+// never carries upstream text: the protocol revision comes from our own
+// fallback list and the private-address refusal from our own dialer, so the
+// message stays safe to log while still saying which attempt failed and why.
+func connectCategory(err error, offeredVersion string) string {
+	switch {
+	case errors.Is(err, errPrivateUpstreamAddress):
+		return "connect: upstream address is not public"
+	case offeredVersion != "":
+		return "connect: legacy handshake fallback (protocolVersion " + offeredVersion + ")"
+	default:
+		return "connect"
+	}
+}
+
+// connect performs one legacy handshake attempt. The validated header client
+// owns header hygiene and redirect refusal; the handshake round tripper sits in
+// front of it so it can reject server/discover, re-offer an older protocol
+// revision, and notice an upstream 401.
 func (c *Client) connect(
 	ctx context.Context,
 	target appmcp.Target,
-	legacyFallback bool,
 	protocolVersion string,
 ) (*sdk.ClientSession, *handshakeRoundTripper, error) {
+	httpClient, err := newTargetHTTPClientWithTransport(target.Headers, transportFor(target))
+	if err != nil {
+		return nil, &handshakeRoundTripper{}, fmt.Errorf("%w: invalid upstream HTTP configuration: %w",
+			appmcp.ErrUnreachable, err)
+	}
 	attempt := &handshakeRoundTripper{
-		headers:         target.Headers,
-		transport:       transportFor(target),
-		legacyFallback:  legacyFallback,
+		transport:       httpClient.Transport,
+		rejectDiscover:  true,
 		protocolVersion: protocolVersion,
 	}
+	httpClient.Transport = attempt
 	transport := &sdk.StreamableClientTransport{
-		Endpoint: target.URL,
-		HTTPClient: &http.Client{
-			Transport:     attempt,
-			CheckRedirect: rejectRedirect,
-		},
+		Endpoint:             target.URL,
+		HTTPClient:           httpClient,
 		DisableStandaloneSSE: true,
 	}
 	cli := sdk.NewClient(
 		&sdk.Implementation{Name: clientName, Version: clientVersion},
-		&sdk.ClientOptions{},
+		nil,
 	)
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
@@ -298,15 +353,17 @@ func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return mapItems[appmcp.Tool]("tools/list", items)
 }
 
-func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+// CallTool runs a legacy tools/call. The legacy era has no multi round-trip
+// contract, so continuation fields are dropped instead of forwarded.
+func (s *Session) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
 	if err := s.lock(); err != nil {
 		return nil, err
 	}
 	defer s.mu.RUnlock()
 	ctx, unauthorized := trackUnauthorized(ctx)
-	params := &sdk.CallToolParams{Name: name}
-	if len(arguments) > 0 {
-		params.Arguments = arguments
+	params := &sdk.CallToolParams{Name: call.Name}
+	if len(call.Arguments) > 0 {
+		params.Arguments = call.Arguments
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {
@@ -359,7 +416,7 @@ func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage
 	}
 	defer s.mu.RUnlock()
 	if s.capabilities().Resources == nil {
-		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.origin)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
@@ -394,7 +451,7 @@ func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[stri
 	}
 	defer s.mu.RUnlock()
 	if s.capabilities().Prompts == nil {
-		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.origin)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})

@@ -94,8 +94,15 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
 | `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
+| `trustgate.mcp.protocol_era` | `mcp.protocol_era` — `legacy` or `modern` |
+| `trustgate.mcp.protocol_version` | `mcp.protocol_version` — known revision or `unsupported` |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
+
+Success MCP events stamp bounded protocol identity after request validation. Era is
+`legacy` or `modern`. Version is one of `2026-07-28`, `2025-06-18`, `2025-03-26`,
+`2024-11-05`; any other revision maps to `unsupported`. Raw client strings are never
+exported as labels.
 
 ### Latency semantics
 

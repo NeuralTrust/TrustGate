@@ -253,6 +253,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		"code-sentinel",
 		"",
 		"",
+		"",
 	)
 	require.NoError(t, err)
 	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
@@ -308,6 +309,7 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 			"code-sentinel",
 			"",
 			"",
+			"",
 		)
 
 		require.Equal(t, "ticket-sentinel", ticketID)
@@ -340,6 +342,7 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 			"code-sentinel",
 			"",
 			"",
+			"",
 		)
 
 		require.Equal(t, "ticket-sentinel", ticketID)
@@ -370,6 +373,7 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 			connectAuditProviderID,
 			parsed.Query().Get("state"),
 			"code-sentinel",
+			"",
 			"",
 			"",
 		)
@@ -857,6 +861,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		"code-sentinel",
 		"",
 		"",
+		"",
 	)
 	require.NoError(t, err)
 	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
@@ -902,6 +907,7 @@ func TestConnectServiceSkipsAuditForNonAPIKeyTicket(t *testing.T) {
 		connectAuditProviderID,
 		parsed.Query().Get("state"),
 		"code-sentinel",
+		"",
 		"",
 		"",
 	)
@@ -1029,6 +1035,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 					connectAuditProviderID,
 					parsed.Query().Get("state"),
 					"code-sentinel",
+					"",
 					"",
 					"",
 				)

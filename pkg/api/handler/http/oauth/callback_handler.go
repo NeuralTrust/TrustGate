@@ -45,6 +45,7 @@ func (h *CallbackHandler) Handle(c *fiber.Ctx) error {
 		c.Query("code"),
 		c.Query("error"),
 		c.Query("error_description"),
+		c.Query("iss"),
 	)
 	if err != nil {
 		return writeOAuthError(c, err)

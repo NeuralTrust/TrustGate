@@ -73,7 +73,7 @@ func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, nil).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(nil), mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
@@ -108,7 +108,7 @@ func TestRPCGateway_Store_ConsentPendingStillListsMetaTools(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return(nil, &appmcp.ConsentRequiredError{Provider: "com.notion/mcp", Ticket: "abc", Path: "/store/mcp"}).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(nil), mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 
@@ -133,8 +133,11 @@ func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
 		})).
 		Return([]appmcp.Tool{{Name: "github_create_issue"}}, nil).Once()
 
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t)).
-		WithStoreScoper(stubScoper{regs: []*registrydomain.Registry{installedReg}})
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil,
+		mcphttp.WithConnections(nil),
+		mcphttp.WithStoreTool(storeToolForDispatch(t)),
+		mcphttp.WithStoreScoper(stubScoper{regs: []*registrydomain.Registry{installedReg}}),
+	)
 
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 
@@ -150,7 +153,7 @@ func TestRPCGateway_Store_NotOfferedOnRegularConsumer(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return([]appmcp.Tool{{Name: "upstream_tool"}}, nil).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(nil), mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID:   ids.New[ids.ConsumerKind](),
@@ -184,7 +187,7 @@ func TestRPCGateway_Store_ToleratesNoRegistries(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return(nil, appmcp.ErrNoMCPRegistries).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(nil), mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
@@ -203,7 +206,7 @@ func TestRPCGateway_RegularConsumer_NoRegistriesStillErrors(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return(nil, appmcp.ErrNoMCPRegistries).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(nil), mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID:   ids.New[ids.ConsumerKind](),
@@ -227,7 +230,7 @@ func TestRPCGateway_Store_ConsentPendingListsEmptyPromptsAndResources(t *testing
 	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, consent).Once()
 	composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, consent).Once()
 	composer.EXPECT().ListResourceTemplates(mock.Anything, mock.Anything).Return(nil, consent).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithStoreTool(storeToolForDispatch(t)))
 
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 
@@ -249,7 +252,7 @@ func TestRPCGateway_Store_NoRegistriesListsEmptyPrompts(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, appmcp.ErrNoMCPRegistries).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithStoreTool(storeToolForDispatch(t)))
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 
 	prompts, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
@@ -263,7 +266,7 @@ func TestRPCGateway_RegularConsumer_NoRegistriesStillFailsPrompts(t *testing.T) 
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, appmcp.ErrNoMCPRegistries).Once()
-	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithStoreTool(storeToolForDispatch(t)))
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Type: consumerdomain.TypeMCP,
 	}}

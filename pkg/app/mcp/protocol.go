@@ -22,12 +22,14 @@ import (
 	"net/http"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Tool struct {
 	Name string
 
 	payload map[string]json.RawMessage
+	source  string
 }
 
 func (t Tool) MarshalJSON() ([]byte, error) {
@@ -69,6 +71,7 @@ type Resource struct {
 	URI  string
 
 	payload map[string]json.RawMessage
+	source  string
 }
 
 func (r Resource) MarshalJSON() ([]byte, error) {
@@ -144,11 +147,13 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 }
 
 type Target struct {
-	URL      string
-	Headers  map[string]string
-	PinKey   string
-	Revision string
-	OpenAPI  *appopenapi.Source
+	URL              string
+	Headers          map[string]string
+	PinKey           string
+	Revision         string
+	RegistryTargetID string
+	ProtocolMode     registrydomain.MCPProtocolMode
+	OpenAPI          *appopenapi.Source
 	// RestrictPrivateNetwork is set when URL was produced by per-user variable
 	// substitution. The dialer then refuses to connect to loopback, private
 	// (RFC 1918), link-local, CGNAT, unspecified or multicast addresses — at
@@ -156,6 +161,100 @@ type Target struct {
 	// reach the gateway's own network, even through DNS rebinding. Admin-fixed
 	// URLs leave it false.
 	RestrictPrivateNetwork bool
+}
+
+// ListChangedCapabilities is the exact modern list-changed trio negotiated with an upstream.
+type ListChangedCapabilities struct {
+	Tools     bool
+	Prompts   bool
+	Resources bool
+}
+
+// Empty reports whether no list-changed capability was negotiated.
+func (c ListChangedCapabilities) Empty() bool {
+	return !c.Tools && !c.Prompts && !c.Resources
+}
+
+// Equal reports whether all three capability bits are identical.
+func (c ListChangedCapabilities) Equal(other ListChangedCapabilities) bool {
+	return c == other
+}
+
+// Intersect returns the capabilities present in both values.
+func (c ListChangedCapabilities) Intersect(other ListChangedCapabilities) ListChangedCapabilities {
+	return ListChangedCapabilities{
+		Tools:     c.Tools && other.Tools,
+		Prompts:   c.Prompts && other.Prompts,
+		Resources: c.Resources && other.Resources,
+	}
+}
+
+// HonouredSet converts the capability trio to the application notification set.
+func (c ListChangedCapabilities) HonouredSet() HonouredSet {
+	kinds := make([]NotificationKind, 0, 3)
+	if c.Tools {
+		kinds = append(kinds, NotificationToolsListChanged)
+	}
+	if c.Prompts {
+		kinds = append(kinds, NotificationPromptsListChanged)
+	}
+	if c.Resources {
+		kinds = append(kinds, NotificationResourcesListChanged)
+	}
+	return NewHonouredSet(kinds...)
+}
+
+// SubscriptionSourceKey is the complete comparable, non-secret physical-listener identity.
+type SubscriptionSourceKey struct {
+	TargetDigest          [32]byte
+	OriginDigest          [32]byte
+	RegistryTargetDigest  [32]byte
+	PinDigest             [32]byte
+	CredentialFingerprint [32]byte
+	ProtocolVersion       string
+	Capabilities          ListChangedCapabilities
+}
+
+// String returns a safe label without exposing source-key components.
+func (SubscriptionSourceKey) String() string {
+	return "mcp-subscription-source"
+}
+
+// PreparedSubscription is the modern source identity retained after discovery.
+type PreparedSubscription struct {
+	Key          SubscriptionSourceKey
+	Capabilities ListChangedCapabilities
+}
+
+// String returns a safe label without exposing prepared source identity.
+func (PreparedSubscription) String() string {
+	return "mcp-prepared-subscription"
+}
+
+// SubscriptionEvent is one allowed list-changed event from a modern upstream.
+type SubscriptionEvent struct {
+	Kind   NotificationKind
+	Source SubscriptionSourceKey
+}
+
+// SubscriptionSourceKeyResolver derives a complete source key without network I/O.
+type SubscriptionSourceKeyResolver interface {
+	SourceKey(target Target, capabilities ListChangedCapabilities) (SubscriptionSourceKey, error)
+}
+
+// SubscriptionConnector prepares and opens modern bounded subscription streams.
+//
+//go:generate mockery --name=SubscriptionConnector --dir=. --output=./mocks --filename=subscription_connector.go --case=underscore --with-expecter
+type SubscriptionConnector interface {
+	Prepare(ctx context.Context, target Target) (PreparedSubscription, error)
+	Open(ctx context.Context, target Target, prepared PreparedSubscription) (SubscriptionStream, error)
+}
+
+// SubscriptionStream reads one acknowledged southbound subscription.
+type SubscriptionStream interface {
+	Acknowledged() ListChangedCapabilities
+	Next(ctx context.Context) (SubscriptionEvent, error)
+	Close() error
 }
 
 type RPCError struct {
@@ -201,9 +300,19 @@ var ErrUpstreamUnauthorized = errors.New("mcp upstream rejected its credential")
 
 var ErrNotSupported = errors.New("mcp upstream does not support this method")
 
+var ErrProtocolIncompatible = errors.New("mcp upstream protocol incompatible")
+
+// ToolCall is the Composer and Upstream input for tools/call.
+type ToolCall struct {
+	Name           string
+	Arguments      json.RawMessage
+	InputResponses json.RawMessage
+	RequestState   string
+}
+
 type Upstream interface {
 	ListTools(ctx context.Context) ([]Tool, error)
-	CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error)
+	CallTool(ctx context.Context, call ToolCall) (json.RawMessage, error)
 	ListResources(ctx context.Context) ([]Resource, error)
 	ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error)
 	ReadResource(ctx context.Context, uri string) (json.RawMessage, error)
@@ -212,6 +321,25 @@ type Upstream interface {
 	SupportsResources() bool
 	SupportsPrompts() bool
 	Close(ctx context.Context)
+}
+
+// TaskRef is the resolved, re-authorized coordinates of one upstream task. It
+// carries the real upstream taskId, never the handle the client presented.
+type TaskRef struct {
+	RegistryID string
+	Exposed    string
+	Upstream   string
+	TaskID     string
+	Exp        int64
+}
+
+// TaskUpstream is implemented only by modern upstreams. The composer asserts it,
+// so a legacy session never satisfies it and a task can never be served over the
+// legacy protocol.
+type TaskUpstream interface {
+	GetTask(ctx context.Context, ref TaskRef) (json.RawMessage, error)
+	UpdateTask(ctx context.Context, ref TaskRef, inputResponses json.RawMessage) (json.RawMessage, error)
+	CancelTask(ctx context.Context, ref TaskRef) (json.RawMessage, error)
 }
 
 type Dialer interface {

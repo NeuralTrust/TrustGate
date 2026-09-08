@@ -46,14 +46,16 @@ type ProtectedResourceMetadata struct {
 }
 
 type RegisterRequest struct {
-	RedirectURIs []string `json:"redirect_uris"`
-	ClientName   string   `json:"client_name,omitempty"`
+	RedirectURIs    []string `json:"redirect_uris"`
+	ClientName      string   `json:"client_name,omitempty"`
+	ApplicationType string   `json:"application_type,omitempty"`
 }
 
 type RegisterResponse struct {
 	ClientID                string   `json:"client_id"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
 	ClientName              string   `json:"client_name,omitempty"`
+	ApplicationType         string   `json:"application_type,omitempty"`
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
@@ -139,14 +141,18 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 		return nil, ErrNoAuthorizationServer
 	}
 	doc := map[string]any{
-		"issuer":                                baseURL,
-		"authorization_endpoint":                baseURL + "/oauth/authorize",
-		"token_endpoint":                        baseURL + "/oauth/token",
-		"registration_endpoint":                 baseURL + "/oauth/register",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none"},
+		"issuer":                                         baseURL,
+		"authorization_endpoint":                         baseURL + "/oauth/authorize",
+		"token_endpoint":                                 baseURL + "/oauth/token",
+		"registration_endpoint":                          baseURL + "/oauth/register",
+		"response_types_supported":                       []string{"code"},
+		"grant_types_supported":                          grantTypesSupported(auths),
+		"code_challenge_methods_supported":               []string{"S256"},
+		"token_endpoint_auth_methods_supported":          []string{"none"},
+		"authorization_response_iss_parameter_supported": true,
+	}
+	if advertisesEMA(auths) {
+		doc[emaExtension] = true
 	}
 	if scopes := scopesOf(auths); len(scopes) > 0 {
 		doc["scopes_supported"] = scopes
@@ -171,6 +177,10 @@ func (s *metadataService) RegisterClient(ctx context.Context, req RegisterReques
 				fmt.Sprintf("%q must be an https URL, an http loopback URL, or a private-use URI without a fragment", uri))
 		}
 	}
+	appType, err := resolveApplicationType(req.ApplicationType, req.RedirectURIs)
+	if err != nil {
+		return nil, err
+	}
 	suffix, err := randomToken()
 	if err != nil {
 		return nil, err
@@ -189,7 +199,8 @@ func (s *metadataService) RegisterClient(ctx context.Context, req RegisterReques
 		ClientID:                client.ClientID,
 		RedirectURIs:            client.RedirectURIs,
 		ClientName:              client.ClientName,
-		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ApplicationType:         appType,
+		GrantTypes:              grantTypesSupported(auths),
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: "none",
 	}, nil
@@ -267,6 +278,11 @@ func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (m
 			lastErr = err
 			continue
 		}
+		metadataIssuer, _ := doc["issuer"].(string)
+		if !issuersEqual(metadataIssuer, issuer) {
+			logInvalidMetadata(issuer, metadataIssuer, issuer)
+			return nil, fmt.Errorf("oauth: AS metadata issuer %q does not match %q", metadataIssuer, issuer)
+		}
 		s.mu.Lock()
 		s.asCache[issuer] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
 		s.mu.Unlock()
@@ -329,4 +345,24 @@ func scopesOf(auths []*authdomain.Auth) []string {
 		}
 	}
 	return out
+}
+
+func advertisesEMA(auths []*authdomain.Auth) bool {
+	for _, a := range auths {
+		if a == nil || a.Config.OAuth2 == nil {
+			continue
+		}
+		if a.Config.OAuth2.AdvertisesEMA() {
+			return true
+		}
+	}
+	return false
+}
+
+func grantTypesSupported(auths []*authdomain.Auth) []string {
+	grants := []string{"authorization_code", "refresh_token"}
+	if advertisesEMA(auths) {
+		grants = append(grants, grantJWTBearer)
+	}
+	return grants
 }

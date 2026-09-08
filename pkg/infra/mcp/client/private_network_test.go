@@ -47,7 +47,7 @@ func TestConnect_RestrictedTargetRefusesLoopbackUpstream(t *testing.T) {
 	if !errors.Is(err, appmcp.ErrUnreachable) {
 		t.Fatalf("error = %v, want ErrUnreachable", err)
 	}
-	if !strings.Contains(err.Error(), "non-public") {
+	if !strings.Contains(err.Error(), "upstream address is not public") {
 		t.Fatalf("error should name the private-network refusal: %v", err)
 	}
 	if hits.Load() != 0 {
@@ -73,7 +73,8 @@ func TestConnect_RestrictedTargetRefusesLoopbackHostname(t *testing.T) {
 		URL:                    "http://localhost:" + port + "/",
 		RestrictPrivateNetwork: true,
 	})
-	if err == nil || !errors.Is(err, appmcp.ErrUnreachable) || !strings.Contains(err.Error(), "non-public") {
+	if err == nil || !errors.Is(err, appmcp.ErrUnreachable) ||
+		!strings.Contains(err.Error(), "upstream address is not public") {
 		t.Fatalf("error = %v, want ErrUnreachable with the private-network refusal", err)
 	}
 }

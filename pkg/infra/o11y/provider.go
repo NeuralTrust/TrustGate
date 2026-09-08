@@ -49,6 +49,7 @@ const (
 	RouteProxyForward    Route = "proxy.forward"
 	RouteMCPRPC          Route = "mcp.rpc"
 	RouteMCPOAuth        Route = "mcp.oauth"
+	RouteMCPSubscription Route = "mcp.subscription"
 	RouteOther           Route = "other"
 )
 

@@ -28,13 +28,48 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
-// wrapUnreachable classifies a failed connect. Both the URL it prints and the
+const (
+	codeHeaderMismatch             int64 = -32020
+	codeRequiredCapability         int64 = -32021
+	codeUnsupportedProtocolVersion int64 = -32022
+)
+
+// unreachableError carries the bounded failure category next to the origin it
+// happened against. Both the origin it prints and the cause's text are already
+// redacted by wrapUnreachable, so formatting one is always safe to log.
+type unreachableError struct {
+	origin   string
+	category string
+	cause    error
+}
+
+// Error names the bounded failure category and the origin, never the upstream's
+// own text. An upstream controls that text and an upstream URL can carry a
+// per-user secret in a query variable, so the cause is reachable through Unwrap
+// (already redacted) but is deliberately not part of the message this error
+// puts in a log or hands back to an MCP client.
+func (e *unreachableError) Error() string {
+	if e.origin == "" {
+		return fmt.Sprintf("%s: %s", appmcp.ErrUnreachable, e.category)
+	}
+	return fmt.Sprintf("%s: %s: %s", appmcp.ErrUnreachable, e.category, e.origin)
+}
+
+func (e *unreachableError) Unwrap() []error {
+	return []error{appmcp.ErrUnreachable, e.cause}
+}
+
+// wrapUnreachable classifies a failed connect. Both the origin it prints and the
 // underlying error's text are redacted: catalog servers such as Bright Data or
 // Browserbase carry the user's API token as a query variable (?token={token}),
 // and this error is logged by the composer and, before the handler learned to
 // map it, was returned verbatim to the MCP client.
-func wrapUnreachable(rawURL string, err error) error {
-	return fmt.Errorf("%w: %s: %w", appmcp.ErrUnreachable, redactURL(rawURL), redactError(err, rawURL))
+func wrapUnreachable(origin, category string, err error) error {
+	return &unreachableError{
+		origin:   redactURL(origin),
+		category: category,
+		cause:    redactError(err, origin),
+	}
 }
 
 // redactURL returns a form of the URL that is safe to log or return: userinfo
@@ -42,6 +77,9 @@ func wrapUnreachable(rawURL string, err error) error {
 // redaction marker. Keys are kept so the shape of the request stays
 // recognisable to an operator.
 func redactURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		if i := strings.IndexAny(raw, "?#"); i >= 0 {
@@ -139,6 +177,23 @@ func mapRPCError(err error) error {
 		return &appmcp.RPCError{Code: je.Code, Message: je.Message, Data: je.Data}
 	}
 	return err
+}
+
+func probeRPCError(err error) (*jsonrpc.Error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	rpcErr, ok := errors.AsType[*jsonrpc.Error](err)
+	return rpcErr, ok
+}
+
+func isModernProofRPCCode(code int64) bool {
+	switch code {
+	case codeHeaderMismatch, codeRequiredCapability, codeUnsupportedProtocolVersion:
+		return true
+	default:
+		return false
+	}
 }
 
 func mapItems[T any](method string, items any) ([]T, error) {

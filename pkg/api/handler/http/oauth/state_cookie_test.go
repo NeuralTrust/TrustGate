@@ -38,7 +38,7 @@ func (s *stubAuthProxy) Authorize(context.Context, string, appoauth.AuthorizeReq
 	return s.authorizeLocation, s.authorizeErr
 }
 
-func (s *stubAuthProxy) Callback(_ context.Context, _, state, _, _, _ string) (string, error) {
+func (s *stubAuthProxy) Callback(_ context.Context, _, state, _, _, _, _ string) (string, error) {
 	s.callbackCalls++
 	s.callbackState = state
 	return "https://client.example.com/cb?code=gw-code&state=client-state", nil

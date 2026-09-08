@@ -122,8 +122,10 @@ func TestOpenAPIUpstreamListsAndCallsTools(t *testing.T) {
 
 	result, err := upstream.CallTool(
 		context.Background(),
-		"updatePet",
-		json.RawMessage(`{"id":42,"view":"full","name":"Milo"}`),
+		appmcp.ToolCall{
+			Name:      "updatePet",
+			Arguments: json.RawMessage(`{"id":42,"view":"full","name":"Milo"}`),
+		},
 	)
 	require.NoError(t, err)
 	require.Contains(t, string(result), `"structuredContent":{"id":42,"name":"Milo"}`)
@@ -174,7 +176,7 @@ func TestOpenAPIUpstreamCallsTrustGateAdminHealthz(t *testing.T) {
 	}
 	require.Contains(t, names, "get_healthz")
 
-	result, err := upstream.CallTool(context.Background(), "get_healthz", json.RawMessage(`{}`))
+	result, err := upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "get_healthz", Arguments: json.RawMessage(`{}`)})
 	require.NoError(t, err)
 	require.Contains(t, string(result), `"status":"ok"`)
 	require.Equal(t, int32(1), healthCalls.Load())
@@ -213,7 +215,7 @@ func TestOpenAPIUpstreamRejectsInvalidArguments(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = upstream.CallTool(context.Background(), "getPet", json.RawMessage(`{}`))
+	_, err = upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "getPet", Arguments: json.RawMessage(`{}`)})
 	var rpcErr *appmcp.RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, int64(-32602), rpcErr.Code)
@@ -253,7 +255,7 @@ func (*fakeRemoteUpstream) ListTools(context.Context) ([]appmcp.Tool, error) {
 	return nil, nil
 }
 
-func (*fakeRemoteUpstream) CallTool(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+func (*fakeRemoteUpstream) CallTool(context.Context, appmcp.ToolCall) (json.RawMessage, error) {
 	return nil, nil
 }
 

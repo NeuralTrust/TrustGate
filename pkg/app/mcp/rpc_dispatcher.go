@@ -184,7 +184,7 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
-	pre, err := d.plugins.PreRequest(ctx, req.consumer, params.Name, params.Arguments)
+	pre, err := d.plugins.PreRequest(ctx, req.consumer, params.Name, params.Arguments, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 			arguments = pre.Arguments
 		}
 	}
-	result, err := d.composer.CallTool(ctx, req.consumer, params.Name, arguments)
+	result, err := d.composer.CallTool(ctx, req.consumer, ToolCall{Name: params.Name, Arguments: arguments})
 	if err != nil {
 		return nil, err
 	}

@@ -27,25 +27,26 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 )
 
+// methodServerDiscover lives in legacy_transport.go; only what is unique to the
+// handshake interception is declared here.
 const (
-	methodInitialize     = "initialize"
-	methodServerDiscover = "server/discover"
-	maxHandshakeBody     = 64 << 10
-
-	codeMethodNotFound             = -32601
-	codeHeaderMismatch             = -32020
-	codeParameterHeaderMismatch    = -32021
-	codeUnsupportedProtocolVersion = -32022
+	methodInitialize = "initialize"
+	maxHandshakeBody = 64 << 10
 )
 
+// handshakeRoundTripper intercepts the two handshake requests of a legacy-era
+// connect. server/discover is answered locally — it is a modern-era method, and
+// the era was already decided by the negotiating dialer's probe, so putting it
+// on the wire would both leak a modern request into a legacy session and cost a
+// round trip. initialize's protocol revision is rewritten when the SDK's own
+// offer was refused, so an older upstream can still be reached.
 type handshakeRoundTripper struct {
-	headers                 map[string]string
-	transport               http.RoundTripper
-	legacyFallback          bool
-	protocolVersion         string
-	discoverLegacyCandidate atomic.Bool
-	initializeBadRequest    atomic.Bool
-	unauthorizedResponses   atomic.Uint64
+	headers               map[string]string
+	transport             http.RoundTripper
+	rejectDiscover        bool
+	protocolVersion       string
+	initializeBadRequest  atomic.Bool
+	unauthorizedResponses atomic.Uint64
 }
 
 func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -54,10 +55,12 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	method, id, ok := handshakeRequest(req)
-	if t.legacyFallback && ok {
+	if ok {
 		switch method {
 		case methodServerDiscover:
-			return rejectDiscover(req, id)
+			if t.rejectDiscover {
+				return rejectDiscover(req, id)
+			}
 		case methodInitialize:
 			if t.protocolVersion != "" {
 				offered, err := withProtocolVersion(req, t.protocolVersion)
@@ -81,69 +84,10 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		}
 		return nil, fmt.Errorf("%w: HTTP %d", appmcp.ErrUpstreamUnauthorized, resp.StatusCode)
 	}
-	if err == nil && ok && method == methodServerDiscover && isLegacyDiscoverResponse(resp) {
-		t.discoverLegacyCandidate.Store(true)
-	}
 	if err == nil && ok && method == methodInitialize && resp.StatusCode == http.StatusBadRequest {
 		t.initializeBadRequest.Store(true)
 	}
 	return resp, err
-}
-
-func rejectRedirect(*http.Request, []*http.Request) error {
-	return errors.New("MCP upstream redirects are not allowed")
-}
-
-func isLegacyDiscoverResponse(resp *http.Response) bool {
-	if resp.Body == nil ||
-		(resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest) {
-		return false
-	}
-	data, err := peekResponseBody(resp, maxHandshakeBody)
-	if err != nil || len(data) > maxHandshakeBody {
-		return false
-	}
-
-	var envelope struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Result  json.RawMessage `json:"result"`
-		Error   *struct {
-			Code int64 `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope.JSONRPC != "2.0" {
-		return resp.StatusCode == http.StatusBadRequest
-	}
-	if envelope.Error != nil {
-		switch envelope.Error.Code {
-		case codeMethodNotFound:
-			return true
-		case codeHeaderMismatch, codeParameterHeaderMismatch, codeUnsupportedProtocolVersion:
-			return false
-		default:
-			return resp.StatusCode == http.StatusBadRequest
-		}
-	}
-	return false
-}
-
-func peekResponseBody(resp *http.Response, limit int64) ([]byte, error) {
-	body := resp.Body
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	resp.Body = &replayReadCloser{
-		Reader: io.MultiReader(bytes.NewReader(data), body),
-		closer: body,
-	}
-	return data, err
-}
-
-type replayReadCloser struct {
-	io.Reader
-	closer io.Closer
-}
-
-func (r *replayReadCloser) Close() error {
-	return r.closer.Close()
 }
 
 func handshakeRequest(req *http.Request) (string, json.RawMessage, bool) {

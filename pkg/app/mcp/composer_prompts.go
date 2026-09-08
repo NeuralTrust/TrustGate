@@ -54,7 +54,7 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		}
 		stop := annotateUpstream(ctx, b.registry, b.prompt.Name)
 		defer stop()
-		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+		return invokeUpstream(c, ctx, rc, b.registry, upstreamReplaySafe, func(up Upstream) (json.RawMessage, error) {
 			return up.GetPrompt(ctx, b.prompt.Name, arguments)
 		})
 	}
@@ -101,6 +101,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 				if pendingConsent == nil {
 					pendingConsent = consentErr
 				}
+				markCompositionDegraded(ctx)
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
@@ -108,6 +109,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 			if !failOpen {
 				return nil, nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
+			markCompositionDegraded(ctx)
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
 			continue

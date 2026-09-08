@@ -56,18 +56,20 @@ func (e *InvalidGrantError) Error() string { return ErrInvalidGrant.Error() }
 func (e *InvalidGrantError) Unwrap() error { return ErrInvalidGrant }
 
 type UpstreamAuthServer struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	RegistrationEndpoint  string   `json:"registration_endpoint"`
-	ScopesSupported       []string `json:"scopes_supported"`
-	Resource              string   `json:"resource"`
+	Issuer                                     string   `json:"issuer"`
+	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
+	TokenEndpoint                              string   `json:"token_endpoint"`
+	RegistrationEndpoint                       string   `json:"registration_endpoint"`
+	ScopesSupported                            []string `json:"scopes_supported"`
+	Resource                                   string   `json:"resource"`
+	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported,omitempty"`
 }
 
 type RegisteredClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
+	Issuer       string `json:"issuer,omitempty"`
 	// ClientName is the client_name the client was registered with. Empty on
 	// rows written before the name became configurable (the default name).
 	ClientName string `json:"client_name,omitempty"`

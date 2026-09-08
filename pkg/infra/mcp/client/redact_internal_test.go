@@ -41,20 +41,23 @@ func TestRedactURL(t *testing.T) {
 }
 
 // net/http's *url.Error carries the full request URL, query string included, so
-// the underlying error — not just the URL wrapUnreachable prints — must be
+// the underlying error — not just the origin wrapUnreachable prints — must be
 // scrubbed, while the chain stays intact for errors.Is / errors.As.
 func TestWrapUnreachable_RedactsSecretQueryValuesEverywhere(t *testing.T) {
 	const raw = "https://mcp.brightdata.com/mcp?token=supersecret123"
 	inner := &url.Error{Op: "Post", URL: raw, Err: errors.New("dial tcp: connection refused")}
 	wrapped := fmt_Errorf_chain(inner)
 
-	err := wrapUnreachable(raw, wrapped)
+	err := wrapUnreachable(raw, "connect", wrapped)
+	// The message itself is bounded: the category plus the redacted origin, never
+	// the upstream's own text. Production callers hand it a canonical, query-free
+	// origin; redactURL masks a query anyway so this can never regress.
 	msg := err.Error()
 	if strings.Contains(msg, "supersecret123") {
 		t.Fatalf("secret leaked into the error text: %s", msg)
 	}
-	if !strings.Contains(msg, "token=***") {
-		t.Fatalf("redacted URL shape missing from error text: %s", msg)
+	if !strings.Contains(msg, "https://mcp.brightdata.com/mcp?token=***") {
+		t.Fatalf("redacted origin missing from error text: %s", msg)
 	}
 	if !errors.Is(err, appmcp.ErrUnreachable) {
 		t.Fatalf("error lost ErrUnreachable: %v", err)
@@ -67,16 +70,39 @@ func TestWrapUnreachable_RedactsSecretQueryValuesEverywhere(t *testing.T) {
 		t.Fatalf("error chain lost the *url.Error: %v", err)
 	}
 
+	// The cause is reachable for a caller that wants the detail, and it is
+	// scrubbed too: net/http embedded the full request URL in its message.
+	var unreachable *unreachableError
+	if !errors.As(err, &unreachable) {
+		t.Fatalf("error is not an unreachableError: %v", err)
+	}
+	cause := unreachable.cause.Error()
+	if strings.Contains(cause, "supersecret123") {
+		t.Fatalf("secret leaked through the cause: %s", cause)
+	}
+	if !strings.Contains(cause, "token=***") {
+		t.Fatalf("redacted URL shape missing from the cause: %s", cause)
+	}
+
 	// The value on its own (an upstream echoing the token in a body) is masked too.
-	loose := wrapUnreachable(raw, errors.New("upstream said: invalid token supersecret123 (escaped supersecret123)"))
-	if strings.Contains(loose.Error(), "supersecret123") {
-		t.Fatalf("loose secret leaked: %s", loose.Error())
+	loose := wrapUnreachable(raw, "connect", errors.New("upstream said: invalid token supersecret123 (escaped supersecret123)"))
+	var looseErr *unreachableError
+	if !errors.As(loose, &looseErr) {
+		t.Fatalf("error is not an unreachableError: %v", loose)
+	}
+	if strings.Contains(looseErr.cause.Error(), "supersecret123") {
+		t.Fatalf("loose secret leaked: %s", looseErr.cause)
 	}
 
 	// A target without a query is passed through untouched.
 	plain := errors.New("dial tcp 127.0.0.1:1: connection refused")
-	if got := wrapUnreachable("http://127.0.0.1:1/mcp", plain); !errors.Is(got, plain) || !strings.Contains(got.Error(), plain.Error()) {
+	got := wrapUnreachable("http://127.0.0.1:1/mcp", "connect", plain)
+	if !errors.Is(got, plain) {
 		t.Fatalf("plain error mangled: %v", got)
+	}
+	var plainErr *unreachableError
+	if !errors.As(got, &plainErr) || plainErr.cause.Error() != plain.Error() {
+		t.Fatalf("plain cause mangled: %v", got)
 	}
 }
 

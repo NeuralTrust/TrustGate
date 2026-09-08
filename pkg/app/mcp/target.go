@@ -117,10 +117,16 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
+	mode := t.ProtocolMode
+	if mode == "" {
+		mode = registrydomain.MCPProtocolModeAuto
+	}
 	target := Target{
-		URL:      t.URL,
-		Headers:  headers,
-		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+		URL:              t.URL,
+		Headers:          headers,
+		Revision:         reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+		RegistryTargetID: reg.ID.String(),
+		ProtocolMode:     mode,
 	}
 	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
 		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}

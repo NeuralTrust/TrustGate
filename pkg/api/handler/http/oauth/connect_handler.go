@@ -42,7 +42,7 @@ type ConnectHandler struct {
 type ConnectFlow interface {
 	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
-	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
+	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc, iss string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error
 }
 
@@ -84,6 +84,7 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 	ticketID, err := h.connect.Callback(
 		c.UserContext(), h.connectBaseURL(c), providerParam(c),
 		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
+		c.Query("iss"),
 	)
 	if err != nil {
 		if ticketID == "" {

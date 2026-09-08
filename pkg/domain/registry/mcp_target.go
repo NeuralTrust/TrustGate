@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -32,6 +33,23 @@ const (
 type MCPTransport string
 
 const MCPTransportStreamableHTTP MCPTransport = "streamable-http"
+
+type MCPProtocolMode string
+
+const (
+	MCPProtocolModeAuto   MCPProtocolMode = "auto"
+	MCPProtocolModeModern MCPProtocolMode = "modern"
+	MCPProtocolModeLegacy MCPProtocolMode = "legacy"
+)
+
+func (m MCPProtocolMode) Validate() error {
+	switch m {
+	case "", MCPProtocolModeAuto, MCPProtocolModeModern, MCPProtocolModeLegacy:
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported protocol_mode %q", ErrInvalidMCPTarget, m)
+	}
+}
 
 type MCPSource string
 
@@ -123,13 +141,14 @@ type MCPTarget struct {
 	// Origin is set by the gateway when it materialises the registry from the
 	// catalog (MCPOriginStore); never accepted from a client and preserved
 	// across admin edits (see appregistry.applyMCPTargetUpdate).
-	Origin    MCPOrigin         `json:"origin,omitempty"`
-	Source    MCPSource         `json:"source,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Transport MCPTransport      `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuth          `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITarget    `json:"openapi,omitempty"`
+	Origin       MCPOrigin         `json:"origin,omitempty"`
+	Source       MCPSource         `json:"source,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Transport    MCPTransport      `json:"transport,omitempty"`
+	ProtocolMode MCPProtocolMode   `json:"protocol_mode,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Auth         *MCPAuth          `json:"auth,omitempty"`
+	OpenAPI      *OpenAPITarget    `json:"openapi,omitempty"`
 	// URLVariables declares the per-user placeholders in URL (e.g. {account_url},
 	// {instance}) that each principal fills at install time. It is copied verbatim
 	// from the catalog entry when a registry is materialised, so the dial path is
@@ -204,9 +223,27 @@ func (t *MCPTarget) Normalize() {
 	if t.Source == MCPSourceRemote && t.Transport == "" {
 		t.Transport = MCPTransportStreamableHTTP
 	}
+	if t.ProtocolMode == "" {
+		t.ProtocolMode = MCPProtocolModeAuto
+	}
 	if t.Auth == nil {
 		t.Auth = &MCPAuth{Mode: MCPAuthModeNone}
 	}
+}
+
+func (t *MCPTarget) UnmarshalJSON(data []byte) error {
+	type targetAlias MCPTarget
+	var decoded targetAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	target := MCPTarget(decoded)
+	target.Normalize()
+	if err := target.Validate(); err != nil {
+		return err
+	}
+	*t = target
+	return nil
 }
 
 // targetURLValid reports whether the target URL is a valid http(s) URL, treating
@@ -227,6 +264,7 @@ func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
 	}
+	t.Normalize()
 	source := t.Source
 	if source == "" {
 		source = MCPSourceRemote
@@ -257,6 +295,9 @@ func (t *MCPTarget) Validate() error {
 		}
 	default:
 		return fmt.Errorf("%w: unsupported source %q", ErrInvalidMCPTarget, t.Source)
+	}
+	if err := t.ProtocolMode.Validate(); err != nil {
+		return err
 	}
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {

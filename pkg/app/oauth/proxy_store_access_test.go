@@ -270,7 +270,7 @@ func (f *defaultIdPFixture) login(t *testing.T) (string, error) {
 	if err != nil {
 		t.Fatalf("parse authorize redirect: %v", err)
 	}
-	return f.proxy.Callback(f.ctx, "http://gw.example.com", u.Query().Get("state"), "platform-code", "", "")
+	return f.proxy.Callback(f.ctx, "http://gw.example.com", u.Query().Get("state"), "platform-code", "", "", "")
 }
 
 // platformToken mints an RS256 token the way the platform would, using an STS
@@ -418,7 +418,7 @@ func TestCallbackOperatorIdPIgnoresVerifier(t *testing.T) {
 		WithIdPTokenVerifier(oidcauth.NewVerifier()))
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	if _, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", ""); err != nil {
+	if _, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", ""); err != nil {
 		t.Fatalf("operator IdP callback must not be subject to platform verification: %v", err)
 	}
 }

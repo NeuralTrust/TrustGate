@@ -29,27 +29,35 @@ import (
 )
 
 type fakeUpstream struct {
-	tools      []Tool
-	prompts    []Prompt
-	resources  []Resource
-	templates  []ResourceTemplate
-	listErr    error
-	lastCall   string
-	lastPrompt string
-	lastRead   string
-	result     json.RawMessage
+	tools        []Tool
+	prompts      []Prompt
+	resources    []Resource
+	templates    []ResourceTemplate
+	listErr      error
+	resourcesErr error
+	lastCall     string
+	lastPrompt   string
+	lastRead     string
+	result       json.RawMessage
+	lastToolCall ToolCall
+	callCount    int
 }
 
 func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
 	return f.tools, f.listErr
 }
 
-func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessage) (json.RawMessage, error) {
-	f.lastCall = name
+func (f *fakeUpstream) CallTool(_ context.Context, call ToolCall) (json.RawMessage, error) {
+	f.lastCall = call.Name
+	f.lastToolCall = call
+	f.callCount++
 	return f.result, nil
 }
 
 func (f *fakeUpstream) ListResources(context.Context) ([]Resource, error) {
+	if f.resourcesErr != nil {
+		return nil, f.resourcesErr
+	}
 	return f.resources, f.listErr
 }
 
@@ -243,8 +251,12 @@ func TestComposer_ListTools_CollisionAutoPrefix(t *testing.T) {
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
 	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
-		"https://a.example.com/mcp": {tools: tools("search")},
-		"https://b.example.com/mcp": {tools: tools("search")},
+		"https://a.example.com/mcp": {tools: []Tool{
+			mustAppsTool(t, `{"name":"search","_meta":{"ui":{"resourceUri":"ui://github/raw"}}}`),
+		}},
+		"https://b.example.com/mcp": {tools: []Tool{
+			mustAppsTool(t, `{"name":"search","_meta":{"ui":{"resourceUri":"ui://slack/raw"}}}`),
+		}},
 	}}
 	c := newTestComposer(dialer)
 
@@ -255,6 +267,12 @@ func TestComposer_ListTools_CollisionAutoPrefix(t *testing.T) {
 	names := toolNames(got)
 	if len(names) != 2 || names[0] != "github_search" || names[1] != "slack_search" {
 		t.Fatalf("tools = %v, want [github_search slack_search]", names)
+	}
+	if gotMeta := string(got[0].payload["_meta"]); gotMeta != `{"ui":{"resourceUri":"ui://github/raw"}}` {
+		t.Fatalf("github _meta = %s", gotMeta)
+	}
+	if gotMeta := string(got[1].payload["_meta"]); gotMeta != `{"ui":{"resourceUri":"ui://slack/raw"}}` {
+		t.Fatalf("slack _meta = %s", gotMeta)
 	}
 }
 
@@ -351,7 +369,7 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 	c := newTestComposer(dialer)
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
 
-	res, err := c.CallTool(context.Background(), rc, "slack_search", nil)
+	res, err := c.CallTool(context.Background(), rc, ToolCall{Name: "slack_search"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -365,8 +383,32 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 		t.Fatalf("github upstream was called: %q", upA.lastCall)
 	}
 
-	if _, err := c.CallTool(context.Background(), rc, "missing_tool", nil); !errors.Is(err, ErrToolNotFound) {
+	if _, err := c.CallTool(context.Background(), rc, ToolCall{Name: "missing_tool"}); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("error = %v, want ErrToolNotFound", err)
+	}
+}
+
+func TestComposer_CallToolClassifiedRejectsInvalidAppsDeclaration(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	reg := mcpRegistry(t, "github", url)
+	upstream := &fakeUpstream{
+		tools: []Tool{
+			mustAppsTool(t, `{"name":"app","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+			mustAppsTool(t, `{"name":"invalid","_meta":{"ui":{"visibility":["app"]}}}`),
+		},
+		result: json.RawMessage(`{"content":[]}`),
+	}
+	composer := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{url: upstream}}).(AppsCallComposer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	_, appsCall, err := composer.CallToolClassified(context.Background(), rc, ToolCall{Name: "app"})
+	if err != nil || !appsCall {
+		t.Fatalf("appsCall = %t, err = %v", appsCall, err)
+	}
+	_, _, err = composer.CallToolClassified(context.Background(), rc, ToolCall{Name: "invalid"})
+	if !errors.Is(err, ErrAppsResourceRejected) || upstream.callCount != 1 {
+		t.Fatalf("err = %v, upstream calls = %d", err, upstream.callCount)
 	}
 }
 
@@ -393,7 +435,7 @@ func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.
 		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
 	}, notion, graphite)
 
-	res, err := c.CallTool(context.Background(), rc, "list_diffs", nil)
+	res, err := c.CallTool(context.Background(), rc, ToolCall{Name: "list_diffs"})
 	if err != nil {
 		t.Fatalf("call routed to a healthy upstream must succeed, got %v", err)
 	}
@@ -427,7 +469,7 @@ func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
 		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
 	}, notion, graphite)
 
-	_, err := c.CallTool(context.Background(), rc, "search", nil)
+	_, err := c.CallTool(context.Background(), rc, ToolCall{Name: "search"})
 	var consentErr *ConsentRequiredError
 	if !errors.As(err, &consentErr) {
 		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
@@ -456,7 +498,7 @@ func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
 		}},
 	}, notion)
 
-	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	_, err := c.CallTool(context.Background(), rc, ToolCall{Name: "notion-search"})
 	var denied *ToolNotPermittedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("error = %v, want ToolNotPermittedError", err)
@@ -496,7 +538,7 @@ func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
 		},
 	}, notion, linear)
 
-	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	_, err := c.CallTool(context.Background(), rc, ToolCall{Name: "notion-search"})
 	var consent *ConsentRequiredError
 	if errors.As(err, &consent) {
 		t.Fatal("a forbidden tool must not send the user through a consent flow")
@@ -522,7 +564,7 @@ func TestComposer_CallTool_UnknownToolStaysNotFound(t *testing.T) {
 		}},
 	}, notion)
 
-	if _, err := c.CallTool(context.Background(), rc, "does-not-exist", nil); !errors.Is(err, ErrToolNotFound) {
+	if _, err := c.CallTool(context.Background(), rc, ToolCall{Name: "does-not-exist"}); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("error = %v, want ErrToolNotFound", err)
 	}
 }

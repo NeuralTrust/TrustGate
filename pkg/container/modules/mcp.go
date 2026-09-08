@@ -16,6 +16,7 @@ package modules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -51,12 +52,23 @@ import (
 	"go.uber.org/dig"
 )
 
+const mcpAppsPipelineReady = true
+
 func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
-	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, compiler appopenapi.Compiler) appmcp.Dialer {
-		remote := mcpclient.NewCachedDialer(client, logger)
+	if err := c.Provide(func(
+		client *mcpclient.Client,
+		logger *slog.Logger,
+		cfg *config.Config,
+		compiler appopenapi.Compiler,
+	) appmcp.Dialer {
+		remote := mcpclient.NewNegotiatingDialer(
+			client,
+			logger,
+			mcpclient.NewProtocolDecisionRecorder(cfg.Telemetry.OpsMetricsEnabled),
+		)
 		return mcpopenapi.NewDialer(remote, compiler)
 	}); err != nil {
 		return err
@@ -134,6 +146,46 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(manager *cache.TTLMapManager) appmcp.AppCapabilityResolver {
+		return mcpclient.NewAppCapabilityResolver(manager.GetTTLMap(cache.MCPAppsTTLName))
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(provideAppsMetadataPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(provideAppsListPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(provideAppsReadPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		cfg *config.Config,
+		creds appmcp.CredentialResolver,
+		resolver appmcp.AppCapabilityResolver,
+	) appmcp.AppsMediator {
+		return appmcp.NewAppsMediator(cfg.Server.MCPApps.Enabled, mcpAppsPipelineReady, creds, resolver)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) *appmcp.TicketSigner {
+		mrtr := cfg.Server.MCPMRTR
+		return appmcp.NewTicketSigner(mrtr.TicketSecret, mrtr.TicketSecretPrev, mrtr.TicketTTL, mrtr.MaxRounds)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) *appmcp.TaskHandleSigner {
+		tasks := cfg.Server.MCPTasks
+		return appmcp.NewTaskHandleSigner(
+			tasks.HandleSecret,
+			tasks.HandleSecretPrev,
+			tasks.HandleTTL,
+			tasks.HandleMaxBytes,
+		)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(provideComposer); err != nil {
 		return err
 	}
@@ -160,6 +212,21 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
+	if err := c.Provide(provideSubscriptionRegistry); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionConnector); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionTargetResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionMultiplexer); err != nil {
+		return err
+	}
 	return c.Provide(provideMCPHandler)
 }
 
@@ -169,18 +236,47 @@ func MCP(c *container.Container) error {
 type mcpHandlerParams struct {
 	dig.In
 
-	Gateway    *mcphttp.RPCGateway
-	RoleScoper appmcp.RoleScoper
-	Vault      vaultdomain.Repository
-	Installs   installationdomain.Repository `optional:"true"`
+	Gateway     *mcphttp.RPCGateway
+	RoleScoper  appmcp.RoleScoper
+	Vault       vaultdomain.Repository
+	Signer      *appmcp.TicketSigner
+	Tasks       *appmcp.TaskHandleSigner
+	Registry    *appmcp.SubscriptionRegistry
+	Policy      appmcp.SubscriptionPolicy
+	Targets     appmcp.SubscriptionTargetResolver
+	Multiplexer *appmcp.SubscriptionMultiplexer
+	Apps        appmcp.AppsMediator
+	Config      *config.Config
+	Installs    installationdomain.Repository `optional:"true"`
 }
 
 func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
+	metrics := p.Config.Telemetry.OpsMetricsEnabled
+	opts := []mcphttp.HandlerOption{
+		mcphttp.WithProtocolRecorder(mcphttp.NewProtocolValidationRecorder(metrics)),
+		mcphttp.WithMRTR(mcphttp.MRTRSupport{
+			Signer:   p.Signer,
+			Recorder: mcphttp.NewMRTRRecorder(metrics),
+		}),
+		mcphttp.WithTasks(mcphttp.TasksSupport{
+			Signer:   p.Tasks,
+			Recorder: mcphttp.NewTasksRecorder(metrics),
+		}),
+		mcphttp.WithSubscriptions(subscriptionsSupport(
+			p.Config.Server.MCPSubscriptions,
+			p.Registry,
+			p.Policy,
+			p.Targets,
+			p.Multiplexer,
+			mcphttp.NewSubscriptionsRecorder(metrics),
+		)),
+		mcphttp.WithApps(p.Apps),
+	}
 	// The watcher fingerprints the Store surface with the same scoper the
 	// dispatcher applies to tools/list, so an admin revoking a grant pushes
 	// tools/list_changed to the affected user's clients.
 	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs, appmcp.WithSurfaceScoper(p.Gateway.StoreScoper()))
-	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, surface)
+	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, surface, opts...)
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the
@@ -195,6 +291,9 @@ type composerParams struct {
 	Creds    appmcp.CredentialResolver
 	Manager  *cache.TTLMapManager
 	Logger   *slog.Logger
+	Signer   *appmcp.TicketSigner
+	Tasks    *appmcp.TaskHandleSigner
+	Config   *config.Config
 	Installs installationdomain.Repository `optional:"true"`
 	Vault    vaultdomain.Repository        `optional:"true"`
 }
@@ -204,7 +303,16 @@ func provideComposer(p composerParams) appmcp.Composer {
 	if p.Installs != nil {
 		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
 	}
-	return appmcp.NewComposer(p.Dialer, p.Creds, p.Manager.GetTTLMap(cache.MCPToolsTTLName), p.Logger, opts...)
+	return appmcp.NewComposerWithMediation(
+		p.Dialer,
+		p.Creds,
+		p.Manager.GetTTLMap(cache.MCPToolsTTLName),
+		p.Logger,
+		p.Signer,
+		p.Tasks,
+		int64(p.Config.Server.MCPTasks.PollIntervalFloorMs),
+		opts...,
+	)
 }
 
 type connectServiceParams struct {
@@ -230,6 +338,9 @@ type rpcGatewayParams struct {
 	Limiter     ratelimitapp.Checker
 	Connections appmcp.ConnectionTool
 	Shared      mcpoauth.Provider
+	AppsList    appmcp.AppsListPolicy
+	AppsRead    appmcp.AppsReadPolicy
+	Config      *config.Config
 	Catalog     appcatalog.MCPServerCatalog `optional:"true"`
 	// Install path — present on the full/control plane only. When any is absent
 	// the Store offers SEARCH but not INSTALL (e.g. the Redis data plane, which
@@ -299,16 +410,23 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
-
+	metrics := p.Config.Telemetry.OpsMetricsEnabled
+	opts := []mcphttp.GatewayOption{
+		mcphttp.WithConnections(p.Connections),
+		mcphttp.WithStoreTool(store),
+		mcphttp.WithAppsPolicies(p.AppsList, p.AppsRead, mcphttp.NewAppsRecorder(metrics)),
+		mcphttp.WithMaxContinuationBytes(p.Config.Server.MCPMRTR.MaxContinuationBytes),
+	}
+	// The Store scoper needs both stores; a SEARCH-only plane has neither, and
+	// there the Store lists the catalog without the caller's installed servers.
 	if p.Installs != nil && p.Registries != nil {
 		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
 		if err != nil {
 			return nil, err
 		}
-		gateway = gateway.WithStoreScoper(scoper)
+		opts = append(opts, mcphttp.WithStoreScoper(scoper))
 	}
-	return gateway, nil
+	return mcphttp.NewRPCGateway(p.Composer, p.Plugins, p.Limiter, opts...), nil
 }
 
 // configureServiceParams wires the MCP-Store per-user configure flow. Every dep
@@ -396,6 +514,166 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 		catalog,
 		registries,
 	), nil
+}
+
+func provideAppsMetadataPolicy(cfg *config.Config) (appmcp.AppsMetadataPolicy, error) {
+	apps := cfg.Server.MCPApps
+	return appmcp.NewAppsMetadataPolicy(
+		apps.MaxCSPOriginsPerDirective,
+		apps.MaxCSPOriginsTotal,
+		apps.AllowedOriginPatterns,
+		apps.AllowedPermissions,
+	)
+}
+
+func provideAppsListPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsListPolicy {
+	return appmcp.NewAppsListPolicy(cfg.Server.MCPApps.Enabled && mcpAppsPipelineReady, metadata)
+}
+
+func provideAppsReadPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsReadPolicy {
+	apps := cfg.Server.MCPApps
+	return appmcp.NewAppsReadPolicy(apps.Enabled && mcpAppsPipelineReady, apps.MaxResourceBytes, metadata)
+}
+
+// provideSubscriptionRegistry builds the lease accountant, or nil while the
+// feature is disabled. A nil registry makes SubscriptionsSupport.Enabled false,
+// so the default build behaves exactly as it did before subscriptions existed.
+func provideSubscriptionRegistry(cfg *config.Config) *appmcp.SubscriptionRegistry {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled {
+		return nil
+	}
+	return appmcp.NewSubscriptionRegistry(appmcp.SubscriptionCaps{
+		MaxStreams:      subs.MaxStreams,
+		MaxPerConsumer:  subs.MaxPerConsumer,
+		MaxPerPrincipal: subs.MaxPerPrincipal,
+	})
+}
+
+// provideSubscriptionPolicy builds the re-authorization pass, or a nil interface
+// while the feature is disabled. The nil must be a literal rather than a typed
+// nil pointer, since SubscriptionsSupport.Enabled compares the interface itself.
+func provideSubscriptionPolicy(
+	cfg *config.Config,
+	consumers appconsumer.DataFinder,
+	scoper appmcp.RoleScoper,
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	appsListPolicy appmcp.AppsListPolicy,
+	creds appmcp.CredentialResolver,
+	connector appmcp.SubscriptionConnector,
+) appmcp.SubscriptionPolicy {
+	if !cfg.Server.MCPSubscriptions.Enabled {
+		return nil
+	}
+	if cfg.Server.MCPSubscriptions.UpstreamEnabled {
+		return appmcp.NewSubscriptionPolicyWithUpstreamAndAppsListPolicy(
+			consumers,
+			scoper,
+			composer,
+			plugins,
+			appsListPolicy,
+			creds,
+			connector,
+		)
+	}
+	return appmcp.NewSubscriptionPolicyWithAppsListPolicy(
+		consumers,
+		scoper,
+		composer,
+		appsListPolicy,
+		plugins,
+	)
+}
+
+func provideSubscriptionConnector(cfg *config.Config) appmcp.SubscriptionConnector {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil
+	}
+	return mcpclient.NewModernSubscriptionConnector(subs.MaxEventBytes, subs.UpstreamIdleTimeout)
+}
+
+func provideSubscriptionTargetResolver(
+	cfg *config.Config,
+	consumers appconsumer.DataFinder,
+	scoper appmcp.RoleScoper,
+	creds appmcp.CredentialResolver,
+) appmcp.SubscriptionTargetResolver {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil
+	}
+	return appmcp.NewSubscriptionTargetResolver(consumers, scoper, creds)
+}
+
+func provideSubscriptionMultiplexer(
+	cfg *config.Config,
+	policy appmcp.SubscriptionPolicy,
+	connector appmcp.SubscriptionConnector,
+	targets appmcp.SubscriptionTargetResolver,
+) (*appmcp.SubscriptionMultiplexer, error) {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil, nil
+	}
+	upstreamPolicy, ok := policy.(appmcp.UpstreamSubscriptionPolicy)
+	if !ok {
+		return nil, fmt.Errorf("mcp: upstream subscription policy is unavailable")
+	}
+	refresher, ok := targets.(appmcp.SubscriptionTargetRefresher)
+	if !ok {
+		return nil, fmt.Errorf("mcp: upstream subscription target refresher is unavailable")
+	}
+	return appmcp.NewSubscriptionMultiplexer(
+		context.Background(),
+		connector,
+		upstreamPolicy.AuthorizeEvent,
+		appmcp.SubscriptionMultiplexerOptions{
+			MaxListeners:         subs.MaxUpstreamListeners,
+			MaxPerOrigin:         subs.MaxUpstreamPerOrigin,
+			QueueCapacity:        subs.StreamQueue,
+			ReconnectAttempts:    subs.ReconnectMaxAttempts,
+			ReconnectBackoffMin:  subs.ReconnectBackoffMin,
+			ReconnectBackoffMax:  subs.ReconnectBackoffMax,
+			AuthorizationTimeout: appmcp.ReauthBudget(subs.ReauthInterval, subs.Keepalive),
+			Refresher:            refresher,
+			Recorder: mcphttp.NewSubscriptionSourceRecorder(
+				cfg.Telemetry.OpsMetricsEnabled,
+			),
+		},
+	)
+}
+
+// subscriptionsSupport carries the configured bounds to the handler. Nothing is
+// constructed while the feature is disabled: the value is inert and the default
+// build behaves exactly as it did before subscriptions existed.
+func subscriptionsSupport(
+	cfg config.MCPSubscriptionsConfig,
+	registry *appmcp.SubscriptionRegistry,
+	policy appmcp.SubscriptionPolicy,
+	targets appmcp.SubscriptionTargetResolver,
+	multiplexer *appmcp.SubscriptionMultiplexer,
+	recorder mcphttp.SubscriptionsRecorder,
+) mcphttp.SubscriptionsSupport {
+	var source appmcp.SubscriptionSource
+	if multiplexer != nil {
+		source = multiplexer
+	}
+	return mcphttp.SubscriptionsSupport{
+		On:             cfg.Enabled,
+		MaxLifetime:    cfg.MaxLifetime,
+		ReauthInterval: cfg.ReauthInterval,
+		Keepalive:      cfg.Keepalive,
+		MaxEventBytes:  cfg.MaxEventBytes,
+		MaxURIs:        cfg.MaxURIs,
+		Registry:       registry,
+		Policy:         policy,
+		Recorder:       recorder,
+		Upstream:       cfg.UpstreamEnabled,
+		Targets:        targets,
+		Source:         source,
+	}
 }
 
 func provideAPIKeyConnectService(

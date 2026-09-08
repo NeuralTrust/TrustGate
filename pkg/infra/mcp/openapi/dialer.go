@@ -246,15 +246,19 @@ func (u *upstream) ListTools(context.Context) ([]appmcp.Tool, error) {
 	return append([]appmcp.Tool(nil), u.compiled.tools...), nil
 }
 
-func (u *upstream) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+// CallTool runs one compiled OpenAPI operation. An OpenAPI-backed upstream is a
+// plain request/response HTTP call, so the mediated continuation fields a modern
+// tools/call may carry are dropped rather than forwarded.
+func (u *upstream) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
+	name := call.Name
 	operation, ok := u.compiled.operations[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", appmcp.ErrToolNotFound, name)
 	}
 	var args map[string]any
-	if len(arguments) == 0 {
+	if len(call.Arguments) == 0 {
 		args = map[string]any{}
-	} else if err := json.Unmarshal(arguments, &args); err != nil {
+	} else if err := json.Unmarshal(call.Arguments, &args); err != nil {
 		return nil, &appmcp.RPCError{Code: -32602, Message: "invalid tool arguments"}
 	}
 	validationOptions := []openapi3.SchemaValidationOption{}

@@ -15,6 +15,7 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,14 +28,20 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+func echoToolCall() appmcp.ToolCall {
+	return appmcp.ToolCall{Name: "echo", Arguments: json.RawMessage(`{}`)}
+}
+
 type upstreamStub struct {
-	srv     *httptest.Server
-	handler atomic.Pointer[http.Handler]
-	inits   atomic.Int64
+	srv       *httptest.Server
+	handler   atomic.Pointer[http.Handler]
+	inits     atomic.Int64
+	discovers atomic.Int64
 }
 
 func newUpstreamStub(t *testing.T) *upstreamStub {
@@ -54,6 +61,9 @@ func (u *upstreamStub) reset() {
 		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
 			if method == "initialize" {
 				u.inits.Add(1)
+			}
+			if method == "server/discover" {
+				u.discovers.Add(1)
 			}
 			return next(ctx, method, req)
 		}
@@ -92,6 +102,9 @@ func TestCachedDialer_ReusesSessionPerPinKey(t *testing.T) {
 	if got := upstream.inits.Load(); got != 1 {
 		t.Fatalf("expected 1 initialize for a pinned target, got %d", got)
 	}
+	if got := upstream.discovers.Load(); got != 0 {
+		t.Fatalf("server/discover reached legacy upstream %d times", got)
+	}
 }
 
 func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
@@ -104,7 +117,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if _, err := up.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
+	if _, err := up.CallTool(context.Background(), echoToolCall()); err != nil {
 		t.Fatalf("call: %v", err)
 	}
 
@@ -114,7 +127,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
-	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err == nil {
+	if _, err := up2.CallTool(context.Background(), echoToolCall()); err == nil {
 		t.Fatal("call on a lost session must propagate the error instead of retrying")
 	}
 
@@ -122,11 +135,14 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect after eviction: %v", err)
 	}
-	if _, err := up3.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
+	if _, err := up3.CallTool(context.Background(), echoToolCall()); err != nil {
 		t.Fatalf("call after re-dial: %v", err)
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
+	}
+	if got := upstream.discovers.Load(); got != 0 {
+		t.Fatalf("server/discover reached legacy upstream %d times", got)
 	}
 }
 
@@ -155,6 +171,9 @@ func TestCachedDialer_ListRetriesAfterLostSession(t *testing.T) {
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
+	}
+	if got := upstream.discovers.Load(); got != 0 {
+		t.Fatalf("server/discover reached legacy upstream %d times", got)
 	}
 }
 
@@ -199,24 +218,34 @@ func TestCachedDialer_DoesNotReconnectWithRejectedCredential(t *testing.T) {
 	}
 }
 
-func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
+func TestCachedDialer_NoPinKeyOwnsIndependentSessions(t *testing.T) {
 	t.Parallel()
 	upstream := newUpstreamStub(t)
 	dialer := newCachedDialer()
 	target := appmcp.Target{URL: upstream.srv.URL}
 
-	for i := 0; i < 2; i++ {
-		up, err := dialer.Connect(context.Background(), target)
-		if err != nil {
-			t.Fatalf("connect %d: %v", i, err)
-		}
-		if _, err := up.ListTools(context.Background()); err != nil {
-			t.Fatalf("list %d: %v", i, err)
-		}
-		up.Close(context.Background())
+	const callers = 8
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			up, err := dialer.Connect(context.Background(), target)
+			if err == nil {
+				_, err = up.ListTools(context.Background())
+				up.Close(context.Background())
+			}
+			results <- err
+		}()
 	}
-	if got := upstream.inits.Load(); got != 2 {
-		t.Fatalf("expected a fresh session per connect without a pin key, got %d inits", got)
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatalf("connect/list: %v", err)
+		}
+	}
+	if got := upstream.inits.Load(); got != callers {
+		t.Fatalf("initializes = %d, want %d independent sessions", got, callers)
+	}
+	if got := upstream.discovers.Load(); got != 0 {
+		t.Fatalf("server/discover reached legacy upstream %d times", got)
 	}
 }
 
@@ -332,5 +361,99 @@ func TestCachedDialer_CredentialChangeGetsNewSession(t *testing.T) {
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected distinct sessions per credential fingerprint, got %d inits", got)
+	}
+	if got := upstream.discovers.Load(); got != 0 {
+		t.Fatalf("server/discover reached legacy upstream %d times", got)
+	}
+}
+
+func TestCachedDialer_URLChangeGetsNewSession(t *testing.T) {
+	t.Parallel()
+
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	for _, path := range []string{"/registry-a", "/registry-b", "/registry-a"} {
+		up, err := dialer.Connect(context.Background(), appmcp.Target{
+			URL:    upstream.srv.URL + path,
+			PinKey: "gw:consumer:reg:user",
+		})
+		if err != nil {
+			t.Fatalf("connect %s: %v", path, err)
+		}
+		if _, err := up.ListTools(context.Background()); err != nil {
+			t.Fatalf("list %s: %v", path, err)
+		}
+	}
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("initializes = %d, want distinct sessions for two URL identities", got)
+	}
+}
+
+func TestCachedDialer_ProtocolModeChangeGetsNewSession(t *testing.T) {
+	t.Parallel()
+
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	for _, mode := range []registrydomain.MCPProtocolMode{
+		registrydomain.MCPProtocolModeLegacy,
+		registrydomain.MCPProtocolModeAuto,
+		registrydomain.MCPProtocolModeLegacy,
+	} {
+		up, err := dialer.Connect(context.Background(), appmcp.Target{
+			URL:          upstream.srv.URL,
+			PinKey:       "gw:consumer:reg:user",
+			ProtocolMode: mode,
+		})
+		if err != nil {
+			t.Fatalf("connect mode %q: %v", mode, err)
+		}
+		if _, err := up.ListTools(context.Background()); err != nil {
+			t.Fatalf("list mode %q: %v", mode, err)
+		}
+	}
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("initializes = %d, want distinct sessions for two protocol modes", got)
+	}
+}
+
+func TestCachedDialer_RefreshLogIsSanitized(t *testing.T) {
+	t.Parallel()
+
+	upstream := newUpstreamStub(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	dialer := mcpclient.NewCachedDialer(mcpclient.New(), logger)
+	const secret = "refresh-secret-sentinel"
+	up, err := dialer.Connect(context.Background(), appmcp.Target{
+		URL:     upstream.srv.URL + "/mcp?token=" + secret,
+		PinKey:  "gw:consumer:reg:user",
+		Headers: map[string]string{"Authorization": "Bearer " + secret},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := up.ListTools(context.Background()); err != nil {
+		t.Fatalf("initial list: %v", err)
+	}
+	var failing http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Session-Id") != "" {
+			http.Error(w, "session missing", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+	})
+	upstream.handler.Store(&failing)
+	if _, err := up.ListTools(context.Background()); err == nil {
+		t.Fatal("list after session loss unexpectedly succeeded")
+	}
+	output := logs.String()
+	if bytes.Contains([]byte(output), []byte(secret)) {
+		t.Fatalf("refresh log exposed secret: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte(`"category":"unreachable"`)) {
+		t.Fatalf("refresh log missing sanitized category: %s", output)
+	}
+	if bytes.Contains([]byte(output), []byte(`"error"`)) {
+		t.Fatalf("refresh log contains raw error attribute: %s", output)
 	}
 }

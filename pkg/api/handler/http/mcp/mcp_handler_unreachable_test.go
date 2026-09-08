@@ -42,7 +42,7 @@ func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			composer := mocks.NewComposer(t)
-			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "scrape", mock.Anything).Return(nil, upstreamErr).Once()
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("scrape")).Return(nil, upstreamErr).Once()
 			app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 			status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scrape"}}`)
@@ -71,7 +71,7 @@ func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "query", mock.Anything).
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("query")).
 		Return(nil, fmt.Errorf("%w: missing required variable %q", registrydomain.ErrURLTemplate, "account_url")).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 

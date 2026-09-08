@@ -102,13 +102,14 @@ type MCPTargetResponse struct {
 	Code string `json:"code,omitempty"`
 	// Origin is "store" when the gateway materialised this registry from the
 	// catalog itself (self-service install, approval, consumer binding).
-	Origin    string                 `json:"origin,omitempty"`
-	Source    string                 `json:"source,omitempty"`
-	URL       string                 `json:"url,omitempty"`
-	Transport string                 `json:"transport,omitempty"`
-	Headers   map[string]string      `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
+	Origin       string                 `json:"origin,omitempty"`
+	Source       string                 `json:"source,omitempty"`
+	URL          string                 `json:"url,omitempty"`
+	Transport    string                 `json:"transport,omitempty"`
+	ProtocolMode string                 `json:"protocol_mode"`
+	Headers      map[string]string      `json:"headers,omitempty"`
+	Auth         *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI      *OpenAPITargetResponse `json:"openapi,omitempty"`
 }
 
 type OpenAPITargetResponse struct {
@@ -264,13 +265,18 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	if t == nil {
 		return nil
 	}
+	mode := t.ProtocolMode
+	if mode == "" {
+		mode = domain.MCPProtocolModeAuto
+	}
 	out := &MCPTargetResponse{
-		Code:      t.Code,
-		Origin:    string(t.Origin),
-		Source:    string(t.Source),
-		URL:       maskSecretURLVariables(t),
-		Transport: string(t.Transport),
-		Headers:   t.Headers,
+		Code:         t.Code,
+		Origin:       string(t.Origin),
+		Source:       string(t.Source),
+		URL:          maskSecretURLVariables(t),
+		Transport:    string(t.Transport),
+		ProtocolMode: string(mode),
+		Headers:      t.Headers,
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}

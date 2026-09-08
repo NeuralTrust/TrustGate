@@ -168,6 +168,14 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	if !ok {
 		return nil, fmt.Errorf("oauth dcr: no authorization-server metadata at %s", as)
 	}
+	if !appoauth.IssuersEqual(doc.Issuer, as) {
+		slog.Warn("oauth.invalid_metadata",
+			"expected_issuer", as,
+			"metadata_issuer", doc.Issuer,
+			"key", as,
+		)
+		return nil, fmt.Errorf("oauth dcr: authorization server metadata issuer %q does not match %q", doc.Issuer, as)
+	}
 	if len(doc.ScopesSupported) == 0 {
 		doc.ScopesSupported = prm.ScopesSupported
 	}
@@ -181,12 +189,32 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
 	cached, cacheErr := r.clients.GetClient(ctx, key)
 	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI && r.clientNameMatches(cached) {
-		return cached, nil
+		if cached.Issuer == "" {
+			if meta != nil && meta.Issuer != "" {
+				cached.Issuer = meta.Issuer
+				if err := r.clients.SaveClient(ctx, key, *cached); err != nil {
+					return nil, err
+				}
+			}
+			return cached, nil
+		}
+		if meta != nil && appoauth.IssuersEqual(cached.Issuer, meta.Issuer) {
+			return cached, nil
+		}
+		got := ""
+		if meta != nil {
+			got = meta.Issuer
+		}
+		slog.Warn("oauth.issuer_mismatch",
+			"expected_issuer", cached.Issuer,
+			"got_issuer", got,
+			"key", key,
+		)
 	}
-	// A client is already registered but for a different redirect URI or under a
-	// different name. Replacing it is deliberate, and it invalidates every
-	// refresh token the old client holds, so say so rather than losing those
-	// grants silently.
+	// A client is already registered but for a different redirect URI, under a
+	// different name, or against a different issuer. Replacing it is deliberate,
+	// and it invalidates every refresh token the old client holds, so say so
+	// rather than losing those grants silently.
 	replacing := cacheErr == nil && cached != nil
 	if replacing {
 		slog.Warn("oauth dcr: re-registering upstream client because its redirect URI or client name changed; grants held by the previous client can no longer be refreshed",
@@ -203,6 +231,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
+		"application_type":           "web",
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, meta.RegistrationEndpoint, bytes.NewReader(body))
 	if err != nil {
@@ -232,6 +261,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		ClientID:     doc.ClientID,
 		ClientSecret: doc.ClientSecret,
 		RedirectURI:  redirectURI,
+		Issuer:       meta.Issuer,
 		ClientName:   r.clientName,
 	}
 	if replacing {

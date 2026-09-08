@@ -43,6 +43,7 @@ func (h *TokenHandler) Handle(c *fiber.Ctx) error {
 		CodeVerifier: c.FormValue("code_verifier"),
 		RefreshToken: c.FormValue("refresh_token"),
 		Resource:     c.FormValue("resource"),
+		Assertion:    c.FormValue("assertion"),
 	}
 	ctx := resolver.WithResolvedGateway(c, h.gateways)
 	token, err := h.proxy.Exchange(ctx, c.BaseURL(), req)

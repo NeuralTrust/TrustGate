@@ -191,22 +191,28 @@ func (w *surfaceWatcher) removeSnapshot(entry *surfaceWatchEntry) {
 	w.lru.Remove(entry.element)
 }
 
+// SurfaceFingerprint summarises everything that decides which tools a virtual
+// MCP exposes: the configuration digest — the bound MCP registries, when each
+// was last changed, and the toolkit that filters them — plus the caller's
+// dynamic surface (connected accounts, installations). It rides in
+// serverInfo.version as semver build metadata, so a client that caches a
+// server's tool list keyed on its reported version re-lists after the consumer
+// is reconfigured or the user connects an account.
+//
+// The dynamic parts are folded in as a second digest over the configuration one
+// rather than mixed into its material: that material is also the subscription
+// isolation key's RoleScope (SurfaceConfigFingerprint), which must stay a
+// function of configuration alone.
 func SurfaceFingerprint(rc *appconsumer.RoutableConsumer, dynamic []string) string {
-	if rc == nil || rc.Consumer == nil {
-		return "0"
+	config := SurfaceConfigFingerprint(rc)
+	if len(dynamic) == 0 {
+		return config
 	}
-	parts := make([]string, 0, len(rc.Registries))
-	for _, registry := range rc.Registries {
-		if registry != nil && registry.IsMCP() {
-			parts = append(parts, registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano))
-		}
-	}
-	for _, entry := range rc.Consumer.Toolkit() {
-		parts = append(parts, "tk:"+entry.RegistryID.String()+"/"+entry.Tool+"/"+entry.Prompt+"/"+entry.Resource+"/"+entry.ExposeAs)
-	}
-	parts = append(parts, dynamic...)
-	sort.Strings(parts)
-	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	// Callers answer in their own order, so sort: the same set of connected
+	// accounts must always fingerprint the same.
+	linked := append([]string(nil), dynamic...)
+	sort.Strings(linked)
+	sum := sha256.Sum256([]byte(config + "|" + strings.Join(linked, "|")))
 	return hex.EncodeToString(sum[:6])
 }
 

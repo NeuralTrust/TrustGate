@@ -32,6 +32,10 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 			return up.ListResources(ctx)
 		},
 		func(reg *registrydomain.Registry, resources []Resource) []Resource {
+			resources = append([]Resource(nil), resources...)
+			for i := range resources {
+				resources[i].source = reg.ID.String()
+			}
 			if toolkit == nil {
 				return resources
 			}
@@ -113,7 +117,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 func (c *composer) readFrom(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, uri string) (json.RawMessage, error) {
 	stop := annotateUpstream(ctx, reg, "")
 	defer stop()
-	return invokeUpstream(c, ctx, rc, reg, func(up Upstream) (json.RawMessage, error) {
+	return invokeUpstream(c, ctx, rc, reg, upstreamReplaySafe, func(up Upstream) (json.RawMessage, error) {
 		return up.ReadResource(ctx, uri)
 	})
 }

@@ -153,6 +153,9 @@ func applyMCPTargetUpdate(
 		if incoming.Transport == "" {
 			incoming.Transport = prev.Transport
 		}
+		if incoming.ProtocolMode == "" {
+			incoming.ProtocolMode = prev.ProtocolMode
+		}
 		if incoming.Headers == nil {
 			incoming.Headers = prev.Headers
 		}

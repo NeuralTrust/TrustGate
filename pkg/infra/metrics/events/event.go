@@ -82,6 +82,10 @@ type MCP struct {
 	UpstreamStatus    int    `json:"upstream_status,omitempty"`
 	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
 	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
+	ProtocolEra       string `json:"protocol_era,omitempty"`
+	ProtocolVersion   string `json:"protocol_version,omitempty"`
+	MRTROutcome       string `json:"mrtr_outcome,omitempty"`
+	MRTRRound         string `json:"mrtr_round,omitempty"`
 	AccountRef        string `json:"account_ref,omitempty"`
 }
 

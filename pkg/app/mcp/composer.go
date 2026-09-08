@@ -33,23 +33,40 @@ import (
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
 type Composer interface {
 	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error)
-	CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error)
+	CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, call ToolCall) (json.RawMessage, error)
 	ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error)
 	ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error)
 	ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error)
 	ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error)
 	GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error)
+	UnwrapTaskHandle(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (TaskRef, error)
+	GetTask(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (json.RawMessage, error)
+	UpdateTask(
+		ctx context.Context,
+		rc *appconsumer.RoutableConsumer,
+		handle string,
+		inputResponses json.RawMessage,
+	) (json.RawMessage, error)
+	CancelTask(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (json.RawMessage, error)
+}
+
+// AppsCallComposer classifies an Apps call during normal tool routing.
+type AppsCallComposer interface {
+	CallToolClassified(ctx context.Context, rc *appconsumer.RoutableConsumer, call ToolCall) (json.RawMessage, bool, error)
 }
 
 var _ Composer = (*composer)(nil)
 
 type composer struct {
-	dialer    Dialer
-	creds     CredentialResolver
-	discovery DiscoveryCache
-	urlvars   URLValueResolver
-	flight    singleflight.Group
-	logger    *slog.Logger
+	dialer      Dialer
+	creds       CredentialResolver
+	discovery   DiscoveryCache
+	urlvars     URLValueResolver
+	flight      singleflight.Group
+	logger      *slog.Logger
+	signer      *TicketSigner
+	tasks       *TaskHandleSigner
+	pollFloorMs int64
 }
 
 // ComposerOption configures optional composer collaborators without widening the
@@ -63,12 +80,47 @@ func WithURLValues(r URLValueResolver) ComposerOption {
 	return func(c *composer) { c.urlvars = r }
 }
 
-func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger, opts ...ComposerOption) Composer {
+func NewComposer(
+	dialer Dialer,
+	creds CredentialResolver,
+	discovery DiscoveryCache,
+	logger *slog.Logger,
+	opts ...ComposerOption,
+) Composer {
+	return NewComposerWithSigner(dialer, creds, discovery, logger, nil, opts...)
+}
+
+func NewComposerWithSigner(
+	dialer Dialer,
+	creds CredentialResolver,
+	discovery DiscoveryCache,
+	logger *slog.Logger,
+	signer *TicketSigner,
+	opts ...ComposerOption,
+) Composer {
+	return NewComposerWithMediation(dialer, creds, discovery, logger, signer, nil, 0, opts...)
+}
+
+// NewComposerWithMediation wires both mediated continuation primitives: MRTR
+// tickets and task handles. A nil task signer leaves task mediation off.
+func NewComposerWithMediation(
+	dialer Dialer,
+	creds CredentialResolver,
+	discovery DiscoveryCache,
+	logger *slog.Logger,
+	signer *TicketSigner,
+	tasks *TaskHandleSigner,
+	pollFloorMs int64,
+	opts ...ComposerOption,
+) Composer {
 	c := &composer{
-		dialer:    dialer,
-		creds:     creds,
-		discovery: discovery,
-		logger:    logger,
+		dialer:      dialer,
+		creds:       creds,
+		discovery:   discovery,
+		logger:      logger,
+		signer:      signer,
+		tasks:       tasks,
+		pollFloorMs: pollFloorMs,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -95,43 +147,215 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	for _, b := range comp.bindings {
 		t := attributeTool(b.tool, b.registry)
 		t.Name = b.exposed
+		t.source = b.registry.ID.String()
 		out = append(out, t)
 	}
 	return out, nil
 }
 
-func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error) {
+func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, call ToolCall) (json.RawMessage, error) {
+	result, _, err := c.callTool(ctx, rc, call, false)
+	return result, err
+}
+
+func (c *composer) CallToolClassified(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	call ToolCall,
+) (json.RawMessage, bool, error) {
+	return c.callTool(ctx, rc, call, true)
+}
+
+func (c *composer) callTool(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	call ToolCall,
+	classifyApps bool,
+) (json.RawMessage, bool, error) {
 	comp, err := c.compose(ctx, rc)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, b := range comp.bindings {
-		if b.exposed != name {
+		if b.exposed != call.Name {
 			continue
+		}
+		appsCall := false
+		if classifyApps {
+			metadata, marked, metadataErr := toolAppsMetadata(b.tool)
+			if marked && (metadataErr != nil || metadata.ResourceURI == "") {
+				return nil, false, ErrAppsResourceRejected
+			}
+			appsCall = marked
+		}
+		south, producingRound, err := c.bindContinuation(ctx, rc, b, call)
+		if err != nil {
+			return nil, false, err
 		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
-		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
-			return up.CallTool(ctx, b.tool.Name, arguments)
+		result, err := invokeUpstream(c, ctx, rc, b.registry, upstreamNoReplay, func(up Upstream) (json.RawMessage, error) {
+			return up.CallTool(ctx, south)
 		})
+		if err != nil {
+			return nil, false, err
+		}
+		result, err = c.wrapContinuation(ctx, rc, b, call, producingRound, result)
+		return result, appsCall, err
 	}
-	// The upstream offers this tool but the consumer's toolkit excludes it: a
-	// policy denial, and the answer must say so. Connecting an account would not
-	// change it, so this is checked before any pending consent — otherwise a
-	// forbidden tool sends the user off to an authorization flow that cannot
-	// grant it.
-	if _, forbidden := comp.denied[name]; forbidden {
-		return nil, &ToolNotPermittedError{Tool: name}
+	if _, forbidden := comp.denied[call.Name]; forbidden {
+		return nil, false, &ToolNotPermittedError{Tool: call.Name}
 	}
-	// No reachable upstream exposes this tool. If another upstream is still
-	// awaiting consent it may be the one that owns the tool, so the consent
-	// requirement is the useful answer; otherwise the tool genuinely does not
-	// exist. A tool served by a reachable upstream never reaches this point, so
-	// an unconnected provider can no longer break calls routed elsewhere.
 	if comp.consent != nil {
-		return nil, comp.consent
+		return nil, false, comp.consent
 	}
-	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
+	return nil, false, fmt.Errorf("%w: %s", ErrToolNotFound, call.Name)
+}
+
+func (c *composer) bindContinuation(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	b binding,
+	call ToolCall,
+) (ToolCall, int, error) {
+	south := ToolCall{
+		Name:           b.tool.Name,
+		Arguments:      call.Arguments,
+		InputResponses: call.InputResponses,
+	}
+	round := 1
+	if call.RequestState == "" {
+		stampMRTR(ctx, "", round)
+		return south, round, nil
+	}
+	claims, err := c.unwrapTicket(call.RequestState)
+	if err != nil {
+		stampMRTR(ctx, trace.MRTROutcomeReplayRejected, round)
+		return ToolCall{}, 0, MapMRTRError(err)
+	}
+	round = claims.Round + 1
+	if claims.Round >= c.maxRounds() {
+		stampMRTR(ctx, trace.MRTROutcomeRoundLimit, round)
+		return ToolCall{}, 0, MRTRRoundLimitRPCError()
+	}
+	if rc == nil || rc.Consumer == nil || b.registry == nil ||
+		!claims.Binds(rc.Consumer.ID.String(), b.registry.ID.String(), call.Name, b.tool.Name, MethodToolsCall) {
+		stampMRTR(ctx, trace.MRTROutcomeReplayRejected, round)
+		return ToolCall{}, 0, MRTRReplayRPCError()
+	}
+	stampMRTR(ctx, "", round)
+	south.RequestState = claims.State
+	return south, round, nil
+}
+
+func (c *composer) unwrapTicket(ticket string) (*TicketClaims, error) {
+	if c.signer == nil || !c.signer.Enabled() {
+		return nil, ErrMRTRReplayRejected
+	}
+	return c.signer.Unwrap(ticket)
+}
+
+func (c *composer) maxRounds() int {
+	if c.signer == nil {
+		return DefaultMRTRMaxRounds
+	}
+	return c.signer.MaxRounds()
+}
+
+func (c *composer) wrapContinuation(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	b binding,
+	call ToolCall,
+	producingRound int,
+	result json.RawMessage,
+) (json.RawMessage, error) {
+	resultType, upstreamState := mrtrResultFields(result)
+	// A task result is checked before the MRTR branch: it is a third answer
+	// shape, and letting it fall through would report it as complete and strip
+	// the fields the client needs to poll.
+	if resultType == ResultTypeTask {
+		return c.wrapTask(ctx, rc, b, call, result)
+	}
+	if resultType != trace.MRTROutcomeInputRequired {
+		stampMRTR(ctx, trace.MRTROutcomeComplete, 0)
+		return result, nil
+	}
+	if c.signer == nil || !c.signer.Enabled() {
+		stampMRTR(ctx, trace.MRTROutcomeComplete, 0)
+		return stripMRTRResult(result), nil
+	}
+	consumerID, registryID := "", ""
+	if rc != nil && rc.Consumer != nil {
+		consumerID = rc.Consumer.ID.String()
+	}
+	if b.registry != nil {
+		registryID = b.registry.ID.String()
+	}
+	ticket, err := c.signer.Mint(TicketClaims{
+		CID:      consumerID,
+		RID:      registryID,
+		Exposed:  call.Name,
+		Upstream: b.tool.Name,
+		Method:   MethodToolsCall,
+		Round:    producingRound,
+		State:    upstreamState,
+	})
+	if err != nil {
+		return nil, MapMRTRError(err)
+	}
+	stampMRTR(ctx, trace.MRTROutcomeInputRequired, 0)
+	return replaceRequestState(result, ticket), nil
+}
+
+func stampMRTR(ctx context.Context, outcome string, round int) {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPMRTR(outcome, trace.BoundMRTRRound(round))
+	}
+}
+
+func mrtrResultFields(raw json.RawMessage) (resultType, requestState string) {
+	var env struct {
+		ResultType   string `json:"resultType"`
+		RequestState string `json:"requestState"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", ""
+	}
+	return env.ResultType, env.RequestState
+}
+
+func stripMRTRResult(raw json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	complete, _ := json.Marshal(trace.MRTROutcomeComplete)
+	obj["resultType"] = complete
+	delete(obj, "requestState")
+	delete(obj, "inputRequests")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func replaceRequestState(raw json.RawMessage, ticket string) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	encoded, err := json.Marshal(ticket)
+	if err != nil {
+		return raw
+	}
+	obj["requestState"] = encoded
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // annotateUpstream records the resolved upstream registry on the active MCP
@@ -201,6 +425,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 				if pendingConsent == nil {
 					pendingConsent = consentErr
 				}
+				markCompositionDegraded(ctx)
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
@@ -208,6 +433,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
+			markCompositionDegraded(ctx)
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
 			continue
