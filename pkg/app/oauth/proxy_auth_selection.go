@@ -155,7 +155,7 @@ func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool)
 				continue
 			}
 			protected = true
-			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
+			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2.Interactive() {
 				providers = append(providers, a)
 			}
 		}
@@ -171,6 +171,9 @@ func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorizati
 		}
 		for _, a := range auths {
 			if a.ID.String() == pending.AuthID {
+				if !a.Config.OAuth2.Interactive() {
+					return nil, oauthErr("invalid_request", "the identity provider behind this authorization no longer supports interactive login")
+				}
 				return a, nil
 			}
 		}
@@ -269,7 +272,7 @@ func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 		return nil, ErrAmbiguousAuthorizationServer
 	}
 	for _, a := range real {
-		if a.Config.OAuth2 != nil && a.Config.OAuth2.Issuer == issuers[0] {
+		if a.Config.OAuth2.Interactive() && a.Config.OAuth2.Issuer == issuers[0] {
 			return a, nil
 		}
 	}
