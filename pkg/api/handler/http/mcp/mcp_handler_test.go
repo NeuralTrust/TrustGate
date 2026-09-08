@@ -658,8 +658,10 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	rt := trace.New("trace-id", trace.Metadata{})
 	principal := &identity.Principal{Subject: "dogfood-key", Method: identity.MethodAPIKey}
 	vault := vaultmocks.NewRepository(t)
+	// The credential's name is what called; the account it reaches belongs to
+	// the application, so the vault is read under the consumer's subject.
 	vault.EXPECT().
-		ListByPrincipal(mock.Anything, gwID, "dogfood-key").
+		ListByPrincipal(mock.Anything, gwID, consumerdomain.AppSubject(cons.ID)).
 		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil).
 		Once()
 

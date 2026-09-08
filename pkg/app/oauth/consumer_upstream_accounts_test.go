@@ -38,7 +38,6 @@ type upstreamFixture struct {
 	vault      *memVaultRepo
 	gatewayID  ids.GatewayID
 	consumerID ids.ConsumerID
-	authID     ids.AuthID
 }
 
 func mcpRegistry(t *testing.T, gw ids.GatewayID, name string, auth *registrydomain.MCPAuth) *registrydomain.Registry {
@@ -89,14 +88,10 @@ func newUpstreamFixture(
 	)
 	accounts, err := oauth.NewConsumerUpstreamAccounts(&stubDataFinder{data: data}, connect)
 	require.NoError(t, err)
-	fixture := upstreamFixture{
+	return upstreamFixture{
 		accounts: accounts, connect: connect, vault: vault,
 		gatewayID: gw, consumerID: consumerID,
 	}
-	if len(auths) > 0 {
-		fixture.authID = auths[0].ID
-	}
-	return fixture
 }
 
 func apiKeyAuth(name string) *authdomain.Auth {
@@ -121,9 +116,10 @@ func TestConsumerUpstreamAccounts_ReportsWhatEachServerNeeds(t *testing.T) {
 		})
 	ctx := context.Background()
 
-	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
+	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
 	require.NoError(t, err)
-	require.Equal(t, "prod", state.PrincipalSub, "the account hangs off the api key's name today")
+	require.Equal(t, consumerdomain.AppSubject(f.consumerID), state.PrincipalSub,
+		"the account hangs off the application, not off any of its credentials")
 	require.Len(t, state.Accounts, 2)
 	require.True(t, state.NeedsLinking(), "the forwarded server has no account linked yet")
 
@@ -148,13 +144,13 @@ func TestConsumerUpstreamAccounts_ReportsALinkedAccount(t *testing.T) {
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 	cred, err := vaultdomain.NewCredential(
-		f.gatewayID, "prod", "com.notion/mcp", "victor@corp.com",
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID), "com.notion/mcp", "victor@corp.com",
 		"access", "refresh", []string{"read"}, time.Now().Add(time.Hour),
 	)
 	require.NoError(t, err)
 	require.NoError(t, f.vault.Upsert(ctx, cred))
 
-	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
+	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
 	require.NoError(t, err)
 	require.Len(t, state.Accounts, 1)
 	require.True(t, state.Accounts[0].Linked)
@@ -170,7 +166,7 @@ func TestConsumerUpstreamAccounts_LinkMintsATicketForTheApplication(t *testing.T
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 
-	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
 	require.NoError(t, err)
 	require.NotEmpty(t, link.Ticket)
 	require.Equal(t, "/assistant/mcp", link.ConsumerPath)
@@ -193,7 +189,7 @@ func TestConsumerUpstreamAccounts_RefusesConsumersWithoutAccountsOfTheirOwn(t *t
 		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
 			consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
 			[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-		_, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
+		_, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
 		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
 	})
 
@@ -202,56 +198,64 @@ func TestConsumerUpstreamAccounts_RefusesConsumersWithoutAccountsOfTheirOwn(t *t
 		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
 			consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
 			[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-		_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
-		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
-	})
-
-	t.Run("no api key at all", func(t *testing.T) {
-		t.Parallel()
-		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](), machineIdentity, nil, nil)
-		_, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
+		_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
 		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
 	})
 }
 
-// Keys that differ in name do not share upstream accounts, because the name is
-// the principal. Rather than pick one silently, say which one is meant.
-func TestConsumerUpstreamAccounts_KeysWithDifferentNamesAreAmbiguous(t *testing.T) {
+// An application that holds no api key at all — one that authenticates with a
+// client certificate, or one whose only key was just revoked — still has
+// upstream accounts, because they hang off the consumer.
+func TestConsumerUpstreamAccounts_NeedNoAPIKey(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	prod, staging := apiKeyAuth("prod"), apiKeyAuth("staging")
-	f := newUpstreamFixture(t, gw, machineIdentity,
-		[]*authdomain.Auth{prod, staging},
+	f := newUpstreamFixture(t, gw, machineIdentity, nil,
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 
-	_, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.AuthID{})
-	require.ErrorIs(t, err, oauth.ErrUpstreamAccountsAmbiguousKey)
-
-	// Named explicitly, each key reads its own principal.
-	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID, staging.ID)
+	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
 	require.NoError(t, err)
-	require.Equal(t, "staging", state.PrincipalSub)
+	require.Equal(t, consumerdomain.AppSubject(f.consumerID), state.PrincipalSub)
+	require.True(t, state.NeedsLinking())
 
-	// Two keys sharing a name share the principal, so no id is needed.
-	gw2 := ids.New[ids.GatewayKind]()
-	rotated := apiKeyAuth("prod")
-	f2 := newUpstreamFixture(t, gw2, machineIdentity,
-		[]*authdomain.Auth{apiKeyAuth("prod"), rotated},
-		[]*registrydomain.Registry{mcpRegistry(t, gw2, "notion", forwardedAuthCfg("com.notion/mcp"))})
-	state, err = f2.accounts.State(ctx, f2.gatewayID, f2.consumerID, ids.AuthID{})
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID)
 	require.NoError(t, err)
-	require.Equal(t, "prod", state.PrincipalSub)
+	require.NotEmpty(t, link.Ticket)
 }
 
-func TestConsumerUpstreamAccounts_UnknownConsumerAndKey(t *testing.T) {
+// Credentials are not identities: whatever an application's keys are called,
+// and however many it holds, they all reach the one account set that belongs to
+// the consumer. Renaming or rotating a key cannot strand a linked account.
+func TestConsumerUpstreamAccounts_EveryCredentialReachesTheSameAccounts(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod"), apiKeyAuth("staging")},
+		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
+	ctx := context.Background()
+	cred, err := vaultdomain.NewCredential(
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID), "com.notion/mcp", "ops@corp.com",
+		"access", "refresh", []string{"read"}, time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	require.NoError(t, f.vault.Upsert(ctx, cred))
+
+	state, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
+	require.NoError(t, err)
+	require.Equal(t, consumerdomain.AppSubject(f.consumerID), state.PrincipalSub)
+	require.True(t, state.Accounts[0].Linked, "the linked account is the application's, not one key's")
+	require.Equal(t, "ops@corp.com", state.Accounts[0].AccountRef)
+	require.False(t, state.NeedsLinking())
+}
+
+func TestConsumerUpstreamAccounts_UnknownConsumer(t *testing.T) {
 	t.Parallel()
 	f := newUpstreamFixture(t, ids.New[ids.GatewayKind](), machineIdentity, []*authdomain.Auth{apiKeyAuth("prod")}, nil)
 	ctx := context.Background()
 
-	_, err := f.accounts.State(ctx, f.gatewayID, ids.New[ids.ConsumerKind](), ids.AuthID{})
+	_, err := f.accounts.State(ctx, f.gatewayID, ids.New[ids.ConsumerKind]())
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 
-	_, err = f.accounts.State(ctx, f.gatewayID, f.consumerID, ids.New[ids.AuthKind]())
+	_, err = f.accounts.Link(ctx, f.gatewayID, ids.New[ids.ConsumerKind]())
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 }

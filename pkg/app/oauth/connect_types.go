@@ -97,7 +97,12 @@ type ConnectService interface {
 	// instanceID optionally pins the ticket to the exact installation instance
 	// the install recorded; empty when none was.
 	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
-	CreateAPIKeyTicket(
+	// CreateAppTicket mints a connect ticket for an application's own upstream
+	// accounts, pinned to that consumer and to the providers bound to it at mint
+	// time. authID is the api key the ticket was minted from, so revoking that
+	// key kills it; pass a nil id for a ticket an admin minted, whose authority
+	// was the admin API and which stands on the consumer alone.
+	CreateAppTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		principalSub,

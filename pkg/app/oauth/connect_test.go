@@ -974,9 +974,9 @@ func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	ticketID, err := svc.CreateAPIKeyTicket(ctx, gw, "prod", "/dev/mcp", consumerID, authID, nil)
+	ticketID, err := svc.CreateAppTicket(ctx, gw, "prod", "/dev/mcp", consumerID, authID, nil)
 	if err != nil {
-		t.Fatalf("CreateAPIKeyTicket: %v", err)
+		t.Fatalf("CreateAppTicket: %v", err)
 	}
 
 	page, err := svc.Page(ctx, ticketID)

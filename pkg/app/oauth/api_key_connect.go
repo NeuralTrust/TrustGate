@@ -40,8 +40,8 @@ type APIKeyConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey string) (string, error)
 }
 
-type APIKeyTicketIssuer interface {
-	CreateAPIKeyTicket(
+type AppTicketIssuer interface {
+	CreateAppTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
 		principalSub,
@@ -57,14 +57,14 @@ var _ APIKeyConnectService = (*apiKeyConnectService)(nil)
 type apiKeyConnectService struct {
 	apiKeyFinder   appauth.APIKeyFinder
 	dataFinder     appconsumer.DataFinder
-	connectService APIKeyTicketIssuer
+	connectService AppTicketIssuer
 	limiter        ConnectAttemptLimiter
 }
 
 func NewAPIKeyConnectService(
 	apiKeyFinder appauth.APIKeyFinder,
 	dataFinder appconsumer.DataFinder,
-	connectService APIKeyTicketIssuer,
+	connectService AppTicketIssuer,
 	limiter ConnectAttemptLimiter,
 ) APIKeyConnectService {
 	return &apiKeyConnectService{
@@ -118,10 +118,10 @@ func (s *apiKeyConnectService) CreateTicket(
 		return "", ErrAPIKeyConnectUnauthorized
 	}
 
-	ticket, err := s.connectService.CreateAPIKeyTicket(
+	ticket, err := s.connectService.CreateAppTicket(
 		ctx,
 		gatewayID,
-		auth.Name,
+		consumerdomain.AppSubject(target.Consumer.ID),
 		appconsumer.MCPPath(slug),
 		target.Consumer.ID,
 		auth.ID,
