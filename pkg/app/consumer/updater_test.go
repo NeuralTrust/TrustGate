@@ -21,7 +21,6 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -279,7 +278,12 @@ func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
+// Switching a consumer to MCP while it carries a provider stored under the
+// deprecated alias is accepted: the alias is oauth2, which is the type MCP
+// takes. Whether that provider can broker an interactive login is a capability
+// question the protected-resource metadata answers; it is not a reason to
+// refuse a credential a client may already hold a token for.
+func TestUpdater_Update_AllowsAliasedIdPAuthOnSwitchToMCP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
@@ -294,17 +298,17 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
 
+	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
 		Type:      ptr(domain.TypeMCP),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {

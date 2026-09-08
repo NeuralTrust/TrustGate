@@ -99,7 +99,7 @@ func (v fakeOIDCVerifier) Peek(_ string) (appauth.TokenHints, error) {
 	return v.hints, nil
 }
 
-func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OIDCConfig) (*appauth.VerifiedClaims, error) {
+func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OAuth2Config) (*appauth.VerifiedClaims, error) {
 	if v.err != nil {
 		return nil, v.err
 	}
@@ -279,11 +279,15 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestAuthMiddleware_OIDCInlineSuccess(t *testing.T) {
+// A consumer whose provider is still typed with the deprecated alias
+// authenticates through the one bearer path: the finder matches it on the
+// token's hints and the verifier is the same one every provider now uses.
+func TestAuthMiddleware_AliasedIdPInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc := inlineConsumerWithOIDC(t)
-	oidcVerifier := matchingOIDCVerifier()
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, oidcVerifier)
+	hints := matchingOIDCVerifier()
+	verifier := fakeOAuth2Verifier{claims: hints.claims}
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), verifier, hints)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -406,10 +410,13 @@ func newAuthTestAppWithResolver(
 		jwt.NewJwtManager(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}),
 	)
 	apiKey := resolver.NewAPIKeyIdentityResolver()
-	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
-	idp := resolver.NewOIDCIdentityResolver(appauth.NewOIDCFinder(oidcVerifier), oidcVerifier)
+	oauth2 := resolver.NewOAuth2IdentityResolver(
+		appauth.NewIdentityProviderFinder(oidcVerifier),
+		oauthVerifier,
+		slog.Default(),
+	)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		slog.Default(),
@@ -494,7 +501,7 @@ func inlineConsumerWithOIDC(t *testing.T) (*gatewaydomain.Gateway, appconsumer.R
 			GatewayID: gw.ID,
 			Type:      authdomain.TypeOIDC,
 			Enabled:   true,
-			Config: authdomain.Config{OIDC: &authdomain.OIDCConfig{
+			Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
 				Issuer:    "https://issuer.example.com",
 				Audiences: []string{"gateway"},
 				JWKSURL:   "https://issuer.example.com/jwks",
@@ -559,6 +566,72 @@ func TestAuthMiddleware_AuthBindingRestrictsClients(t *testing.T) {
 			resp, err := app.Test(req)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, resp.StatusCode)
+		})
+	}
+}
+
+// Before the two identity-provider types were unified, a consumer carrying
+// both shapes had its aliased provider silently ignored: bearer resolution
+// branched on the auth type, took the oauth2 branch whenever an oauth2 auth
+// was attached, and that branch skipped every auth whose type was not exactly
+// oauth2. A token issued by the aliased provider got a 401 from a consumer it
+// was legitimately attached to. Selection now comes from the token's own
+// issuer and audience, so both providers stay reachable.
+func TestAuthMiddleware_AliasedAndNativeIdPsBothResolve(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	aliasedID := ids.New[ids.AuthKind]()
+	nativeID := ids.New[ids.AuthKind]()
+	rc := appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gw.ID,
+			Slug:      "cons1234",
+			Active:    true,
+			AuthIDs:   []ids.AuthID{aliasedID, nativeID},
+		},
+		Auths: []*authdomain.Auth{
+			{
+				ID: aliasedID, GatewayID: gw.ID, Type: authdomain.TypeOIDC, Enabled: true,
+				Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+					Issuer:    "https://aliased.example.com",
+					Audiences: []string{"gateway"},
+					JWKSURL:   "https://aliased.example.com/jwks",
+				}},
+			},
+			{
+				ID: nativeID, GatewayID: gw.ID, Type: authdomain.TypeOAuth2, Enabled: true,
+				Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+					Issuer:    "https://native.example.com",
+					Audiences: []string{"gateway"},
+					JWKSURL:   "https://native.example.com/jwks",
+				}},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		issuer string
+	}{
+		{"token from the aliased provider", "https://aliased.example.com"},
+		{"token from the native provider", "https://native.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hints := fakeOIDCVerifier{hints: appauth.TokenHints{Issuer: tc.issuer, Audiences: []string{"gateway"}}}
+			verifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{
+				Subject: "user-1",
+				Claims:  map[string]any{"sub": "user-1"},
+			}}
+			app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), verifier, hints)
+
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
 		})
 	}
 }

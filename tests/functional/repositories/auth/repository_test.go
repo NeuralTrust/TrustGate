@@ -84,11 +84,14 @@ func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 
 func validIDPAuth(t *testing.T, gwID ids.GatewayID, name string, enabled bool) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OIDC: &domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		JWKSURL:           "https://issuer.example.com/.well-known/jwks.json",
-		AllowedAlgorithms: []string{"RS256"},
+	// Built through the deprecated alias on purpose: NewAuth canonicalizes it,
+	// so this also covers that a row written that way is found by a query for
+	// the canonical type.
+	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OAuth2: &domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		JWKSURL:    "https://issuer.example.com/.well-known/jwks.json",
+		Algorithms: []string{"RS256"},
 	}})
 	if err != nil {
 		t.Fatalf("auth domain.NewAuth: %v", err)
@@ -173,7 +176,7 @@ func TestRepository_ListEnabledByGatewayAndType(t *testing.T) {
 		}
 	}
 
-	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOIDC)
+	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOAuth2)
 	if err != nil {
 		t.Fatalf("ListEnabledByGatewayAndType: %v", err)
 	}

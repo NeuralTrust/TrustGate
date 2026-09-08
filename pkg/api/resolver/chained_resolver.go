@@ -19,7 +19,6 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -28,20 +27,17 @@ type ChainedIdentityResolver struct {
 	playground IdentityResolver
 	apiKey     IdentityResolver
 	oauth2     IdentityResolver
-	oidc       IdentityResolver
 }
 
 func NewIdentityResolver(
 	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
-	oidc *OIDCIdentityResolver,
 ) IdentityResolver {
 	return ChainedIdentityResolver{
 		playground: playground,
 		apiKey:     apiKey,
 		oauth2:     oauth2,
-		oidc:       oidc,
 	}
 }
 
@@ -59,10 +55,9 @@ func (r ChainedIdentityResolver) Resolve(
 	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
 		return nil, ErrUnauthenticated
 	}
-	// A bearer token is verified against the consumer's OAuth2 auths; consumers
-	// that only carry OIDC auths keep resolving through the OIDC verifier.
-	if hasAttachedAuthType(rc, authdomain.TypeOIDC) && !hasAttachedAuthType(rc, authdomain.TypeOAuth2) {
-		return r.oidc.Resolve(c, gw, rc)
-	}
+	// A bearer token resolves through one path for every identity provider the
+	// consumer carries: the provider is selected from the token's own issuer and
+	// audience hints, not from the auth's type. Branching on type left an auth
+	// unusable whenever a consumer carried both shapes.
 	return r.oauth2.Resolve(c, gw, rc)
 }

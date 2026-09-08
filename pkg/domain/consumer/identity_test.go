@@ -140,7 +140,6 @@ func TestValidateAuth_IdentityRules(t *testing.T) {
 		{"platform users with api key", platform, authdomain.TypeAPIKey},
 		{"platform users with mtls", platform, authdomain.TypeMTLS},
 		{"app users with oauth2", appUsers, authdomain.TypeOAuth2},
-		{"mcp with oidc", app, authdomain.TypeOIDC},
 	}
 	for _, tc := range rejected {
 		if err := ValidateAuth(tc.c, tc.auth); !errors.Is(err, commonerrors.ErrConflict) {

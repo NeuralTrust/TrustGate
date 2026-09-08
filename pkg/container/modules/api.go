@@ -130,7 +130,7 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.OIDCVerifier,
+		verifier appauth.JWTVerifier,
 		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
@@ -169,9 +169,6 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
-		return err
-	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
@@ -203,7 +200,7 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
-		verifier appauth.OIDCVerifier,
+		verifier appauth.JWTVerifier,
 		cfg *config.Config,
 	) appoauth.AuthProxy {
 		// The platform token minted by the built-in default IdP is verified
