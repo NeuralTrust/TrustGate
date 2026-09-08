@@ -186,36 +186,110 @@ func TestListModels_SkipsRoutingRefs(t *testing.T) {
 	openai := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai)
 	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
-		openai.ID: {Allowed: []string{"gpt-4o", "@openai/gpt-4o", "auto", "pool:fast", "gpt-*"}},
+		openai.ID: {Allowed: []string{"gpt-4o", "@openai/gpt-4o", "auto", "pool:fast"}},
 	}
 
 	list := listModels(t, rc, catalogmocks.NewService(t))
 	assertModelIDs(t, list, "gpt-4o")
 }
 
-func TestListModels_NeverPublishesAPattern(t *testing.T) {
+func patternConsumer(t *testing.T, allowed ...string) (*appconsumer.RoutableConsumer, string) {
+	t.Helper()
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai)
 	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
-		openai.ID: {Allowed: []string{"gpt-*"}},
+		openai.ID: {Allowed: allowed},
 	}
+	return rc, "openai"
+}
+
+func TestListModels_PatternExpandsAgainstCatalog(t *testing.T) {
+	rc, provider := patternConsumer(t, "gpt-*")
+
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return([]catalogdomain.Model{
+		{Slug: "gpt-4o", Capabilities: map[string]any{"chat": true}},
+		{Slug: "gpt-4o-mini", Capabilities: map[string]any{"chat": true}},
+		{Slug: "claude-3-opus", Capabilities: map[string]any{"chat": true}},
+	}, nil).Once()
+
+	list := listModels(t, rc, cat)
+	assertModelIDs(t, list, "gpt-4o", "gpt-4o-mini")
+}
+
+func TestListModels_PatternUnionsWithLiterals(t *testing.T) {
+	rc, provider := patternConsumer(t, "claude-3-opus", "gpt-*")
+
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return([]catalogdomain.Model{
+		{Slug: "gpt-4o", Capabilities: map[string]any{"chat": true}},
+	}, nil).Once()
+
+	list := listModels(t, rc, cat)
+	assertModelIDs(t, list, "claude-3-opus", "gpt-4o")
+}
+
+func TestListModels_LiteralAllowListNeverQueriesTheCatalog(t *testing.T) {
+	rc, _ := patternConsumer(t, "gpt-4o")
 
 	list := listModels(t, rc, catalogmocks.NewService(t))
+	assertModelIDs(t, list, "gpt-4o")
+}
+
+func TestListModels_PatternWithEmptyCatalogPublishesNothing(t *testing.T) {
+	rc, provider := patternConsumer(t, "gpt-*")
+
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return(nil, nil).Once()
+
+	list := listModels(t, rc, cat)
 	assertModelIDs(t, list)
 }
 
-func TestListModels_GetRejectsAPattern(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	rc := routableConsumerWith(gatewayID, openai)
-	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
-		openai.ID: {Allowed: []string{"gpt-4o", "gpt-*"}},
-	}
+func TestListModels_PatternMatchingNothingPublishesNothing(t *testing.T) {
+	rc, provider := patternConsumer(t, "mistral-*")
 
-	lister := appproxy.NewModelsLister(approuting.NewResolver(), catalogmocks.NewService(t))
-	if _, err := lister.Get(context.Background(), appproxy.ListModelsInput{Consumer: rc}, "gpt-*"); !errors.Is(err, appproxy.ErrModelNotFound) {
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return([]catalogdomain.Model{
+		{Slug: "gpt-4o", Capabilities: map[string]any{"chat": true}},
+	}, nil).Once()
+
+	list := listModels(t, rc, cat)
+	assertModelIDs(t, list)
+}
+
+func TestListModels_PatternCatalogErrorPropagates(t *testing.T) {
+	rc, provider := patternConsumer(t, "gpt-*")
+
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return(nil, errors.New("catalog down")).Once()
+
+	lister := appproxy.NewModelsLister(approuting.NewResolver(), cat)
+	if _, err := lister.List(context.Background(), appproxy.ListModelsInput{Consumer: rc}); err == nil {
+		t.Fatal("expected the catalog error to propagate")
+	}
+}
+
+func TestListModels_GetRejectsAPattern(t *testing.T) {
+	rc, provider := patternConsumer(t, "gpt-4o", "gpt-*")
+
+	cat := catalogmocks.NewService(t)
+	cat.EXPECT().ListModels(mock.Anything, provider).Return([]catalogdomain.Model{
+		{Slug: "gpt-4o-mini", Capabilities: map[string]any{"chat": true}},
+	}, nil).Twice()
+
+	lister := appproxy.NewModelsLister(approuting.NewResolver(), cat)
+	in := appproxy.ListModelsInput{Consumer: rc}
+	if _, err := lister.Get(context.Background(), in, "gpt-*"); !errors.Is(err, appproxy.ErrModelNotFound) {
 		t.Fatalf("expected ErrModelNotFound, got %v", err)
+	}
+	card, err := lister.Get(context.Background(), in, "gpt-4o-mini")
+	if err != nil {
+		t.Fatalf("an expanded slug must be retrievable: %v", err)
+	}
+	if card.ID != "gpt-4o-mini" {
+		t.Fatalf("card = %+v", card)
 	}
 }
 
