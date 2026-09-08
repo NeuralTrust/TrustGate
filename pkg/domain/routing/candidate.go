@@ -30,7 +30,7 @@ type Candidate struct {
 	Sources  []string
 }
 
-func (c Candidate) AllowsModel(model string) bool {
+func (c Candidate) PolicyAllowsModel(model string) bool {
 	if c.Allowed == nil {
 		return true
 	}
@@ -40,6 +40,10 @@ func (c Candidate) AllowsModel(model string) bool {
 		}
 	}
 	return false
+}
+
+func (c Candidate) DefersModelChoice() bool {
+	return c.Allowed == nil
 }
 
 type CandidateSet struct {
@@ -185,7 +189,7 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 			continue
 		}
 		providerSeen = true
-		if !c.AllowsModel(model) {
+		if !c.PolicyAllowsModel(model) {
 			continue
 		}
 		c.Model = model
@@ -203,7 +207,7 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
 	out := NewCandidateSet()
 	for _, c := range s.candidates {
-		if !c.AllowsModel(model) {
+		if !c.PolicyAllowsModel(model) {
 			continue
 		}
 		c.Model = model
