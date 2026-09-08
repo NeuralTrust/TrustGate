@@ -5,7 +5,7 @@ traffic between applications, AI agents, and LLM providers.
 
 <div align="center">
 
-<img src="assets/trustgate-hero.png" alt="TrustGate" width="100%"/>
+<img src="assets/ai-agent-security-hero-trustguard-policies-dashboard-updated-2x.webp" alt="TrustGate" width="100%"/>
 
 **A security-first LLM and AI Agent gateway built in Go.**
 
