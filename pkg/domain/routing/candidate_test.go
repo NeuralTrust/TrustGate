@@ -259,7 +259,7 @@ func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 	}
 }
 
-func TestCandidate_AllowsModelWildcard(t *testing.T) {
+func TestCandidate_PolicyAllowsModel(t *testing.T) {
 	t.Parallel()
 	reg := newTestRegistry(t, "openai")
 	tests := []struct {
@@ -280,18 +280,32 @@ func TestCandidate_AllowsModelWildcard(t *testing.T) {
 		{name: "dot matches a dot", allowed: []string{"gpt-5.*"}, model: "gpt-5.1", want: true},
 		{name: "a pattern never authorizes itself", allowed: []string{"gpt-*"}, model: "gpt-*", want: false},
 		{name: "open allow-list permits anything", allowed: nil, model: "anything", want: true},
+		{name: "empty allow-list denies everything", allowed: []string{}, model: "gpt-4.1", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := routing.Candidate{Registry: reg, Allowed: tt.allowed}
-			if got := c.AllowsModel(tt.model); got != tt.want {
-				t.Fatalf("AllowsModel(%q) = %v, want %v", tt.model, got, tt.want)
+			if got := c.PolicyAllowsModel(tt.model); got != tt.want {
+				t.Fatalf("PolicyAllowsModel(%q) = %v, want %v", tt.model, got, tt.want)
 			}
 		})
 	}
 }
 
+func TestCandidate_DefersModelChoice(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	if !(routing.Candidate{Registry: reg}).DefersModelChoice() {
+		t.Error("a candidate without an allow-list must defer the model choice to its provider")
+	}
+	if (routing.Candidate{Registry: reg, Allowed: []string{}}).DefersModelChoice() {
+		t.Error("an empty allow-list is an explicit operator restriction, not a deferral")
+	}
+	if (routing.Candidate{Registry: reg, Allowed: []string{"gpt-4.1"}}).DefersModelChoice() {
+		t.Error("an allow-list is an explicit operator restriction, not a deferral")
+	}
+}
 func TestCandidateSet_ResolveShortModelWildcardKeepsConcreteModel(t *testing.T) {
 	t.Parallel()
 	reg := newTestRegistry(t, "openai")
@@ -350,7 +364,7 @@ func TestCandidateSet_AddMergeUnionsPatternsAcrossRoles(t *testing.T) {
 	if len(c.Allowed) != 2 {
 		t.Fatalf("role grants union additively, got %v", c.Allowed)
 	}
-	if !c.AllowsModel("gpt-4.1") || !c.AllowsModel("claude-3") {
+	if !c.PolicyAllowsModel("gpt-4.1") || !c.PolicyAllowsModel("claude-3") {
 		t.Fatalf("union must permit both grants, got %v", c.Allowed)
 	}
 }
@@ -360,10 +374,10 @@ func TestCandidate_OpenAllowListStillRejectsAPattern(t *testing.T) {
 	reg := newTestRegistry(t, "openai")
 	c := routing.Candidate{Registry: reg}
 
-	if c.AllowsModel("gpt-*") {
+	if c.PolicyAllowsModel("gpt-*") {
 		t.Fatal("an open allow-list must not let a pattern through as a model")
 	}
-	if !c.AllowsModel("anything") {
+	if !c.PolicyAllowsModel("anything") {
 		t.Fatal("an open allow-list must still permit a concrete model")
 	}
 }

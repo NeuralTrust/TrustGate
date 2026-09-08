@@ -66,6 +66,7 @@ func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.AuthTTLName, cache.AuthCacheTTL)
 	mgr.CreateTTLMap(cache.AuthKeyTTLName, cache.AuthKeyCacheTTL)
 	mgr.CreateTTLMap(cache.CatalogModelTTLName, cache.CatalogModelCacheTTL)
+	mgr.CreateTTLMap(cache.CatalogListingTTLName, cache.CatalogListingCacheTTL)
 	mgr.CreateTTLMap(cache.MCPToolsTTLName, cache.MCPToolsCacheTTL)
 
 	lbMap := mgr.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
