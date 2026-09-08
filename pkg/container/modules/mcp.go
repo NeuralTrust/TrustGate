@@ -421,9 +421,24 @@ func provideConnectAttemptLimiter(
 	)
 }
 
+// MCPVaultPostgres provides the control-plane vault: Postgres for what this
+// plane writes, with the shared Redis vault behind it for reads. In a deployed
+// topology the connect flow runs on the DB-less MCP data plane, which writes
+// per-user upstream credentials to Redis (MCPVaultRedis) — without the fallback
+// every control-plane read reports those people as never connected, which is
+// what the Portal showed for an account linked from an MCP client.
 func MCPVaultPostgres(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, cipher vaultdomain.Encrypter) vaultdomain.Repository {
-		return vaultrepo.NewRepository(conn, cipher)
+	return c.Provide(func(
+		conn *database.Connection,
+		cc cache.Client,
+		cipher vaultdomain.Encrypter,
+	) vaultdomain.Repository {
+		postgres := vaultrepo.NewRepository(conn, cipher)
+		rc := cc.RedisClient()
+		if rc == nil {
+			return postgres
+		}
+		return vaultrepo.NewFallbackRepository(postgres, vaultrepo.NewRedisRepository(rc, cipher))
 	})
 }
 
