@@ -186,11 +186,37 @@ func TestListModels_SkipsRoutingRefs(t *testing.T) {
 	openai := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai)
 	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
-		openai.ID: {Allowed: []string{"gpt-4o", "@openai/gpt-4o", "auto", "pool:fast"}},
+		openai.ID: {Allowed: []string{"gpt-4o", "@openai/gpt-4o", "auto", "pool:fast", "gpt-*"}},
 	}
 
 	list := listModels(t, rc, catalogmocks.NewService(t))
 	assertModelIDs(t, list, "gpt-4o")
+}
+
+func TestListModels_NeverPublishesAPattern(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, openai)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		openai.ID: {Allowed: []string{"gpt-*"}},
+	}
+
+	list := listModels(t, rc, catalogmocks.NewService(t))
+	assertModelIDs(t, list)
+}
+
+func TestListModels_GetRejectsAPattern(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, openai)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		openai.ID: {Allowed: []string{"gpt-4o", "gpt-*"}},
+	}
+
+	lister := appproxy.NewModelsLister(approuting.NewResolver(), catalogmocks.NewService(t))
+	if _, err := lister.Get(context.Background(), appproxy.ListModelsInput{Consumer: rc}, "gpt-*"); !errors.Is(err, appproxy.ErrModelNotFound) {
+		t.Fatalf("expected ErrModelNotFound, got %v", err)
+	}
 }
 
 func TestListModels_EmptyConsumer(t *testing.T) {

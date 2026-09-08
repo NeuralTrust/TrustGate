@@ -258,3 +258,123 @@ func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 		t.Fatal("zero intent must keep the original set")
 	}
 }
+
+func TestCandidate_AllowsModelWildcard(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	tests := []struct {
+		name    string
+		allowed []string
+		model   string
+		want    bool
+	}{
+		{name: "pattern matches family", allowed: []string{"gpt-*"}, model: "gpt-4.1", want: true},
+		{name: "pattern matches base", allowed: []string{"gpt-*"}, model: "gpt-", want: true},
+		{name: "pattern denies other family", allowed: []string{"gpt-*"}, model: "claude-3", want: false},
+		{name: "pattern is case sensitive", allowed: []string{"gpt-*"}, model: "GPT-4O", want: false},
+		{name: "pattern is prefix anchored", allowed: []string{"gpt-*"}, model: "xgpt-4o", want: false},
+		{name: "literal alongside pattern", allowed: []string{"claude-3", "gpt-*"}, model: "claude-3", want: true},
+		{name: "exact entry still exact", allowed: []string{"gpt-4o"}, model: "gpt-4o", want: true},
+		{name: "exact entry does not widen", allowed: []string{"gpt-4o"}, model: "gpt-4o-mini", want: false},
+		{name: "dot is literal", allowed: []string{"gpt-5.*"}, model: "gpt-5-mini", want: false},
+		{name: "dot matches a dot", allowed: []string{"gpt-5.*"}, model: "gpt-5.1", want: true},
+		{name: "a pattern never authorizes itself", allowed: []string{"gpt-*"}, model: "gpt-*", want: false},
+		{name: "open allow-list permits anything", allowed: nil, model: "anything", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := routing.Candidate{Registry: reg, Allowed: tt.allowed}
+			if got := c.AllowsModel(tt.model); got != tt.want {
+				t.Fatalf("AllowsModel(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCandidateSet_ResolveShortModelWildcardKeepsConcreteModel(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
+
+	out, err := s.ResolveIntent(routing.Intent{Model: "gpt-4.1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Len() != 1 {
+		t.Fatalf("expected 1 candidate, got %d", out.Len())
+	}
+	if got := out.Candidates()[0].Model; got != "gpt-4.1" {
+		t.Fatalf("candidate model = %q, want the concrete requested model", got)
+	}
+}
+
+func TestCandidateSet_ResolveQualifiedWildcardKeepsConcreteModel(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
+
+	out, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-4.1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := out.Candidates()[0].Model; got != "gpt-4.1" {
+		t.Fatalf("candidate model = %q, want the concrete requested model", got)
+	}
+}
+
+func TestCandidateSet_ResolveShortModelPatternSubjectDenied(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}})
+
+	if _, err := s.ResolveIntent(routing.Intent{Model: "gpt-*"}); !errors.Is(err, routing.ErrModelDenied) {
+		t.Fatalf("expected ErrModelDenied, got %v", err)
+	}
+}
+
+func TestCandidateSet_AddMergeUnionsPatternsAcrossRoles(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-*"}, Sources: []string{"role:a"}})
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"claude-3"}, Sources: []string{"role:b"}})
+
+	c, ok := s.ForRegistry(reg.ID)
+	if !ok {
+		t.Fatal("candidate not found")
+	}
+	if len(c.Allowed) != 2 {
+		t.Fatalf("role grants union additively, got %v", c.Allowed)
+	}
+	if !c.AllowsModel("gpt-4.1") || !c.AllowsModel("claude-3") {
+		t.Fatalf("union must permit both grants, got %v", c.Allowed)
+	}
+}
+
+func TestCandidate_OpenAllowListStillRejectsAPattern(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	c := routing.Candidate{Registry: reg}
+
+	if c.AllowsModel("gpt-*") {
+		t.Fatal("an open allow-list must not let a pattern through as a model")
+	}
+	if !c.AllowsModel("anything") {
+		t.Fatal("an open allow-list must still permit a concrete model")
+	}
+}
+
+func TestCandidateSet_ResolveQualifiedPatternSubjectDeniedOnOpenList(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg})
+
+	if _, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-*"}); !errors.Is(err, routing.ErrModelDenied) {
+		t.Fatalf("expected ErrModelDenied, got %v", err)
+	}
+}
