@@ -26,6 +26,7 @@ import (
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
@@ -243,13 +244,40 @@ func (f fakePathResolver) Match(context.Context, string, string) ([]appconsumer.
 	return f.matches, f.err
 }
 
+// pathMatchWith is a match on a consumer whose users sign in — the shape the
+// built-in identity provider is allowed to serve. Production always carries a
+// consumer on the match (pathResolver.load), so the fixtures do too.
 func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
-	m := appconsumer.PathMatch{}
+	m := appconsumer.PathMatch{Consumer: signInConsumer()}
 	if len(auths) > 0 {
 		m.GatewayID = auths[0].GatewayID
+		m.Consumer.GatewayID = auths[0].GatewayID
 	}
 	m.Auths = auths
 	return m
+}
+
+func signInConsumer() *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:       ids.New[ids.ConsumerKind](),
+		Name:     "sign-in",
+		Slug:     "sign-in",
+		Type:     consumerdomain.TypeMCP,
+		Active:   true,
+		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
+	}
+}
+
+// machineConsumer authenticates as the application itself: the built-in
+// provider must never stand in for its missing credential.
+func machineConsumer() *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:     ids.New[ids.ConsumerKind](),
+		Name:   "machine",
+		Slug:   "machine",
+		Type:   consumerdomain.TypeMCP,
+		Active: true,
+	}
 }
 
 func resolveChallengeEligibility(
