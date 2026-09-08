@@ -137,7 +137,7 @@ func (a *modelListing) load(ctx context.Context, providerCode string) listedMode
 			slog.String("error", err.Error()))
 		return listedModels{}
 	}
-	slugs := make(map[string]struct{}, len(models)*2)
+	slugs := make(map[string]struct{}, len(models))
 	for _, model := range models {
 		if !model.Enabled {
 			continue
