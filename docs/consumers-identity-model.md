@@ -523,12 +523,16 @@ not for a machine consumer:
 The machine principal is built by the auth chain
 (`pkg/api/middleware/auth_chain.go`): an API key resolves to
 `Principal{Subject: auth.Name, Method: api_key}` with **no raw token**; an IdP
-JWT resolves to the token's own subject **with** the raw token.
+JWT resolves to the token's own subject **with** the raw token. On the MCP
+plane, a consumer that acts as the application then runs as
+`app:<consumer_id>` instead, whenever the credential was an api key or a
+certificate (§14.3) — the rows below say "the application's principal" for
+that reason.
 
 | Consumer credential | `none` / `static` / `client_credentials` | `forwarded` | `exchange` impersonation / delegation | `passthrough`, `exchange` OBO / token_exchange |
 |---|---|---|---|---|
-| **API key** | works | works — one shared account linked to the key's principal | works (minted from `auth.Name`) | **impossible**: no token to reuse |
-| **Client certificate (mTLS)** | works | works — same, keyed by the certificate principal | works | **impossible** |
+| **API key** | works | works — one shared account, linked to the application's principal | works (minted from the application's principal) | **impossible**: no token to reuse |
+| **Client certificate (mTLS)** | works | works — the same account as its api keys reach | works | **impossible** |
 | **IdP JWT (validated)** | works | works — keyed by the token's `sub` | works | works |
 
 So the answer is: **a machine consumer authenticates upstream either with a
@@ -545,8 +549,10 @@ shared by every call the application makes:
 
 1. **The connect page** — `GET/POST /{slug}/connect`
    (`pkg/app/oauth/api_key_connect.go`): a human pastes the consumer's API key
-   and the gateway mints a ticket for `auth.Name` covering every forwarded
-   provider of that consumer. One-time, out of band.
+   and the gateway mints a ticket for the application's principal, covering
+   every forwarded provider of that consumer. One-time, out of band.
+   Since §14.3, an admin can mint the same ticket from the console without
+   holding a key at all (`POST .../upstream-accounts/link`).
 2. **The `trustgate_connect_<provider>` tool** (`pkg/app/mcp/connection_tool.go`),
    exposed on the consumer's own tool list: calling it returns a connect URL for
    the current principal. This is also what the first tool call answers with —
@@ -640,13 +646,14 @@ re-verified by hand).
 | Concept | What it is for | What it is today |
 |---|---|---|
 | **Call credential** | proves "I am this application" on each request | an `auths` row of type `api_key`; a consumer may hold several, and rotation issues a new one |
-| **Application identity** | the stable thing an upstream account should belong to | *nothing* — there is no such concept on the request path |
+| **Application identity** | the stable thing an upstream account should belong to | `app:<consumer_id>` (§14.3); until this branch, *nothing* |
 | **Upstream account** | what the third-party MCP server authorizes | a vault row keyed by `(gateway_id, principal_sub, provider)` |
 
-The whole difficulty comes from the middle row being missing. `resolveAPIKey`
-sets `Principal{Subject: auth.Name}` (`pkg/api/middleware/auth_chain.go:309`),
-so the **display label of a credential** is the durable identity. That string
-keys: the credential vault (`pkg/app/mcp/credentials.go:195`), connect tickets
+The whole difficulty came from the middle row being missing. `resolveAPIKey`
+sets `Principal{Subject: auth.Name}` (`pkg/api/middleware/auth_chain.go`), so
+the **display label of a credential** was the durable identity — on the MCP
+plane it is now replaced by the application's own subject (§14.3), and what
+follows is the reason. That string keys: the credential vault (`pkg/app/mcp/credentials.go:195`), connect tickets
 and provider statuses (`pkg/app/oauth/api_key_connect.go:124`), per-user URL
 variables, Store installs and grants, the per-principal discovery cache
 (`pkg/app/mcp/discovery.go:260`), the upstream session pin
@@ -763,35 +770,80 @@ Deliberately still open:
   their 15 minutes and also authorise disconnect. Pinning them is easy; the rest
   touches the tool-call hot path, where a limiter outage would turn a consent
   prompt into a failed call, so it wants its own change.
-- **The email on machine traces** is intentional
-  (`TestHandler_StampsVaultEmailOnAPIKeyTrace`): it answers whose account the
-  upstream saw. Documented at the call site rather than changed.
-- **`app:<consumer_id>` as the machine principal** (§14.3), which is the change
-  that actually removes the class of problem rather than papering over it.
+- **The in-band ticket hardening** above is the whole of what is left here.
 
-### 14.3 The model this should be
+Also fixed, and the reason the rest of §14 reads as history: **the machine
+principal is now `app:<consumer_id>`** (§14.3). The email on machine traces
+stays intentional (`TestHandler_StampsVaultEmailOnAPIKeyTrace`) — it answers
+whose account the upstream saw — and the trace's principal subject still shows
+the credential that called, from the `credential_subject` claim, so the change
+did not cost attribution.
 
-**The upstream account belongs to the application, not to one of its keys.**
+### 14.3 The model, implemented
 
-- Machine principal subject becomes the consumer, namespaced the way end users
-  already are: `app:<consumer_id>` next to today's
-  `app:<consumer_id>:<end_user>`. The call credential stays what it is — proof
-  of "I am this application" — and stops being an identity.
-- Then, by construction: rotating, renaming, adding or deleting keys never
-  touches a linked account; two keys of one consumer share the account *by
-  design*; two consumers never cross; and deleting the consumer can revoke its
-  upstream accounts because they are enumerable by prefix.
-- Migration is the same shape as the split-vault read fix (§13): write the new
-  subject, read new-then-old for a window, backfill, drop the fallback. Both
-  vault stores need it (Postgres and Redis).
-- It also unblocks what §12.4 listed as open: an admin-side "connected accounts"
-  view per application, real revocation, and an audit trail that names the
-  consumer instead of a label.
+**The upstream account belongs to the application, not to one of its
+credentials.** A consumer that acts as the application now *runs as* the
+application: `consumerdomain.AppSubject(consumerID)` = `app:<consumer_id>`,
+namespaced exactly like the end users an application names
+(`app:<consumer_id>:<end_user>`).
+
+Where the swap happens, and why there: `resolveMCPConsumer`
+(`pkg/api/handler/http/mcp/mcp_handler.go`), right after the consumer's auth
+binding has been applied to the real caller. It cannot happen in
+`resolveAPIKey`, where the old subject was set, because `consumer_auth` is a
+**many-to-many** table: one api key can serve several consumers, so the
+credential alone cannot say whose application this is. Only the request path
+knows, which is the same reason the app-identified end-user swap already lives
+there.
+
+What it is limited to, deliberately: a caller that presented an **api key or a
+client certificate** (`machineCredential`). A bearer token keeps its own
+subject. On a consumer that admits tokens from an external IdP the token may
+well be one person's, and collapsing those onto one subject would hand every
+holder the account the first of them linked — sharing is the direction that
+cannot be undone. A client-credentials token needs nothing from this anyway:
+its subject is the application's client id already.
+
+Everything but the subject carries over (`appPrincipal`): issuer, scopes,
+claims and the raw token, because a `passthrough` or `exchange` upstream
+forwards the caller's own token and dropping it would break those modes on a
+machine consumer. The credential's own subject is kept as the
+`credential_subject` claim, and the trace's principal subject prefers it, so
+"which key called" survives while "whose account is this" is the application.
+
+By construction, then:
+
+- Rotating, renaming, adding or removing a credential never touches a linked
+  account. The app's rotate-under-the-same-name trick
+  (`consumerApiKeys.ts:167-199`) is no longer load-bearing — it is just a name.
+- Two credentials of one application share the account **by design**; the
+  dropped `auths_gateway_name_unique` (`20260729110000`) stops mattering,
+  because a name is no longer an identity.
+- Two applications never cross, even holding a key with the same name, since
+  the subject carries the consumer id.
+- An application's accounts are enumerable by prefix, so deleting the consumer
+  can revoke them.
+- The admin API needed no `auth_id` and no api key at all: an application that
+  authenticates only with a client certificate still has accounts to link, and
+  `GET /upstream-accounts` answers for the consumer. The
+  `ErrUpstreamAccountsAmbiguousKey` 409 ("pass auth_id") is gone — the question
+  it asked no longer exists.
+
+Ticket authority changed with it. An application connect ticket is pinned to
+the consumer; the api key is now an *optional* pin, present on the in-band
+self-service ticket (so revoking a leaked key kills the tickets it spawned) and
+absent on one an admin minted, whose authority was the admin API
+(`currentAppIdentity`). Redemption revalidates that the consumer is still that
+same active machine MCP consumer. Audit no longer requires a key to be present
+(`connectAuditIdentity`), which is what would otherwise have made the admin path
+the one path that went unaudited.
+
+No migration was needed: none of this had shipped.
 
 What stays unchanged: an upstream whose credential the server owns (`static`,
 `client_credentials`) needs none of this, and remains the right default for a
 machine consumer. What `forwarded` buys is *one shared service account per
-application*, and the product should say exactly that.
+application*, and the product now says exactly that.
 
 ## 15. Access governs the Store, not a consumer
 

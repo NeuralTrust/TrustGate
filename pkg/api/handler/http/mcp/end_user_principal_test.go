@@ -60,3 +60,56 @@ func TestMachineCredential(t *testing.T) {
 		t.Fatal("a user login (JWT / session) is not the application's credential")
 	}
 }
+
+// A consumer that acts as the application runs as the application, so its
+// upstream accounts survive whatever happens to the credential that opened the
+// door: rotate the key, rename it, add a second one, swap it for a certificate,
+// and the same subject keeps reaching the same accounts.
+func TestAppPrincipal(t *testing.T) {
+	cons := &consumerdomain.Consumer{
+		ID:   ids.New[ids.ConsumerKind](),
+		Type: consumerdomain.TypeMCP,
+	}
+	callers := map[string]*identity.Principal{
+		"an api key":           {Subject: "prod", Method: identity.MethodAPIKey},
+		"a renamed api key":    {Subject: "prod-rotated-2026", Method: identity.MethodAPIKey},
+		"a client certificate": {Subject: "CN=assistant", Method: identity.MethodMTLS},
+	}
+	for name, caller := range callers {
+		t.Run(name, func(t *testing.T) {
+			p := appPrincipal(cons, caller)
+			if p.Subject != consumerdomain.AppSubject(cons.ID) {
+				t.Fatalf("subject = %q, want the consumer's own subject", p.Subject)
+			}
+			if p.Method != caller.Method {
+				t.Fatalf("method = %q, want the credential's own method %q", p.Method, caller.Method)
+			}
+			if p.Claims[identity.ClaimCredentialSubject] != caller.Subject {
+				t.Fatalf("the credential that called must survive for audit, got %v", p.Claims)
+			}
+			if p.Claims["consumer_id"] != cons.ID.String() {
+				t.Fatalf("claims must name the application, got %v", p.Claims)
+			}
+		})
+	}
+
+	// A token an upstream forwards or exchanges is the caller's, not the
+	// subject's: dropping it here would break passthrough on a machine consumer.
+	bearer := &identity.Principal{
+		Subject: "svc-client", Method: identity.MethodJWT, Issuer: "https://idp",
+		Scopes: []string{"mcp.read"}, RawToken: "raw-token", Claims: map[string]any{"azp": "svc"},
+	}
+	p := appPrincipal(cons, bearer)
+	if p.RawToken != "raw-token" || p.Issuer != "https://idp" || len(p.Scopes) != 1 || p.Claims["azp"] != "svc" {
+		t.Fatalf("everything but the subject must carry over, got %+v", p)
+	}
+	if bearer.Subject != "svc-client" || bearer.Claims[identity.ClaimCredentialSubject] != nil {
+		t.Fatal("the caller's own principal must not be mutated")
+	}
+
+	// Defensive: no caller at all still yields a namespaced subject.
+	if bare := appPrincipal(cons, nil); bare.Subject != consumerdomain.AppSubject(cons.ID) ||
+		bare.Method != identity.MethodAPIKey {
+		t.Fatalf("unexpected bare principal %+v", bare)
+	}
+}

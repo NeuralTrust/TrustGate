@@ -224,7 +224,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		Once()
 	unlinkAudit.NotBefore(linkAudit)
 
-	ticketID, err := fixture.service.CreateAPIKeyTicket(
+	ticketID, err := fixture.service.CreateAppTicket(
 		ctx,
 		fixture.gatewayID,
 		"subject-sentinel",
@@ -473,7 +473,7 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 		ProviderUnlinked(ctx, identity, connectAuditProviderID).
 		Once()
 
-	ticketID, err := fixture.service.CreateAPIKeyTicket(
+	ticketID, err := fixture.service.CreateAppTicket(
 		ctx,
 		fixture.gatewayID,
 		"subject-sentinel",
@@ -830,7 +830,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 	auditor := oauth.NewConnectAuditor(slog.New(slog.NewJSONHandler(&output, nil)))
 	fixture := newConnectAuditFixture(t, auditor, tokenServer.URL)
 
-	ticketID, err := fixture.service.CreateAPIKeyTicket(
+	ticketID, err := fixture.service.CreateAppTicket(
 		ctx,
 		fixture.gatewayID,
 		"subject-sentinel",
@@ -927,12 +927,6 @@ func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 			},
 		},
 		{
-			name: "missing auth",
-			mutate: func(ticket *oauth.ConnectTicket) {
-				ticket.AuthID = ""
-			},
-		},
-		{
 			name: "identity without provider snapshot",
 			mutate: func(ticket *oauth.ConnectTicket) {
 				ticket.Providers = nil
@@ -943,6 +937,12 @@ func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 			mutate: func(ticket *oauth.ConnectTicket) {
 				ticket.ConsumerID = ""
 				ticket.AuthID = ""
+			},
+		},
+		{
+			name: "consumer that is not this one",
+			mutate: func(ticket *oauth.ConnectTicket) {
+				ticket.ConsumerID = ids.New[ids.ConsumerKind]().String()
 			},
 		},
 	}
@@ -985,6 +985,39 @@ func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 	}
 }
 
+// A ticket an admin minted through the admin API carries no api key: its
+// authority was the admin bearer, and the accounts belong to the consumer, so
+// it stands on the consumer alone. It must be redeemable — that is the whole
+// point of the admin path — while everything else about it is still revalidated.
+func TestConnectServiceAcceptsAnAdminMintedTicketWithNoAPIKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	auditor := oauthmocks.NewConnectAuditor(t)
+	fixture := newConnectAuditFixture(t, auditor, "https://unused.example/token")
+	ticket := completeConnectTicket(fixture)
+	ticket.AuthID = ""
+	fixture.store.tickets["ticket-sentinel"] = ticket
+	// The audit still names the consumer; only the key is absent.
+	auditor.EXPECT().
+		ProviderUnlinked(ctx, oauth.ConnectAuditIdentity{
+			GatewayID:  fixture.gatewayID.String(),
+			ConsumerID: fixture.consumerID.String(),
+		}, connectAuditProviderID).
+		Once()
+	credential, err := vaultdomain.NewCredential(
+		fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID, "",
+		"access-token-sentinel", "", nil, time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	fixture.vault.creds = map[string]*vaultdomain.Credential{
+		fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID): credential,
+	}
+
+	require.NoError(t, fixture.service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID))
+	require.Empty(t, fixture.vault.creds)
+}
+
 func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 	t.Parallel()
 
@@ -997,7 +1030,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 			name: "ticket save",
 			run: func(t *testing.T, fixture connectAuditFixtureData) error {
 				fixture.store.saveTicketErr = dependencyErr
-				_, err := fixture.service.CreateAPIKeyTicket(
+				_, err := fixture.service.CreateAppTicket(
 					context.Background(),
 					fixture.gatewayID,
 					"subject-sentinel",

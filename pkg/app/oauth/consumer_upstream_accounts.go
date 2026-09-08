@@ -18,31 +18,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 var (
-	// ErrUpstreamAccountsNotMachine: the consumer is not an application that
-	// authenticates with an api key, so it has no account of its own to link.
-	// People who sign in link their own (the connect page during a tool call),
-	// and an app-identified consumer links per end user through the connections
-	// API.
+	// ErrUpstreamAccountsNotMachine: the consumer does not act as the application
+	// itself, so it has no account of its own to link. People who sign in link
+	// their own (the connect page during a tool call), and an app-identified
+	// consumer links per end user through the connections API.
 	ErrUpstreamAccountsNotMachine = fmt.Errorf(
-		"consumer upstream accounts: only an MCP application that authenticates with an api key holds accounts of its own: %w",
-		commonerrors.ErrConflict)
-	// ErrUpstreamAccountsAmbiguousKey: the consumer holds several api keys whose
-	// names differ, and the upstream account is keyed by that name, so the caller
-	// has to say which key it means.
-	ErrUpstreamAccountsAmbiguousKey = fmt.Errorf(
-		"consumer upstream accounts: this application holds several api keys with different names, which do not share upstream accounts; pass auth_id: %w",
+		"consumer upstream accounts: only an MCP consumer that acts as the application itself holds accounts of its own: %w",
 		commonerrors.ErrConflict)
 )
 
@@ -66,13 +57,13 @@ type UpstreamAccount struct {
 	NeedsReconnect     bool
 }
 
-// ConsumerUpstreamState is a consumer's whole upstream-credential picture for
-// one of its api keys: which servers need an account and where each stands.
+// ConsumerUpstreamState is an application's whole upstream-credential picture:
+// which of its servers need an account of its own and where each one stands.
+// It names no credential, because the accounts hang off the consumer — every
+// api key and certificate the application holds reaches the same accounts.
 type ConsumerUpstreamState struct {
 	ConsumerID   ids.ConsumerID
 	Slug         string
-	AuthID       ids.AuthID
-	AuthName     string
 	PrincipalSub string
 	Accounts     []UpstreamAccount
 }
@@ -105,8 +96,8 @@ type ConsumerConnectLink struct {
 //
 //go:generate mockery --name=ConsumerUpstreamAccounts --dir=. --output=./mocks --filename=oauth_consumer_upstream_accounts_mock.go --case=underscore --with-expecter
 type ConsumerUpstreamAccounts interface {
-	State(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) (*ConsumerUpstreamState, error)
-	Link(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) (*ConsumerConnectLink, error)
+	State(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*ConsumerUpstreamState, error)
+	Link(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*ConsumerConnectLink, error)
 }
 
 var _ ConsumerUpstreamAccounts = (*consumerUpstreamAccounts)(nil)
@@ -127,14 +118,14 @@ func (s *consumerUpstreamAccounts) State(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumerID ids.ConsumerID,
-	authID ids.AuthID,
 ) (*ConsumerUpstreamState, error) {
-	data, rc, auth, err := s.resolve(ctx, gatewayID, consumerID, authID)
+	data, rc, err := s.resolve(ctx, gatewayID, consumerID)
 	if err != nil {
 		return nil, err
 	}
 	path := appconsumer.MCPPath(rc.Consumer.Slug)
-	statuses, err := s.connect.Statuses(ctx, gatewayID, auth.Name, path)
+	principalSub := consumerdomain.AppSubject(rc.Consumer.ID)
+	statuses, err := s.connect.Statuses(ctx, gatewayID, principalSub, path)
 	if err != nil {
 		return nil, err
 	}
@@ -171,9 +162,7 @@ func (s *consumerUpstreamAccounts) State(
 	return &ConsumerUpstreamState{
 		ConsumerID:   rc.Consumer.ID,
 		Slug:         rc.Consumer.Slug,
-		AuthID:       auth.ID,
-		AuthName:     auth.Name,
-		PrincipalSub: auth.Name,
+		PrincipalSub: principalSub,
 		Accounts:     accounts,
 	}, nil
 }
@@ -182,15 +171,17 @@ func (s *consumerUpstreamAccounts) Link(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumerID ids.ConsumerID,
-	authID ids.AuthID,
 ) (*ConsumerConnectLink, error) {
-	data, rc, auth, err := s.resolve(ctx, gatewayID, consumerID, authID)
+	data, rc, err := s.resolve(ctx, gatewayID, consumerID)
 	if err != nil {
 		return nil, err
 	}
 	path := appconsumer.MCPPath(rc.Consumer.Slug)
 	providers := forwardedProviderIDs(data.EffectiveRegistries(rc))
-	ticket, err := s.connect.CreateAPIKeyTicket(ctx, gatewayID, auth.Name, path, rc.Consumer.ID, auth.ID, providers)
+	// No auth id: the admin holds no api key of this application, and the link
+	// does not need one — the accounts are the consumer's.
+	ticket, err := s.connect.CreateAppTicket(
+		ctx, gatewayID, consumerdomain.AppSubject(rc.Consumer.ID), path, rc.Consumer.ID, ids.AuthID{}, providers)
 	if err != nil {
 		return nil, err
 	}
@@ -202,35 +193,32 @@ func (s *consumerUpstreamAccounts) Link(
 	}, nil
 }
 
-// resolve finds the consumer in the gateway and the api key whose name is the
-// principal its upstream accounts hang off. A consumer that acts for users has
-// none of its own: platform users link their own accounts, and an app-identified
-// consumer links per end user through the connections API.
+// resolve finds the machine MCP consumer these accounts belong to. A consumer
+// that acts for users has no account of its own: platform users link their own
+// on the connect page, and an app-identified consumer links one per end user
+// through the connections API. No credential is looked up — the accounts hang
+// off the consumer, so an application that authenticates with a client
+// certificate and holds no api key at all still has accounts to link.
 func (s *consumerUpstreamAccounts) resolve(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumerID ids.ConsumerID,
-	authID ids.AuthID,
-) (*appconsumer.Data, *appconsumer.RoutableConsumer, *authdomain.Auth, error) {
+) (*appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	if gatewayID.IsNil() || consumerID.IsNil() {
-		return nil, nil, nil, fmt.Errorf("gateway id and consumer id are required: %w", commonerrors.ErrValidation)
+		return nil, nil, fmt.Errorf("gateway id and consumer id are required: %w", commonerrors.ErrValidation)
 	}
 	data, err := s.consumers.FindByGateway(ctx, gatewayID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("consumer upstream accounts: find consumers: %w", err)
+		return nil, nil, fmt.Errorf("consumer upstream accounts: find consumers: %w", err)
 	}
 	rc := routableByID(data, consumerID)
 	if rc == nil {
-		return nil, nil, nil, fmt.Errorf("consumer %s not found: %w", consumerID, commonerrors.ErrNotFound)
+		return nil, nil, fmt.Errorf("consumer %s not found: %w", consumerID, commonerrors.ErrNotFound)
 	}
 	if rc.Consumer.Type != consumerdomain.TypeMCP || rc.Consumer.Identity.ActsForUsers {
-		return nil, nil, nil, ErrUpstreamAccountsNotMachine
+		return nil, nil, ErrUpstreamAccountsNotMachine
 	}
-	auth, err := pickAPIKeyAuth(rc, gatewayID, authID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return data, rc, auth, nil
+	return data, rc, nil
 }
 
 func routableByID(data *appconsumer.Data, consumerID ids.ConsumerID) *appconsumer.RoutableConsumer {
@@ -244,40 +232,6 @@ func routableByID(data *appconsumer.Data, consumerID ids.ConsumerID) *appconsume
 		}
 	}
 	return nil
-}
-
-// pickAPIKeyAuth resolves which api key's principal to read or link. With an
-// explicit id it must be that key; without one, the consumer's keys must agree
-// on a name, because the name *is* the principal and keys with different names
-// hold different upstream accounts.
-func pickAPIKeyAuth(rc *appconsumer.RoutableConsumer, gatewayID ids.GatewayID, authID ids.AuthID) (*authdomain.Auth, error) {
-	var chosen *authdomain.Auth
-	names := make(map[string]struct{})
-	for _, auth := range rc.Auths {
-		if !validAPIKeyAuth(auth, rc.Consumer, gatewayID) {
-			continue
-		}
-		if !authID.IsNil() {
-			if auth.ID == authID {
-				return auth, nil
-			}
-			continue
-		}
-		names[strings.TrimSpace(auth.Name)] = struct{}{}
-		if chosen == nil {
-			chosen = auth
-		}
-	}
-	if !authID.IsNil() {
-		return nil, fmt.Errorf("api key %s is not an enabled key of this consumer: %w", authID, commonerrors.ErrNotFound)
-	}
-	if chosen == nil {
-		return nil, ErrUpstreamAccountsNotMachine
-	}
-	if len(names) > 1 {
-		return nil, ErrUpstreamAccountsAmbiguousKey
-	}
-	return chosen, nil
 }
 
 func upstreamMode(reg *registrydomain.Registry) registrydomain.MCPAuthMode {
