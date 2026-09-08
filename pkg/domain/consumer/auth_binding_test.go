@@ -98,3 +98,20 @@ func TestClientOfClaims(t *testing.T) {
 		t.Fatalf("ClientOfClaims = %q, want empty for a non-string claim", got)
 	}
 }
+
+func TestAuthBinding_AllowsCertificateClaims(t *testing.T) {
+	t.Parallel()
+	bound := AuthBinding{AllowedCertificateSubjects: []string{"svc.internal"}}
+	if !bound.AllowsCertificateClaims(map[string]any{"common_name": "other", "dns_names": []any{"svc.internal"}}) {
+		t.Fatal("a SAN in the claims (decoded as []any) must pass")
+	}
+	if !bound.AllowsCertificateClaims(map[string]any{"common_name": "svc.internal", "dns_names": []string{}}) {
+		t.Fatal("the common name in the claims must pass")
+	}
+	if bound.AllowsCertificateClaims(map[string]any{"common_name": "other"}) || bound.AllowsCertificateClaims(nil) {
+		t.Fatal("claims naming no allowed subject must fail")
+	}
+	if !(AuthBinding{}).AllowsCertificateClaims(nil) {
+		t.Fatal("without an allowed list every certificate passes")
+	}
+}

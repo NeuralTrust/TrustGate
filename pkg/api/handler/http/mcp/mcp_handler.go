@@ -551,19 +551,7 @@ func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.
 	case identity.MethodJWT, identity.MethodIntrospection:
 		return cons.AuthBinding.AllowsClient(principal.Claims)
 	case identity.MethodMTLS:
-		commonName, _ := principal.Claims["common_name"].(string)
-		var dnsNames []string
-		switch v := principal.Claims["dns_names"].(type) {
-		case []string:
-			dnsNames = v
-		case []any:
-			for _, item := range v {
-				if name, ok := item.(string); ok {
-					dnsNames = append(dnsNames, name)
-				}
-			}
-		}
-		return cons.AuthBinding.AllowsCertificate(commonName, dnsNames)
+		return cons.AuthBinding.AllowsCertificateClaims(principal.Claims)
 	default:
 		return true
 	}

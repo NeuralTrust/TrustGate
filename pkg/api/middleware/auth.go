@@ -211,8 +211,8 @@ func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsu
 
 // consumerAdmitsCaller applies the consumer's auth binding to a verified
 // caller: a bearer token from a shared IdP must have been issued to one of the
-// consumer's allowed clients. API keys and playground tokens are already bound
-// to exactly one consumer.
+// consumer's allowed clients, and a client certificate must carry an allowed
+// subject. API keys and playground tokens are already bound to one consumer.
 func consumerAdmitsCaller(cons *consumerdomain.Consumer, authCtx *appauth.AuthContext) bool {
 	if cons == nil || authCtx == nil {
 		return false
@@ -220,6 +220,8 @@ func consumerAdmitsCaller(cons *consumerdomain.Consumer, authCtx *appauth.AuthCo
 	switch authCtx.Method {
 	case appauth.MethodOAuth2, appauth.MethodOIDC:
 		return cons.AuthBinding.AllowsClient(authCtx.Claims)
+	case appauth.MethodMTLS:
+		return cons.AuthBinding.AllowsCertificateClaims(authCtx.Claims)
 	default:
 		return true
 	}
