@@ -511,3 +511,175 @@ func TestRoutingIntent_SequentialChain(t *testing.T) {
 		assert.Equal(t, 0, second.Hits(), "the chain walk is deterministic, not round-robin")
 	})
 }
+
+func TestRoutingIntent_SequentialChainOrder(t *testing.T) {
+	defer Track(t, "RoutingIntent")()
+
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("order-gw")})
+	first := newModelNotFoundUpstream(t)
+	second := newJSONUpstream(t, "second-served")
+	firstID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-a"), first.URL()))
+	secondID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-b"), second.URL()))
+
+	consumerBound := func(t *testing.T, registryIDs ...string) (string, string) {
+		t.Helper()
+		bindings := make([]map[string]any, 0, len(registryIDs))
+		for _, id := range registryIDs {
+			bindings = append(bindings, map[string]any{"id": id})
+		}
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name":       uniqueName("cons"),
+			"registries": bindings,
+		})
+		return createAndAttachAPIKey(t, gatewayID, coID), chatCompletionsPath(t, coID)
+	}
+
+	t.Run("the model-not-found registry bound first is probed first", func(t *testing.T) {
+		apiKey, path := consumerBound(t, firstID, secondID)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("some-model"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "second-served")
+		assert.Equal(t, 1, first.Hits(), "the registry bound first must be probed before the one bound second")
+	})
+
+	t.Run("reversing the binding order flips the winner", func(t *testing.T) {
+		before := first.Hits()
+		apiKey, path := consumerBound(t, secondID, firstID)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("some-model"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "second-served")
+		assert.Equal(t, before, first.Hits(),
+			"bound second, the model-not-found registry must never be reached: order is the consumer's, not the registry id's")
+	})
+}
+
+func TestRoutingIntent_SequentialChainHardening(t *testing.T) {
+	defer Track(t, "RoutingIntent")()
+
+	setupChain := func(t *testing.T, extra map[string]any, registries ...map[string]any) (string, string) {
+		t.Helper()
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("hard-gw")})
+		bindings := make([]map[string]any, 0, len(registries))
+		for _, payload := range registries {
+			bindings = append(bindings, map[string]any{"id": CreateRegistry(t, gatewayID, payload)})
+		}
+		body := map[string]any{"name": uniqueName("cons"), "registries": bindings}
+		for k, v := range extra {
+			body[k] = v
+		}
+		coID := CreateConsumer(t, gatewayID, body)
+		return createAndAttachAPIKey(t, gatewayID, coID), chatCompletionsPath(t, coID)
+	}
+
+	t.Run("three registries are walked until one serves the model", func(t *testing.T) {
+		a := newModelNotFoundUpstream(t)
+		b := newModelNotFoundUpstream(t)
+		c := newJSONUpstream(t, "third-served")
+		apiKey, path := setupChain(t, nil,
+			openaiCompatibleBackendPayload(uniqueName("be-a"), a.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-b"), b.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-c"), c.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("some-model"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "third-served")
+		assert.Equal(t, 1, a.Hits())
+		assert.Equal(t, 1, b.Hits())
+		assert.Equal(t, 1, c.Hits())
+	})
+
+	t.Run("a low fallback attempt budget does not truncate the walk", func(t *testing.T) {
+		a := newModelNotFoundUpstream(t)
+		b := newJSONUpstream(t, "second-served")
+		rescue := newJSONUpstream(t, "must-not-rescue")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("budget-gw")})
+		aID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-a"), a.URL()))
+		bID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-b"), b.URL()))
+		rescueID := CreateRegistry(t, gatewayID,
+			openaiCompatibleBackendPayload(uniqueName("be-rescue"), rescue.URL()))
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name":       uniqueName("cons"),
+			"registries": []map[string]any{{"id": aID}, {"id": bID}, {"id": rescueID}},
+			"fallback": map[string]any{
+				"enabled":  true,
+				"triggers": []string{"http_5xx"},
+				"chain":    []string{rescueID},
+				"budget":   map[string]any{"max_attempts": 1},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+
+		status, _, body := proxyPost(t, apiKey, chatCompletionsPath(t, coID), chatRequestModel("some-model"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "second-served",
+			"the fallback attempt budget bounds failover retries, not registry selection")
+		assert.Equal(t, 1, a.Hits())
+		assert.Equal(t, 1, b.Hits())
+		assert.Equal(t, 0, rescue.Hits(),
+			"the walk stops at the registry that serves the model; the fallback chain is never needed")
+	})
+
+	t.Run("a streaming request falls through to the registry that serves the model", func(t *testing.T) {
+		a := newModelNotFoundUpstream(t)
+		b := newStreamUpstream(t, "streamed-by-second")
+		apiKey, path := setupChain(t, nil,
+			openaiCompatibleBackendPayload(uniqueName("be-a"), a.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-b"), b.URL()),
+		)
+
+		body := chatRequestModel("some-model")
+		body["stream"] = true
+		status, _, raw := proxyPost(t, apiKey, path, body)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "streamed-by-second")
+		assert.Equal(t, 1, a.Hits())
+		assert.Equal(t, 1, b.Hits())
+	})
+
+	t.Run("an allow-list that excludes the model removes its registry from the chain", func(t *testing.T) {
+		denied := newJSONUpstream(t, "must-not-serve")
+		allowed := newJSONUpstream(t, "allowed-served")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("policy-gw")})
+		deniedID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-denied"), denied.URL()))
+		allowedID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-allowed"), allowed.URL()))
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"registries": []map[string]any{
+				{"id": deniedID, "model_policies": map[string]any{"allowed": []string{"other-model"}}},
+				{"id": allowedID, "model_policies": map[string]any{"allowed": []string{"some-model"}}},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+
+		status, _, body := proxyPost(t, apiKey, chatCompletionsPath(t, coID), chatRequestModel("some-model"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "allowed-served")
+		assert.Equal(t, 0, denied.Hits(),
+			"an explicit allow-list still decides eligibility before any provider is contacted")
+		assert.Equal(t, 1, allowed.Hits())
+	})
+
+	t.Run("the gateway error carries the provider's own diagnosis", func(t *testing.T) {
+		a := newModelNotFoundUpstream(t)
+		apiKey, path := setupChain(t, nil,
+			openaiCompatibleBackendPayload(uniqueName("be-a"), a.URL()),
+		)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("nope-9"))
+
+		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
+		assert.Contains(t, string(body), "model_not_supported")
+		assert.Contains(t, string(body), "nope-9")
+		assert.Contains(t, string(body), "do not have access",
+			"the provider's message must survive alongside the gateway's verdict")
+	})
+}
