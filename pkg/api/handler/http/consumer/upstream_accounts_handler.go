@@ -15,9 +15,13 @@
 package consumer
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -61,26 +65,45 @@ func (h *UpstreamAccountsHandler) Get(c *fiber.Ctx) error {
 
 // Link godoc
 // @Summary      Mint a connect link for an MCP application's upstream accounts
-// @Description  Returns a single-consumer connect ticket an admin can open to link the application's own accounts on the servers that forward a stored credential — the same page the api-key self-service flow uses, without needing one of the application's credentials. The ticket is pinned to this consumer and to the providers bound to it, revalidated on redemption, audited, and short-lived.
+// @Description  Returns a connect ticket an admin can open to link the application's own accounts on the servers that forward a stored credential — the same page the api-key self-service flow uses, without needing one of the application's credentials. Naming a registry narrows the ticket to that one server; omitting it covers every server of the application that forwards a credential. The ticket is pinned to this consumer and to those providers, revalidated on redemption, audited, and short-lived.
 // @Tags         consumers
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
+// @Param        gateway_id   path   string  true   "Gateway id"   format(uuid)
+// @Param        id           path   string  true   "Consumer id"  format(uuid)
+// @Param        registry_id  query  string  false  "Authorize only this bound MCP server"  format(uuid)
 // @Success      201  {object}  response.ConsumerConnectLink
 // @Failure      400  {object}  httpio.ErrorBody
 // @Failure      401  {object}  httpio.ErrorBody
-// @Failure      404  {object}  httpio.ErrorBody
-// @Failure      409  {object}  httpio.ErrorBody  "The consumer acts for users, so it holds no account of its own"
+// @Failure      404  {object}  httpio.ErrorBody  "The consumer does not exist, or the registry is not bound to it"
+// @Failure      409  {object}  httpio.ErrorBody  "The consumer acts for users, or the named server carries its own credential"
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts/link [post]
 func (h *UpstreamAccountsHandler) Link(c *fiber.Ctx) error {
 	gatewayID, consumerID, err := httpio.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	link, err := h.accounts.Link(c.UserContext(), gatewayID, consumerID)
+	registryID, err := optionalRegistryID(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	link, err := h.accounts.Link(c.UserContext(), gatewayID, consumerID, registryID)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteCreated(c, response.NewConsumerConnectLink(link))
+}
+
+// optionalRegistryID reads ?registry_id=, absent meaning every server of the
+// application that forwards a credential.
+func optionalRegistryID(c *fiber.Ctx) (ids.RegistryID, error) {
+	raw := strings.TrimSpace(c.Query("registry_id"))
+	if raw == "" {
+		return ids.RegistryID{}, nil
+	}
+	parsed, err := ids.Parse[ids.RegistryKind](raw)
+	if err != nil {
+		return ids.RegistryID{}, fmt.Errorf("invalid registry_id: %w", commonerrors.ErrValidation)
+	}
+	return parsed, nil
 }
