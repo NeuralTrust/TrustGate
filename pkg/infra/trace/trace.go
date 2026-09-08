@@ -15,6 +15,7 @@
 package trace
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -154,7 +155,7 @@ func (t *RequestTrace) SetEndUser(id string) {
 		return
 	}
 	t.mu.Lock()
-	t.meta.EndUser = id
+	t.meta.EndUser = strings.Clone(id)
 	t.mu.Unlock()
 }
 

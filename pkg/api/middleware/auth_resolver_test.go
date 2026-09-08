@@ -36,6 +36,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
@@ -266,7 +267,9 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 	gw, rc := inlineConsumerWithOAuth(t)
 	oauthVerifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{
 		Subject: "user-1",
-		Claims:  map[string]any{"sub": "user-1"},
+		Method:  identity.MethodJWT,
+		Issuer:  "https://issuer.example.com",
+		Claims:  map[string]any{"sub": "user-1", "email": "user@example.com"},
 		Scopes:  []string{"chat"},
 	}}
 	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeOIDCVerifier{})
@@ -426,6 +429,16 @@ func newAuthTestAppWithResolver(
 		authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 		require.True(t, ok)
 		require.Equal(t, data.GatewayID, authCtx.GatewayID)
+		if authCtx.Method == appauth.MethodOAuth2 {
+			p := identity.PrincipalFromContext(c.UserContext())
+			require.NotNil(t, p)
+			require.Equal(t, authCtx.Subject, p.Subject)
+			require.Same(t, oauthVerifier.claims, p)
+			require.Equal(t, oauthVerifier.claims.Method, p.Method)
+			require.Equal(t, oauthVerifier.claims.Email(), p.Email())
+		} else {
+			require.Nil(t, identity.PrincipalFromContext(c.UserContext()))
+		}
 		_, ok = appconsumer.ConsumerFromContext(c.UserContext())
 		require.True(t, ok)
 		return c.SendStatus(fiber.StatusOK)

@@ -27,6 +27,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -179,6 +180,9 @@ func (m *AuthMiddleware) attach(
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
 	c.Locals(string(appconsumer.ConsumerKey), rc)
 	ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+	if authCtx.Principal != nil {
+		ctx = identity.WithPrincipal(ctx, authCtx.Principal)
+	}
 	ctx = appconsumer.WithGatewayID(ctx, authCtx.GatewayID)
 	if authCtx.AuthID != (ids.AuthID{}) {
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)

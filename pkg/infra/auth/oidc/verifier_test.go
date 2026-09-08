@@ -31,6 +31,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -268,5 +269,47 @@ func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifierSignedClaimValidation(t *testing.T) {
+	t.Parallel()
+	key := newRSAKey(t)
+	publicKey, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	requireNoError(t, err)
+	cfg := domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		PublicKeys: []string{string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKey}))},
+	}
+	now := time.Now()
+	for _, tc := range []struct {
+		name, claim string
+		value       any
+		valid       bool
+	}{
+		{"valid", "aud", "gateway", true},
+		{"multiple audiences", "aud", []string{"other", "gateway"}, true},
+		{"expired", "exp", now.Add(-time.Minute).Unix(), false},
+		{"future nbf", "nbf", now.Add(time.Hour).Unix(), false},
+		{"wrong issuer", "iss", "https://other.example.com", false},
+		{"wrong audience", "aud", "other", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := jwt.MapClaims{"sub": "alice", "email": "alice@example.com", "iss": cfg.Issuer, "aud": "gateway", "exp": now.Add(time.Hour).Unix()}
+			claims[tc.claim] = tc.value
+			token := signToken(t, key, "", claims)
+			got, err := NewVerifierWithCache(NewJWKSCache(http.DefaultClient, time.Minute)).Verify(context.Background(), token, cfg)
+			if !tc.valid {
+				if err == nil || got != nil {
+					t.Fatalf("invalid signed claims accepted: principal=%+v err=%v", got, err)
+				}
+				return
+			}
+			requireNoError(t, err)
+			if got.Method != identity.MethodJWT || got.Issuer != cfg.Issuer || got.Subject != "alice" || got.Email() != "alice@example.com" {
+				t.Fatalf("verified identity not preserved: %+v", got)
+			}
+		})
 	}
 }
