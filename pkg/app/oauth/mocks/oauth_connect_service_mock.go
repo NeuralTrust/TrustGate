@@ -127,11 +127,11 @@ func (_c *ConnectService_ChainURL_Call) RunAndReturn(run func(context.Context, s
 	return _c
 }
 
-func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string) (string, error) {
+func (_m *ConnectService) CreateAppTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string) (string, error) {
 	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
 
 	if len(ret) == 0 {
-		panic("no return value specified for CreateAPIKeyTicket")
+		panic("no return value specified for CreateAppTicket")
 	}
 
 	var r0 string
@@ -154,27 +154,27 @@ func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.
 	return r0, r1
 }
 
-type ConnectService_CreateAPIKeyTicket_Call struct {
+type ConnectService_CreateAppTicket_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) CreateAPIKeyTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}) *ConnectService_CreateAPIKeyTicket_Call {
-	return &ConnectService_CreateAPIKeyTicket_Call{Call: _e.mock.On("CreateAPIKeyTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)}
+func (_e *ConnectService_Expecter) CreateAppTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}) *ConnectService_CreateAppTicket_Call {
+	return &ConnectService_CreateAppTicket_Call{Call: _e.mock.On("CreateAppTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)}
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string)) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string)) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string))
 	})
 	return _c
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -40,14 +40,14 @@ type ConsumerUpstreamAccount struct {
 	NeedsReconnect     bool       `json:"needs_reconnect"`
 }
 
-// ConsumerUpstreamAccounts is the whole picture for one api key of a consumer.
+// ConsumerUpstreamAccounts is an application's whole upstream picture. It names
+// no credential: the accounts belong to the consumer, so every api key and
+// certificate it holds reaches the same ones.
 type ConsumerUpstreamAccounts struct {
 	ConsumerID string `json:"consumer_id"`
 	Slug       string `json:"slug"`
-	AuthID     string `json:"auth_id"`
-	AuthName   string `json:"auth_name"`
-	// PrincipalSub is the identity the upstream accounts hang off — today the
-	// api key's name, shared by every caller holding that key.
+	// PrincipalSub is the identity the upstream accounts hang off:
+	// app:<consumer_id>, the application itself.
 	PrincipalSub string                    `json:"principal_sub"`
 	NeedsLinking bool                      `json:"needs_linking"`
 	Accounts     []ConsumerUpstreamAccount `json:"accounts"`
@@ -60,8 +60,6 @@ func NewConsumerUpstreamAccounts(state *appoauth.ConsumerUpstreamState) Consumer
 	out := ConsumerUpstreamAccounts{
 		ConsumerID:   state.ConsumerID.String(),
 		Slug:         state.Slug,
-		AuthID:       state.AuthID.String(),
-		AuthName:     state.AuthName,
 		PrincipalSub: state.PrincipalSub,
 		NeedsLinking: state.NeedsLinking(),
 		Accounts:     make([]ConsumerUpstreamAccount, 0, len(state.Accounts)),

@@ -42,7 +42,7 @@ func (s *stubConnectService) CreateServerTicket(context.Context, ids.GatewayID, 
 	return "t", nil
 }
 
-func (s *stubConnectService) CreateAPIKeyTicket(
+func (s *stubConnectService) CreateAppTicket(
 	context.Context,
 	ids.GatewayID,
 	string,

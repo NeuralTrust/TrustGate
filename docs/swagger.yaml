@@ -352,11 +352,6 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerConnectLinkRequest:
-    properties:
-      auth_id:
-        type: string
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
@@ -708,19 +703,14 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccount'
         type: array
-      auth_id:
-        type: string
-      auth_name:
-        type: string
       consumer_id:
         type: string
       needs_linking:
         type: boolean
       principal_sub:
-        description: 'PrincipalSub is the identity the upstream accounts hang off —
-          today the
+        description: 'PrincipalSub is the identity the upstream accounts hang off:
 
-          api key''s name, shared by every caller holding that key.'
+          app:<consumer_id>, the application itself.'
         type: string
       slug:
         type: string
@@ -3870,10 +3860,12 @@ paths:
       - consumers
   /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts:
     get:
-      description: 'For an MCP consumer that authenticates with an api key: per bound
+      description: 'For an MCP consumer that acts as the application itself: per bound
         MCP server, its upstream auth mode, whether that server needs an account linked
         for the application, and — when it does — whether one is linked, for which account,
-        and whether it needs reconnecting. Credential material is never returned.'
+        and whether it needs reconnecting. The accounts belong to the consumer, so the
+        answer does not depend on which credential the application authenticates with.
+        Credential material is never returned.'
       parameters:
         - description: Gateway id
           format: uuid
@@ -3886,12 +3878,6 @@ paths:
           in: path
           name: id
           required: true
-          type: string
-        - description: Which api key's accounts to read; required only when the application
-            holds keys with different names
-          format: uuid
-          in: query
-          name: auth_id
           type: string
       produces:
         - application/json
@@ -3913,8 +3899,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         '409':
-          description: The consumer acts for users, holds no api key, or holds several
-            with different names
+          description: The consumer acts for users, so it holds no account of its
+            own
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -3924,13 +3910,11 @@ paths:
         - consumers
   /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts/link:
     post:
-      consumes:
-        - application/json
       description: Returns a single-consumer connect ticket an admin can open to link
         the application's own accounts on the servers that forward a stored credential
-        — the same page the api-key self-service flow uses, without needing the api
-        key itself. The ticket is pinned to this consumer and key, revalidated on redemption,
-        audited, and short-lived.
+        — the same page the api-key self-service flow uses, without needing one of the
+        application's credentials. The ticket is pinned to this consumer and to the
+        providers bound to it, revalidated on redemption, audited, and short-lived.
       parameters:
         - description: Gateway id
           format: uuid
@@ -3944,11 +3928,6 @@ paths:
           name: id
           required: true
           type: string
-        - description: Which api key to link accounts for
-          in: body
-          name: body
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerConnectLinkRequest'
       produces:
         - application/json
       responses:
@@ -3969,8 +3948,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         '409':
-          description: The consumer acts for users, holds no api key, or holds several
-            with different names
+          description: The consumer acts for users, so it holds no account of its
+            own
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
