@@ -223,7 +223,29 @@
           "Enter the raw APP_ID:SEARCH_API_KEY value for Authorization."
         ],
         "docs_url": "https://www.algolia.com/doc/guides/algolia-ai/agent-studio/how-to/tools/mcp-tools"
-      }
+      },
+      "tools": [
+        {
+          "name": "algolia_search_{index_name}",
+          "description": "Search an index"
+        },
+        {
+          "name": "algolia_search_for_facet_values",
+          "description": "Search for facet values"
+        },
+        {
+          "name": "algolia_recommendations",
+          "description": "Retrieve recommendations"
+        },
+        {
+          "name": "search",
+          "description": "Search an index"
+        },
+        {
+          "name": "fetch",
+          "description": "Get an object"
+        }
+      ]
     },
     {
       "name": "com.amplitude/mcp",
@@ -417,7 +439,217 @@
         ],
         "resource": "https://mcp.apollo.io/mcp"
       },
-      "relevance": 55
+      "relevance": 55,
+      "tools": [
+        {
+          "name": "Search for companies",
+          "description": "Search for companies using filters like industry, headcount, and website visitor intent."
+        },
+        {
+          "name": "Bulk company enrichment",
+          "description": "Enrich multiple company records at once using the Enrichment API."
+        },
+        {
+          "name": "Company enrichment",
+          "description": "Enrich a single company with fresh firmographic data."
+        },
+        {
+          "name": "Company job postings",
+          "description": "Retrieve company job posting data to identify hiring signals."
+        },
+        {
+          "name": "Bulk people enrichment",
+          "description": "Enrich multiple people records at once, including verified email data."
+        },
+        {
+          "name": "People enrichment",
+          "description": "Enrich a single person record with updated contact and employment data."
+        },
+        {
+          "name": "Search for people",
+          "description": "Search Apollo's people API data programmatically."
+        },
+        {
+          "name": "Search for contacts",
+          "description": "Search people and contacts with natural language."
+        },
+        {
+          "name": "Create a contact",
+          "description": "Create a contact record to save and engage in Apollo."
+        },
+        {
+          "name": "Bulk create contacts",
+          "description": "Create multiple contact records at once."
+        },
+        {
+          "name": "Update a contact",
+          "description": "Update details on a saved contact."
+        },
+        {
+          "name": "Create an account",
+          "description": "Create a company record to save and manage in Apollo."
+        },
+        {
+          "name": "Bulk create accounts",
+          "description": "Create multiple account records at once."
+        },
+        {
+          "name": "Update an account",
+          "description": "Update fields on an existing account."
+        },
+        {
+          "name": "Search for deals",
+          "description": "Find existing deals in your pipeline."
+        },
+        {
+          "name": "Create a deal",
+          "description": "Create a new deal to track in Apollo."
+        },
+        {
+          "name": "View deal details",
+          "description": "View the details of an existing deal."
+        },
+        {
+          "name": "Search custom object records",
+          "description": "Search records for custom objects configured in your workspace."
+        },
+        {
+          "name": "Create a custom object",
+          "description": "Define a new custom object type for your workspace."
+        },
+        {
+          "name": "View a custom object",
+          "description": "View the configuration of an existing custom object."
+        },
+        {
+          "name": "Search conversations",
+          "description": "Find calls and conversations recorded in Apollo."
+        },
+        {
+          "name": "Get conversation insights",
+          "description": "Retrieve AI-generated insights for a conversation."
+        },
+        {
+          "name": "Get conversation transcript",
+          "description": "Retrieve the transcript for a recorded conversation."
+        },
+        {
+          "name": "Get conversation recording link",
+          "description": "Retrieve a link to a conversation's recording."
+        },
+        {
+          "name": "Search for lists",
+          "description": "Find your team's Apollo lists for contacts and accounts."
+        },
+        {
+          "name": "Create a list",
+          "description": "Create a new contact or account list."
+        },
+        {
+          "name": "Update a list",
+          "description": "Rename an existing list."
+        },
+        {
+          "name": "Add records to lists",
+          "description": "Add contacts or accounts to one or more lists."
+        },
+        {
+          "name": "Remove records from lists",
+          "description": "Remove contacts or accounts from one or more lists without deleting the records themselves."
+        },
+        {
+          "name": "Create or update a sequence",
+          "description": "Create sequences, improve sequence steps, generate variants for segments or personas, and preview changes before updating Apollo."
+        },
+        {
+          "name": "Add contacts to a sequence",
+          "description": "Enroll contacts into a sequence to start outreach steps."
+        },
+        {
+          "name": "Remove contacts from sequences",
+          "description": "Remove contacts from a sequence to stop future outreach steps."
+        },
+        {
+          "name": "Search for sequences",
+          "description": "Find existing sequences to enroll and manage outreach."
+        },
+        {
+          "name": "Get a list of email accounts",
+          "description": "List connected mailboxes used for sending, sequences, and tracking across your team."
+        },
+        {
+          "name": "Send one-off emails",
+          "description": "Create and send one-off emails to contacts, including custom To, Cc, and Bcc recipients."
+        },
+        {
+          "name": "Search email campaigns",
+          "description": "Search sequence email activity, message content, and send status."
+        },
+        {
+          "name": "Connect a data source",
+          "description": "Create and configure an external data source connection."
+        },
+        {
+          "name": "Import data from a data source",
+          "description": "Import records from a connected data source."
+        },
+        {
+          "name": "Purchase or browse sending domains",
+          "description": "Buy or browse available domains for cold email sending."
+        },
+        {
+          "name": "Purchase or browse email accounts",
+          "description": "Buy or browse available mailboxes for cold email sending."
+        },
+        {
+          "name": "Check email domain authentication",
+          "description": "Check the SPF, DKIM, and DMARC authentication status for a sending domain."
+        },
+        {
+          "name": "Create or manage labels",
+          "description": "Create, update, or apply labels to records."
+        },
+        {
+          "name": "Search tasks",
+          "description": "Search Apollo tasks by status, type, priority, sequence, or owner."
+        },
+        {
+          "name": "Show task details",
+          "description": "View task context, including who the task is for, what action is due, and any related sequence step."
+        },
+        {
+          "name": "Create tasks",
+          "description": "Create one or more tasks for contacts, accounts, or deals."
+        },
+        {
+          "name": "Complete or skip tasks",
+          "description": "Complete or skip tasks with a note to keep your Apollo task queue up to date."
+        },
+        {
+          "name": "Query analytics data",
+          "description": "Retrieve analytics data on sequences, emails, and engagement to measure performance and activity."
+        },
+        {
+          "name": "Get API usage and credit stats",
+          "description": "Retrieve current API usage and credit consumption stats."
+        },
+        {
+          "name": "Get user profile",
+          "description": "Retrieve the authenticated user's Apollo profile and settings."
+        },
+        {
+          "name": "Poll webhook result",
+          "description": "Retrieve the result of an asynchronous webhook-based request."
+        },
+        {
+          "name": "Track website visitors",
+          "description": "Retrieve or manage website visitor and domain tracking data."
+        },
+        {
+          "name": "Send feedback",
+          "description": "Log feedback about Apollo MCP directly from your AI client."
+        }
+      ]
     },
     {
       "name": "dev.arcade/mcp",
@@ -1124,7 +1356,41 @@
         "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html",
         "note": "AWS Sign-In only issues DCR clients for allowlisted redirect URIs, so this gateway's callback must be approved by AWS."
       },
-      "relevance": 95
+      "relevance": 95,
+      "tools": [
+        {
+          "name": "aws___retrieve_skill",
+          "description": "Retrieve domain-specific expertise for a particular AWS domain. Skills provide workflows, context, best practices, decision frameworks, and step-by-step procedures. When called with a skill name, returns the full skill content including reference materials. Use aws___search_documentation to discover available skills."
+        },
+        {
+          "name": "aws___search_documentation",
+          "description": "Search across all AWS documentation, including API references, best practices, service guides, and skills (formerly Agent SOPs). Use the topic filter to search skills exclusively, or see skills alongside general knowledge search results."
+        },
+        {
+          "name": "aws___read_documentation",
+          "description": "Retrieve and convert AWS documentation pages to markdown format for easy consumption by AI assistants."
+        },
+        {
+          "name": "aws___list_regions",
+          "description": "Retrieve a list of all AWS regions, including their identifiers and names."
+        },
+        {
+          "name": "aws___get_regional_availability",
+          "description": "Check AWS regional availability information for services, features, SDK APIs, and CloudFormation resources."
+        },
+        {
+          "name": "aws___run_script",
+          "description": "Execute Python code in a sandboxed environment with AWS API access. Use for tasks that involve listing resources and checking their properties, parallel API calls, multi-step workflows, cross-service checks, and retry logic."
+        },
+        {
+          "name": "aws___get_presigned_url",
+          "description": "Generate pre-signed Amazon S3 URLs for uploading or downloading files. Use this tool for direct Amazon S3 uploads and downloads, or when an AWS CLI command requires a local file path."
+        },
+        {
+          "name": "aws___get_tasks",
+          "description": "Poll the status of long-running tasks started by aws___call_aws or aws___run_script. Use when a previous tool call returns a task ID with a working status."
+        }
+      ]
     },
     {
       "name": "co.axiom/mcp",
@@ -1241,7 +1507,433 @@
         ],
         "resource": "https://mcp.betterstack.com"
       },
-      "relevance": 50
+      "relevance": 50,
+      "tools": [
+        {
+          "name": "Search documentation",
+          "description": "Searches Better Stack documentation and returns the contents of relevant articles"
+        },
+        {
+          "name": "Get on-call details",
+          "description": "Shows who's currently on-call across all schedules"
+        },
+        {
+          "name": "List on-call calendars",
+          "description": "Provides information about on-call calendars and rotations"
+        },
+        {
+          "name": "List on-call events",
+          "description": "Lists upcoming shifts and schedule changes"
+        },
+        {
+          "name": "Get on-call event details",
+          "description": "Fetches details for specific on-call events"
+        },
+        {
+          "name": "Get on-call rotation details",
+          "description": "Explains how rotations are configured"
+        },
+        {
+          "name": "Get available incident escalation policies",
+          "description": "Shows available escalation targets for incidents"
+        },
+        {
+          "name": "List escalation policies",
+          "description": "Lists configured escalation rules and steps"
+        },
+        {
+          "name": "Get escalation policy details",
+          "description": "Provides detailed policy information"
+        },
+        {
+          "name": "List severities",
+          "description": "Shows incident severity levels and configurations"
+        },
+        {
+          "name": "Get severity details",
+          "description": "Explains specific severity settings"
+        },
+        {
+          "name": "Create incident",
+          "description": "Reports new issues with context and metadata"
+        },
+        {
+          "name": "List incidents",
+          "description": "Finds incidents by date, status, monitor, or other criteria"
+        },
+        {
+          "name": "Get incident details",
+          "description": "Shows full incident information including error messages and screenshots"
+        },
+        {
+          "name": "Get incident timeline",
+          "description": "Displays complete incident history"
+        },
+        {
+          "name": "Get incident comments",
+          "description": "Retrieves incident comments"
+        },
+        {
+          "name": "Create incident comment",
+          "description": "Adds team collaboration comments"
+        },
+        {
+          "name": "Acknowledge incident",
+          "description": "Takes ownership of incidents to stop escalations"
+        },
+        {
+          "name": "Escalate incident",
+          "description": "Routes incidents to users, teams, schedules, or policies"
+        },
+        {
+          "name": "Resolve incident",
+          "description": "Marks incidents as fixed"
+        },
+        {
+          "name": "Reopen incident",
+          "description": "Reopens a resolved incident within 24 hours of resolution"
+        },
+        {
+          "name": "List monitors",
+          "description": "Shows all monitors with filtering options"
+        },
+        {
+          "name": "Get monitor details",
+          "description": "Provides monitor configuration, status, and settings"
+        },
+        {
+          "name": "Create monitor",
+          "description": "Creates a new monitor to track the availability of a website, host, or service"
+        },
+        {
+          "name": "Get monitor availability",
+          "description": "Calculates SLA summaries and uptime percentages"
+        },
+        {
+          "name": "Get monitor response times",
+          "description": "Analyzes performance metrics and trends"
+        },
+        {
+          "name": "List heartbeats",
+          "description": "Shows all heartbeat monitors and their status"
+        },
+        {
+          "name": "Get heartbeat details",
+          "description": "Provides heartbeat configuration and recent activity"
+        },
+        {
+          "name": "Create heartbeat",
+          "description": "Creates a new heartbeat that alerts when a cron job or background task stops reporting"
+        },
+        {
+          "name": "Get heartbeat availability",
+          "description": "Tracks uptime for scheduled tasks"
+        },
+        {
+          "name": "List status pages",
+          "description": "Shows all public status pages"
+        },
+        {
+          "name": "Get status page details",
+          "description": "Provides status page configuration and current status"
+        },
+        {
+          "name": "Update status page",
+          "description": "Updates status page settings like company name, theme, layout, or custom domain"
+        },
+        {
+          "name": "Get status page resources",
+          "description": "Lists monitors and heartbeats displayed on each page"
+        },
+        {
+          "name": "Add status page resource",
+          "description": "Adds a monitor, heartbeat, or group to a status page"
+        },
+        {
+          "name": "Update status page resource",
+          "description": "Changes a resource's public name, description, widget type, or placement"
+        },
+        {
+          "name": "Remove status page resource",
+          "description": "Removes a resource from a status page"
+        },
+        {
+          "name": "Get status page sections",
+          "description": "Lists the sections of a status page"
+        },
+        {
+          "name": "Create status page section",
+          "description": "Creates a section to group status page resources under a heading"
+        },
+        {
+          "name": "Update status page section",
+          "description": "Renames a section or moves it to a new position"
+        },
+        {
+          "name": "Remove status page section",
+          "description": "Removes a section and its resources from a status page"
+        },
+        {
+          "name": "Create status page report",
+          "description": "Creates incident reports or maintenance announcements"
+        },
+        {
+          "name": "Create status page report update",
+          "description": "Adds updates to ongoing reports"
+        },
+        {
+          "name": "List status page reports",
+          "description": "Shows status reports for a specific page"
+        },
+        {
+          "name": "List status page report updates",
+          "description": "Lists updates for a specific report"
+        },
+        {
+          "name": "Get status page report update details",
+          "description": "Provides details for specific updates"
+        },
+        {
+          "name": "Execute query",
+          "description": "Executes a ClickHouse SQL query against your telemetry data — works with logs, spans, metrics, exceptions, and replays"
+        },
+        {
+          "name": "Render chart",
+          "description": "Executes a ClickHouse SQL query and renders the result as a line, bar, or pie chart"
+        },
+        {
+          "name": "List sources",
+          "description": "Shows all log sources with status and configuration"
+        },
+        {
+          "name": "Get source details",
+          "description": "Provides detailed source configuration and settings"
+        },
+        {
+          "name": "Create source",
+          "description": "Creates new log sources with integration guides"
+        },
+        {
+          "name": "Get source fields",
+          "description": "Discovers available fields for querying logs and spans"
+        },
+        {
+          "name": "List dashboards",
+          "description": "Lists all dashboards with their ID, name, creation, and update dates"
+        },
+        {
+          "name": "Get dashboard details",
+          "description": "Shows detailed dashboard information including charts, sections, layout, and configuration"
+        },
+        {
+          "name": "List dashboard templates",
+          "description": "Lists all available dashboard templates, including ID, name, description, and platform"
+        },
+        {
+          "name": "Create dashboard",
+          "description": "Creates a new dashboard, optionally from a template or with a specific source"
+        },
+        {
+          "name": "Configure dashboard",
+          "description": "Updates a dashboard's name or source eligibility"
+        },
+        {
+          "name": "Set dashboard variable",
+          "description": "Creates or updates a dashboard variable, a filter in the dashboard toolbar referenced as {{name}} in chart queries"
+        },
+        {
+          "name": "Remove dashboard variable",
+          "description": "Removes a dashboard variable by name"
+        },
+        {
+          "name": "Export dashboard",
+          "description": "Exports a dashboard's full configuration, including charts, sections, and settings, as JSON"
+        },
+        {
+          "name": "Import dashboard",
+          "description": "Imports a new dashboard from a JSON configuration, creating a new dashboard with the provided data structure"
+        },
+        {
+          "name": "Remove dashboard",
+          "description": "Permanently removes a dashboard and all its associated charts"
+        },
+        {
+          "name": "Get chart details",
+          "description": "Shows chart configuration, SQL queries, and settings"
+        },
+        {
+          "name": "Get chart building instructions",
+          "description": "Provides guidance on chart types, units, axis settings, and best practices"
+        },
+        {
+          "name": "Get dashboard query instructions",
+          "description": "Provides instructions for writing ClickHouse queries used inside dashboard charts"
+        },
+        {
+          "name": "Add chart to dashboard",
+          "description": "Adds a new chart with a SQL query to a dashboard"
+        },
+        {
+          "name": "Configure chart",
+          "description": "Updates a chart's name, type, query, or settings"
+        },
+        {
+          "name": "Remove chart",
+          "description": "Permanently removes a chart from its dashboard"
+        },
+        {
+          "name": "Add dashboard section",
+          "description": "Adds a section divider to organize charts into groups"
+        },
+        {
+          "name": "Configure dashboard section",
+          "description": "Updates a section's title, description, or collapsed state"
+        },
+        {
+          "name": "Remove dashboard section",
+          "description": "Removes a section divider from a dashboard"
+        },
+        {
+          "name": "Move charts",
+          "description": "Rearranges chart positions on the dashboard grid"
+        },
+        {
+          "name": "List chart alerts",
+          "description": "Lists chart alerts with their ID, name, chart, and status"
+        },
+        {
+          "name": "Get chart alert details",
+          "description": "Shows configuration of a specific alert including its configuration, SQL queries, and current incident info"
+        },
+        {
+          "name": "Get chart alert instructions",
+          "description": "Provides instructions for creating and configuring chart alerts, including alert types and operators"
+        },
+        {
+          "name": "Create chart alert",
+          "description": "Creates a new alert on an existing chart with support for threshold, relative, and anomaly detection alert types"
+        },
+        {
+          "name": "Configure chart alert",
+          "description": "Updates an existing chart alert's configuration"
+        },
+        {
+          "name": "Remove chart alert",
+          "description": "Permanently removes a chart alert"
+        },
+        {
+          "name": "Pause or resume chart alert",
+          "description": "Pauses or unpauses a chart alert"
+        },
+        {
+          "name": "Get query instructions",
+          "description": "Provides instructions for building logs and spans queries to run directly via the query tools"
+        },
+        {
+          "name": "Get explore logs query instructions",
+          "description": "Provides instructions for writing queries for the Explore logs page and live-tail charts"
+        },
+        {
+          "name": "Get metrics schema",
+          "description": "Shows available metrics with data points and series count"
+        },
+        {
+          "name": "Get metric details",
+          "description": "Explains how to query and use specific metrics with examples"
+        },
+        {
+          "name": "Get metric query instructions",
+          "description": "Provides instructions for building metrics queries to run directly via the query tools"
+        },
+        {
+          "name": "List metric expressions",
+          "description": "Lists the extract-metrics-from-logs rules on a source"
+        },
+        {
+          "name": "Create metric expression",
+          "description": "Creates a new metric or label extracted from log fields"
+        },
+        {
+          "name": "Update metric expression",
+          "description": "Updates an existing metric expression's name, SQL expression, type, or aggregations"
+        },
+        {
+          "name": "Remove metric expression",
+          "description": "Deletes a metric expression from a source"
+        },
+        {
+          "name": "List data regions",
+          "description": "Shows available regions for storing data"
+        },
+        {
+          "name": "List clusters",
+          "description": "Lists storage clusters for direct data access"
+        },
+        {
+          "name": "List teams",
+          "description": "Shows teams with telemetry platform access"
+        },
+        {
+          "name": "Create cloud connection",
+          "description": "Creates temporary credentials for direct ClickHouse access"
+        },
+        {
+          "name": "List applications",
+          "description": "Shows all error tracking applications with status and configuration"
+        },
+        {
+          "name": "Get application details",
+          "description": "Provides detailed configuration, ingestion settings, and available data tables"
+        },
+        {
+          "name": "Create application",
+          "description": "Creates new error tracking applications with platform-specific integration guides"
+        },
+        {
+          "name": "List releases",
+          "description": "Shows all releases for an application with first and last seen timestamps"
+        },
+        {
+          "name": "List errors",
+          "description": "Lists error patterns for an application with occurrence counts, affected users, and current state"
+        },
+        {
+          "name": "Get error details",
+          "description": "Shows comprehensive error information including type, message, call site, first occurrence, and current state"
+        },
+        {
+          "name": "Update error state",
+          "description": "Changes error state to mark errors as resolved, ignored, or unresolved with optional notification settings"
+        },
+        {
+          "name": "Get replays query instructions",
+          "description": "Provides instructions for querying session replay data, including data structure, fields, and query patterns"
+        },
+        {
+          "name": "Get errors query instructions",
+          "description": "Provides comprehensive documentation for querying error data including the two-layer architecture (errors and exceptions)"
+        },
+        {
+          "name": "List team members",
+          "description": "Shows members of a team, including pending invitations, with each member's e-mail, name, and role"
+        },
+        {
+          "name": "List team roles",
+          "description": "Lists the roles in your organization with their IDs, including custom roles"
+        },
+        {
+          "name": "Invite team member",
+          "description": "Invites someone to a team by e-mail address with an optional role"
+        },
+        {
+          "name": "Change team member role",
+          "description": "Changes an existing team member's role"
+        },
+        {
+          "name": "Remove team member",
+          "description": "Removes a member from a team or cancels a pending invitation"
+        }
+      ]
     },
     {
       "name": "com.box/mcp",
@@ -2625,7 +3317,201 @@
         ],
         "resource": "https://mcp.clickup.com/mcp"
       },
-      "relevance": 70
+      "relevance": 70,
+      "tools": [
+        {
+          "name": "Search Workspace",
+          "description": "Searches for items across the entire ClickUp Workspace, including tasks, Lists, Folders, and Docs."
+        },
+        {
+          "name": "Search tasks by task type",
+          "description": "Retrieves tasks filtered by task type."
+        },
+        {
+          "name": "Search tasks by tag",
+          "description": "Retrieves tasks filtered by tags."
+        },
+        {
+          "name": "Create Task",
+          "description": "Creates a new task in a specific List. You can specify details like the task name, description, assignees, due date, and priority."
+        },
+        {
+          "name": "Get Task",
+          "description": "Retrieves the full details of a single task using its unique task ID."
+        },
+        {
+          "name": "Update Task",
+          "description": "Modifies the properties of an existing task. This can include changing the task's name, description, status, assignees, or due date."
+        },
+        {
+          "name": "Set Custom Fields",
+          "description": "Set Custom Fields on tasks."
+        },
+        {
+          "name": "Delete task",
+          "description": "Deletes a task or subtask."
+        },
+        {
+          "name": "Create Bulk Tasks",
+          "description": "Creates multiple tasks in a specified List with a single API call."
+        },
+        {
+          "name": "Update Bulk Tasks",
+          "description": "Modifies multiple tasks at once. This is useful for changing the status, assignee, or due date for a group of tasks simultaneously."
+        },
+        {
+          "name": "Attach File to Task",
+          "description": "Uploads and attaches a file (like a document, image, or ZIP file) to a specific task."
+        },
+        {
+          "name": "Get Task Comments",
+          "description": "Retrieves all comments from a specific task."
+        },
+        {
+          "name": "Get Threaded Replies",
+          "description": "Retrieves threaded replies under a parent task comment."
+        },
+        {
+          "name": "Create Task Comment",
+          "description": "Adds a new comment to a task. This can be used to ask questions, provide updates, or @mention other team members."
+        },
+        {
+          "name": "Add Tag to Task",
+          "description": "Applies an existing tag (label) to a task for categorization."
+        },
+        {
+          "name": "Remove Tag from Task",
+          "description": "Removes a specific tag from a task."
+        },
+        {
+          "name": "Add task link",
+          "description": "Relate two tasks by linking them."
+        },
+        {
+          "name": "Remove task link",
+          "description": "Remove links between tasks."
+        },
+        {
+          "name": "Add dependency",
+          "description": "Create a dependency relationship between tasks."
+        },
+        {
+          "name": "Remove dependency",
+          "description": "Remove a dependency relationship between tasks."
+        },
+        {
+          "name": "Move task to a new List",
+          "description": "Move a task to a new home List."
+        },
+        {
+          "name": "Add task to another List",
+          "description": "Add a task to another List."
+        },
+        {
+          "name": "Get Task Time Entries",
+          "description": "Retrieves all time log entries for a specific task."
+        },
+        {
+          "name": "Get time entries for multiple tasks",
+          "description": "Retrieves total time entries fro tasks in a specific Space, Folder, or List."
+        },
+        {
+          "name": "Start Time Tracking",
+          "description": "Starts a timer for a specific task for the current user."
+        },
+        {
+          "name": "Stop Time Tracking",
+          "description": "Stops the currently active timer for the user."
+        },
+        {
+          "name": "Add Time Entry",
+          "description": "Manually adds a block of time (a time entry) to a task, including a start and end time or a duration."
+        },
+        {
+          "name": "Get Current Time Entry",
+          "description": "Checks if the user has a timer currently running and, if so, returns the details of that time entry."
+        },
+        {
+          "name": "Get Workspace Hierarchy",
+          "description": "Retrieves the full structure of the Workspace, including all Spaces, Folders, and Lists."
+        },
+        {
+          "name": "Create List",
+          "description": "Creates a new List within a specific Folder or Space."
+        },
+        {
+          "name": "Create List in Folder",
+          "description": "Creates a new List specifically inside a designated Folder."
+        },
+        {
+          "name": "Get List",
+          "description": "Retrieves the details and settings for a single List."
+        },
+        {
+          "name": "Update List",
+          "description": "Modifies the settings of an existing List, such as changing its name or color."
+        },
+        {
+          "name": "Get Folder",
+          "description": "Retrieves the details for a single Folder, including the Lists it contains."
+        },
+        {
+          "name": "Create Folder",
+          "description": "Creates a new Folder within a specific Space."
+        },
+        {
+          "name": "Update Folder",
+          "description": "Modifies the settings of an existing Folder, such as changing its name."
+        },
+        {
+          "name": "Get Workspace Members",
+          "description": "Retrieves a list of all members and guests in the Workspace."
+        },
+        {
+          "name": "Find Member by Name",
+          "description": "Searches for a Workspace member using their name or email."
+        },
+        {
+          "name": "Resolve Assignees",
+          "description": "A utility to confirm and retrieve the user objects for a list of potential assignees, often used before adding them to a task."
+        },
+        {
+          "name": "Get Chat Channels",
+          "description": "Retrieves a list of all Chat channels (views) in the Workspace."
+        },
+        {
+          "name": "Send Chat Message",
+          "description": "Sends a message to a specific Chat channel."
+        },
+        {
+          "name": "Create Document",
+          "description": "Creates a new Doc within the Workspace, usually in a specific location (like a Space or Folder) or in the private Docs area."
+        },
+        {
+          "name": "List Document Pages",
+          "description": "Retrieves the structure or table of contents of a Doc, listing all its pages."
+        },
+        {
+          "name": "Get Document Pages",
+          "description": "Retrieves the content of one or more pages from a specific Doc."
+        },
+        {
+          "name": "Create Document Page",
+          "description": "Adds a new page (or sub-page) to an existing Doc."
+        },
+        {
+          "name": "Update Document Page",
+          "description": "Edits the content of an existing page within a Doc."
+        },
+        {
+          "name": "Get Time in Status for a task",
+          "description": "Retrieve the amount of time a task has been in a status."
+        },
+        {
+          "name": "Get Time in Status for tasks in a List",
+          "description": "Retrieve time in status metrics for multiple tasks."
+        }
+      ]
     },
     {
       "name": "com.close/mcp",
@@ -7298,7 +8184,257 @@
         ],
         "resource": "https://mcp.grafana.com/mcp"
       },
-      "relevance": 80
+      "relevance": 80,
+      "tools": [
+        {
+          "name": "search_dashboards",
+          "description": "Search for dashboards by query string."
+        },
+        {
+          "name": "search_folders",
+          "description": "Search for folders by query string."
+        },
+        {
+          "name": "generate_deeplink",
+          "description": "Generate deeplink URLs for dashboards, panels, and Explore queries."
+        },
+        {
+          "name": "get_dashboard_by_uid",
+          "description": "Retrieve the complete dashboard JSON by UID."
+        },
+        {
+          "name": "get_dashboard_summary",
+          "description": "Get a compact summary of a dashboard without the full JSON."
+        },
+        {
+          "name": "get_dashboard_property",
+          "description": "Extract specific parts of a dashboard using JSONPath expressions."
+        },
+        {
+          "name": "get_dashboard_panel_queries",
+          "description": "Retrieve panel queries with template variable substitution."
+        },
+        {
+          "name": "update_dashboard",
+          "description": "Create or update a dashboard using full JSON or targeted patch operations."
+        },
+        {
+          "name": "create_folder",
+          "description": "Create a Grafana folder."
+        },
+        {
+          "name": "list_datasources",
+          "description": "List all configured data sources. Supports filtering by type and pagination."
+        },
+        {
+          "name": "get_datasource",
+          "description": "Get detailed information about a data source by UID or name."
+        },
+        {
+          "name": "list_prometheus_metric_names",
+          "description": "Discover available metrics with regex filtering and pagination."
+        },
+        {
+          "name": "list_prometheus_metric_metadata",
+          "description": "List metadata about currently scraped metrics."
+        },
+        {
+          "name": "list_prometheus_label_names",
+          "description": "List label names with optional series selector and time range filtering."
+        },
+        {
+          "name": "list_prometheus_label_values",
+          "description": "Get values for a specific label."
+        },
+        {
+          "name": "query_prometheus",
+          "description": "Execute PromQL instant or range queries."
+        },
+        {
+          "name": "query_prometheus_histogram",
+          "description": "Query histogram percentiles."
+        },
+        {
+          "name": "list_loki_label_names",
+          "description": "List available label names in logs."
+        },
+        {
+          "name": "list_loki_label_values",
+          "description": "Get unique values for a specific label."
+        },
+        {
+          "name": "query_loki_logs",
+          "description": "Execute LogQL queries for log entries or metric values."
+        },
+        {
+          "name": "query_loki_stats",
+          "description": "Get statistics about log streams."
+        },
+        {
+          "name": "query_loki_patterns",
+          "description": "Detect and analyze common log patterns."
+        },
+        {
+          "name": "list_pyroscope_label_names",
+          "description": "List available label names in profiles."
+        },
+        {
+          "name": "list_pyroscope_label_values",
+          "description": "List values for a specific label."
+        },
+        {
+          "name": "list_pyroscope_profile_types",
+          "description": "List available profile types."
+        },
+        {
+          "name": "query_pyroscope",
+          "description": "Query profiles or metrics from Pyroscope."
+        },
+        {
+          "name": "list_clickhouse_tables",
+          "description": "List available tables with metadata."
+        },
+        {
+          "name": "describe_clickhouse_table",
+          "description": "Get column schema for a table."
+        },
+        {
+          "name": "query_clickhouse",
+          "description": "Execute SQL queries against ClickHouse datasources."
+        },
+        {
+          "name": "list_cloudwatch_namespaces",
+          "description": "List available AWS namespaces."
+        },
+        {
+          "name": "list_cloudwatch_metrics",
+          "description": "List metrics for a namespace."
+        },
+        {
+          "name": "list_cloudwatch_dimensions",
+          "description": "List dimension keys for a metric."
+        },
+        {
+          "name": "query_cloudwatch",
+          "description": "Query AWS CloudWatch metrics."
+        },
+        {
+          "name": "query_elasticsearch",
+          "description": "Execute Lucene or Query DSL searches against Elasticsearch datasources."
+        },
+        {
+          "name": "alerting_manage_rules",
+          "description": "List, filter, and manage alert rules. With write scope, supports creating and updating rules."
+        },
+        {
+          "name": "alerting_manage_routing",
+          "description": "View alerting routing configuration, notification policies, contact points, and time intervals."
+        },
+        {
+          "name": "get_annotations",
+          "description": "Fetch annotations filtered by dashboard UID, time range, or tags."
+        },
+        {
+          "name": "get_annotation_tags",
+          "description": "Get annotation tags with optional filtering."
+        },
+        {
+          "name": "create_annotation",
+          "description": "Create a new annotation on a dashboard or panel."
+        },
+        {
+          "name": "update_annotation",
+          "description": "Update properties of an existing annotation."
+        },
+        {
+          "name": "list_incidents",
+          "description": "List incidents with optional status filtering."
+        },
+        {
+          "name": "get_incident",
+          "description": "Get full incident details by ID."
+        },
+        {
+          "name": "create_incident",
+          "description": "Create a new incident."
+        },
+        {
+          "name": "add_activity_to_incident",
+          "description": "Add a note to an incident’s timeline."
+        },
+        {
+          "name": "list_oncall_schedules",
+          "description": "List OnCall schedules with optional team filtering."
+        },
+        {
+          "name": "get_oncall_shift",
+          "description": "Get detailed shift information."
+        },
+        {
+          "name": "get_current_oncall_users",
+          "description": "Get users currently on-call for a schedule."
+        },
+        {
+          "name": "list_oncall_teams",
+          "description": "List OnCall teams."
+        },
+        {
+          "name": "list_oncall_users",
+          "description": "List OnCall users with optional filtering."
+        },
+        {
+          "name": "list_alert_groups",
+          "description": "List alert groups with filtering by state, team, time range, and labels."
+        },
+        {
+          "name": "get_alert_group",
+          "description": "Get a specific alert group by ID."
+        },
+        {
+          "name": "list_investigations",
+          "description": "List Assistant investigations with optional filtering and pagination."
+        },
+        {
+          "name": "list_investigation_profiles",
+          "description": "List available Assistant investigation profiles."
+        },
+        {
+          "name": "get_investigation",
+          "description": "Get investigation details, lifecycle state, metadata, and report snapshot."
+        },
+        {
+          "name": "list_investigation_evidence",
+          "description": "List evidence collected for an Assistant investigation."
+        },
+        {
+          "name": "get_investigation_thread",
+          "description": "Get the message thread for an Assistant investigation."
+        },
+        {
+          "name": "create_investigation",
+          "description": "Start a new Assistant investigation from an external AI agent."
+        },
+        {
+          "name": "ask_assistant",
+          "description": "Send a prompt to Grafana Assistant and get the full reply, including tool use and reasoning."
+        },
+        {
+          "name": "get_assertions",
+          "description": "Get assertion summary for an entity."
+        },
+        {
+          "name": "get_panel_image",
+          "description": "Render a dashboard panel as a PNG image."
+        },
+        {
+          "name": "describe_infrastructure",
+          "description": "Retrieve pre-built summaries of service groups including topology, metrics, and dependencies."
+        },
+        {
+          "name": "get_query_examples",
+          "description": "Get example queries for datasource types."
+        }
+      ]
     },
     {
       "name": "ai.granola/mcp",
@@ -7765,7 +8901,13 @@
         ],
         "resource": "https://huggingface.co/mcp?login"
       },
-      "relevance": 80
+      "relevance": 80,
+      "tools": [
+        {
+          "name": "hf_fs",
+          "description": "Use to access the Hugging Face Hub. Navigate resources and run semantic searches of Documents and Spaces."
+        }
+      ]
     },
     {
       "name": "com.incident/mcp",
@@ -9671,7 +10813,49 @@
         "docs_url": "https://learn.microsoft.com/en-us/microsoft-agent-365/tooling-servers-overview",
         "note": "Requires Microsoft 365 Copilot and an enabled Work IQ/Agent 365 tenant."
       },
-      "relevance": 92
+      "relevance": 92,
+      "tools": [
+        {
+          "name": "mcp_MailTools_graph_mail_createMessage",
+          "description": "Create a draft email. Supports HTML by setting body.body.contentType = \"HTML\"."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_deleteMessage",
+          "description": "Deletes a message from the signed-in user's mailbox."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_getMessage",
+          "description": "Gets a message by ID from the signed-in user's mailbox. Use preferHtml to request HTML body."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_listSent",
+          "description": "List messages in sent items."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_reply",
+          "description": "Send a reply to an existing message. Supports HTML via preferHtml or headers."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_replyAll",
+          "description": "Send a reply-all to an existing message. Supports HTML via preferHtml or headers."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_searchMessages",
+          "description": "Search Outlook messages using Microsoft Graph Search API with keyword query language (KQL) style queries."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_sendDraft",
+          "description": "Send an existing draft message by ID."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_sendMail",
+          "description": "Send an email as the signed-in user."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_updateMessage",
+          "description": "Updates a message's mutable properties, such as the subject, body, and categories."
+        }
+      ]
     },
     {
       "name": "com.microsoft/sentinel",
@@ -10956,7 +12140,65 @@
         ],
         "docs_url": "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_0714082142.html",
         "note": "NetSuite does not allow the Administrator role for this connection."
-      }
+      },
+      "tools": [
+        {
+          "name": "ns_createRecord",
+          "description": "Creates a new record in NetSuite."
+        },
+        {
+          "name": "ns_getRecord",
+          "description": "Retrieves a record in NetSuite."
+        },
+        {
+          "name": "ns_getRecordTypeMetadata",
+          "description": "Retrieves metadata for all NetSuite record types or for a specific record type, including available fields and their data types."
+        },
+        {
+          "name": "ns_updateRecord",
+          "description": "Updates an existing record in NetSuite."
+        },
+        {
+          "name": "ns_getAccountingBooks",
+          "description": "Returns a list of accounting books in your NetSuite account that can be used to filter report results."
+        },
+        {
+          "name": "ns_getAccountingContexts",
+          "description": "Returns a list of accounting contexts in your NetSuite account that can be used to filter report results."
+        },
+        {
+          "name": "ns_getNexusIds",
+          "description": "Returns a list of nexuses in your NetSuite account that can be used to filter report results."
+        },
+        {
+          "name": "ns_getSubsidiaries",
+          "description": "Returns a list of subsidiaries in your NetSuite account that can be used to filter report results."
+        },
+        {
+          "name": "ns_listAllReports",
+          "description": "Returns a list of all standard and custom reports in your NetSuite account."
+        },
+        {
+          "name": "ns_runReport",
+          "description": "Runs a report in your NetSuite account and displays the results."
+        },
+        {
+          "name": "ns_listSavedSearches",
+          "description": "Returns a list of all saved searches in your NetSuite account."
+        },
+        {
+          "name": "ns_runSavedSearch",
+          "description": "Runs an existing saved search from your NetSuite account."
+        },
+        {
+          "name": "ns_runCustomSuiteQL",
+          "description": "Runs a custom SuiteQL query in NetSuite. Only read-only queries are supported. Useful for gathering information of all types."
+        },
+        {
+          "name": "ns_getSuiteQLMetadata",
+          "description": "Retrieves metadata for NetSuite records that you can access with SuiteQL, including available fields, data types, and joinable fields."
+        }
+      ]
     },
     {
       "name": "com.newrelic/mcp",
@@ -11350,7 +12592,193 @@
           "Select Connect and complete n8n OAuth."
         ],
         "docs_url": "https://docs.n8n.io/connect/connect-to-n8n-mcp-server"
-      }
+      },
+      "tools": [
+        {
+          "name": "search_workflows",
+          "description": "Search for workflows with optional filters. Returns a preview of each workflow."
+        },
+        {
+          "name": "get_workflow_details",
+          "description": "Get detailed information about a specific workflow, including trigger details."
+        },
+        {
+          "name": "execute_workflow",
+          "description": "Execute a workflow by ID. Returns the execution ID immediately without waiting for completion."
+        },
+        {
+          "name": "test_workflow",
+          "description": "Test a workflow using pin data to bypass external services. Trigger nodes, nodes with credentials, and HTTP Request nodes are pinned (use simulated data). Other nodes (Set, If, Code, etc.) execute normally, including credential-free I/O nodes like Execute Command or file read/write nodes."
+        },
+        {
+          "name": "prepare_workflow_pin_data",
+          "description": "Prepare test pin data for a workflow. Trigger nodes, nodes with credentials, and HTTP Request nodes need pin data. Logic nodes (Set, If, Code, etc.) and credential-free I/O nodes (Execute Command, file read/write) execute normally without pin data. Returns JSON Schemas describing the expected output shape for each node that needs pin data."
+        },
+        {
+          "name": "publish_workflow",
+          "description": "Publish (activate) a workflow to make it available for production execution. This creates an active version from the current draft."
+        },
+        {
+          "name": "unpublish_workflow",
+          "description": "Unpublish (deactivate) a workflow to stop it from being available for production execution."
+        },
+        {
+          "name": "get_workflow_versions_diff",
+          "description": "Compare two saved versions of a workflow and return what changed between them."
+        },
+        {
+          "name": "search_projects",
+          "description": "Search for projects accessible to the current user. Use this to resolve a project ID before creating workflows or data tables in a specific project."
+        },
+        {
+          "name": "search_folders",
+          "description": "Search for folders within a project."
+        },
+        {
+          "name": "list_workflow_tags",
+          "description": "List all workflow tags in the instance. Tags are global (not project-scoped) and can be used with `search_workflows` to filter results."
+        },
+        {
+          "name": "get_workflow_execution",
+          "description": "Get execution details by execution ID and workflow ID. By default returns metadata only."
+        },
+        {
+          "name": "search_workflow_executions",
+          "description": "Search for workflow executions with optional filters. Returns execution metadata including status, timing, and workflow ID."
+        },
+        {
+          "name": "list_credentials",
+          "description": "List credentials the current user can access. Use this to find a credential ID before referencing it from a workflow node. Never returns credential secret data."
+        },
+        {
+          "name": "get_workflow_sdk_reference",
+          "description": "Get the n8n Workflow SDK reference documentation including patterns, expression syntax, functions, rules, import syntax, guidelines, and design guidance."
+        },
+        {
+          "name": "search_nodes",
+          "description": "Search for n8n nodes by service name, trigger type, or utility function. Set `usage` to `\"agentTool\"` to return only agent-compatible tool nodes. Returns node IDs, discriminators (resource/operation/mode), and related nodes needed for `get_node_types` tool."
+        },
+        {
+          "name": "get_node_types",
+          "description": "Get TypeScript type definitions for n8n nodes. Returns exact parameter names and structures."
+        },
+        {
+          "name": "get_workflow_best_practices",
+          "description": "Get best-practices guidance for a workflow technique. Useful this before searching for nodes or writing workflow code."
+        },
+        {
+          "name": "explore_node_resources",
+          "description": "Resolve the real values behind a node's resource locator or load-options dropdown (for example Slack channels, Google Sheets tabs, or available AI models). Requires a credential to be set for the desired service."
+        },
+        {
+          "name": "validate_workflow",
+          "description": "Validate n8n Workflow SDK code. Parses the code into a workflow and checks for errors. Always validate before creating or updating a workflow."
+        },
+        {
+          "name": "validate_node_config",
+          "description": "Validate one or more node configurations independently against their generated node schemas. Useful while composing nodes, before assembling workflow code or calling `update_workflow`."
+        },
+        {
+          "name": "create_workflow_from_code",
+          "description": "Create a workflow in n8n from validated SDK code. Parses the code into a workflow and saves it."
+        },
+        {
+          "name": "update_workflow",
+          "description": "Update an existing workflow in n8n by applying an ordered batch of targeted partial updates. The batch is atomic: if any operation fails, no changes are saved."
+        },
+        {
+          "name": "archive_workflow",
+          "description": "Archive a workflow in n8n by its ID."
+        },
+        {
+          "name": "search_agents",
+          "description": "Search agents the current user can access. Use `publishedOnly` and `excludeAgentId` to discover candidate sub-agents."
+        },
+        {
+          "name": "get_agent",
+          "description": "Read an agent draft, its skills, tasks, custom tools, runnable state, and `configHash`. Call before `mutate_agent`. Pass `versionId` to inspect a published version snapshot instead of the draft."
+        },
+        {
+          "name": "get_agent_builder_reference",
+          "description": "Return the required reference for agent configuration and `mutate_agent` operations, including the canonical agent configuration JSON Schema. Read before building an agent."
+        },
+        {
+          "name": "discover_agent_assets",
+          "description": "Discover model catalogs, chat integrations, attachable workflows, published sub-agents, or MCP registry servers to ground an agent's configuration."
+        },
+        {
+          "name": "create_agent",
+          "description": "Create an agent draft, optionally with its initial model, credential, instructions, and ordinary tool configuration. Use `mutate_agent` afterward for skills, tasks, and custom tools."
+        },
+        {
+          "name": "mutate_agent",
+          "description": "Apply one config, skill, task, or custom-tool mutation to an agent draft. Returns the next `configHash` for subsequent mutations."
+        },
+        {
+          "name": "validate_agent",
+          "description": "Validate an agent draft, its sidecar references, and user-accessible credentials."
+        },
+        {
+          "name": "call_agent",
+          "description": "Test an agent draft through the built-in Preview chat. Start or continue a conversation with a message request, or resume a returned approval after a person decides."
+        },
+        {
+          "name": "verify_agent_mcp_server",
+          "description": "Test an MCP server with a user-accessible credential and return its available tools. Call before writing an `mcpServers` config entry."
+        },
+        {
+          "name": "publish_agent",
+          "description": "Publish a valid agent draft and activate its tasks and integrations. Pass `versionId` to republish a previously published version instead."
+        },
+        {
+          "name": "unpublish_agent",
+          "description": "Unpublish an agent and stop its live tasks and integrations."
+        },
+        {
+          "name": "revert_agent",
+          "description": "Restore an agent draft from a published version, overwriting the draft's config, skills, tasks, and custom tools. Doesn't publish."
+        },
+        {
+          "name": "list_agent_versions",
+          "description": "List the publish history of an agent, newest first."
+        },
+        {
+          "name": "update_agent_integration",
+          "description": "Configure or disconnect a Slack, Telegram, or Linear conversation integration. This is the only way to manage integrations; `config.replace` and `config.patch` in `mutate_agent` can't change them."
+        },
+        {
+          "name": "delete_agent",
+          "description": "Permanently delete an agent and its associated resources."
+        },
+        {
+          "name": "search_data_tables",
+          "description": "Search for data tables accessible to the current user. Use this to find a data table ID before modifying or adding data to it."
+        },
+        {
+          "name": "create_data_table",
+          "description": "Create a new data table with the specified columns."
+        },
+        {
+          "name": "add_data_table_column",
+          "description": "Add a new column to an existing data table."
+        },
+        {
+          "name": "rename_data_table_column",
+          "description": "Rename a column in a data table."
+        },
+        {
+          "name": "delete_data_table_column",
+          "description": "Delete a column from a data table. This permanently removes the column and all its data."
+        },
+        {
+          "name": "rename_data_table",
+          "description": "Rename an existing data table."
+        },
+        {
+          "name": "add_data_table_rows",
+          "description": "Insert rows into an existing data table. Each row is an object mapping column names to values."
+        }
+      ]
     },
     {
       "name": "com.paddle/mcp",
@@ -12997,7 +14425,53 @@
           "Connect and complete Salesforce sign-in."
         ],
         "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/client-connection-overview.html"
-      }
+      },
+      "tools": [
+        {
+          "name": "getObjectSchema",
+          "description": "Returns Salesforce schema information optimized for LLM consumption. Call with no parameters first to get a compact index of all queryable business objects. Then call with a specific object name to get field-level details."
+        },
+        {
+          "name": "soqlQuery",
+          "description": "Executes a SOQL query to retrieve Salesforce records. This is the primary way to read data when you know which object and fields you need."
+        },
+        {
+          "name": "find",
+          "description": "Executes a text search across multiple Salesforce objects simultaneously."
+        },
+        {
+          "name": "getUserInfo",
+          "description": "Returns the currently authenticated user’s identity and context — User ID, name, email, role, profile, manager, local time, and timezone."
+        },
+        {
+          "name": "listRecentSobjectRecords",
+          "description": "Returns records of a specific type that the user recently viewed or modified."
+        },
+        {
+          "name": "getRelatedRecords",
+          "description": "Retrieves child records related to a parent record by traversing relationships."
+        },
+        {
+          "name": "createSobjectRecord",
+          "description": "Creates a new Salesforce record."
+        },
+        {
+          "name": "updateSobjectRecord",
+          "description": "Updates an existing record by ID."
+        },
+        {
+          "name": "updateRelatedRecord",
+          "description": "Updates a child record by navigating from a parent record through a relationship."
+        },
+        {
+          "name": "deleteSobjectRecord",
+          "description": "Permanently deletes a record by ID."
+        },
+        {
+          "name": "deleteRelatedRecord",
+          "description": "Deletes a child record by navigating from a parent record through a relationship."
+        }
+      ]
     },
     {
       "name": "io.sanity/mcp",
@@ -16507,7 +17981,69 @@
         ],
         "docs_url": "https://developers.zoom.us/docs/mcp/zoom-revenue-accelerator-mcp-server/",
         "note": "The signing-in user also needs a Zoom Revenue Accelerator license."
-      }
+      },
+      "tools": [
+        {
+          "name": "get_conversation_analysis",
+          "description": "Batch endpoint for analysis sections. You can request up to 20 conversation IDs in one call. The response is keyed directly by conversation_id, and a missing section means analysis is unavailable or not ready."
+        },
+        {
+          "name": "get_conversation_comments",
+          "description": "Returns the comment history for a conversation in chronological order. This endpoint is non-paginated and currently returns up to 200 comments."
+        },
+        {
+          "name": "get_conversation_transcript",
+          "description": "Returns a chronological verbatim transcript."
+        },
+        {
+          "name": "get_customer_accounts",
+          "description": "Get customer account records with optional account ID list and keyword filters."
+        },
+        {
+          "name": "get_customer_contacts",
+          "description": "Get customer contact records with optional contact ID list, keyword/account filters, and enrichment options."
+        },
+        {
+          "name": "get_deal_activities_v2",
+          "description": "Returns the complete interaction history (meetings, calls, and emails) for a deal with pagination support. Enable include_content only for content analysis."
+        },
+        {
+          "name": "get_deal_analysis",
+          "description": "Returns one or both analysis blocks: story and playbook. If analysis_types is omitted, the API attempts to return both."
+        },
+        {
+          "name": "get_deal_detail_v2",
+          "description": "Given deal IDs, returns richer fields including description, team members, key contacts, and optional custom fields. Maximum 20 IDs per call."
+        },
+        {
+          "name": "get_deal_stages",
+          "description": "Retrieves the list of deal pipeline stages configured in Zoom Revenue Accelerator."
+        },
+        {
+          "name": "get_manager_team_and_member",
+          "description": "Dual-mode endpoint. Without team_ids, returns the managed team list (overview). With team_ids (maximum 5), returns team details with recursive member lists."
+        },
+        {
+          "name": "get_scorecard_sessions",
+          "description": "Retrieves scorecard evaluation sessions for a given list of conversation IDs."
+        },
+        {
+          "name": "search_conversations",
+          "description": "Retrieves a paginated list of conversations with flexible filtering options."
+        },
+        {
+          "name": "search_deals",
+          "description": "Search for CRM deals using a combination of filters including scope, keyword, pipeline stage, owner, amount range, close date range, last activity date range, customer account, and team membership."
+        },
+        {
+          "name": "search_indicators",
+          "description": "Retrieves the list of keyword and topic indicators configured by your account admin."
+        },
+        {
+          "name": "search_internal_users",
+          "description": "Resolves a team member's name or email fragment to their internal ZRA user ID."
+        }
+      ]
     },
     {
       "name": "us.zoom/team-chat",
