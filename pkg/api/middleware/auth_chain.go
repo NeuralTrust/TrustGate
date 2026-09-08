@@ -25,6 +25,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -117,10 +118,14 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
 	}
-	if token := bearerToken(c); token != "" {
+	// An api key presented as a bearer token is an api key, not a token to hand
+	// to the IdP validators: most MCP clients can only send Authorization, and
+	// the proxy plane has always accepted that form. A bearer without the api-key
+	// marker keeps its precedence over the key headers.
+	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
 		return r.resolveBearer(c.UserContext(), token, scope)
 	}
-	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
+	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
 	return Identity{}, resolver.ErrUnauthenticated
@@ -143,7 +148,11 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	hasOAuth2 := false
 	hasEnabledOAuth2 := false
 	hasEnabledAuth := false
+	signInMatch := false
 	for _, m := range matches {
+		if wantsSignIn(m.Consumer) {
+			signInMatch = true
+		}
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
 			if a.Enabled {
@@ -157,11 +166,16 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 			}
 		}
 	}
-	// The built-in provider bootstraps consumers that carry no credential of
-	// their own. Once a path has an enabled one — an api key, mTLS, or its own
-	// oauth2 IdP — that credential is the only way in: falling back here would
-	// let any platform login reach the consumer without it.
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
+	// The built-in provider bootstraps consumers whose *users sign in* and that
+	// carry no identity provider of their own. Two things exclude it. An enabled
+	// credential on the path — an api key, mTLS, or its own oauth2 IdP — is then
+	// the only way in: falling back here would let any platform login reach the
+	// consumer without it. And a consumer that authenticates as an application
+	// (acts_for_users = false) is never entered by a person, so it must not be
+	// rescued when it holds no credential: revoking its last api key would
+	// otherwise not lock it down but open it up, since an empty auth binding
+	// accepts any client the provider verifies.
+	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth && signInMatch
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
@@ -199,6 +213,17 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 		return r.resolveJWT(ctx, token, candidates, scope)
 	}
 	return r.resolveOpaque(ctx, token, candidates, scope)
+}
+
+// wantsSignIn reports whether a matched consumer is entered by people signing
+// in — the platform identity, or the Store, which is that identity by
+// construction. A consumer with no identity of its own is not: acts_for_users
+// defaults to false, which means the application authenticates as itself.
+func wantsSignIn(cons *consumerdomain.Consumer) bool {
+	if cons == nil {
+		return false
+	}
+	return cons.Identity.PlatformUsers() || consumerdomain.IsStoreConsumer(cons)
 }
 
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {

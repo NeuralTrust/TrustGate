@@ -116,9 +116,9 @@ func (d *RPCDispatcher) Dispatch(
 // empty surface rather than fail: an upstream still awaiting the user's consent
 // is skipped (the connect page handles it, and the Store meta-tools must stay
 // reachable so the user can fix it), and a consumer that acts for users — the
-// Store, whose registries are whatever the caller installed, or a custom
-// consumer whose servers Access scopes per person — has nothing to list when
-// none is exposed to this principal or none is reachable. Every list method
+// Store, whose registries are whatever the caller installed and Access allows —
+// has nothing to list when none is exposed to this principal or none is
+// reachable. Every list method
 // (tools, prompts, resources, resource templates) degrades the same way so a
 // client that lists all four during initialization never sees one of them fail
 // on a pending consent.

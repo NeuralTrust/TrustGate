@@ -186,6 +186,12 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 
 	var candidates []binding
 	var pendingConsent *ConsentRequiredError
+	// firstSkipped is the reason the first fail-open skip gave. It matters only
+	// when nothing at all was reachable: there is no healthy surface left to
+	// protect, so the caller is better served by the real cause — a
+	// misconfiguration like an upstream that reuses the caller's token — than by
+	// a bare "unreachable".
+	var firstSkipped error
 	denied := make(map[string]struct{})
 	reachable := 0
 	for _, found := range c.discoverTools(ctx, rc, registries) {
@@ -207,6 +213,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
+			}
+			if firstSkipped == nil {
+				firstSkipped = fmt.Errorf("registry %q: %w", reg.Name, err)
 			}
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
@@ -235,6 +244,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		// actionable explanation, so it wins over a bare "unreachable".
 		if pendingConsent != nil {
 			return nil, pendingConsent
+		}
+		if firstSkipped != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, firstSkipped)
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}

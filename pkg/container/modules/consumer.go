@@ -109,5 +109,10 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(consumerhttp.NewAssociationHandler); err != nil {
 		return err
 	}
+	// The upstream-accounts handler needs the connect service, which only the
+	// planes that serve MCP provide; the admin router takes it as optional.
+	if err := c.Provide(consumerhttp.NewUpstreamAccountsHandler); err != nil {
+		return err
+	}
 	return nil
 }
