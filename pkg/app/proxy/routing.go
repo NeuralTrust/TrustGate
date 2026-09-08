@@ -364,36 +364,6 @@ func nextChainRoute(
 	return nil
 }
 
-func noRegistryServesModelError(model string, chain []routingdomain.Route, last failoverState) error {
-	err := fmt.Errorf("%w: %q (tried %s)",
-		routingdomain.ErrNoRegistryServesModel, model, strings.Join(chainProviders(chain), ", "))
-	if last.resp == nil {
-		return err
-	}
-	detail := adapter.ProviderErrorMessage(last.resp.Body)
-	if detail == "" {
-		return err
-	}
-	return fmt.Errorf("%w: last provider response: %s", err, detail)
-}
-
-func chainProviders(chain []routingdomain.Route) []string {
-	out := make([]string, 0, len(chain))
-	seen := make(map[string]struct{}, len(chain))
-	for _, route := range chain {
-		if route.Registry == nil {
-			continue
-		}
-		provider := route.Registry.Provider()
-		if _, dup := seen[provider]; dup {
-			continue
-		}
-		seen[provider] = struct{}{}
-		out = append(out, provider)
-	}
-	return out
-}
-
 func smartRoutingBaseline(
 	lb *loadbalancer.LoadBalancer,
 	excluded map[routingdomain.RouteKey]struct{},

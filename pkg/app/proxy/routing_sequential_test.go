@@ -191,8 +191,12 @@ func TestForward_SequentialChain_NoRegistryServesTheModel(t *testing.T) {
 	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel),
 		"the gateway must own the failure instead of relaying one provider's model_not_found, got %v", err)
 	assert.Contains(t, err.Error(), "nope-9")
-	assert.Contains(t, err.Error(), "openai")
-	assert.Contains(t, err.Error(), "vertex")
+	assert.Contains(t, err.Error(), "registry-openai")
+	assert.Contains(t, err.Error(), "registry-vertex")
+	assert.NotContains(t, err.Error(), "tried",
+		"the message names every bound registry, not the subset that was probed")
+	assert.NotContains(t, err.Error(), "do not have access",
+		"no provider's own text may reach the client")
 	assert.Equal(t, []string{"openai", "vertex"}, *invoked)
 }
 
@@ -375,7 +379,7 @@ func TestForward_SequentialChain_FallbackBudgetDoesNotTruncateRegistrySelection(
 		"the fallback attempt budget bounds failover retries, not registry selection")
 }
 
-func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(t *testing.T) {
+func TestForward_SequentialChain_NoRegistryServesTheModelDropsTheProviderDetail(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai)
@@ -393,8 +397,43 @@ func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
-	assert.Contains(t, err.Error(), "do not have access",
-		"the provider's own diagnosis must survive alongside the gateway's verdict")
+	assert.NotContains(t, err.Error(), "do not have access",
+		"relaying the provider's own diagnosis sends the reader to debug the wrong system")
+	assert.Contains(t, err.Error(), "registry-openai",
+		"the gateway names the registry it ruled out, not the provider that answered")
+}
+
+func TestForward_SequentialChain_NoRegistryServesTheModelNamesEveryBoundRegistry(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	anthropic := backendFor(gatewayID, "anthropic")
+	openai := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, anthropic, openai)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		anthropic.ID: {Allowed: []string{"claude-haiku-*"}},
+	}
+
+	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
+		"openai:claude-sonnet-4-5": appcatalog.VerdictAbsent,
+	}}
+
+	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
+	})
+	fwd := newSequentialForwarder(t, invoker, listing)
+
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: chatBody("claude-sonnet-4-5")},
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
+	assert.Contains(t, err.Error(), `"claude-sonnet-4-5" (registry-anthropic: restricted by its `+
+		`model allow-list; registry-openai: not in the provider catalog)`,
+		"every bound registry is named with the reason it was ruled out")
+	assert.Equal(t, []string{"openai"}, *invoked,
+		"the allow-list rules anthropic out before any request is sent to it")
 }
 
 func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *testing.T) {
