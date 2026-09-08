@@ -449,3 +449,30 @@ binds them per consumer. Resolved open questions: the attribution header is
   that tab.
 - Not done: the Access *Applications* tab listing acts-for-users consumers, and a
   per-user note on the Connect tab for acts-for-users consumers.
+
+## 11. MCP flow matrix (audit)
+
+Every MCP consumer is one row of identity × credential. What the gateway does at
+each step, and where it is enforced:
+
+| Identity | Credential | Who is the principal | Upstream connections | Access rules | Enforced |
+|---|---|---|---|---|---|
+| Acts as the application | API key | the key (`sub` = auth name) | one shared account per key; linked on the API-key connect page `/{slug}/connect` or via the consent error | no | `resolveMCPConsumer`, `apiKeyConnectService` |
+| Acts as the application | Trusted IdP (JWT) or mTLS | the token's `azp`/`sub` or the certificate CN | shared per principal, same page | no | `consumerAdmitsPrincipal` applies the auth binding |
+| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | yes: mode All / Selected / None over the consumer's registries | `scoper.scopeConsumerRegistries`, `emptySurfaceInsteadOfError` |
+| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | yes | same; `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
+| My app identifies its users (app) | API key or mTLS + `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | header required (400), user login refused (403), API-key connect page refused (409), oauth2 auths refused at attach |
+
+Invariants checked in this audit:
+
+- The credential shape follows the identity at attach time and on every
+  identity change (`ValidateAuth` / `ValidateAuthConfig`, 409), and the UI only
+  offers what the gateway accepts.
+- A per-user surface is never computed without a principal: the scoper and the
+  surface watcher skip when the subject is empty.
+- The end-user swap only happens after the caller proved it is the application
+  (API key or certificate); a platform session cannot impersonate an end user.
+- Per-user credentials are keyed by the principal subject everywhere (vault,
+  consent tickets, connect page, statuses, stream fingerprint), so the three
+  subjects (`auth name`, platform `sub`, `app:…`) never share an account.
+- The Store is the platform-users row with the catalog as its server set.

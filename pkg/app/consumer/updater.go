@@ -188,7 +188,7 @@ func (u *updater) revalidateAuthsForTransition(
 			commonerrors.ErrConflict, len(c.AuthIDs), len(auths))
 	}
 	for _, au := range auths {
-		if err := domain.ValidateAuth(c, au.Type); err != nil {
+		if err := domain.ValidateAuthConfig(c, au); err != nil {
 			return err
 		}
 	}
