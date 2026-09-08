@@ -111,7 +111,7 @@ func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
 }
 
 func writeAuthError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousOIDCConfig) {
+	if errors.Is(err, appauth.ErrInvalidAuthRequest) {
 		return invalidAuthRequest(c, err)
 	}
 	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
@@ -125,7 +125,6 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 
 func isAuthMappableError(err error) bool {
 	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
-		errors.Is(err, appauth.ErrAmbiguousOIDCConfig) ||
 		errors.Is(err, commonerrors.ErrInvalidConfig) ||
 		errors.Is(err, commonerrors.ErrValidation) ||
 		errors.Is(err, resolver.ErrForbidden) ||

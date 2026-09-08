@@ -464,8 +464,9 @@ func (s *Snapshot) AuthsEnabledByTypes(types []authdomain.Type) []*authdomain.Au
 
 func (s *Snapshot) AuthsEnabledByGatewayAndType(gatewayID ids.GatewayID, authType authdomain.Type) []*authdomain.Auth {
 	out := make([]*authdomain.Auth, 0)
+	want := authdomain.NormalizeType(authType)
 	for _, a := range s.authsEnabledGateway[gatewayID] {
-		if a.Type == authType {
+		if authdomain.NormalizeType(a.Type) == want {
 			out = append(out, a)
 		}
 	}
