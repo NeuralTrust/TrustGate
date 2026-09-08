@@ -725,6 +725,50 @@ That has consequences nobody chose:
    its mode to `none` (`mcpCatalog.ts:96-99,617-627` +
    `pkg/app/registry/updater.go:159-161`).
 
+### 14.2b What is fixed now, and what is not
+
+Fixed in this branch (gateway + app):
+
+1. **The promotion is closed.** The built-in provider now also requires a
+   matched consumer whose users sign in, so a machine application with no
+   credential is unreachable rather than open to any platform login
+   (`pathScope`, `wantsSignIn`). Existing credential-less MCP consumers are
+   backfilled as sign-in consumers by
+   `20260909150000_backfill_signin_identity_for_credentialless_mcp`, so their
+   behaviour is unchanged. `DetachAuth` is deliberately *not* guarded: the app's
+   own credential-swap edits detach before they attach, so a guard there would
+   break them, and the promotion is closed at the source instead.
+2. **The dead ticket.** An empty provider snapshot stays empty rather than
+   degrading into absent, and the test fixture round-trips tickets through JSON
+   so this class of bug fails in a unit test.
+3. **Bearer-form api keys.** The MCP plane accepts `Authorization: Bearer ag_…`
+   and `x-api-key`, trimmed, through the same helper the proxy plane uses.
+4. **Fail-open no longer swallows the cause** when nothing was reachable, so
+   `ErrUpstreamNeedsCallerToken` reaches the caller with the registry named.
+5. **The product says it.** `GET`/`POST
+   /v1/gateways/{gid}/consumers/{id}/upstream-accounts[/link]` report which
+   bound servers want the application's own account and mint the pinned, audited
+   connect ticket for it; the console's Connect tab lists them, shows each
+   account's state, and authorizes them in one click — no api key needed, which
+   is what made this unreachable from the console before.
+6. **`passthrough`/`exchange` in the UI** read as "caller's own token" instead
+   of "no authentication", and saving such a registry no longer strips its
+   credential (the payload omits `auth` while the mode is one the panel cannot
+   express).
+
+Deliberately still open:
+
+- **The in-band ticket paths** (`trustgate_connect_*` and the consent error)
+  remain unpinned, unrate-limited and unaudited, and tickets stay reusable for
+  their 15 minutes and also authorise disconnect. Pinning them is easy; the rest
+  touches the tool-call hot path, where a limiter outage would turn a consent
+  prompt into a failed call, so it wants its own change.
+- **The email on machine traces** is intentional
+  (`TestHandler_StampsVaultEmailOnAPIKeyTrace`): it answers whose account the
+  upstream saw. Documented at the call site rather than changed.
+- **`app:<consumer_id>` as the machine principal** (§14.3), which is the change
+  that actually removes the class of problem rather than papering over it.
+
 ### 14.3 The model this should be
 
 **The upstream account belongs to the application, not to one of its keys.**
