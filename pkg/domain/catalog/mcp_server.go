@@ -47,8 +47,24 @@ type MCPServer struct {
 	// or a platform-held client, a public server, or a static server whose only
 	// credential is a per-user secret URL variable. False means an admin must
 	// connect an instance first (a shared API key, a manual OAuth client, or a
-	// client_credentials grant). Computed from the entry (see IsSelfService).
+	// client_credentials grant).
+	//
+	// Declared per entry in the catalog seed as self_service, not derived: the
+	// answer is a property of the server, and reading it off the entry is how it
+	// stays legible. The one thing that moves it is a platform-held OAuth
+	// client, which the seed cannot know (see applyPlatformOAuth). The zero
+	// value is the conservative answer.
 	SelfService bool `json:"self_service"`
+	// MultiInstance reports whether more than one registry of this server is
+	// meaningful on one gateway: two of them can only differ in what an operator
+	// configures — a templated URL, a credential of its own, an OAuth client they
+	// register — so a server that is one URL behind per-user OAuth holds exactly
+	// one, and a second would be a copy of the first.
+	//
+	// Declared per entry in the catalog seed as multi_instance, like
+	// SelfService, and nothing moves it after load. The zero value is the
+	// conservative answer.
+	MultiInstance bool `json:"multi_instance"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`
@@ -158,57 +174,4 @@ func (s MCPServer) SupportedAuthMethods() (static, oauth bool) {
 	oauth = hint == "oauth" || s.OAuth != nil
 	static = hint == "static" || len(s.AuthHeaders) > 0
 	return static, oauth
-}
-
-// IsSelfService reports whether the entry can be installed without an admin
-// connecting it first:
-//
-//   - an OAuth server whose client the gateway can obtain itself — dynamic
-//     registration (auto) or a platform-held client; not a client_credentials
-//     grant nor a manual registration without a platform client;
-//   - a public server (no auth);
-//   - a static server whose only credential is a per-user secret URL variable
-//     (each user enters their own value through the hosted form).
-//
-// A static-only server whose credential is a shared header value (an API key)
-// the catalog does not carry is NOT self-service: only an admin can add it.
-func (s MCPServer) IsSelfService() bool {
-	static, oauth := s.SupportedAuthMethods()
-	if oauth {
-		return s.oauthSelfServiceable()
-	}
-	if !static {
-		return true
-	}
-	return len(s.AuthHeaders) == 0 && s.hasSecretURLVariable()
-}
-
-func (s MCPServer) oauthSelfServiceable() bool {
-	o := s.OAuth
-	if o == nil {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(o.GrantType), "client_credentials") {
-		return false
-	}
-	if s.PlatformClient {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(o.Registration)) {
-	case "auto":
-		return true
-	case "":
-		return !o.Required
-	default:
-		return false
-	}
-}
-
-func (s MCPServer) hasSecretURLVariable() bool {
-	for _, v := range s.URLVariables {
-		if v.Secret {
-			return true
-		}
-	}
-	return false
 }

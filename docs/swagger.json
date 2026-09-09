@@ -7141,6 +7141,10 @@
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "multi_instance": {
+                    "description": "MultiInstance reports whether more than one registry of this server is\nmeaningful on one gateway: two of them can only differ in what an operator\nconfigures — a templated URL, a credential of its own, an OAuth client they\nregister — so a server that is one URL behind per-user OAuth holds exactly\none, and a second would be a copy of the first.\n\nDeclared per entry in the catalog seed as multi_instance, like\nSelfService, and nothing moves it after load. The zero value is the\nconservative answer.",
+                    "type": "boolean"
+                },
                 "oauth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },
@@ -7165,7 +7169,7 @@
                     }
                 },
                 "self_service": {
-                    "description": "SelfService reports whether a user can install this server from the Store\nwith nothing configured by an admin: OAuth with dynamic client registration\nor a platform-held client, a public server, or a static server whose only\ncredential is a per-user secret URL variable. False means an admin must\nconnect an instance first (a shared API key, a manual OAuth client, or a\nclient_credentials grant). Computed from the entry (see IsSelfService).",
+                    "description": "SelfService reports whether a user can install this server from the Store\nwith nothing configured by an admin: OAuth with dynamic client registration\nor a platform-held client, a public server, or a static server whose only\ncredential is a per-user secret URL variable. False means an admin must\nconnect an instance first (a shared API key, a manual OAuth client, or a\nclient_credentials grant).\n\nDeclared per entry in the catalog seed as self_service, not derived: the\nanswer is a property of the server, and reading it off the entry is how it\nstays legible. The one thing that moves it is a platform-held OAuth\nclient, which the seed cannot know (see applyPlatformOAuth). The zero\nvalue is the conservative answer.",
                     "type": "boolean"
                 },
                 "source": {
