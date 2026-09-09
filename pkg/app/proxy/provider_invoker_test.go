@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"iter"
 	"net/http"
+	"strings"
 	"testing"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
@@ -40,6 +41,8 @@ const (
 
 	anthropicRequestBody  = `{"model":"claude","max_tokens":10,"system":"be nice","messages":[{"role":"user","content":"hi"}]}`
 	anthropicResponseBody = `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":15}}`
+	reasoningToolsBody    = `{"model":"gpt-5.6-luna","max_tokens":32,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"Read","description":"Read a file","input_schema":{"type":"object","properties":{}}}]}`
+	reasoningToolsError   = `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."}}`
 )
 
 func apiKeyTarget(provider string) *registrydomain.Registry {
@@ -209,6 +212,98 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
 	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
 		"a failed attempt must still say which route was tried")
+}
+
+func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return !strings.Contains(string(body), `"reasoning_effort"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+		Once()
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			var request map[string]any
+			if json.Unmarshal(body, &request) != nil {
+				return false
+			}
+			return request["reasoning_effort"] == "none" &&
+				request["max_completion_tokens"] == float64(32) && request["tools"] != nil
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{Body: []byte(reasoningToolsBody), SourceFormat: string(adapter.FormatAnthropic)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), `"type":"message"`)
+}
+
+func TestProviderInvoke_DoesNotOverrideExplicitReasoningEffort(t *testing.T) {
+	body := `{"model":"gpt-5.6-luna","max_tokens":32,"reasoning_effort":"high","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"Read","parameters":{"type":"object"}}}]}`
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(reasoningToolsError))).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{Body: []byte(body)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+}
+
+func TestProviderInvoke_DoesNotRetryReasoningToolsOutsideExactCase(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		status   int
+		body     string
+		options  map[string]any
+	}{
+		{name: "different status", provider: "openai", status: http.StatusUnprocessableEntity, body: reasoningToolsBody},
+		{name: "compatible provider", provider: "openai_compatible", status: http.StatusBadRequest, body: reasoningToolsBody},
+		{name: "missing tools", provider: "openai", status: http.StatusBadRequest, body: openaiRequestBody},
+		{name: "empty tools", provider: "openai", status: http.StatusBadRequest, body: `{"model":"gpt-5.6-luna","messages":[],"tools":[]}`},
+		{name: "null tools", provider: "openai", status: http.StatusBadRequest, body: `{"model":"gpt-5.6-luna","messages":[],"tools":null}`},
+		{name: "responses target", provider: "openai", status: http.StatusBadRequest, body: reasoningToolsBody, options: map[string]any{"api": "responses"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, registrydomain.NewBackendError(tt.status, []byte(reasoningToolsError))).
+				Once()
+
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get(tt.provider).Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			target := apiKeyTarget(tt.provider)
+			target.LLMTarget.ProviderOptions = tt.options
+			req := &infracontext.RequestContext{Body: []byte(tt.body), SourceFormat: string(adapter.FormatAnthropic)}
+
+			resp, err := inv.Invoke(context.Background(), target, req)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.status, resp.StatusCode)
+			assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+		})
+	}
 }
 
 func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
