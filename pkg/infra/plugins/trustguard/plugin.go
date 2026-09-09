@@ -80,8 +80,8 @@ type Plugin struct {
 	cfgCache sync.Map
 }
 
-func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger) *Plugin {
-	c := newClient(timeout)
+func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...clientOption) *Plugin {
+	c := newClient(timeout, opts...)
 	return &Plugin{
 		registry: registry,
 		client:   c,
