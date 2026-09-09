@@ -916,6 +916,18 @@ Three decisions worth keeping:
   the gateway could not reach the server, not which host refused the connection.
   The caller cannot act on the latter, and it is not theirs to read.
 
+One more thing it has to do, found the first time someone asked a client "what
+do I have in TrustGate?": the client read `tools/list`, found the gateway's own
+four tools in it — they have to be listed to be callable — and reported them to
+the user as tools they have, under a heading of their own. They are not: they
+are how the user's surface is managed. MCP has no way to mark a tool as plumbing
+rather than capability, so the only lever is prose, and it is used in three
+places: every gateway tool's description disowns itself
+(`GatewayToolDisclaimer`) and points at this tool for the real answer, this
+tool's description says what its answer excludes, and the answer itself ends by
+saying it is the whole list. The text body carries it, not only
+`structuredContent`, because the text is the part many clients hand the model.
+
 It is offered to every consumer with an MCP server bound, and withheld from a
 deny-all toolkit — a consumer meant to expose nothing gets no gateway tools
 either, the rule the connect tool already followed (`metaToolsPermitted`).

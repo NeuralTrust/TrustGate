@@ -36,6 +36,22 @@ const (
 	maxInventoryDescription = 200
 )
 
+// GatewayToolDisclaimer is appended to every gateway-implemented tool's
+// description. The gateway's own tools have to appear in tools/list for a
+// client to be able to call them, so a client asked "what tools do I have?"
+// sees them next to the user's and reports them as capabilities the user has —
+// which they are not: they are how the user's surface is managed. Saying so in
+// the description is the only lever there is; MCP has no way to mark a tool as
+// plumbing rather than capability.
+const GatewayToolDisclaimer = " This is one of the gateway's own tools, not one of the user's: leave it out when telling the user which tools or servers they have (" +
+	InventoryToolName + " answers that)."
+
+// inventoryClosingNote ends the inventory's answer. Without it a client that has
+// just read tools/list tends to append the gateway's own tools to the list it
+// reports, as though the user had those too.
+const inventoryClosingNote = "\n\nThat is the whole list. The gateway's own " + InventoryToolName +
+	" and " + StoreToolNamePrefix + "* tools are how this surface is managed, not tools the user has, so leave them out of the answer."
+
 // ErrInventoryToolUnavailable is returned when the inventory meta-tool cannot
 // serve a request (no composed surface behind it, or an unknown tool name).
 var ErrInventoryToolUnavailable = errors.New("mcp: tool inventory unavailable")
@@ -261,9 +277,10 @@ func inventorySummary(servers []map[string]any, callable, pending int, filter st
 	if len(servers) == 0 {
 		if filter != "" {
 			fmt.Fprintf(&b, "No MCP server matching %q is available to you.", filter)
+			b.WriteString(inventoryClosingNote)
 			return b.String()
 		}
-		return "You have no MCP servers available."
+		return "You have no MCP servers available." + inventoryClosingNote
 	}
 	fmt.Fprintf(&b, "You have %d MCP server(s): %d tool(s) callable now", len(servers), callable)
 	if pending > 0 {
@@ -284,6 +301,7 @@ func inventorySummary(servers []map[string]any, callable, pending int, filter st
 			fmt.Fprintf(&b, "\n  blocked by policy: %s", strings.Join(denied, ", "))
 		}
 	}
+	b.WriteString(inventoryClosingNote)
 	return b.String()
 }
 
@@ -337,7 +355,8 @@ func inventoryDefinition() (Tool, error) {
 		"description": "List every tool the current user has through this gateway, grouped by the MCP server that serves it, with each server's state. " +
 			"Call this when you need to know what the user can do beyond the tools currently in your list — the standard tool list only carries the tools of servers that are connected and reachable, so it is silent about a server the user has but has not connected yet, or one that is down. " +
 			"Each server comes back as ready, needs_connect (its tools are named but not callable until the user connects their account), unavailable, or no_tools, and a needs_connect server names the connect tool that gives the user a link. " +
-			"Use it to answer \"what can you do?\", to find out why an expected tool is missing, and to tell the user which of their servers needs attention.",
+			"Use it to answer \"what can you do?\", to find out why an expected tool is missing, and to tell the user which of their servers needs attention. " +
+			"What it returns is the whole answer: the gateway's own trustgate_* tools — this one, the Store's, the connect ones — are how that surface is managed, not tools the user has, so do not add them to it.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
