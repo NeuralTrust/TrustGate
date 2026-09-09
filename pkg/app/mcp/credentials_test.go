@@ -49,7 +49,8 @@ func TestCredentialResolver_LogsOpaquePrincipalReference(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeForwarded, Provider: "provider", Registration: registrydomain.RegistrationAuto,
 	})
 
-	err := resolver.consentRequired(context.Background(), mcpConsumer(gw), reg, "provider", "alice@example.com", "expired")
+	err := resolver.consentRequired(context.Background(), mcpConsumer(gw), reg, "provider", "alice@example.com",
+		ConsentCauseNoRefreshToken, "expired")
 	if err == nil {
 		t.Fatal("consentRequired returned nil")
 	}
