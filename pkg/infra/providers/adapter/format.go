@@ -164,6 +164,17 @@ func resolveProviderWireFormat(providerName string) Format {
 	}
 }
 
+// prefersMaxCompletionTokens reports whether the provider's Chat Completions
+// surface takes max_completion_tokens instead of max_tokens; Azure requires
+// api-version 2024-10-21 or 2024-09-01-preview and later.
+func prefersMaxCompletionTokens(providerName string) bool {
+	switch providerName {
+	case provider.OpenAI, provider.Azure:
+		return true
+	}
+	return false
+}
+
 func ResolveTargetFormat(providerName string, providerOptions map[string]any) Format {
 	f := resolveProviderWireFormat(providerName)
 	providerFormat := Format(providerName)
