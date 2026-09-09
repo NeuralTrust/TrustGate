@@ -94,10 +94,6 @@ type CanonicalRespFormat struct {
 	Type string `json:"type"` // "json_object", "text"
 }
 
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
-
 // CanonicalResponse is the internal neutral representation of a provider
 // response.
 type CanonicalResponse struct {
@@ -217,10 +213,6 @@ func newCanonicalUsage(in, out, total int) *CanonicalUsage {
 		TotalTokens:  total,
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Stream chunk types
-// ---------------------------------------------------------------------------
 
 // StreamToolCallDelta is one tool-call delta in a streamed response (OpenAI
 // streams tool_calls with incremental arguments; Anthropic uses input_json_delta).
