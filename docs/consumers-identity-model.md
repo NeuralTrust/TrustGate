@@ -933,3 +933,43 @@ deny-all toolkit — a consumer meant to expose nothing gets no gateway tools
 either, the rule the connect tool already followed (`metaToolsPermitted`).
 Descriptions are truncated per entry: a caller wanting a tool's full schema gets
 it from `tools/list` once the tool is callable.
+
+## 17. How many instances a server can hold
+
+Instances exist so one catalog server can be shelved twice with **different
+configuration**: two Snowflake schemas, two Aha! domains, two API keys for two
+accounts of the same SaaS. That is the whole point of them, and it decides which
+servers should have them.
+
+A server that is one URL behind per-user OAuth has no such configuration. The
+gateway registers its client itself (`registration: auto`) or the platform holds
+one, and each user signs in with their own account — so a second registry would
+be a byte-for-byte copy of the first, and would buy nothing but ambiguity: an
+instance to pick on every install and uninstall, every one of its tools renamed
+with an instance prefix (`resolveNames`' `perInstance`), and two Access rows
+granting the same thing.
+
+`catalogdomain.MCPServer.SupportsInstances()` is that rule, stamped onto each
+entry as `multi_instance` next to `self_service` and after the platform clients
+are applied (a platform-held client leaves an operator nothing to differ on, so
+it settles both questions):
+
+| The entry has | Instances | Because |
+| --- | --- | --- |
+| any URL variable | yes | the URL itself differs |
+| static auth headers | yes | two credentials are two accounts |
+| an OAuth client the operator registers (`manual`, no platform client) | yes | the client id and secret are theirs |
+| a `client_credentials` grant | yes | same |
+| a fixed URL, OAuth `auto` or a platform client | **no** | only the user differs, and one instance serves them all |
+| no auth at all | **no** | one URL, no credential, nothing to vary |
+
+Across the 198 curated entries that is 96 multi-instance and 102 single.
+
+Two places enforce it. `appregistry.creator` refuses a second registry for a
+single-instance code with `ErrSingleInstanceServer` (a conflict — the request is
+well formed, the shelf already holds the only instance the server can have), and
+the console hides *Add instance* for those servers and says why instead. Only
+*new* duplicates are refused: a gateway that already holds two keeps them, since
+the pair is real and something is routing to it. The self-service paths are
+unaffected — `RegistryEnsurer.Ensure` and `from-catalog` both look for an
+existing registry first, so they only ever create the first one.

@@ -2172,6 +2172,11 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      multi_instance:
+        description: |-
+          MultiInstance reports whether more than one registry of this server is
+          meaningful on one gateway. Computed from the entry (see SupportsInstances).
+        type: boolean
       oauth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth'
       platform_client:
