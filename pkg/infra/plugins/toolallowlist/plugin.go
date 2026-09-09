@@ -294,6 +294,9 @@ func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, 
 			orig[key] = strippedValue
 		}
 	}
+	if tools, ok := stripped["tools"]; ok {
+		orig["tools"] = tools
+	}
 	return json.Marshal(orig)
 }
 

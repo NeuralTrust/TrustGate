@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -352,9 +353,24 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 		out.Messages = append(out.Messages, msg)
 	}
 
-	for _, t := range req.Tools {
+	out.Tools = encodeCompletionsTools(req.Tools)
+
+	dropped := len(req.Tools) > len(out.Tools)
+	if req.ToolChoice != nil && (!dropped || !toolChoiceDangles(req.ToolChoice, out.Tools)) {
+		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	}
+
+	return json.Marshal(out)
+}
+
+func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
+	var out []openaiTool
+	for _, t := range tools {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
 		if t.Kind == ToolKindCustom {
-			out.Tools = append(out.Tools, openaiTool{
+			out = append(out, openaiTool{
 				Type: "custom",
 				Custom: &openaiCustomTool{
 					Name:        t.Name,
@@ -364,7 +380,7 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 			})
 			continue
 		}
-		out.Tools = append(out.Tools, openaiTool{
+		out = append(out, openaiTool{
 			Type: "function",
 			Function: &openaiFunction{
 				Name:        t.Name,
@@ -373,12 +389,20 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 			},
 		})
 	}
+	return out
+}
 
-	if req.ToolChoice != nil {
-		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+func toolChoiceDangles(tc *CanonicalToolChoice, kept []openaiTool) bool {
+	if len(kept) == 0 {
+		return true
 	}
-
-	return json.Marshal(out)
+	if tc.Type != "tool" {
+		return false
+	}
+	return !slices.ContainsFunc(kept, func(t openaiTool) bool {
+		return (t.Function != nil && t.Function.Name == tc.Name) ||
+			(t.Custom != nil && t.Custom.Name == tc.Name)
+	})
 }
 
 // ---------------------------------------------------------------------------

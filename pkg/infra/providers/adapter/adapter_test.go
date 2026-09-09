@@ -446,6 +446,31 @@ func TestAdaptRequest_AnthropicToOpenAI(t *testing.T) {
 	assert.Equal(t, "You are helpful.", first["content"])
 }
 
+func TestAdaptRequest_AnthropicServerToolBlockToOpenAI(t *testing.T) {
+	input := `{
+		"model": "gpt-5",
+		"max_tokens": 100,
+		"messages": [{"role": "user", "content": "Hello"}],
+		"tools": [
+			{"name": "Read", "description": "read", "input_schema": {"type": "object", "properties": {}}},
+			{"type": "web_search_20250305"}
+		]
+	}`
+
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatOpenAI)
+	require.NoError(t, err)
+
+	var result struct {
+		Tools []struct {
+			Function struct{ Name string } `json:"function"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.Len(t, result.Tools, 1)
+	assert.Equal(t, "Read", result.Tools[0].Function.Name)
+	assert.NotContains(t, string(out), `"name":""`)
+}
+
 // ---------------------------------------------------------------------------
 // Cross-provider: OpenAI → Gemini
 // ---------------------------------------------------------------------------
