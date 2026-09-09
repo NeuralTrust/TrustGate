@@ -106,6 +106,12 @@ func TestConnectionToolDefinitionsListOnlyPendingProviders(t *testing.T) {
 	notion := marshalTool(t, defs[1])
 	require.Equal(t, "trustgate_connect_notion", notion["name"])
 	require.Contains(t, notion["description"], "needs to be reconnected")
+
+	// A gateway tool has to be listed to be callable, so a client asked what the
+	// user has reads it alongside their own tools. Both definitions say they are
+	// not part of that answer.
+	require.Contains(t, linear["description"], appmcp.GatewayToolDisclaimer)
+	require.Contains(t, notion["description"], appmcp.GatewayToolDisclaimer)
 }
 
 func TestConnectionToolDefinitionsFailOpen(t *testing.T) {

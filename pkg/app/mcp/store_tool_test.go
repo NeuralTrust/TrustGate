@@ -515,6 +515,43 @@ func TestStoreDefinitionsIncludeInstallOnlyWithInstaller(t *testing.T) {
 	}
 }
 
+// toolDescription reads a definition's description back off the wire, which is
+// where a client sees it.
+func toolDescription(t *testing.T, tool Tool) string {
+	t.Helper()
+	raw, err := json.Marshal(tool)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", tool.Name, err)
+	}
+	var decoded struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", tool.Name, err)
+	}
+	return decoded.Description
+}
+
+// The Store's tools have to be listed for a client to call them, so a client
+// asked "what tools do I have?" reads them next to the user's own. Every one of
+// them says it is not part of that answer.
+func TestStoreDefinitionsSayTheyAreNotTheUsersTools(t *testing.T) {
+	tool := storeToolWithInstaller(t, &fakeInstaller{})
+	defs := tool.Definitions(context.Background(), storeRC())
+	if len(defs) != 3 {
+		t.Fatalf("expected search+install+uninstall, got %d", len(defs))
+	}
+	for _, def := range defs {
+		description := toolDescription(t, def)
+		if !strings.Contains(description, GatewayToolDisclaimer) {
+			t.Fatalf("%s does not say it is a gateway tool: %q", def.Name, description)
+		}
+		if !strings.Contains(description, InventoryToolName) {
+			t.Fatalf("%s should point at %s for what the user actually has", def.Name, InventoryToolName)
+		}
+	}
+}
+
 func TestStoreInstallCall(t *testing.T) {
 	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", RequiresAuth: true}}
 	tool := storeToolWithInstaller(t, installer)
