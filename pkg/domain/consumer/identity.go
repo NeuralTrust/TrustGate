@@ -120,6 +120,20 @@ func (c *Consumer) ActsForUsers() bool {
 	return c != nil && c.Identity.ActsForUsers
 }
 
+// WantsSignIn reports whether the consumer is entered by people signing in:
+// the platform identity, or the MCP Store, which is that identity by
+// construction. An app-source consumer is not, even though it acts for users:
+// its application authenticates as a machine and names its end users itself.
+// A nil consumer reports false so callers that read this as "may broker a
+// login" fail closed.
+//
+// This is the one predicate both the request-time auth chain and the
+// authorize-time provider selection must ask, or the two security decisions
+// diverge for the app source (RUN-1501).
+func (c *Consumer) WantsSignIn() bool {
+	return c != nil && (c.Identity.PlatformUsers() || IsStoreConsumer(c))
+}
+
 // MaxEndUserLength bounds the opaque end-user id an application may send.
 const MaxEndUserLength = 256
 
