@@ -50,6 +50,19 @@ func mcpRegistry(t *testing.T, gw ids.GatewayID, name string, auth *registrydoma
 	return reg
 }
 
+// catalogMCPRegistry is a registry materialized from the catalog: it carries the
+// server's code, which is what focuses a connect page on one card.
+func catalogMCPRegistry(t *testing.T, gw ids.GatewayID, name, code string, auth *registrydomain.MCPAuth) *registrydomain.Registry {
+	t.Helper()
+	reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+		URL:  "https://" + name + ".example.com/mcp",
+		Code: code,
+		Auth: auth,
+	})
+	require.NoError(t, err)
+	return reg
+}
+
 func forwardedAuthCfg(provider string) *registrydomain.MCPAuth {
 	return &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeForwarded, Provider: provider,
@@ -312,4 +325,55 @@ func TestConsumerUpstreamAccounts_UnknownConsumer(t *testing.T) {
 
 	_, err = f.accounts.Link(ctx, f.gatewayID, ids.New[ids.ConsumerKind](), ids.RegistryID{})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
+}
+
+// The page an admin lands on must be the one a user lands on from their client:
+// one server's own consent card, not the picker. The picker with a single card
+// and a search box reads as the wrong screen — and it is, for a row that named
+// its server.
+func TestConsumerUpstreamAccounts_LinkOpensOnTheServersOwnCard(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	airtable := catalogMCPRegistry(t, gw, "airtable", "com.airtable/mcp", forwardedAuthCfg("com.airtable/mcp"))
+	notion := catalogMCPRegistry(t, gw, "notion", "com.notion/mcp", forwardedAuthCfg("com.notion/mcp"))
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{airtable, notion})
+	ctx := context.Background()
+
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, airtable.ID)
+	require.NoError(t, err)
+	page, err := f.connect.Page(ctx, link.Ticket)
+	require.NoError(t, err)
+	require.Equal(t, "com.airtable/mcp", page.Code, "the page must be focused on the server the row named")
+	require.Len(t, page.Providers, 1)
+	require.Equal(t, "com.airtable/mcp", page.Providers[0].Code, "the focused code must match a provider, or the card renders empty")
+
+	// Every server at once is the one case the picker is for.
+	all, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
+	require.NoError(t, err)
+	allPage, err := f.connect.Page(ctx, all.Ticket)
+	require.NoError(t, err)
+	require.Empty(t, allPage.Code)
+	require.Len(t, allPage.Providers, 2)
+}
+
+// A server an admin added by hand carries no catalog code, so there is nothing
+// to focus the page on: it falls back to the picker rather than rendering a
+// card that matches no provider.
+func TestConsumerUpstreamAccounts_LinkFallsBackWithoutACatalogCode(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	custom := mcpRegistry(t, gw, "internal-tools", forwardedAuthCfg("internal-tools"))
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{custom})
+	ctx := context.Background()
+
+	link, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, custom.ID)
+	require.NoError(t, err)
+	page, err := f.connect.Page(ctx, link.Ticket)
+	require.NoError(t, err)
+	require.Empty(t, page.Code)
+	require.Len(t, page.Providers, 1)
 }
