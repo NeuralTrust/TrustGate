@@ -123,5 +123,10 @@ type ConnectService interface {
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
+	// CredentialUsable reports whether a credential stored for this registry can
+	// still be redeemed: for a dynamically registered client, that registration
+	// has to still exist. It is what keeps a reader of the vault from calling an
+	// account connected while every tool call on it asks the user to connect.
+	CredentialUsable(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (bool, error)
 	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)
 }

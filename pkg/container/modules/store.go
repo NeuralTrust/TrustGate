@@ -17,6 +17,7 @@ package modules
 import (
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -138,12 +139,20 @@ type storePrincipalParams struct {
 	Policies storeaccessdomain.PolicyReader
 	Ensurer  appstore.RegistryEnsurer
 	Gateways gatewaydomain.Repository `optional:"true"`
+	// Connect answers whether a linked credential can still be refreshed, so the
+	// Portal does not call an account connected that every tool call refuses.
+	// Absent on planes without the OAuth connect service.
+	Connect appoauth.ConnectService `optional:"true"`
 }
 
 // provideStorePrincipalHandler serves the Portal's admin preview of one user's
 // Store state (installs, requests, linked accounts — never token material).
 func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalHandler, error) {
-	preview, err := appstore.NewPrincipalPreview(p.Installs, p.Registries, p.Catalog, p.Vault)
+	var previewOpts []appstore.PrincipalPreviewOption
+	if p.Connect != nil {
+		previewOpts = append(previewOpts, appstore.WithConnectionHealth(p.Connect))
+	}
+	preview, err := appstore.NewPrincipalPreview(p.Installs, p.Registries, p.Catalog, p.Vault, previewOpts...)
 	if err != nil {
 		return nil, err
 	}
