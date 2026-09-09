@@ -91,6 +91,11 @@ type Installation struct {
 	// The nil id means the code's canonical instance: the sole registry, or the
 	// one materialised from the catalog.
 	RegistryID ids.RegistryID
+	// Reason is why the user asked for this server, in their own words, on a
+	// request that needs an approver's decision. Empty for a self-service
+	// install, which asks nobody. It is the requester's text and nothing else
+	// reads it as anything but text.
+	Reason string
 	// Decision, DecidedBy and DecidedAt record the admin verdict on a request
 	// (empty for a self-service install that never needed one).
 	Decision  Decision
@@ -175,8 +180,20 @@ func (i *Installation) Validate() error {
 	if !i.Status.Valid() {
 		return fmt.Errorf("%w: invalid status %q", ErrInvalidInstallation, i.Status)
 	}
+	// The reason is free text a user typed, so it is bounded here, at the write
+	// boundary every caller goes through, rather than trusted to whichever API
+	// collected it.
+	if len([]rune(i.Reason)) > MaxReasonLength {
+		return fmt.Errorf("%w: reason is longer than %d characters",
+			ErrInvalidInstallation, MaxReasonLength)
+	}
 	return nil
 }
+
+// MaxReasonLength bounds the requester's reason: long enough for a sentence or
+// two of justification, short enough to read in a table cell and to store
+// without thinking about it.
+const MaxReasonLength = 500
 
 // IsActive reports whether the installation currently contributes to the user's
 // Store surface.

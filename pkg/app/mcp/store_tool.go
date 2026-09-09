@@ -29,6 +29,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
@@ -196,6 +197,10 @@ type storeInstallArgs struct {
 	// Instance is the configured instance (registry id) to install when the
 	// server has several, from a prior requires_instance_choice response.
 	Instance string `json:"instance,omitempty"`
+	// Reason is why the user wants the server, in their own words. It is kept
+	// only when the install becomes a request an approver must decide, and shown
+	// to them there.
+	Reason string `json:"reason,omitempty"`
 }
 
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
@@ -244,6 +249,7 @@ func (t *storeTool) install(
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
 		RegistryID:   registryID,
+		Reason:       trimReason(args.Reason),
 	})
 	if err != nil {
 		return nil, err
@@ -300,6 +306,19 @@ func (t *storeTool) install(
 		structured["connect_label"] = "Connect " + res.Name
 	}
 	return marshalToolResult(installMessage(res, configureURL, connectURL), structured)
+}
+
+// trimReason bounds what a client may send as the requester's words. The domain
+// refuses an over-long one, and failing an install for it would be a poor trade:
+// the caller is a model relaying a sentence, so the sentence is cut and the
+// install proceeds.
+func trimReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	runes := []rune(reason)
+	if len(runes) <= installationdomain.MaxReasonLength {
+		return reason
+	}
+	return strings.TrimSpace(string(runes[:installationdomain.MaxReasonLength]))
 }
 
 // linkMarkdown renders a URL as a labeled markdown link so the client shows the
@@ -843,7 +862,8 @@ func storeInstallDefinition() (Tool, error) {
 		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
 			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
 			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
-			"Governed by the user's role; a server that needs the user's own account returns a connect link for them to authorize before its tools work." + GatewayToolDisclaimer,
+			"Governed by the user's role; a server outside it becomes a request an administrator decides on, so pass `reason` with why the user wants it. " +
+			"A server that needs the user's own account returns a connect link for them to authorize before its tools work." + GatewayToolDisclaimer,
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -859,6 +879,13 @@ func storeInstallDefinition() (Tool, error) {
 				"instance": map[string]any{
 					"type":        "string",
 					"description": "Which configured instance of the server to install, when the administrator connected several (from a prior requires_instance_choice response). Omit otherwise.",
+				},
+				"reason": map[string]any{
+					"type": "string",
+					"description": "Why the user wants this server, in their own words — the task they are trying to do. " +
+						"Pass it whenever you know it: a server outside the user's access becomes a request an administrator has to decide on, and this is what they read when deciding. " +
+						"Do not invent one; if the user has not said why, ask them or leave it out.",
+					"maxLength": installationdomain.MaxReasonLength,
 				},
 			},
 			"required":             []string{"code"},

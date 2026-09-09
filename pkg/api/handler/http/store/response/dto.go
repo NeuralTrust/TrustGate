@@ -88,12 +88,15 @@ type Principal struct {
 }
 
 type PendingRequest struct {
-	InstanceID   string    `json:"instance_id"`
-	PrincipalSub string    `json:"principal_sub"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	InstalledBy  string    `json:"installed_by,omitempty"`
-	RequestedAt  time.Time `json:"requested_at"`
+	InstanceID   string `json:"instance_id"`
+	PrincipalSub string `json:"principal_sub"`
+	Code         string `json:"code"`
+	Name         string `json:"name"`
+	InstalledBy  string `json:"installed_by,omitempty"`
+	// Reason is why the requester asked for the server, in their own words.
+	// Omitted when they gave none.
+	Reason      string    `json:"reason,omitempty"`
+	RequestedAt time.Time `json:"requested_at"`
 }
 
 type PendingRequests struct {
@@ -102,15 +105,17 @@ type PendingRequests struct {
 }
 
 type DecidedRequest struct {
-	InstanceID   string    `json:"instance_id"`
-	PrincipalSub string    `json:"principal_sub"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	RegistryID   string    `json:"registry_id,omitempty"`
-	Decision     string    `json:"decision"`
-	DecidedBy    string    `json:"decided_by,omitempty"`
-	DecidedAt    time.Time `json:"decided_at"`
-	RequestedAt  time.Time `json:"requested_at"`
+	InstanceID   string `json:"instance_id"`
+	PrincipalSub string `json:"principal_sub"`
+	Code         string `json:"code"`
+	Name         string `json:"name"`
+	RegistryID   string `json:"registry_id,omitempty"`
+	// Reason is what the requester wrote when they asked, kept with the verdict.
+	Reason      string    `json:"reason,omitempty"`
+	Decision    string    `json:"decision"`
+	DecidedBy   string    `json:"decided_by,omitempty"`
+	DecidedAt   time.Time `json:"decided_at"`
+	RequestedAt time.Time `json:"requested_at"`
 }
 
 type History struct {
