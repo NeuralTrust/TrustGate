@@ -131,10 +131,10 @@ func catalogAuthMethods(entry catalogdomain.MCPServer) (static, oauth bool) {
 }
 
 // catalogNeedsAdminCredential reports whether a catalog entry cannot be
-// self-served because it needs a credential only an admin can add on the shelf
-// (see catalogdomain.MCPServer.IsSelfService for the rule).
+// self-served because it needs a credential only an admin can add on the shelf.
+// The catalog entry declares it (`self_service` in the seed).
 func catalogNeedsAdminCredential(entry catalogdomain.MCPServer) bool {
-	return !entry.IsSelfService()
+	return !entry.SelfService
 }
 
 // catalogOAuth maps a catalog OAuth spec onto the registry's auth. Forwarded auth

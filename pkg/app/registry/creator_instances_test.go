@@ -43,30 +43,35 @@ func (instanceCatalog) SharedOAuthCredentials(string) (string, string, bool) {
 	return "", "", false
 }
 
-// linearEntry is the shape the rule refuses a second copy of: one URL, per-user
-// OAuth the gateway registers itself, nothing an operator supplies.
+// linearEntry is what the catalog declares for a server whose second instance
+// would be a copy of the first: one URL, per-user OAuth the gateway registers
+// itself, nothing an operator supplies.
 func linearEntry() catalogdomain.MCPServer {
 	return catalogdomain.MCPServer{
-		Code:         "app.linear/mcp",
-		DisplayName:  "Linear",
-		URL:          "https://mcp.linear.app/mcp",
-		AuthHint:     "oauth",
-		RequiresAuth: true,
-		OAuth:        &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
+		Code:          "app.linear/mcp",
+		DisplayName:   "Linear",
+		URL:           "https://mcp.linear.app/mcp",
+		AuthHint:      "oauth",
+		RequiresAuth:  true,
+		SelfService:   true,
+		MultiInstance: false,
+		OAuth:         &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
 	}
 }
 
-// snowflakeEntry is the shape instances exist for: a templated URL, so two
-// registries reach two different schemas.
+// snowflakeEntry is what it declares for the servers instances exist for: a
+// templated URL, so two registries reach two different schemas.
 func snowflakeEntry() catalogdomain.MCPServer {
 	return catalogdomain.MCPServer{
-		Code:         "com.snowflake/mcp",
-		DisplayName:  "Snowflake",
-		URL:          "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{server}",
-		AuthHint:     "oauth",
-		RequiresAuth: true,
-		URLVariables: []catalogdomain.MCPURLVariable{{Name: "account_url", Required: true}},
-		OAuth:        &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
+		Code:          "com.snowflake/mcp",
+		DisplayName:   "Snowflake",
+		URL:           "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{server}",
+		AuthHint:      "oauth",
+		RequiresAuth:  true,
+		URLVariables:  []catalogdomain.MCPURLVariable{{Name: "account_url", Required: true}},
+		SelfService:   false,
+		MultiInstance: true,
+		OAuth:         &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
 	}
 }
 
@@ -151,8 +156,8 @@ func TestCreator_AllowsASecondInstanceOfAConfigurableServer(t *testing.T) {
 	cat := instanceCatalog{entries: map[string]catalogdomain.MCPServer{"com.snowflake/mcp": snowflakeEntry()}}
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, cat)
 
-	// The shelf is never even read: the entry says two of these can differ, so
-	// there is nothing to compare against.
+	// The shelf is never even read: the entry declares multi_instance, so there
+	// is nothing to compare against.
 	_, err := creator.Create(context.Background(), catalogInput(
 		gatewayID, "Snowflake — FINANCE", "com.snowflake/mcp",
 		"https://acme.snowflakecomputing.com/api/v2/databases/D/schemas/FINANCE/mcp-servers/S"))

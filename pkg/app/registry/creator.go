@@ -129,8 +129,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 const instanceScanPageSize = 500
 
 // ErrSingleInstanceServer is returned when a second registry is asked for a
-// catalog server that supports only one (see
-// catalogdomain.MCPServer.SupportsInstances).
+// catalog server that supports only one (`multi_instance: false` on its catalog
+// entry).
 var ErrSingleInstanceServer = fmt.Errorf(
 	"registry: this MCP server supports a single instance: %w", commonerrors.ErrConflict,
 )
@@ -168,7 +168,7 @@ func (c *creator) refuseSecondInstance(
 		return nil
 	}
 	entry, ok := c.catalog.GetByCode(code)
-	if !ok || entry.SupportsInstances() {
+	if !ok || entry.MultiInstance {
 		return nil
 	}
 	existing, err := c.registriesForCode(ctx, gatewayID, code)
