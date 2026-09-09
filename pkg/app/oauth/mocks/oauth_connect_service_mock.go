@@ -179,6 +179,58 @@ func (_c *ConnectService_CreateAppTicket_Call) RunAndReturn(run func(context.Con
 	return _c
 }
 
+func (_m *ConnectService) CredentialUsable(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry) (bool, error) {
+	ret := _m.Called(ctx, gatewayID, reg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CredentialUsable")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)); ok {
+		return rf(ctx, gatewayID, reg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) bool); ok {
+		r0 = rf(ctx, gatewayID, reg)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) error); ok {
+		r1 = rf(ctx, gatewayID, reg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CredentialUsable_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CredentialUsable(ctx interface{}, gatewayID interface{}, reg interface{}) *ConnectService_CredentialUsable_Call {
+	return &ConnectService_CredentialUsable_Call{Call: _e.mock.On("CredentialUsable", ctx, gatewayID, reg)}
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry)) *ConnectService_CredentialUsable_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(*registry.Registry))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Return(_a0 bool, _a1 error) *ConnectService_CredentialUsable_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)) *ConnectService_CredentialUsable_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 func (_m *ConnectService) CreateTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string) (string, error) {
 	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath)
 

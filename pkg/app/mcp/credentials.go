@@ -57,7 +57,40 @@ type ConsentRequiredError struct {
 	Provider string
 	Ticket   string
 	Path     string
+	// Cause names the condition that produced the prompt, as one of the
+	// ConsentCause codes. It travels with the refusal because "connect this
+	// again" is not a diagnosis: a credential that was never linked, one the
+	// vault key can no longer read, a refresh token the provider rejected and a
+	// registered client that went missing all reach the user as the same
+	// sentence, and telling them apart afterwards took the gateway's own logs.
+	//
+	// A code, not the log's prose: the prose names internals (an env var, a
+	// flushed store) that a tenant's client has no use for.
+	Cause string
 }
+
+// The conditions that make the gateway ask a user to connect. Stable strings:
+// they are what a client reports and what an operator greps for.
+const (
+	// ConsentCauseNoCredential: this user never linked an account here.
+	ConsentCauseNoCredential = "no_credential"
+	// ConsentCauseUndecryptable: the credential is stored but cannot be read
+	// with the current vault key.
+	ConsentCauseUndecryptable = "credential_undecryptable"
+	// ConsentCauseNoRefreshToken: the access token expired and the grant carries
+	// nothing to refresh it with.
+	ConsentCauseNoRefreshToken = "no_refresh_token"
+	// ConsentCauseRefreshRejected: the provider refused the stored refresh token.
+	ConsentCauseRefreshRejected = "refresh_rejected"
+	// ConsentCauseRefreshAlreadyRejected: the same refresh token was refused
+	// before and is not retried until the user reconnects.
+	ConsentCauseRefreshAlreadyRejected = "refresh_already_rejected"
+	// ConsentCauseCredentialVanished: the credential disappeared mid-refresh.
+	ConsentCauseCredentialVanished = "credential_vanished"
+	// ConsentCauseRegisteredClientLost: the dynamically registered OAuth client
+	// the grant was issued to is gone, so the token cannot be redeemed.
+	ConsentCauseRegisteredClientLost = "registered_client_lost"
+)
 
 func (e *ConsentRequiredError) Error() string {
 	return fmt.Sprintf("user consent required to connect provider %q", e.Provider)
@@ -195,7 +228,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
 	if errors.Is(err, vaultdomain.ErrNotFound) {
 		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
-			"no stored credential for this user and provider")
+			ConsentCauseNoCredential, "no stored credential for this user and provider")
 	}
 	if errors.Is(err, vaultdomain.ErrUndecryptable) {
 		// The credential exists but the vault key can no longer read it — the
@@ -204,6 +237,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		// time. Name the real cause; reconnecting rewrites it under the current
 		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
 		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
+			ConsentCauseUndecryptable,
 			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
 	}
 	if err != nil {
@@ -350,6 +384,7 @@ func (r *credentialResolver) refreshCredential(
 		switch {
 		case errors.Is(err, errGrantExhausted):
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseNoRefreshToken,
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
 			var diagnostic *appoauth.InvalidGrantError
@@ -358,12 +393,15 @@ func (r *credentialResolver) refreshCredential(
 				attrs = append(attrs, "oauth_error", diagnostic.Code, "oauth_error_description", diagnostic.Description)
 			}
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRefreshRejected,
 				"provider rejected the stored refresh token", attrs...)
 		case errors.Is(err, errGrantRejected):
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRefreshAlreadyRejected,
 				"stored refresh token was already rejected; not retried until the user reconnects")
 		case errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseCredentialVanished,
 				"stored credential vanished while refreshing")
 		case errors.Is(err, appoauth.ErrNoRegisteredClient):
 			// The DCR client the refresh token was issued to is gone from the
@@ -371,6 +409,7 @@ func (r *credentialResolver) refreshCredential(
 			// consent case — reconnecting re-registers the client — not an
 			// unreachable upstream to be skipped in silence.
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRegisteredClientLost,
 				"dynamically registered client was lost (store flushed?); reconnect re-registers it")
 		}
 		return nil, err
@@ -432,13 +471,14 @@ func (r *credentialResolver) consentRequired(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
-	provider, principalSub, reason string,
+	provider, principalSub, cause, reason string,
 	diagnostics ...any,
 ) error {
 	attrs := []any{
 		"provider", provider,
 		"principal_ref", logref.Opaque(principalSub),
 		"gateway_id", rc.Consumer.GatewayID.String(),
+		"cause", cause,
 		"reason", reason,
 	}
 	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
@@ -453,7 +493,7 @@ func (r *credentialResolver) consentRequired(
 	if err != nil {
 		return err
 	}
-	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
+	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath, Cause: cause}
 }
 
 func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) string {

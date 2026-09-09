@@ -177,3 +177,114 @@ func TestPrincipalPreview_NoVaultReportsUnlinked(t *testing.T) {
 		t.Fatalf("want one unlinked connection, got %+v", state.Connections)
 	}
 }
+
+// fakeHealth answers CredentialUsable per provider, and records whether it was
+// asked at all.
+type fakeHealth struct {
+	unusable map[string]bool
+	err      error
+	asked    []string
+}
+
+func (f *fakeHealth) CredentialUsable(
+	_ context.Context,
+	_ ids.GatewayID,
+	reg *registrydomain.Registry,
+) (bool, error) {
+	provider := ""
+	if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Auth != nil {
+		provider = reg.MCPTarget.Auth.Provider
+	}
+	f.asked = append(f.asked, provider)
+	if f.err != nil {
+		return true, f.err
+	}
+	return !f.unusable[provider], nil
+}
+
+// TestPrincipalPreview_ReconnectWhenTheCredentialCannotBeRedeemed: the vault is
+// not the whole answer. A refresh token issued to a dynamically registered
+// client cannot be redeemed once that registration is gone, and the Portal used
+// to call such an account Active while every tool call on it asked the user to
+// connect.
+func TestPrincipalPreview_ReconnectWhenTheCredentialCannotBeRedeemed(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	linear := forwardedRegistry("linear", "Linear", "linear")
+	notion := forwardedRegistry("notion", "Notion", "notion")
+	vault := &fakeVault{creds: map[string]*vaultdomain.Credential{
+		// Both live: a fresh access token and a refresh token.
+		"linear": {Provider: "linear", AccountRef: "ana@corp", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)},
+		"notion": {Provider: "notion", AccountRef: "ana@corp", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)},
+	}}
+	health := &fakeHealth{unusable: map[string]bool{"linear": true}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{linear, notion}}
+	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{}}
+	p, err := NewPrincipalPreview(&fakeInstalls{}, regs, cat, vault, WithConnectionHealth(health))
+	if err != nil {
+		t.Fatalf("NewPrincipalPreview: %v", err)
+	}
+
+	state, err := p.Preview(context.Background(), gw, "ana")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	byProvider := map[string]PrincipalConnection{}
+	for _, c := range state.Connections {
+		byProvider[c.Provider] = c
+	}
+	if c := byProvider["linear"]; !c.Linked || !c.NeedsReconnect {
+		t.Fatalf("a credential that cannot be redeemed needs a reconnect: %+v", c)
+	}
+	if c := byProvider["notion"]; !c.Linked || c.NeedsReconnect {
+		t.Fatalf("a usable credential stays connected: %+v", c)
+	}
+}
+
+// A failed check must not send everyone round the reconnect loop.
+func TestPrincipalPreview_HealthCheckFailureKeepsTheAccountConnected(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	linear := forwardedRegistry("linear", "Linear", "linear")
+	vault := &fakeVault{creds: map[string]*vaultdomain.Credential{
+		"linear": {Provider: "linear", AccountRef: "ana@corp", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)},
+	}}
+	health := &fakeHealth{err: errors.New("cache unreachable")}
+	p, err := NewPrincipalPreview(&fakeInstalls{},
+		&fakeRegistries{items: []*registrydomain.Registry{linear}},
+		fakeCatalog{entries: map[string]catalogdomain.MCPServer{}}, vault,
+		WithConnectionHealth(health))
+	if err != nil {
+		t.Fatalf("NewPrincipalPreview: %v", err)
+	}
+
+	state, err := p.Preview(context.Background(), gw, "ana")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if len(state.Connections) != 1 || state.Connections[0].NeedsReconnect {
+		t.Fatalf("a failed check leaves the account connected: %+v", state.Connections)
+	}
+}
+
+// An expired credential with no refresh token already needs a reconnect, so the
+// check is not even asked — the answer cannot change.
+func TestPrincipalPreview_SkipsTheCheckWhenAReconnectIsAlreadyDue(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	linear := forwardedRegistry("linear", "Linear", "linear")
+	vault := &fakeVault{creds: map[string]*vaultdomain.Credential{
+		"linear": {Provider: "linear", ExpiresAt: time.Now().Add(-time.Hour)},
+	}}
+	health := &fakeHealth{}
+	p, err := NewPrincipalPreview(&fakeInstalls{},
+		&fakeRegistries{items: []*registrydomain.Registry{linear}},
+		fakeCatalog{entries: map[string]catalogdomain.MCPServer{}}, vault,
+		WithConnectionHealth(health))
+	if err != nil {
+		t.Fatalf("NewPrincipalPreview: %v", err)
+	}
+	if _, err := p.Preview(context.Background(), gw, "ana"); err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if len(health.asked) != 0 {
+		t.Fatalf("no check needed when a reconnect is already due, asked %v", health.asked)
+	}
+}
