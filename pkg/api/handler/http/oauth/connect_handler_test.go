@@ -50,6 +50,7 @@ func (s *stubConnectService) CreateAppTicket(
 	ids.ConsumerID,
 	ids.AuthID,
 	[]string,
+	string,
 ) (string, error) {
 	return "t", nil
 }
