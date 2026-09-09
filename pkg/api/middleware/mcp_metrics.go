@@ -15,6 +15,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -79,9 +80,9 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {
 	meta := trace.Metadata{
 		GatewayID: gatewayID,
-		Path:      c.Path(),
-		Method:    c.Method(),
-		IP:        c.IP(),
+		Path:      strings.Clone(c.Path()),
+		Method:    strings.Clone(c.Method()),
+		IP:        strings.Clone(c.IP()),
 		Kind:      events.KindMCP,
 	}
 	if gw != nil {
@@ -96,24 +97,26 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 
 func (m *MCPMetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) *infracontext.RequestContext {
 	headers := make(map[string][]string)
-	for key, values := range c.GetReqHeaders() {
-		headers[key] = append(headers[key], values...)
+	for key, value := range c.Request().Header.All() {
+		name := string(key)
+		headers[name] = append(headers[name], string(value))
 	}
 
 	return &infracontext.RequestContext{
 		GatewayID: gatewayID,
 		Headers:   headers,
-		Method:    c.Method(),
-		Path:      c.Path(),
+		Method:    strings.Clone(c.Method()),
+		Path:      strings.Clone(c.Path()),
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        c.IP(),
+		IP:        strings.Clone(c.IP()),
 	}
 }
 
 func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string) *infracontext.ResponseContext {
 	headers := make(map[string][]string)
-	for key, values := range c.GetRespHeaders() {
-		headers[key] = append(headers[key], values...)
+	for key, value := range c.Response().Header.All() {
+		name := string(key)
+		headers[name] = append(headers[name], string(value))
 	}
 
 	return &infracontext.ResponseContext{

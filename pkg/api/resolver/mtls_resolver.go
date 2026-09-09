@@ -97,6 +97,7 @@ func (r *MTLSIdentityResolver) Resolve(
 			continue
 		}
 		return &appauth.AuthContext{
+			Principal:   principal,
 			Method:      appauth.MethodMTLS,
 			GatewayID:   gw.ID,
 			GatewaySlug: gw.Slug,

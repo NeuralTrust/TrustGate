@@ -87,6 +87,9 @@ func TestMTLSResolver_AuthenticatesAgainstTheConsumerCA(t *testing.T) {
 	require.Equal(t, appauth.MethodMTLS, got.Method)
 	require.Equal(t, auth.ID, got.AuthID)
 	require.Equal(t, "batch-runner", got.Subject)
+	require.NotNil(t, got.Principal)
+	require.Equal(t, identity.MethodMTLS, got.Principal.Method)
+	require.Equal(t, got.Claims, got.Principal.Claims)
 	require.Equal(t, "batch-runner", got.Claims["common_name"])
 }
 

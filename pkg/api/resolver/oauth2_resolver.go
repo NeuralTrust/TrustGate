@@ -78,6 +78,7 @@ func (r *OAuth2IdentityResolver) Resolve(
 			continue
 		}
 		return &appauth.AuthContext{
+			Principal:   verified,
 			Method:      appauth.MethodOAuth2,
 			GatewayID:   gw.ID,
 			GatewaySlug: gw.Slug,
