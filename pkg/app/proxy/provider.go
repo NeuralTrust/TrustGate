@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -124,6 +125,7 @@ type preparedInvocation struct {
 	cfg          *providers.Config
 	body         []byte
 	sentModel    string
+	providerName string
 	sourceFormat adapter.Format
 	targetFormat adapter.Format
 	crossFormat  bool
@@ -154,6 +156,13 @@ func (p *providerInvoker) Invoke(
 	}
 
 	respBody, err := p.invokeUpstream(ctx, prep)
+	if retryBody, ok := reasoningEffortRetryBody(prep, prep.body, err); ok {
+		p.logger.Info("retrying OpenAI request with reasoning effort disabled",
+			slog.String("model", prep.sentModel))
+		retryPrep := *prep
+		retryPrep.body = retryBody
+		respBody, err = p.invokeUpstream(ctx, &retryPrep)
+	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
@@ -229,6 +238,11 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
+	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
+		p.logger.Info("retrying OpenAI stream with reasoning effort disabled",
+			slog.String("model", prep.sentModel))
+		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
+	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
@@ -331,11 +345,41 @@ func (p *providerInvoker) prepare(
 		},
 		body:         body,
 		sentModel:    sentModel,
+		providerName: bk.Provider(),
 		sourceFormat: sourceFormat,
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
 		capability:   capability,
 	}, nil
+}
+
+func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
+	if prep.providerName != provider.OpenAI || prep.targetFormat != adapter.FormatOpenAI {
+		return nil, false
+	}
+	backendErr, ok := registry.IsBackendError(err)
+	if !ok || backendErr.StatusCode != http.StatusBadRequest ||
+		!adapter.BodyRequiresReasoningEffortNone(backendErr.Body) {
+		return nil, false
+	}
+
+	var request map[string]json.RawMessage
+	if json.Unmarshal(body, &request) != nil {
+		return nil, false
+	}
+	if _, exists := request["reasoning_effort"]; exists {
+		return nil, false
+	}
+	var tools []json.RawMessage
+	if json.Unmarshal(request["tools"], &tools) != nil || len(tools) == 0 {
+		return nil, false
+	}
+	request["reasoning_effort"] = json.RawMessage(`"none"`)
+	retryBody, marshalErr := json.Marshal(request)
+	if marshalErr != nil {
+		return nil, false
+	}
+	return retryBody, true
 }
 
 // Bedrock/Vertex strip the model from the adapted body (it travels out of band),

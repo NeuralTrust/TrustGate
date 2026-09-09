@@ -94,3 +94,31 @@ func TestBodyCarriesModelNotFound(t *testing.T) {
 		})
 	}
 }
+
+func TestBodyRequiresReasoningEffortNone(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "openai tool and reasoning conflict",
+			body: `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.","type":"invalid_request_error","param":"reasoning_effort"}}`,
+			want: true,
+		},
+		{name: "ambiguous none", body: `{"error":{"message":"Function tools with reasoning_effort are not supported; none of these models supports them"}}`, want: false},
+		{name: "different error type", body: `{"error":{"type":"server_error","message":"Function tools with reasoning_effort are not supported; set reasoning_effort to 'none'"}}`, want: false},
+		{name: "different parameter", body: `{"error":{"type":"invalid_request_error","param":"tools","message":"Function tools with reasoning_effort are not supported; set reasoning_effort to 'none'"}}`, want: false},
+		{name: "plain text is not trusted", body: "set reasoning_effort to none", want: false},
+		{name: "unrelated invalid request", body: `{"error":{"message":"reasoning_effort is invalid"}}`, want: false},
+		{name: "missing error envelope", body: `{"message":"Function tools with reasoning_effort are not supported; use none"}`, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BodyRequiresReasoningEffortNone([]byte(tc.body)); got != tc.want {
+				t.Errorf("BodyRequiresReasoningEffortNone(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
