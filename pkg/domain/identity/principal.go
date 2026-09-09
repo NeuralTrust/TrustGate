@@ -47,7 +47,7 @@ const (
 	// a caller actually presented, on a request that runs as something else: a
 	// consumer acting as the application runs as app:<consumer_id>, and this is
 	// how "which api key or certificate called" survives that.
-	ClaimCredentialSubject = "credential_subject"
+	ClaimCredentialSubject = "credential_subject" // #nosec G101 -- JWT claim name, not a credential
 	// ClaimGateway is the claim naming the gateway a platform token was minted
 	// for. The control plane resolves store_access per gateway (Access policies
 	// are gateway-scoped), so the token must not be redeemed at another gateway
