@@ -102,6 +102,11 @@ type ConnectService interface {
 	// time. authID is the api key the ticket was minted from, so revoking that
 	// key kills it; pass a nil id for a ticket an admin minted, whose authority
 	// was the admin API and which stands on the consumer alone.
+	//
+	// code is the catalog code of the one server the ticket is focused on, which
+	// opens the connect page on that server's own card instead of the picker —
+	// what an admin authorizing a single row asked for. Empty covers every
+	// forwarded server of the application, and the picker is then the point.
 	CreateAppTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
@@ -110,6 +115,7 @@ type ConnectService interface {
 		consumerID ids.ConsumerID,
 		authID ids.AuthID,
 		providers []string,
+		code string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
