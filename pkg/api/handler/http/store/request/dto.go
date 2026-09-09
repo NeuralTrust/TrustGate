@@ -32,6 +32,9 @@ type Install struct {
 	Code         string   `json:"code"`
 	Groups       []string `json:"groups"`
 	InstanceID   string   `json:"instance_id"`
+	// Reason is why the user wants the server, in their own words. Kept only on
+	// a request an approver has to decide, and shown to them there.
+	Reason string `json:"reason"`
 }
 
 type Decide struct {

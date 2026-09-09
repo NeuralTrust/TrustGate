@@ -1015,3 +1015,42 @@ the console hides *Add instance* for those servers and says why instead. Only
 the pair is real and something is routing to it. The self-service paths are
 unaffected — `RegistryEnsurer.Ensure` and `from-catalog` both look for an
 existing registry first, so they only ever create the first one.
+
+## 18. Why the user asked
+
+Access → Approvals was built with a Reason column and nothing to put in it: it
+rendered an em dash on every row, because no path ever collected one. An
+approver deciding a request could see who asked, for what, and when — never
+what for.
+
+The requester's words now travel with the request, on the installation row
+(`reason`, bounded at 500 characters by `installation.MaxReasonLength`, checked
+in `Validate` so no caller can route around it). Two paths collect it, because
+there are two ways a request gets filed:
+
+- **The Portal.** Pressing *Request access* opens a form and the request cannot
+  be sent without a sentence. That is the only moment it can be asked: by the
+  time the request exists the user has moved on, and asking the approver to
+  chase them defeats the point of the queue. *Install* — a server the user's
+  access already allows — asks nothing, because it asks nobody.
+- **`trustgate_store_install`.** A user asking their own client for a server is
+  the other way in, so the tool takes a `reason` argument, described as the
+  user's own words and told not to invent one. An over-long reason from there is
+  cut rather than refused: the caller is a model relaying a sentence, and
+  failing the install over its length would serve no one. The Portal's API
+  refuses instead, since a person can shorten it.
+
+Two decisions worth keeping:
+
+- **It is kept only on a request an approver must decide.** An install that
+  needs no approval carries none even when the caller sends one — there is
+  nobody to read it, and storing "why" for something nobody asked about invites
+  reading it as something it is not.
+- **The reason survives the decision.** `DecidedRequest` carries it too, so the
+  History view says what was approved or denied *and* what it was asked for. A
+  repeat request overwrites it with the newest words; an install never erases
+  what a user wrote (the upsert keeps the stored one when the incoming one is
+  empty).
+
+The column is also searchable, since it is the most distinctive text on a row —
+an approver looking for "the one about the pipeline review" can type that.

@@ -155,6 +155,11 @@ type InstallRequest struct {
 	// result). Nil lets the installer pick: the sole usable instance, or the one
 	// materialised from the catalog.
 	RegistryID ids.RegistryID
+	// Reason is why the user wants this server, in their own words. It is kept
+	// only on a request an approver has to decide, which is the one place it is
+	// read (Access → Approvals); an install that needs no approval asks nobody,
+	// so it carries none even when the caller sends one.
+	Reason string
 }
 
 type installer struct {
@@ -281,6 +286,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, err
 	}
 	record.RegistryID = decision.registryID
+	if decision.status == installationdomain.StatusPendingApproval {
+		record.Reason = strings.TrimSpace(in.Reason)
+	}
 	// Reuse the existing instance's id so a repeat install updates it in place
 	// rather than inserting a duplicate; a new-config install keeps its fresh id.
 	if sameInstance != nil {
