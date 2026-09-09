@@ -72,10 +72,6 @@ func runUsageCases(t *testing.T, dec usageDecoder, cases []usageCase) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DetectFormat
-// ---------------------------------------------------------------------------
-
 func TestDetectFormat(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -132,10 +128,6 @@ func TestDetectFormat(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ResolveAgentFormat
-// ---------------------------------------------------------------------------
-
 func TestResolveAgentFormat_SourceFormatOverrides(t *testing.T) {
 	got, err := ResolveAgentFormat("ignored", "openai_responses", nil)
 	require.NoError(t, err)
@@ -183,10 +175,6 @@ func TestResolveAgentFormat_UnknownProvider(t *testing.T) {
 	_, err := ResolveAgentFormat("unknown-provider", "", nil)
 	require.Error(t, err)
 }
-
-// ---------------------------------------------------------------------------
-// IsSameWireFormat
-// ---------------------------------------------------------------------------
 
 func TestIsSameWireFormat(t *testing.T) {
 	assert.True(t, IsSameWireFormat(FormatOpenAI, FormatAzure))
@@ -356,10 +344,6 @@ func TestResolveTargetFormatForCapability_NonChatCapabilitiesIgnoreRoute(t *test
 		ResolveTargetFormatForCapability("mistral", "audio_transcription", FormatOpenAI, nil))
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Anthropic
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToAnthropic(t *testing.T) {
 	input := `{
 		"model": "gpt-4",
@@ -416,10 +400,6 @@ func TestAdaptRequest_OpenAIToAnthropic(t *testing.T) {
 	assert.Equal(t, "auto", tc["type"])
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_AnthropicToOpenAI(t *testing.T) {
 	input := `{
 		"model": "claude-3-sonnet",
@@ -445,10 +425,6 @@ func TestAdaptRequest_AnthropicToOpenAI(t *testing.T) {
 	assert.Equal(t, "system", first["role"])
 	assert.Equal(t, "You are helpful.", first["content"])
 }
-
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Gemini
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 	input := `{
@@ -490,10 +466,6 @@ func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 	assert.Equal(t, 0.5, gc["temperature"])
 }
 
-// ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Bedrock (should get anthropic_version)
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	input := `{
 		"model": "anthropic.claude-3-sonnet",
@@ -514,10 +486,6 @@ func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	assert.Equal(t, "Be helpful.", result["system"])
 }
 
-// ---------------------------------------------------------------------------
-// Same format passthrough
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_SameFormat(t *testing.T) {
 	input := `{"model":"gpt-4","messages":[]}`
 	out, err := testRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatOpenAI)
@@ -531,10 +499,6 @@ func TestAdaptRequest_AzureToOpenAI(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, input, string(out))
 }
-
-// ---------------------------------------------------------------------------
-// Response: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 	input := `{
@@ -552,7 +516,7 @@ func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 		}
 	}`
 
-	// target=anthropic produced this response, source=openai wants it.
+	// The anthropic target produced this response and the openai source expects it.
 	out, err := testRegistry().AdaptResponse([]byte(input), FormatOpenAI, FormatAnthropic)
 	require.NoError(t, err)
 
@@ -576,10 +540,6 @@ func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 	assert.Equal(t, float64(5), usage["completion_tokens"])
 	assert.Equal(t, float64(15), usage["total_tokens"])
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Anthropic → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestAdaptStreamChunk_AnthropicContentDelta(t *testing.T) {
 	input := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`
@@ -614,8 +574,8 @@ func TestAdaptStreamChunk_AnthropicNonContentSkipped(t *testing.T) {
 }
 
 // TestAdaptStreamChunk_OpenAIToolCallsToAnthropic ensures OpenAI stream chunks
-// with tool_calls are converted to Anthropic content_block_start(tool_use) and
-// content_block_delta(input_json_delta) so the agent receives a valid stream.
+// with tool_calls are converted to Anthropic tool_use content_block_start and
+// input_json_delta content_block_delta events so the agent receives a valid stream.
 func TestAdaptStreamChunk_OpenAIToolCallsToAnthropic(t *testing.T) {
 	// First chunk: role + tool_calls with id, name, empty arguments
 	input := `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"database_agent","arguments":""}}]}}]}`
@@ -650,10 +610,6 @@ func TestAdaptStreamChunk_OpenAIToolCallsToAnthropic(t *testing.T) {
 	assert.True(t, seenInputDelta, "expected content_block_delta with input_json_delta")
 }
 
-// ---------------------------------------------------------------------------
-// Cross-format: Gemini → Anthropic (via canonical, no two-hop hack)
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_GeminiToAnthropic(t *testing.T) {
 	input := `{
 		"contents": [
@@ -674,10 +630,6 @@ func TestAdaptRequest_GeminiToAnthropic(t *testing.T) {
 	assert.Len(t, msgs, 1)
 	assert.Equal(t, float64(100), result["max_tokens"])
 }
-
-// ---------------------------------------------------------------------------
-// OpenAI Completions vs Responses dispatcher (OpenAIAdapter handles both)
-// ---------------------------------------------------------------------------
 
 func TestCanonical_OpenAI_CompletionsVsResponsesDispatch(t *testing.T) {
 	adapter := &OpenAIAdapter{}
@@ -731,10 +683,6 @@ func TestCanonical_OpenAI_CompletionsVsResponsesDispatch(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// DetectFormat: Responses API distinction
-// ---------------------------------------------------------------------------
-
 func TestDetectFormat_ResponsesAPIInput(t *testing.T) {
 	body := `{"model":"gpt-4o","input":"Hello"}`
 	got := DetectFormat([]byte(body))
@@ -752,10 +700,6 @@ func TestDetectFormat_CompletionsStillDetected(t *testing.T) {
 	got := DetectFormat([]byte(body))
 	assert.Equal(t, FormatOpenAI, got)
 }
-
-// ---------------------------------------------------------------------------
-// Cross-provider: Responses API request → Anthropic (via canonical)
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_ResponsesAPIToAnthropic(t *testing.T) {
 	input := `{
@@ -780,10 +724,6 @@ func TestAdaptRequest_ResponsesAPIToAnthropic(t *testing.T) {
 	assert.Equal(t, float64(100), result["max_tokens"])
 }
 
-// ---------------------------------------------------------------------------
-// FormatOpenAIResponses: wire format isolation
-// ---------------------------------------------------------------------------
-
 func TestIsSameWireFormat_ResponsesVsCompletions(t *testing.T) {
 	assert.False(t, IsSameWireFormat(FormatOpenAIResponses, FormatOpenAI),
 		"Responses API and Completions are NOT wire-compatible")
@@ -792,10 +732,6 @@ func TestIsSameWireFormat_ResponsesVsCompletions(t *testing.T) {
 	assert.False(t, IsSameWireFormat(FormatOpenAIResponses, FormatAnthropic),
 		"Responses API and Anthropic are NOT wire-compatible")
 }
-
-// ---------------------------------------------------------------------------
-// Cross-provider full roundtrip: Responses API client → Completions upstream
-// ---------------------------------------------------------------------------
 
 func TestAdaptResponse_CompletionsToResponsesAPI(t *testing.T) {
 	completionsResp := `{

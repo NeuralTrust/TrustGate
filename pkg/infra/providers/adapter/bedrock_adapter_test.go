@@ -22,10 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Bedrock Titan: OpenAI → Bedrock (Titan model)
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToBedrockTitan(t *testing.T) {
 	input := `{
 		"model": "amazon.titan-text-express-v1",
@@ -89,10 +85,6 @@ func TestBedrock_Titan_StreamChunkDecode(t *testing.T) {
 	assert.Equal(t, "Hello from Titan", sc.Delta)
 }
 
-// ---------------------------------------------------------------------------
-// Bedrock Llama: OpenAI → Bedrock (Llama model)
-// ---------------------------------------------------------------------------
-
 func TestAdaptRequest_OpenAIToBedrockLlama(t *testing.T) {
 	input := `{
 		"model": "meta.llama3-70b-instruct-v1:0",
@@ -150,10 +142,6 @@ func TestBedrock_Llama_StreamChunkDecode(t *testing.T) {
 	require.NotNil(t, sc)
 	assert.Equal(t, "Hello from Llama", sc.Delta)
 }
-
-// ---------------------------------------------------------------------------
-// Bedrock Mistral: OpenAI → Bedrock (Mistral model)
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_OpenAIToBedrockLegacyMistral(t *testing.T) {
 	input := `{
@@ -231,10 +219,6 @@ func TestBedrock_Mistral_StreamChunkDecode(t *testing.T) {
 	assert.Equal(t, "Hello from Mistral", sc.Delta)
 }
 
-// ---------------------------------------------------------------------------
-// Bedrock: Decode incoming model-specific requests
-// ---------------------------------------------------------------------------
-
 func TestBedrock_DecodeTitanRequest(t *testing.T) {
 	body := `{
 		"inputText": "Hello Titan",
@@ -268,10 +252,6 @@ func TestBedrock_DecodeMistralRequest(t *testing.T) {
 	assert.Contains(t, cr.Messages[0].Content, "Hello Mistral")
 	assert.Equal(t, 128, cr.MaxTokens)
 }
-
-// ---------------------------------------------------------------------------
-// Bedrock OpenAI-compat (DeepSeek): OpenAI → Bedrock (OpenAI model)
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_OpenAIToBedrockDeepSeek(t *testing.T) {
 	input := `{
@@ -486,10 +466,6 @@ func TestBedrock_InvocationMetricsFallback_MetricsAbsent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, cr.Usage, "Mistral with no metrics and no native counters must return nil")
 }
-
-// ---------------------------------------------------------------------------
-// Bedrock Nova (Amazon Nova)
-// ---------------------------------------------------------------------------
 
 func TestAdaptRequest_OpenAIToBedrockNova(t *testing.T) {
 	input := `{

@@ -34,10 +34,6 @@ type BedrockAdapter struct {
 	nova    bedrockNovaAdapter
 }
 
-// ---------------------------------------------------------------------------
-// Model family constants & detection
-// ---------------------------------------------------------------------------
-
 const (
 	bfClaude  = "claude"
 	bfOpenAI  = "openai" // DeepSeek, AI21 Jamba, newer Mistral, etc.
@@ -243,10 +239,6 @@ func detectFamilyFromStreamChunk(chunk []byte) string {
 	return bfClaude
 }
 
-// ---------------------------------------------------------------------------
-// Request: Decode (Bedrock → Canonical)
-// ---------------------------------------------------------------------------
-
 func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	family := detectFamilyFromRequestBody(body)
 	switch family {
@@ -264,10 +256,6 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		return a.claude.DecodeRequest(body)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Bedrock)
-// ---------------------------------------------------------------------------
 
 func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	family := detectFamilyByModel(req.Model)
@@ -306,10 +294,6 @@ func (a *BedrockAdapter) encodeClaude(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(raw)
 }
 
-// ---------------------------------------------------------------------------
-// Response: Decode / Encode
-// ---------------------------------------------------------------------------
-
 func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	family := detectFamilyFromResponseBody(body)
 	switch family {
@@ -336,10 +320,6 @@ func (a *BedrockAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error)
 	return a.claude.EncodeResponse(resp)
 }
 
-// ---------------------------------------------------------------------------
-// Stream: Decode / Encode
-// ---------------------------------------------------------------------------
-
 func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	family := detectFamilyFromStreamChunk(chunk)
 	switch family {
@@ -361,12 +341,6 @@ func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 func (a *BedrockAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	return a.claude.EncodeStreamChunk(chunk)
 }
-
-// =========================================================================
-//
-//	TITAN  (Amazon Titan Text)
-//
-// =========================================================================
 
 type bedrockTitanAdapter struct{}
 
@@ -507,12 +481,6 @@ func (t *bedrockTitanAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamC
 	}, nil
 }
 
-// =========================================================================
-//
-//	LLAMA  (Meta Llama on Bedrock)
-//
-// =========================================================================
-
 type bedrockLlamaAdapter struct{}
 
 // Typed structs ---------------------------------------------------------------
@@ -630,12 +598,6 @@ func (l *bedrockLlamaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamC
 		Usage:        usage,
 	}, nil
 }
-
-// =========================================================================
-//
-//	MISTRAL  (Mistral on Bedrock)
-//
-// =========================================================================
 
 type bedrockMistralAdapter struct{}
 
@@ -757,12 +719,6 @@ func (m *bedrockMistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStrea
 		Usage:        usage,
 	}, nil
 }
-
-// =========================================================================
-//
-//	NOVA  (Amazon Nova)
-//
-// =========================================================================
 
 // bedrockNovaAdapter speaks the Nova schema: content is a list of typed blocks
 // rather than a string, and the sampling knobs live under "inferenceConfig".
@@ -975,12 +931,6 @@ func novaCanonicalUsage(usage *novaUsage, metrics *bedrockInvocationMetrics) *Ca
 	}
 	return mergeParsedUsage(in, out, total, metrics)
 }
-
-// =========================================================================
-//
-//	Prompt template helpers
-//
-// =========================================================================
 
 // formatMessagesAsText renders canonical messages as plain text for models
 // that use a single "inputText" or "prompt" field (Titan).

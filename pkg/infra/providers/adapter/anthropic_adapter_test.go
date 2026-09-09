@@ -23,10 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: Anthropic → Canonical → Anthropic
-// ---------------------------------------------------------------------------
-
 func TestCanonical_Anthropic_Roundtrip(t *testing.T) {
 	input := `{
 		"model": "claude-3-sonnet",
@@ -56,10 +52,6 @@ func TestCanonical_Anthropic_Roundtrip(t *testing.T) {
 	msgs := result["messages"].([]interface{})
 	assert.Len(t, msgs, 1)
 }
-
-// ---------------------------------------------------------------------------
-// Real Anthropic request with stream + tools
-// ---------------------------------------------------------------------------
 
 func TestCanonical_Anthropic_RealRequest_WithStreamAndTools(t *testing.T) {
 	input := `{
@@ -121,10 +113,6 @@ func TestCanonical_Anthropic_RealRequest_WithStreamAndTools(t *testing.T) {
 	tool := tools[0].(map[string]interface{})
 	assert.Equal(t, "function", tool["type"])
 }
-
-// ---------------------------------------------------------------------------
-// Anthropic tool_use response: real-world payload
-// ---------------------------------------------------------------------------
 
 func TestAnthropic_DecodeResponse_ToolUse_RealPayload(t *testing.T) {
 	// Exact payload from Anthropic Claude.

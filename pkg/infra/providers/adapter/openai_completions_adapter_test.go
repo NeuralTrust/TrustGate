@@ -22,10 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: OpenAI → Canonical → OpenAI
-// ---------------------------------------------------------------------------
-
 func TestCanonical_OpenAI_Roundtrip(t *testing.T) {
 	input := `{
 		"model": "gpt-4",
@@ -57,10 +53,6 @@ func TestCanonical_OpenAI_Roundtrip(t *testing.T) {
 	assert.Len(t, msgs, 2) // system re-injected + user
 	assert.Equal(t, "system", msgs[0].(map[string]interface{})["role"])
 }
-
-// ---------------------------------------------------------------------------
-// Response roundtrip: OpenAI → Canonical → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestCanonical_OpenAI_ResponseRoundtrip(t *testing.T) {
 	input := `{
