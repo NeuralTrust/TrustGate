@@ -153,6 +153,12 @@ func (t *inventoryTool) Call(
 		if server.Code != "" {
 			entry["code"] = server.Code
 		}
+		if server.Cause != "" {
+			// The condition behind needs_connect. Without it a client can only
+			// guess at the cause, and it guesses "the session expired" whatever
+			// happened.
+			entry["cause"] = server.Cause
+		}
 		if server.Provider != "" {
 			entry["provider"] = server.Provider
 			// The connection meta-tool for this provider, so a caller can chain
@@ -313,6 +319,9 @@ func inventoryStateText(server map[string]any) string {
 		text := "not connected: its tools cannot be called until the user connects their account"
 		if connect := displayString(server["connect_tool"]); connect != "" {
 			text += ", which " + connect + " gives them a link for"
+		}
+		if cause := displayString(server["cause"]); cause != "" {
+			text += " (" + cause + ")"
 		}
 		return text
 	case InventoryStateUnavailable:
