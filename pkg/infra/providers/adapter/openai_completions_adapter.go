@@ -19,10 +19,6 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
-// Chat Completions API typed structs
-// ---------------------------------------------------------------------------
-
 type openaiRequest struct {
 	Model               string            `json:"model,omitempty"`
 	Messages            []openaiMessage   `json:"messages"`
@@ -229,10 +225,6 @@ func (f *openaiStreamToolCallFn) name() string {
 	return f.Name
 }
 
-// ---------------------------------------------------------------------------
-// Request: Decode (Chat Completions → Canonical)
-// ---------------------------------------------------------------------------
-
 func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	var req openaiRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -307,10 +299,6 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Chat Completions)
-// ---------------------------------------------------------------------------
-
 func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	out := openaiRequest{
 		Model:       req.Model,
@@ -381,10 +369,6 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// ---------------------------------------------------------------------------
-// Response: Decode (Chat Completions response → Canonical)
-// ---------------------------------------------------------------------------
-
 func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	var resp openaiResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -435,10 +419,6 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response: Encode (Canonical → Chat Completions response)
-// ---------------------------------------------------------------------------
-
 func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 	msg := openaiMessage{
 		Role:    "assistant",
@@ -485,10 +465,6 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 
 	return json.Marshal(out)
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Decode (Chat Completions chunk → Canonical)
-// ---------------------------------------------------------------------------
 
 func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var raw openaiStreamChunk
@@ -546,10 +522,6 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 
 	return sc, nil
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Chat Completions chunk)
-// ---------------------------------------------------------------------------
 
 func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	delta := openaiStreamDelta{

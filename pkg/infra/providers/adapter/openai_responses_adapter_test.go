@@ -23,10 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ===========================================================================
-// OpenAI Responses API tests
-// ===========================================================================
-
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_StringInput(t *testing.T) {
 	input := `{"model":"gpt-4o","input":"Hello!"}`
 
@@ -386,10 +382,6 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeStreamChunk_Skipped(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Generic extractors: Responses API support
-// ---------------------------------------------------------------------------
-
 func TestExtractUserInputGeneric_ResponsesAPI_StringInput(t *testing.T) {
 	body := `{"model":"gpt-4o","input":"Hello from responses"}`
 	got := ExtractUserInputGeneric([]byte(body))
@@ -440,10 +432,6 @@ func TestExtractAssistantOutputGeneric_ResponsesAPI_FunctionCallOnly(t *testing.
 	got := ExtractAssistantOutputGeneric([]byte(body))
 	assert.Equal(t, "", got)
 }
-
-// ---------------------------------------------------------------------------
-// Responses API: Encode tests
-// ---------------------------------------------------------------------------
 
 func TestEncodeResponsesRequest_Basic(t *testing.T) {
 	adapter := &OpenAIResponsesAdapter{}
@@ -673,10 +661,6 @@ func TestEncodeResponsesStreamChunk_ToolCallFinish(t *testing.T) {
 	assert.Contains(t, string(joined), "response.function_call_arguments.done")
 	assert.Contains(t, string(joined), "response.completed")
 }
-
-// ---------------------------------------------------------------------------
-// Responses API: Decode → Encode roundtrip
-// ---------------------------------------------------------------------------
 
 func TestResponsesAPI_RequestRoundtrip(t *testing.T) {
 	input := `{

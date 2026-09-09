@@ -20,10 +20,6 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
-// Responses API typed structs
-// ---------------------------------------------------------------------------
-
 type openaiResponsesRequest struct {
 	Model           string            `json:"model,omitempty"`
 	Input           json.RawMessage   `json:"input"`
@@ -126,10 +122,6 @@ type openaiResponsesStreamEvent struct {
 	Item         json.RawMessage `json:"item,omitempty"`
 	Response     json.RawMessage `json:"response,omitempty"`
 }
-
-// ---------------------------------------------------------------------------
-// Request: Decode (Responses API → Canonical)
-// ---------------------------------------------------------------------------
 
 func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	var req openaiResponsesRequest
@@ -241,10 +233,6 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response: Decode (Responses API response → Canonical)
-// ---------------------------------------------------------------------------
-
 func decodeResponsesResponse(body []byte) (*CanonicalResponse, error) {
 	var resp openaiResponsesResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -295,10 +283,6 @@ func decodeResponsesResponse(body []byte) (*CanonicalResponse, error) {
 
 	return cr, nil
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Decode (Responses API stream event → Canonical)
-// ---------------------------------------------------------------------------
 
 func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var event openaiResponsesStreamEvent
@@ -380,10 +364,6 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		return nil, nil
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Responses API)
-// ---------------------------------------------------------------------------
 
 func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 	out := openaiResponsesRequest{
@@ -516,10 +496,6 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// ---------------------------------------------------------------------------
-// Response: Encode (Canonical → Responses API response)
-// ---------------------------------------------------------------------------
-
 func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 	out := openaiResponsesResponse{
 		ID:     resp.ID,
@@ -566,10 +542,6 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 
 	return json.Marshal(out)
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Responses API SSE events)
-// ---------------------------------------------------------------------------
 
 func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	var allLines [][]byte

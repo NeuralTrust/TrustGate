@@ -234,7 +234,7 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"echo", "search"}, names)
+	require.ElementsMatch(t, []string{"echo", "search", appmcp.InventoryToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
@@ -280,7 +280,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"alias-echo"}, names)
+	require.ElementsMatch(t, []string{"alias-echo", appmcp.InventoryToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "alias-echo", "arguments": map[string]any{"message": "hola"}})
@@ -358,7 +358,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo"}, names)
+	require.ElementsMatch(t, []string{"echo", appmcp.InventoryToolName}, names)
 }
 
 func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
