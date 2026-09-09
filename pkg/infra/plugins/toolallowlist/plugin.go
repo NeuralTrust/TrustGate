@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
 	"strings"
+	"unicode"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -33,6 +35,10 @@ import (
 const PluginName = "tool_allowlist"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
+
+var errNullBody = errors.New("tool_allowlist: request body is null")
+
+var ownedToolKeys = []string{"tools", "tool_choice", "parallel_tool_calls", "toolConfig"}
 
 type Plugin struct {
 	registry *adapter.Registry
@@ -83,7 +89,19 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if format == "" {
 		return okResult(), nil
 	}
+	scan := scanToolKeys(in.Request.Body)
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if appplugins.Blocks(in.Mode) && (scan.ambiguous || (err != nil && scan.present)) {
+		setExtras(in.Event, ToolAllowlistData{
+			Provider:       in.Request.Provider,
+			ToolsRequested: []string{},
+			ToolsAllowed:   []string{},
+			ToolsRemoved:   []string{},
+			Action:         actionRejected,
+			Decision:       appplugins.DecisionForMode(in.Mode),
+		})
+		return newRejectResult(http.StatusBadRequest, errInvalidToolsField, nil)
+	}
 	if err != nil || canonical == nil || len(canonical.Tools) == 0 {
 		return okResult(), nil
 	}
@@ -123,8 +141,53 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	case onEmptyPassThrough:
 		return rewriteEmpty(in.Request.Body, false)
 	default:
-		return newRejectResult(requested)
+		return newRejectResult(http.StatusForbidden, errNoToolsAllowed, requested)
 	}
+}
+
+type toolKeyScan struct {
+	present   bool
+	ambiguous bool
+}
+
+func scanToolKeys(body []byte) toolKeyScan {
+	var scan toolKeyScan
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return scan
+	}
+	seen := make(map[string]int, len(ownedToolKeys))
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return scan
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return scan
+		}
+		if canonical, owned := ownedToolKey(key); owned {
+			scan.present = true
+			seen[canonical]++
+			if key != canonical || seen[canonical] > 1 {
+				scan.ambiguous = true
+			}
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return scan
+		}
+	}
+	return scan
+}
+
+func ownedToolKey(key string) (string, bool) {
+	for _, owned := range ownedToolKeys {
+		if strings.EqualFold(key, owned) {
+			return owned, true
+		}
+	}
+	return "", false
 }
 
 func (p *Plugin) stripTools(
@@ -164,11 +227,13 @@ func rewriteEmpty(originalBody []byte, deleteTools bool) (*appplugins.Result, er
 	if err := json.Unmarshal(originalBody, &m); err != nil {
 		return nil, fmt.Errorf("tool_allowlist: rewrite: %w", err)
 	}
-	delete(m, "tool_choice")
-	delete(m, "parallel_tool_calls")
-	if deleteTools {
-		delete(m, "tools")
-	} else {
+	for key := range m {
+		canonical, owned := ownedToolKey(key)
+		if owned && (canonical != "tools" || deleteTools) {
+			delete(m, key)
+		}
+	}
+	if !deleteTools {
 		m["tools"] = json.RawMessage("[]")
 	}
 	body, err := json.Marshal(m)
@@ -178,23 +243,26 @@ func rewriteEmpty(originalBody []byte, deleteTools bool) (*appplugins.Result, er
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
 
-func newRejectResult(requested []string) (*appplugins.Result, error) {
-	body, err := json.Marshal(newErrorBody(requested))
+func newRejectResult(status int, kind string, requested []string) (*appplugins.Result, error) {
+	body, err := json.Marshal(newErrorBody(kind, requested))
 	if err != nil {
 		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusForbidden,
-			Message:    "no tools allowed",
+			StatusCode: status,
+			Message:    kind,
 		}
 	}
 	return &appplugins.Result{
 		StopUpstream: true,
-		StatusCode:   http.StatusForbidden,
+		StatusCode:   status,
 		Headers:      map[string][]string{"Content-Type": {"application/json"}},
 		Body:         body,
 	}, nil
 }
 
 func keepTool(name string, cfg *config) bool {
+	if !printableName(name) {
+		return false
+	}
 	if len(cfg.AllowTools) > 0 {
 		if _, ok := matchAny(cfg.AllowTools, name); !ok {
 			return false
@@ -260,6 +328,10 @@ func matchAny(patterns []string, name string) (string, bool) {
 	return "", false
 }
 
+func printableName(name string) bool {
+	return strings.IndexFunc(name, func(r rune) bool { return !unicode.IsPrint(r) }) < 0
+}
+
 func matchToolPattern(pattern, name string) bool {
 	const sentinel = "\x00"
 	p := strings.ReplaceAll(pattern, "/", sentinel)
@@ -279,22 +351,44 @@ func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, 
 	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
 		return nil, err
 	}
+	if orig == nil {
+		return nil, errNullBody
+	}
+	touched := make(map[string]struct{}, len(full))
 	for key, fullValue := range full {
 		strippedValue, ok := stripped[key]
 		if !ok {
 			delete(orig, key)
+			touched[key] = struct{}{}
 			continue
 		}
 		if !bytes.Equal(fullValue, strippedValue) {
 			orig[key] = strippedValue
+			touched[key] = struct{}{}
 		}
 	}
 	for key, strippedValue := range stripped {
 		if _, ok := full[key]; !ok {
 			orig[key] = strippedValue
+			touched[key] = struct{}{}
 		}
 	}
+	dropCaseVariants(orig, touched)
 	return json.Marshal(orig)
+}
+
+func dropCaseVariants(orig map[string]json.RawMessage, touched map[string]struct{}) {
+	for key := range orig {
+		if _, ok := touched[key]; ok {
+			continue
+		}
+		for owned := range touched {
+			if strings.EqualFold(key, owned) {
+				delete(orig, key)
+				break
+			}
+		}
+	}
 }
 
 func wireFormat(req *infracontext.RequestContext) string {

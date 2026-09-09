@@ -46,6 +46,33 @@ func anthropicBody(names ...string) string {
 	return fmt.Sprintf(`{"model":"claude-3-5-sonnet","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"tools":[%s]}`, strings.Join(tools, ","))
 }
 
+func geminiBody(names ...string) string {
+	decls := make([]string, 0, len(names))
+	for _, n := range names {
+		decls = append(decls, fmt.Sprintf(`{"name":%q,"parameters":{"type":"object"}}`, n))
+	}
+	return fmt.Sprintf(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[%s]}],"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}}`, strings.Join(decls, ","))
+}
+
+func geminiNames(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var body struct {
+		Tools []struct {
+			FunctionDeclarations []struct {
+				Name string `json:"name"`
+			} `json:"functionDeclarations"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	names := make([]string, 0)
+	for _, group := range body.Tools {
+		for _, d := range group.FunctionDeclarations {
+			names = append(names, d.Name)
+		}
+	}
+	return names
+}
+
 func reqFor(format, body string) *infracontext.RequestContext {
 	return &infracontext.RequestContext{
 		Body:         []byte(body),
@@ -377,6 +404,196 @@ func TestPlugin_Execute(t *testing.T) {
 			},
 		},
 		{
+			name:     "capitalised Tools key rejects in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"Tools":[{"type":"function","function":{"name":"evil"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+				assert.JSONEq(t, `{"error":{"type":"invalid_tools_field","requested":[],"allowed_after_filter":[]}}`, string(res.Body))
+				assert.Nil(t, res.RequestBody)
+			},
+		},
+		{
+			name:     "duplicate tools keys with mixed case reject even when all allowed",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"evil"}}],"Tools":[{"type":"function","function":{"name":"search_web"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+			},
+		},
+		{
+			name:     "capitalised Tools key passes through in observe",
+			mode:     policy.ModeObserve,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"Tools":[{"type":"function","function":{"name":"evil"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.False(t, res.StopUpstream)
+				assert.Equal(t, 200, res.StatusCode)
+				assert.Nil(t, res.RequestBody)
+			},
+		},
+		{
+			name:     "null body is a no-op",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `null`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.Equal(t, 200, res.StatusCode)
+				assert.Nil(t, res.RequestBody)
+				assert.False(t, res.StopUpstream)
+			},
+		},
+		{
+			name:     "undecodable body with tools key rejects in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+				assert.JSONEq(t, `{"error":{"type":"invalid_tools_field","requested":[],"allowed_after_filter":[]}}`, string(res.Body))
+			},
+		},
+		{
+			name:     "undecodable body with toolConfig key rejects in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+			},
+		},
+		{
+			name:     "truncated body with tools key rejects in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"tools":[{"type":"function","function":{"name":"delete_db"}}],"messages":[`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+			},
+		},
+		{
+			name:     "undecodable body with tools key passes through in observe",
+			mode:     policy.ModeObserve,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.False(t, res.StopUpstream)
+				assert.Equal(t, 200, res.StatusCode)
+				assert.Nil(t, res.RequestBody)
+			},
+		},
+		{
+			name:     "empty tools array is a no-op",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.Equal(t, 200, res.StatusCode)
+				assert.Nil(t, res.RequestBody)
+				assert.False(t, res.StopUpstream)
+			},
+		},
+		{
+			name:     "NUL byte in tool name never matches slash pattern",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"github/*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"github/rm"}},{"type":"function","function":{"name":"github\u0000rm_rf"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, res.RequestBody)
+				assert.Equal(t, []string{"github/rm"}, openaiNames(t, res.RequestBody))
+			},
+		},
+		{
+			name:     "control characters in tool name are removed under deny-only",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"delete_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"search_web"}},{"type":"function","function":{"name":"sea\u0007rch"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, res.RequestBody)
+				assert.Equal(t, []string{"search_web"}, openaiNames(t, res.RequestBody))
+			},
+		},
+		{
+			name:     "exact duplicate tools keys reject in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"search_web"}}],"tools":[{"type":"function","function":{"name":"evil"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+			},
+		},
+		{
+			name:     "unresolvable adapter with tools key rejects in enforce",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai_files", openaiBody("delete_db")),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				assert.True(t, res.StopUpstream)
+				assert.Equal(t, 400, res.StatusCode)
+			},
+		},
+		{
+			name:     "gemini partial strip preserves toolConfig",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"delete_*"}},
+			req:      reqFor("google", geminiBody("search_web", "delete_db")),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, res.RequestBody)
+				assert.Equal(t, []string{"search_web"}, geminiNames(t, res.RequestBody))
+				m := bodyMap(t, res.RequestBody)
+				assert.JSONEq(t, `{"functionCallingConfig":{"mode":"ANY"}}`, string(m["toolConfig"]))
+			},
+		},
+		{
+			name:     "gemini strip_tools_field drops toolConfig",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}, "on_empty_after_filter": "strip_tools_field"},
+			req:      reqFor("google", geminiBody("delete_db")),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, res.RequestBody)
+				m := bodyMap(t, res.RequestBody)
+				_, hasTools := m["tools"]
+				_, hasToolConfig := m["toolConfig"]
+				assert.False(t, hasTools)
+				assert.False(t, hasToolConfig)
+				assert.Contains(t, m, "contents")
+			},
+		},
+		{
+			name:     "non-ascii printable tool name is kept",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"b*"}},
+			req:      reqFor("openai", openaiBody("búsqueda_web", "delete_db")),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				require.NoError(t, err)
+				require.NotNil(t, res.RequestBody)
+				assert.Equal(t, []string{"búsqueda_web"}, openaiNames(t, res.RequestBody))
+			},
+		},
+		{
 			name:     "bad config returns error",
 			mode:     policy.ModeEnforce,
 			settings: map[string]any{},
@@ -394,6 +611,54 @@ func TestPlugin_Execute(t *testing.T) {
 			t.Parallel()
 			res, err := run(p, tt.mode, tt.settings, tt.req)
 			tt.check(t, res, err)
+		})
+	}
+}
+
+func TestGraftChangedFields(t *testing.T) {
+	full := []byte(`{"model":"gpt-4o","tools":[{"name":"a"},{"name":"b"}],"tool_choice":"auto"}`)
+	stripped := []byte(`{"model":"gpt-4o","tools":[{"name":"a"}],"tool_choice":"auto"}`)
+	tests := []struct {
+		name     string
+		original string
+		check    func(t *testing.T, out []byte, err error)
+	}{
+		{
+			name:     "null original returns error instead of panicking",
+			original: `null`,
+			check: func(t *testing.T, out []byte, err error) {
+				require.ErrorIs(t, err, errNullBody)
+				assert.Nil(t, out)
+			},
+		},
+		{
+			name:     "case variant of grafted key is dropped",
+			original: `{"model":"gpt-4o","Tools":[{"name":"a"},{"name":"b"}],"tool_choice":"auto","extra":1}`,
+			check: func(t *testing.T, out []byte, err error) {
+				require.NoError(t, err)
+				m := bodyMap(t, out)
+				_, hasVariant := m["Tools"]
+				assert.False(t, hasVariant)
+				assert.JSONEq(t, `[{"name":"a"}]`, string(m["tools"]))
+				assert.JSONEq(t, `1`, string(m["extra"]))
+			},
+		},
+		{
+			name:     "case variant of untouched key is preserved",
+			original: `{"model":"gpt-4o","tools":[{"name":"a"},{"name":"b"}],"Tool_Choice":"auto"}`,
+			check: func(t *testing.T, out []byte, err error) {
+				require.NoError(t, err)
+				m := bodyMap(t, out)
+				assert.JSONEq(t, `"auto"`, string(m["Tool_Choice"]))
+				assert.JSONEq(t, `[{"name":"a"}]`, string(m["tools"]))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := graftChangedFields([]byte(tt.original), full, stripped)
+			tt.check(t, out, err)
 		})
 	}
 }
