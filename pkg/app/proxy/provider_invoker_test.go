@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"net/http"
 	"testing"
 
@@ -286,4 +287,68 @@ func TestProviderInvoke_GeminiUsesDefaultModelAfterAutoRouting(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
+	const openaiPassthroughBody = `{"model":"gpt-5","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
+
+	tests := []struct {
+		name         string
+		provider     string
+		sourceFormat string
+		body         string
+		stream       bool
+		wantKey      string
+		absentKey    string
+	}{
+		{name: "anthropic ingress to openai", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to azure", provider: "azure", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "anthropic ingress to cerebras keeps max_tokens", provider: "cerebras", sourceFormat: "anthropic", body: anthropicRequestBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
+		{name: "openai passthrough to openai", provider: "openai", body: openaiPassthroughBody, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+		{name: "openai passthrough to openai_compatible keeps max_tokens", provider: "openai_compatible", body: openaiPassthroughBody, wantKey: "max_tokens", absentKey: "max_completion_tokens"},
+		{name: "anthropic ingress to openai stream", provider: "openai", sourceFormat: "anthropic", body: anthropicRequestBody, stream: true, wantKey: "max_completion_tokens", absentKey: "max_tokens"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			if tc.stream {
+				client.EXPECT().
+					CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+					RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
+						sent = body
+						return seqOf([]byte("data: [DONE]")), nil
+					}).
+					Once()
+			} else {
+				client.EXPECT().
+					Completions(mock.Anything, mock.Anything, mock.Anything).
+					RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+						sent = body
+						return []byte(openaiResponseBody), nil
+					}).
+					Once()
+			}
+			inv := newStreamInvoker(t, tc.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(tc.body), SourceFormat: tc.sourceFormat}
+
+			if tc.stream {
+				resp, err := inv.InvokeStream(context.Background(), apiKeyTarget(tc.provider), req)
+				require.NoError(t, err)
+				collectStream(t, resp.Stream)
+			} else {
+				_, err := inv.Invoke(context.Background(), apiKeyTarget(tc.provider), req)
+				require.NoError(t, err)
+			}
+
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(sent, &got))
+			assert.EqualValues(t, 10, got[tc.wantKey])
+			assert.NotContains(t, got, tc.absentKey)
+			if tc.stream {
+				assert.Equal(t, true, got["stream"])
+			}
+		})
+	}
 }

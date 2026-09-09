@@ -57,6 +57,9 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 			"the upstream must receive the native model in OpenAI format")
 		assert.NotContains(t, string(up.LastBody()), "@openai/",
 			"the routing prefix must never leak upstream")
+		assert.Contains(t, string(up.LastBody()), `"max_completion_tokens":128`,
+			"openai upstreams take max_completion_tokens")
+		assert.NotContains(t, string(up.LastBody()), `"max_tokens"`)
 	})
 
 	t.Run("anthropic streaming request receives anthropic SSE events", func(t *testing.T) {

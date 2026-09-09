@@ -285,13 +285,18 @@ func hasLlamaStyleFunctionContent(m map[string]json.RawMessage) bool {
 
 // NormalizeRequestForProvider applies provider-specific request fixes before an
 // upstream call. Groq uses NormalizeGroqRequest; other OpenAI-wire targets use
-// NormalizeOpenAIRequest when applicable.
+// NormalizeOpenAIRequest when applicable, and providers that prefer
+// max_completion_tokens get max_tokens renamed to it.
 func NormalizeRequestForProvider(providerName string, targetFormat Format, body []byte) []byte {
 	if providerName == provider.Groq {
 		return NormalizeGroqRequest(body)
 	}
-	if IsSameWireFormat(targetFormat, FormatOpenAI) {
-		return NormalizeOpenAIRequest(body)
+	if !IsSameWireFormat(targetFormat, FormatOpenAI) {
+		return body
+	}
+	body = NormalizeOpenAIRequest(body)
+	if prefersMaxCompletionTokens(providerName) {
+		body = normalizeMaxCompletionTokens(body)
 	}
 	return body
 }
