@@ -28,6 +28,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 var (
@@ -120,6 +121,12 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 				if protected {
 					return nil, nil
 				}
+				// The resource pinned a consumer with no provider of its own, so
+				// scope the fallback to that consumer's gateway the way the
+				// authorize path does. The platform-wide lookup below published
+				// other tenants' required scopes on this unauthenticated document
+				// (RUN-1501).
+				return s.gatewayScopedAuths(ctx, matches[0].GatewayID)
 			}
 		}
 	}
@@ -128,6 +135,21 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
 	return auths, nil
+}
+
+func (s *metadataService) gatewayScopedAuths(ctx context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	auths, err := s.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
+	}
+	def := s.credentials.DefaultOAuth2ForGateway(gatewayID)
+	if def == nil {
+		return auths, nil
+	}
+	out := make([]*authdomain.Auth, 0, len(auths)+1)
+	out = append(out, auths...)
+	out = append(out, def)
+	return out, nil
 }
 
 func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
