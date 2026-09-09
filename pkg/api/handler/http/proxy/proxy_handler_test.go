@@ -642,8 +642,9 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.Anything).
-		Return(nil, fmt.Errorf("%w: %q (tried openai, vertex)",
-			routingdomain.ErrNoRegistryServesModel, "gemini-3-flash-preview")).
+		Return(nil, fmt.Errorf("%w: %q (Anthropic: restricted by its model allow-list; "+
+			"OpenAI: not in the provider catalog)",
+			routingdomain.ErrNoRegistryServesModel, "claude-sonnet-4-5")).
 		Once()
 
 	rt := trace.New("trace-no-registry", trace.Metadata{})
@@ -667,11 +668,15 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	if eb.Error != "model_not_supported" {
 		t.Fatalf("error = %q, want model_not_supported", eb.Error)
 	}
-	if !strings.Contains(eb.Message, "gemini-3-flash-preview") {
+	if !strings.Contains(eb.Message, "claude-sonnet-4-5") {
 		t.Fatalf("message = %q, want the requested model named", eb.Message)
 	}
-	if !strings.Contains(eb.Message, "openai") || !strings.Contains(eb.Message, "vertex") {
-		t.Fatalf("message = %q, want the probed providers listed", eb.Message)
+	if !strings.Contains(eb.Message, "Anthropic") || !strings.Contains(eb.Message, "OpenAI") {
+		t.Fatalf("message = %q, want every bound registry named", eb.Message)
+	}
+	if !strings.Contains(eb.Message, "restricted by its model allow-list") ||
+		!strings.Contains(eb.Message, "not in the provider catalog") {
+		t.Fatalf("message = %q, want the forwarder's message relayed whole, not truncated", eb.Message)
 	}
 }
 
