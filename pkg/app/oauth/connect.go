@@ -226,6 +226,12 @@ func (s *connectService) providerStatuses(
 			status.Scopes = cred.Scopes
 			status.ExpiresAt = cred.ExpiresAt
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+			if !status.NeedsReconnect {
+				// A lookup failure answers "usable" (see CredentialUsable), so a
+				// cache blip cannot tell every user to reconnect.
+				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				status.NeedsReconnect = !usable
+			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
 			status.Linked = true
 			status.NeedsReconnect = true
