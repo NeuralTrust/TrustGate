@@ -238,3 +238,68 @@ func TestRequestsHandler_HistoryShapesDecisions(t *testing.T) {
 		t.Fatalf("want 404 without a history store, got %d", resp2.StatusCode)
 	}
 }
+
+// The Approvals screen has had a Reason column with nothing to fill it. Both
+// views carry the requester's words now: the pending queue, where the approver
+// decides, and the history, where the decision is read back.
+func TestRequestsHandler_CarriesTheRequestersReason(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	const reason = "I need to triage issues on the platform repo"
+	approver := &fakeApprover{
+		pending: []appstore.PendingRequest{{
+			GatewayID: gw, InstanceID: ids.New[ids.InstallationKind]().String(),
+			PrincipalSub: "ana", Code: "github", Name: "GitHub",
+			Reason: reason, RequestedAt: time.Now(),
+		}},
+		decided: []appstore.DecidedRequest{{
+			GatewayID: gw, InstanceID: ids.New[ids.InstallationKind]().String(),
+			PrincipalSub: "ana", Code: "github", Name: "GitHub", Reason: reason,
+			Decision: installationdomain.DecisionApproved, DecidedBy: "admin@corp.com",
+			DecidedAt: time.Now(), RequestedAt: time.Now(),
+		}},
+	}
+	app := fiber.New()
+	h := storehttp.NewRequestsHandler(approver)
+	app.Get("/v1/gateways/:gateway_id/store/requests", h.List)
+	app.Get("/v1/gateways/:gateway_id/store/requests/history", h.History)
+
+	for _, path := range []string{"/store/requests", "/store/requests/history"} {
+		resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+path, nil))
+		if err != nil {
+			t.Fatalf("app.Test %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		var got struct {
+			Items []struct {
+				Reason string `json:"reason"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if len(got.Items) != 1 || got.Items[0].Reason != reason {
+			t.Fatalf("%s must carry the reason, got %s", path, body)
+		}
+	}
+}
+
+// A request with no reason must not put an empty string in the column: the
+// field is omitted and the console shows its own "none".
+func TestRequestsHandler_OmitsAnAbsentReason(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	approver := &fakeApprover{pending: []appstore.PendingRequest{{
+		GatewayID: gw, InstanceID: ids.New[ids.InstallationKind]().String(),
+		PrincipalSub: "ana", Code: "github", Name: "GitHub", RequestedAt: time.Now(),
+	}}}
+	app := newApp(approver)
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/requests", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "reason") {
+		t.Fatalf("an absent reason must be omitted, got %s", body)
+	}
+}

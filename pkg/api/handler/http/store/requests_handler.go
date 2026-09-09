@@ -81,6 +81,7 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 			Code:         p.Code,
 			Name:         p.Name,
 			InstalledBy:  p.InstalledBy,
+			Reason:       p.Reason,
 			RequestedAt:  p.RequestedAt,
 		})
 	}
@@ -114,6 +115,7 @@ func (h *RequestsHandler) History(c *fiber.Ctx) error {
 			PrincipalSub: d.PrincipalSub,
 			Code:         d.Code,
 			Name:         d.Name,
+			Reason:       d.Reason,
 			Decision:     string(d.Decision),
 			DecidedBy:    d.DecidedBy,
 			DecidedAt:    d.DecidedAt,

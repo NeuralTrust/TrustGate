@@ -449,6 +449,7 @@ type fakeInstaller struct {
 	lastInstance string
 	instances    []*installationdomain.Installation
 	uninstallErr error
+	lastReason   string
 	result       *appstore.InstallResult
 }
 
@@ -468,6 +469,7 @@ func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (
 	f.installed = append(f.installed, in.Code)
 	f.lastGroups = in.Groups
 	f.lastRegistry = in.RegistryID
+	f.lastReason = in.Reason
 	if f.result != nil {
 		return f.result, nil
 	}
@@ -712,4 +714,63 @@ func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
 		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`)); err == nil {
 		t.Fatal("a malformed instance id must be refused")
 	}
+}
+
+// A user asking their own client for a server is the other way a request gets
+// filed, so the tool takes the reason too — the approver reads the same column
+// whichever way it arrived.
+func TestStoreInstallForwardsTheReason(t *testing.T) {
+	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", Pending: true}}
+	tool := storeToolWithInstaller(t, installer)
+
+	_, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","reason":"  triaging platform issues  "}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if installer.lastReason != "triaging platform issues" {
+		t.Fatalf("reason = %q, want the user's words, trimmed", installer.lastReason)
+	}
+}
+
+// The caller here is a model relaying a sentence, and failing the install over
+// its length would serve nobody: the sentence is cut, the install proceeds.
+func TestStoreInstallTrimsAnOverlongReason(t *testing.T) {
+	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", Pending: true}}
+	tool := storeToolWithInstaller(t, installer)
+
+	long := strings.Repeat("x", installationdomain.MaxReasonLength+50)
+	_, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","reason":"`+long+`"}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if got := len([]rune(installer.lastReason)); got != installationdomain.MaxReasonLength {
+		t.Fatalf("reason length = %d, want it cut to %d", got, installationdomain.MaxReasonLength)
+	}
+}
+
+// The definition tells the model what the field is for, and not to invent one.
+func TestStoreInstallDefinitionAsksForTheReason(t *testing.T) {
+	tool := storeToolWithInstaller(t, &fakeInstaller{})
+	for _, def := range tool.Definitions(context.Background(), storeRC()) {
+		if def.Name != StoreInstallToolName {
+			continue
+		}
+		description := toolDescription(t, def)
+		if !strings.Contains(description, "reason") {
+			t.Fatalf("install must ask for a reason: %q", description)
+		}
+		raw, err := json.Marshal(def)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		for _, want := range []string{`"reason"`, "in their own words", "Do not invent one"} {
+			if !strings.Contains(string(raw), want) {
+				t.Fatalf("the reason argument must say %q: %s", want, raw)
+			}
+		}
+		return
+	}
+	t.Fatalf("%s not offered", StoreInstallToolName)
 }
