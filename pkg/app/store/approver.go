@@ -111,10 +111,11 @@ type DenyRequest struct {
 type Approver interface {
 	// ListPending returns the gateway's pending install requests, oldest first.
 	ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]PendingRequest, error)
-	// Approve grants the requester the server (its code, or the one instance the
-	// request is bound to), materialising the registry when none exists yet, and
-	// marks the request installed. ErrNotShelved when the server cannot be
-	// materialised here and no registry exists for the code.
+	// Approve grants the requester — or the group named by GrantToGroup — the
+	// server: its code, or, when the code has several configured instances, the
+	// one the request is bound to. It materialises the registry when none exists
+	// yet and marks the request installed. ErrNotShelved when the server cannot
+	// be materialised here and no registry exists for the code.
 	Approve(ctx context.Context, in ApproveRequest) error
 	// Deny marks the request revoked, keeping the row for audit.
 	Deny(ctx context.Context, in DenyRequest) error
@@ -271,11 +272,23 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 			return fmt.Errorf("store: materialise registry: %w", err)
 		}
 	}
-	// Approving a request GRANTS the resource to the requester: their subject is
-	// added to the grant on the requested code (or, for a request bound to one
-	// instance, on that instance) so their next install is instant and the
-	// Access page reflects it. Grants are the only governance there is.
-	if err := a.grantRequester(ctx, in.GatewayID, code, existing.RegistryID, existing.PrincipalSub, in.GrantToGroup); err != nil {
+	// Approving a request GRANTS the resource to the requester — or to the group
+	// the admin chose — so their next install is instant and the Access page
+	// reflects it. Grants are the only governance there is.
+	//
+	// A server with one configured instance is granted as the server: that is
+	// what "grant this server" means to the admin who reads it back (Access
+	// shows a single-instance server as one row, and grants it at code level
+	// itself), and a code grant survives the instance being re-materialised
+	// instead of being orphaned by a stale id. The Portal binds its request to
+	// the sole instance so a *later* approval lands on the right one, which is
+	// not the same thing as pinning the grant there. With several instances the
+	// binding is a real choice and is kept.
+	grantRegistryID := existing.RegistryID
+	if len(instances) <= 1 {
+		grantRegistryID = ids.RegistryID{}
+	}
+	if err := a.grantRequester(ctx, in.GatewayID, code, grantRegistryID, existing.PrincipalSub, in.GrantToGroup); err != nil {
 		return err
 	}
 
