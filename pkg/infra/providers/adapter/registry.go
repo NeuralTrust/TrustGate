@@ -130,10 +130,6 @@ func (r *Registry) GetAdapter(f Format) (ProviderAdapter, error) {
 	return a, nil
 }
 
-// ---------------------------------------------------------------------------
-// Request adaptation
-// ---------------------------------------------------------------------------
-
 // DecodeRequestFor decodes a raw provider request into the canonical model.
 func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*CanonicalRequest, error) {
 	a, err := r.GetAdapter(providerFormat)
@@ -181,10 +177,6 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response adaptation
-// ---------------------------------------------------------------------------
-
 // DecodeResponseFor decodes a raw provider response into the canonical model.
 func (r *Registry) DecodeResponseFor(body []byte, providerFormat Format) (*CanonicalResponse, error) {
 	a, err := r.GetAdapter(providerFormat)
@@ -227,10 +219,6 @@ func (r *Registry) AdaptResponse(body []byte, source, target Format) ([]byte, er
 
 	return out, nil
 }
-
-// ---------------------------------------------------------------------------
-// Stream chunk adaptation
-// ---------------------------------------------------------------------------
 
 // DecodeStreamChunkFor decodes a single SSE data payload from the given
 // provider format into a canonical stream chunk.

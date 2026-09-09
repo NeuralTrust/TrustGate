@@ -22,10 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: Gemini → Canonical → Gemini
-// ---------------------------------------------------------------------------
-
 func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	input := `{
 		"contents": [
@@ -59,10 +55,6 @@ func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	second := contents[1].(map[string]interface{})
 	assert.Equal(t, "model", second["role"]) // assistant → model
 }
-
-// ---------------------------------------------------------------------------
-// Gemini functionCall response: real-world payload
-// ---------------------------------------------------------------------------
 
 func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	body := `{
@@ -161,10 +153,6 @@ func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	require.Len(t, cr2.ToolCalls, 1)
 	assert.Equal(t, "database_agent", cr2.ToolCalls[0].Name)
 }
-
-// ---------------------------------------------------------------------------
-// Gemini → OpenAI: tool schema type conversion (STRING → string)
-// ---------------------------------------------------------------------------
 
 func TestGemini_ToolSchemaTypes_ConvertedToOpenAI(t *testing.T) {
 	// Gemini-format request with UPPER_CASE types
