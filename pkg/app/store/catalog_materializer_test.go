@@ -66,6 +66,7 @@ func TestCatalogMaterializer_SelfServiceCreatesStoreOriginRegistry(t *testing.T)
 		URL:         "https://mcp.notion.com/mcp",
 		AuthHint:    "oauth",
 		AuthMethods: []string{"oauth"},
+		SelfService: true,
 		OAuth:       &catalogdomain.MCPOAuth{Registration: "auto"},
 	}
 	m, regs, ensurer := newMaterializerFixture(t, notion)

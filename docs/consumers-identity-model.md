@@ -949,24 +949,66 @@ instance to pick on every install and uninstall, every one of its tools renamed
 with an instance prefix (`resolveNames`' `perInstance`), and two Access rows
 granting the same thing.
 
-`catalogdomain.MCPServer.SupportsInstances()` is that rule, stamped onto each
-entry as `multi_instance` next to `self_service` and after the platform clients
-are applied (a platform-held client leaves an operator nothing to differ on, so
-it settles both questions):
+**Every catalog entry declares the answer**, next to `self_service`, in
+`seed/mcp-catalog/enterprise-servers.json`:
+
+```json
+{
+  "name": "com.notion/mcp",
+  "requires_auth": true,
+  "self_service": true,
+  "multi_instance": false,
+  ...
+}
+```
+
+It was derived at load time first (`SupportsInstances()`, next to
+`IsSelfService()`), and the derivation is gone: reading an entry now answers the
+question, adding a server means answering it, and there is no rule to trace
+through auth hints and registration modes to find out what the catalog thinks.
+The loader **requires** both on every entry — a pointer in the raw struct tells a
+declared `false` from a forgotten field, and a missing one fails the whole
+catalog load rather than defaulting to something plausible.
+
+The rule the declarations follow, which is what a new entry should be measured
+against:
 
 | The entry has | Instances | Because |
 | --- | --- | --- |
 | any URL variable | yes | the URL itself differs |
-| static auth headers | yes | two credentials are two accounts |
-| an OAuth client the operator registers (`manual`, no platform client) | yes | the client id and secret are theirs |
+| static auth headers, or a secret URL variable | yes | two credentials are two accounts |
+| an OAuth client the operator registers (`manual`) | yes | the client id and secret are theirs |
 | a `client_credentials` grant | yes | same |
-| a fixed URL, OAuth `auto` or a platform client | **no** | only the user differs, and one instance serves them all |
+| a fixed URL behind OAuth the gateway registers itself | **no** | only the user differs, and one instance serves them all |
 | no auth at all | **no** | one URL, no credential, nothing to vary |
 
-Across the 198 curated entries that is 96 multi-instance and 102 single.
+Across the 198 curated entries that is 96 multi-instance and 102 single; for
+`self_service`, 114 and 84. The two are not the same question and do not answer
+alike: 12 entries are both (Stripe, GitLab, Linear, Atlassian, Supabase and the
+tenant-templated OAuth servers — a user can install them alone, and an operator
+can still shelve two with different credentials), and 84 are neither
+self-service nor single.
 
-Two places enforce it. `appregistry.creator` refuses a second registry for a
-single-instance code with `ErrSingleInstanceServer` (a conflict — the request is
+Nothing re-derives them, so nothing would notice a wrong one. Two things guard
+the data instead: the loader's requirement above, and a test over the real
+catalog (`TestCuratedCatalogFlagsAgreeWithTheEntry`) that checks each declared
+value against that entry's own facts — a `multi_instance: false` entry may not
+carry a URL variable, an auth header, a static method, a `client_credentials`
+grant or a manual client; a `self_service: false` entry must have something an
+admin would actually supply. An entry that breaks one is either mislabelled or a
+shape the catalog has not seen, and either way it wants a human.
+
+One deployment fact stays in code, because the seed cannot know it:
+`applyPlatformOAuth` raises `self_service` for the three Google Workspace
+entries when NeuralTrust's own OAuth client is configured, since the blocker the
+seed declared — an operator must register a client first — is then gone. It
+leaves `multi_instance` alone: the install form still offers an operator their
+own client id and secret for such a server, so two instances can still differ.
+That last part is the one behaviour that changed when the flags became data.
+
+Two places enforce it, both reading the entry's declaration.
+`appregistry.creator` refuses a second registry for a single-instance code with
+`ErrSingleInstanceServer` (a conflict — the request is
 well formed, the shelf already holds the only instance the server can have), and
 the console hides *Add instance* for those servers and says why instead. Only
 *new* duplicates are refused: a gateway that already holds two keeps them, since

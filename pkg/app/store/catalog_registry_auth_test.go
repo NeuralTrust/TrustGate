@@ -22,91 +22,42 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// The rule that decides this moved into the catalog: each entry declares
+// `self_service`, and the seed is checked against every entry's own facts in
+// pkg/app/catalog. All that is left here is that the Store reads the entry's
+// answer rather than guessing at its auth shape — the table of shapes this test
+// used to carry is what the seed check now covers, over the real 198 entries
+// instead of invented ones.
 func TestCatalogNeedsAdminCredential(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		name  string
 		entry catalogdomain.MCPServer
 		want  bool
 	}{
 		{
-			name: "api key header only (explicit methods)",
+			name: "a server a user can install alone",
 			entry: catalogdomain.MCPServer{
-				AuthHint: "static", AuthMethods: []string{"static"},
-				AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization"}},
-			},
-			want: true,
-		},
-		{
-			name: "api key header only (derived from hint)",
-			entry: catalogdomain.MCPServer{
-				AuthHint:    "static",
-				AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "X-API-Key"}},
-			},
-			want: true,
-		},
-		{
-			name:  "static hint with no credential slot at all",
-			entry: catalogdomain.MCPServer{AuthHint: "static", RequiresAuth: true},
-			want:  true,
-		},
-		{
-			name: "dual auth: api key + oauth",
-			entry: catalogdomain.MCPServer{
-				AuthHint: "static", AuthMethods: []string{"static", "oauth"},
-				AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization"}},
-				OAuth:       &catalogdomain.MCPOAuth{Registration: "auto"},
+				Code: "app.linear/mcp", SelfService: true,
+				AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
 			},
 			want: false,
 		},
 		{
-			name:  "dual auth derived (static hint but an oauth spec)",
-			entry: catalogdomain.MCPServer{AuthHint: "static", AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization"}}, OAuth: &catalogdomain.MCPOAuth{}},
-			want:  false,
-		},
-		{
-			name:  "oauth only",
-			entry: catalogdomain.MCPServer{AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{Required: true, Registration: "auto"}},
-			want:  false,
-		},
-		{
-			name: "secret url variable (per-user token in the URL, no header)",
+			name: "a server whose credential only an admin holds",
 			entry: catalogdomain.MCPServer{
-				AuthHint: "static", RequiresAuth: true, AuthMethods: []string{"static"},
-				URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
+				Code: "com.slack/mcp", SelfService: false,
+				AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{Required: true, Registration: "manual"},
 			},
-			want: false,
-		},
-		{
-			name:  "public server",
-			entry: catalogdomain.MCPServer{AuthHint: "none"},
-			want:  false,
-		},
-		{
-			name: "oauth manual registration without a platform client",
-			entry: catalogdomain.MCPServer{AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{
-				Required: true, Registration: "manual", AuthorizeURL: "https://x/authorize", TokenURL: "https://x/token",
-			}},
 			want: true,
 		},
 		{
-			name: "oauth manual registration with a platform-held client",
-			entry: catalogdomain.MCPServer{AuthHint: "oauth", PlatformClient: true, OAuth: &catalogdomain.MCPOAuth{
-				Required: true, Registration: "manual", AuthorizeURL: "https://x/authorize", TokenURL: "https://x/token",
-			}},
-			want: false,
-		},
-		{
-			name:  "required oauth with undeclared registration (canonicalised to manual)",
-			entry: catalogdomain.MCPServer{AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{Required: true}},
+			// The conservative default: an entry nobody declared is treated as
+			// needing an admin, never the other way round.
+			name:  "an entry with nothing declared",
+			entry: catalogdomain.MCPServer{Code: "com.unknown/mcp"},
 			want:  true,
 		},
-		{
-			name:  "client_credentials grant (admin-provided client)",
-			entry: catalogdomain.MCPServer{AuthHint: "oauth", OAuth: &catalogdomain.MCPOAuth{Required: true, GrantType: "client_credentials", TokenURL: "https://x/token"}},
-			want:  true,
-		},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := catalogNeedsAdminCredential(tc.entry); got != tc.want {
 				t.Fatalf("catalogNeedsAdminCredential = %v, want %v", got, tc.want)

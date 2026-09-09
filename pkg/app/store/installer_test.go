@@ -210,7 +210,13 @@ func (f *fakeEnsurer) Ensure(_ context.Context, _ ids.GatewayID, code string) er
 
 func testCatalog() fakeCatalog {
 	return fakeCatalog{entries: map[string]catalogdomain.MCPServer{
-		"github": {Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true},
+		// Each entry declares what the real catalog declares for its shape:
+		// a fixed URL with nothing to configure holds one instance; a templated
+		// one holds several; and all three are installable by a user alone.
+		"github": {
+			Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true,
+			SelfService: true, MultiInstance: false,
+		},
 		"snowflake": {
 			Code:        "snowflake",
 			DisplayName: "Snowflake",
@@ -219,6 +225,7 @@ func testCatalog() fakeCatalog {
 				{Name: "account_url", Required: true},
 				{Name: "database", Required: true},
 			},
+			SelfService: true, MultiInstance: true,
 		},
 		"brightdata": {
 			Code:        "brightdata",
@@ -227,6 +234,7 @@ func testCatalog() fakeCatalog {
 			URLVariables: []catalogdomain.MCPURLVariable{
 				{Name: "token", Required: true, Secret: true, In: "query"},
 			},
+			SelfService: true, MultiInstance: true,
 		},
 	}}
 }
