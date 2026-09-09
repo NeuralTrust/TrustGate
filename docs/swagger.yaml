@@ -2172,6 +2172,18 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      multi_instance:
+        description: |-
+          MultiInstance reports whether more than one registry of this server is
+          meaningful on one gateway: two of them can only differ in what an operator
+          configures — a templated URL, a credential of its own, an OAuth client they
+          register — so a server that is one URL behind per-user OAuth holds exactly
+          one, and a second would be a copy of the first.
+
+          Declared per entry in the catalog seed as multi_instance, like
+          SelfService, and nothing moves it after load. The zero value is the
+          conservative answer.
+        type: boolean
       oauth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth'
       platform_client:
@@ -2203,7 +2215,13 @@ definitions:
           or a platform-held client, a public server, or a static server whose only
           credential is a per-user secret URL variable. False means an admin must
           connect an instance first (a shared API key, a manual OAuth client, or a
-          client_credentials grant). Computed from the entry (see IsSelfService).
+          client_credentials grant).
+
+          Declared per entry in the catalog seed as self_service, not derived: the
+          answer is a property of the server, and reading it off the entry is how it
+          stays legible. The one thing that moves it is a platform-held OAuth
+          client, which the seed cannot know (see applyPlatformOAuth). The zero
+          value is the conservative answer.
         type: boolean
       source:
         type: string

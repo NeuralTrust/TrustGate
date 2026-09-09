@@ -160,12 +160,14 @@ func apiKeyOnlyCatalog() fakeCatalog {
 			Code: "com.semrush/mcp", DisplayName: "Semrush", URL: "https://mcp.semrush.com/mcp",
 			AuthHint: "static", RequiresAuth: true, AuthMethods: []string{"static"},
 			AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true, Scheme: "Bearer"}},
+			SelfService: false, MultiInstance: true,
 		},
 		"com.dual/mcp": {
 			Code: "com.dual/mcp", DisplayName: "Dual", URL: "https://mcp.dual.example/mcp",
 			AuthHint: "static", RequiresAuth: true, AuthMethods: []string{"static", "oauth"},
 			AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
-			OAuth:       &catalogdomain.MCPOAuth{Registration: "auto"},
+			SelfService: true, MultiInstance: true,
+			OAuth: &catalogdomain.MCPOAuth{Registration: "auto"},
 		},
 	}}
 }

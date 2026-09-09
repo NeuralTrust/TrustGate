@@ -69,8 +69,8 @@ func TestParseCuratedMCPServers_RejectsDuplicateCode(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","self_service":true,"multi_instance":false}
 	]}`)
 
 	_, err := parseCuratedMCPServers(data)
@@ -93,8 +93,8 @@ func TestParseCuratedMCPServers_AcceptsUniqueCodes(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","self_service":true,"multi_instance":false}
 	]}`)
 
 	servers, err := parseCuratedMCPServers(data)
@@ -106,9 +106,9 @@ func TestParseCuratedMCPServers_OmitsHidden(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.hidden/mcp","transport":"streamable-http","server_url":"https://h.example.com/mcp","hidden":true,"hidden_reason":"broken"},
-		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","hidden":false}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.hidden/mcp","transport":"streamable-http","server_url":"https://h.example.com/mcp","hidden":true,"hidden_reason":"broken","self_service":true,"multi_instance":false},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","hidden":false,"self_service":true,"multi_instance":false}
 	]}`)
 
 	servers, err := parseCuratedMCPServers(data)
