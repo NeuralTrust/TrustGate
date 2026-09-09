@@ -58,6 +58,13 @@ func NewRPCGatewayWithMetaTools(
 	return &RPCGateway{dispatcher: appmcp.NewRPCDispatcher(composer, plugins, limiter, connections, store)}
 }
 
+// WithInventoryTool wires the meta-tool that lists every tool the caller has,
+// server by server (see appmcp.InventoryTool).
+func (g *RPCGateway) WithInventoryTool(inventory appmcp.InventoryTool) *RPCGateway {
+	g.dispatcher.WithInventoryTool(inventory)
+	return g
+}
+
 func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
 	g.dispatcher.WithStoreScoper(scoper)
 	return g

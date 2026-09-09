@@ -303,6 +303,14 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	}
 	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
 
+	// The inventory meta-tool reads the composed surface, and the catalog fills
+	// in what a server that is not serving yet would offer.
+	inventory, err := appmcp.NewInventoryTool(p.Composer, catalog)
+	if err != nil {
+		return nil, err
+	}
+	gateway = gateway.WithInventoryTool(inventory)
+
 	if p.Installs != nil && p.Registries != nil {
 		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
 		if err != nil {
