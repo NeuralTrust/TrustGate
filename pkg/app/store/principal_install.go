@@ -42,6 +42,9 @@ type OnBehalfInstallRequest struct {
 	RegistryID ids.RegistryID
 	// Actor is the admin acting, for audit (installed_by).
 	Actor string
+	// Reason is why the user wants the server, in their own words, kept on a
+	// request for the approver to read.
+	Reason string
 }
 
 // PrincipalInstaller runs the Store installer as another principal, resolving
@@ -120,5 +123,6 @@ func (p *principalInstaller) InstallFor(ctx context.Context, in OnBehalfInstallR
 		Groups:       groups,
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		RegistryID:   in.RegistryID,
+		Reason:       in.Reason,
 	})
 }

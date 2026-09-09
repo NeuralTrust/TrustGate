@@ -22,6 +22,7 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/gofiber/fiber/v2"
 	"strings"
 )
@@ -41,6 +42,13 @@ func validateInstall(r storerequest.Install) error {
 	}
 	if strings.TrimSpace(r.Code) == "" {
 		return fmt.Errorf("code is required: %w", commonerrors.ErrValidation)
+	}
+	// Refuse an over-long reason here rather than truncating it: a request whose
+	// justification was silently cut is worse for the approver reading it than
+	// one the caller was told to shorten.
+	if len([]rune(strings.TrimSpace(r.Reason))) > installationdomain.MaxReasonLength {
+		return fmt.Errorf("reason must be at most %d characters: %w",
+			installationdomain.MaxReasonLength, commonerrors.ErrValidation)
 	}
 	return nil
 }
@@ -155,6 +163,7 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 		Code:         req.Code,
 		Groups:       req.Groups,
 		RegistryID:   registryID,
+		Reason:       strings.TrimSpace(req.Reason),
 		Actor:        callerActor(c),
 	})
 	if err != nil {

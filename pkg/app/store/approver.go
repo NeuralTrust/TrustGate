@@ -55,7 +55,10 @@ type PendingRequest struct {
 	Code         string
 	Name         string
 	InstalledBy  string
-	RequestedAt  time.Time
+	// Reason is why the requester wants it, in their own words. Empty for a
+	// request filed by a client that sent none.
+	Reason      string
+	RequestedAt time.Time
 }
 
 // ApproveRequest / DenyRequest identify the install request to decide, plus the
@@ -83,10 +86,14 @@ type DecidedRequest struct {
 	Code         string
 	Name         string
 	RegistryID   ids.RegistryID
-	Decision     installationdomain.Decision
-	DecidedBy    string
-	DecidedAt    time.Time
-	RequestedAt  time.Time
+	// Reason is what the requester wrote when they asked; a decided request
+	// keeps it, so the history says what was approved or denied and why it was
+	// asked for.
+	Reason      string
+	Decision    installationdomain.Decision
+	DecidedBy   string
+	DecidedAt   time.Time
+	RequestedAt time.Time
 }
 
 // ErrHistoryUnavailable: this plane has no durable decision history to read.
@@ -187,6 +194,7 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 			Code:         in.CatalogCode,
 			Name:         name,
 			InstalledBy:  in.InstalledBy,
+			Reason:       in.Reason,
 			RequestedAt:  in.CreatedAt,
 		})
 	}
@@ -219,6 +227,7 @@ func (a *approver) ListDecided(ctx context.Context, gatewayID ids.GatewayID) ([]
 			Code:         in.CatalogCode,
 			Name:         name,
 			RegistryID:   in.RegistryID,
+			Reason:       in.Reason,
 			Decision:     in.Decision,
 			DecidedBy:    in.DecidedBy,
 			DecidedAt:    in.DecidedAt,

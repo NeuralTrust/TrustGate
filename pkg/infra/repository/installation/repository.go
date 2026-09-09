@@ -32,7 +32,7 @@ const pgForeignKeyViolation = "23503"
 
 const selectColumns = `
 	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-	       decision, decided_by, decided_at, created_at, updated_at
+	       reason, decision, decided_by, decided_at, created_at, updated_at
 	  FROM store_installations`
 
 var _ domain.Repository = (*Repository)(nil)
@@ -63,8 +63,8 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	const query = `
 		INSERT INTO store_installations
 			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-			 decision, decided_by, decided_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 reason, decision, decided_by, decided_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (
 			gateway_id,
 			principal_sub,
@@ -74,16 +74,19 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 		) DO UPDATE
 			SET status       = EXCLUDED.status,
 			    installed_by = EXCLUDED.installed_by,
+			    -- A repeat request carries the user's newest words; an install
+			    -- carries none and must not erase what they wrote.
+			    reason       = CASE WHEN EXCLUDED.reason <> '' THEN EXCLUDED.reason ELSE store_installations.reason END,
 			    decision     = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decision ELSE store_installations.decision END,
 			    decided_by   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_by ELSE store_installations.decided_by END,
 			    decided_at   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_at ELSE store_installations.decided_at END,
 			    updated_at   = EXCLUDED.updated_at
-		RETURNING id, decision, decided_by, decided_at, created_at, updated_at`
+		RETURNING id, reason, decision, decided_by, decided_at, created_at, updated_at`
 	if err := r.conn.Pool.QueryRow(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
-		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID),
+		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.Reason,
 		string(in.Decision), in.DecidedBy, nullableTime(in.DecidedAt), in.CreatedAt, in.UpdatedAt,
-	).Scan(&in.ID, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
+	).Scan(&in.ID, &in.Reason, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
 		return mapPgError(err)
 	}
 	in.Decision = domain.Decision(decision)
@@ -280,7 +283,7 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
-		&in.InstalledBy, &configJSON, &registryID,
+		&in.InstalledBy, &configJSON, &registryID, &in.Reason,
 		&decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt,
 	); err != nil {
 		return nil, err

@@ -220,3 +220,40 @@ func TestPrincipalHandler_ShapesStateWithoutSecrets(t *testing.T) {
 		t.Fatalf("unlinked connection must omit expires_at: %v", unlinked)
 	}
 }
+
+// The Portal collects the reason when the user asks for a server, so the
+// endpoint carries it through to the installer, trimmed.
+func TestPrincipalHandler_Install_ForwardsTheReason(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", Status: installationdomain.StatusPendingApproval, Pending: true,
+	}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs",
+		`{"principal_sub":"ana","code":"github","reason":"  triaging platform issues  "}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if installer.got == nil || installer.got.Reason != "triaging platform issues" {
+		t.Fatalf("reason not forwarded: %+v", installer.got)
+	}
+}
+
+// Refused rather than truncated: a justification the approver reads must be
+// what the requester wrote, so an over-long one is the caller's to shorten.
+func TestPrincipalHandler_Install_RefusesAnOverlongReason(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{Code: "github"}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+
+	long := strings.Repeat("x", installationdomain.MaxReasonLength+1)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs",
+		`{"principal_sub":"ana","code":"github","reason":"`+long+`"}`)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d", resp.StatusCode)
+	}
+	if installer.got != nil {
+		t.Fatal("the install must not run when the request is refused")
+	}
+}

@@ -1656,6 +1656,11 @@ definitions:
         type: string
       principal_sub:
         type: string
+      reason:
+        description: |-
+          Reason is why the user wants the server, in their own words. Kept only on
+          a request an approver has to decide, and shown to them there.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.SetGrant:
     properties:
@@ -1696,6 +1701,9 @@ definitions:
       name:
         type: string
       principal_sub:
+        type: string
+      reason:
+        description: Reason is what the requester wrote when they asked, kept with the verdict.
         type: string
       registry_id:
         type: string
@@ -1780,6 +1788,11 @@ definitions:
       name:
         type: string
       principal_sub:
+        type: string
+      reason:
+        description: |-
+          Reason is why the requester asked for the server, in their own words.
+          Omitted when they gave none.
         type: string
       requested_at:
         type: string

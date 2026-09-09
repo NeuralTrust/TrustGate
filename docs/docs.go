@@ -6418,6 +6418,10 @@ const docTemplate = `{
                 },
                 "principal_sub": {
                     "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is why the user wants the server, in their own words. Kept only on\na request an approver has to decide, and shown to them there.",
+                    "type": "string"
                 }
             }
         },
@@ -6480,6 +6484,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "principal_sub": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is what the requester wrote when they asked, kept with the verdict.",
                     "type": "string"
                 },
                 "registry_id": {
@@ -6609,6 +6617,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "principal_sub": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason is why the requester asked for the server, in their own words.\nOmitted when they gave none.",
                     "type": "string"
                 },
                 "requested_at": {
