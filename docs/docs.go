@@ -7148,6 +7148,10 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "multi_instance": {
+                    "description": "MultiInstance reports whether more than one registry of this server is\nmeaningful on one gateway. Computed from the entry (see SupportsInstances).",
+                    "type": "boolean"
+                },
                 "oauth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },

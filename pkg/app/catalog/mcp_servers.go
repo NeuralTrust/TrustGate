@@ -49,6 +49,9 @@ func NewMCPServerCatalog(shared mcpoauth.Provider) (MCPServerCatalog, error) {
 	// client makes a manual-registration OAuth server self-service.
 	for i := range servers {
 		servers[i].SelfService = servers[i].IsSelfService()
+		// Same reason for deciding it here: a platform-held client leaves the
+		// operator nothing to differ on, so it settles both questions.
+		servers[i].MultiInstance = servers[i].SupportsInstances()
 	}
 	byCode := make(map[string]domain.MCPServer, len(servers))
 	for _, s := range servers {

@@ -49,6 +49,9 @@ type MCPServer struct {
 	// connect an instance first (a shared API key, a manual OAuth client, or a
 	// client_credentials grant). Computed from the entry (see IsSelfService).
 	SelfService bool `json:"self_service"`
+	// MultiInstance reports whether more than one registry of this server is
+	// meaningful on one gateway. Computed from the entry (see SupportsInstances).
+	MultiInstance bool `json:"multi_instance"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`
@@ -202,6 +205,45 @@ func (s MCPServer) oauthSelfServiceable() bool {
 	default:
 		return false
 	}
+}
+
+// SupportsInstances reports whether more than one registry of this server is
+// meaningful on one gateway. Two registries of the same server can only differ
+// in what an operator configures, so where there is nothing to configure the
+// second one is a byte-for-byte copy of the first and buys nothing but
+// ambiguity: an instance to pick on every install and uninstall, every tool
+// name qualified by its instance (see naming.go's perInstance), and two Access
+// rows granting the same thing.
+//
+// Something to configure means a templated URL — Snowflake's account, database
+// and schema; Aha!'s domain — or a credential the operator supplies: a static
+// header, an OAuth client they register themselves, a client_credentials grant.
+// What does not count is which user signs in: a fixed URL behind per-user OAuth
+// that registers itself (or whose client the platform holds) serves every user
+// from one instance, and so does a public server.
+//
+// Registration "" is the tenant-hosted case, where discovery happens per
+// instance at connect time; on its own that says nothing about what an operator
+// would configure, so it counts only through the URL variables such a server
+// declares.
+func (s MCPServer) SupportsInstances() bool {
+	if len(s.URLVariables) > 0 {
+		return true
+	}
+	static, oauth := s.SupportedAuthMethods()
+	if static {
+		return true
+	}
+	if !oauth || s.OAuth == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(s.OAuth.GrantType), "client_credentials") {
+		return true
+	}
+	if s.PlatformClient {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(s.OAuth.Registration), "manual")
 }
 
 func (s MCPServer) hasSecretURLVariable() bool {
