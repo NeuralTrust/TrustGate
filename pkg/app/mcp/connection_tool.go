@@ -169,10 +169,12 @@ func connectionPending(status appoauth.ProviderStatus) bool {
 func pendingConnectionDefinition(name string, status appoauth.ProviderStatus) (Tool, error) {
 	display := connectionDisplayName(status)
 	description := display + " is not connected for this TrustGate MCP user. Call this tool when the user asks about " +
-		display + " (its issues, projects, or data) or wants to connect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+		display + " (its issues, projects, or data) or wants to connect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself." +
+		GatewayToolDisclaimer
 	if status.NeedsReconnect {
 		description = display + " is connected but needs to be reconnected for this TrustGate MCP user. Call this tool when the user asks about " +
-			display + " or wants to reconnect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+			display + " or wants to reconnect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself." +
+			GatewayToolDisclaimer
 	}
 	raw, err := json.Marshal(map[string]any{
 		"name":        name,
