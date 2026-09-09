@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -31,6 +32,7 @@ const (
 )
 
 type AuthContext struct {
+	Principal   *identity.Principal
 	Method      Method
 	GatewayID   ids.GatewayID
 	GatewaySlug string

@@ -18,6 +18,7 @@ import (
 	"context"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 type TokenHints struct {
@@ -27,11 +28,8 @@ type TokenHints struct {
 	Algorithm string
 }
 
-type VerifiedClaims struct {
-	Subject string
-	Claims  map[string]any
-	Scopes  []string
-}
+// VerifiedClaims contains the identity established by token verification.
+type VerifiedClaims = identity.Principal
 
 //go:generate mockery --name=JWTVerifier --dir=. --output=./mocks --filename=jwt_verifier_mock.go --case=underscore --with-expecter
 type JWTVerifier interface {

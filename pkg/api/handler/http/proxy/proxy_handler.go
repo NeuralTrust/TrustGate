@@ -187,7 +187,6 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {
-				req.Body = append([]byte(nil), req.Body...)
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
@@ -381,12 +380,12 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	return &infracontext.RequestContext{
 		GatewayID:       gatewayID.String(),
 		Headers:         headers,
-		Method:          c.Method(),
-		Path:            c.Path(),
+		Method:          strings.Clone(c.Method()),
+		Path:            strings.Clone(c.Path()),
 		Query:           query,
-		Body:            c.Body(),
-		IP:              c.IP(),
-		SessionID:       sessionIDFromContext(c),
+		Body:            append([]byte(nil), c.Body()...),
+		IP:              strings.Clone(c.IP()),
+		SessionID:       strings.Clone(sessionIDFromContext(c)),
 		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
