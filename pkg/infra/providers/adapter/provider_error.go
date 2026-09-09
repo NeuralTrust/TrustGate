@@ -81,20 +81,6 @@ func BodyCarriesModelNotFound(body []byte) bool {
 	return false
 }
 
-func ProviderErrorMessage(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	var env modelErrorEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
-		return ""
-	}
-	if env.Error != nil && env.Error.Message != "" {
-		return env.Error.Message
-	}
-	return env.Message
-}
-
 type providerErrorEnvelope struct {
 	Error *providerErrorBody `json:"error"`
 }

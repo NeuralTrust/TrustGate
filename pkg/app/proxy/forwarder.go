@@ -286,7 +286,8 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, noRegistryServesModelError(dto.request.RequestedModel, route.chain, last)
+		return nil, f.noRegistryServesModelError(
+			ctx, rc, dto.request.RequestedModel, excludedRegistries(excluded))
 	}
 	return f.relayLast(ctx, dto, last)
 }
