@@ -317,3 +317,62 @@ func TestInventoryTool_TrimsThePreviewToWhatPolicyAllows(t *testing.T) {
 		t.Fatalf("tool = %v, want query_database: create_page is not this consumer's to call", entry)
 	}
 }
+
+// The reported problem: asked "what do I have in TrustGate?", a client read
+// tools/list, found the gateway's own four tools there — they have to be listed
+// to be callable — and reported them to the user as tools they have. The
+// inventory's answer closes that door explicitly, in the text body, which is
+// the part a client hands the model.
+func TestInventoryTool_SaysTheGatewaysOwnToolsAreNotTheAnswer(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: twoServerInventory()}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+
+	text := resultText(t, callInventory(t, tool, ""))
+	if !strings.Contains(text, "That is the whole list") {
+		t.Fatalf("the answer must claim to be complete:\n%s", text)
+	}
+	if !strings.Contains(text, StoreToolNamePrefix) || !strings.Contains(text, InventoryToolName) {
+		t.Fatalf("the answer must name the tools to leave out:\n%s", text)
+	}
+}
+
+// An empty inventory is where the temptation is strongest — the client has
+// nothing else to report, so it reaches for the gateway's own tools.
+func TestInventoryTool_SaysItEvenWhenTheUserHasNothing(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+
+	text := resultText(t, callInventory(t, tool, ""))
+	if !strings.Contains(text, "no MCP servers") {
+		t.Fatalf("expected an empty answer:\n%s", text)
+	}
+	if !strings.Contains(text, "leave them out of the answer") {
+		t.Fatalf("an empty answer still has to say what not to add:\n%s", text)
+	}
+}
+
+// The definition itself says it, since a client reads descriptions when it
+// decides what to call and what to report.
+func TestInventoryTool_DefinitionSaysWhatIsNotIncluded(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	reg := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	defs := tool.Definitions(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg))
+	if len(defs) != 1 {
+		t.Fatalf("definitions = %v, want one", defs)
+	}
+
+	description := toolDescription(t, defs[0])
+	if !strings.Contains(description, "not tools the user has") {
+		t.Fatalf("the description must disown the gateway's own tools:\n%s", description)
+	}
+}
