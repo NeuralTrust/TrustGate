@@ -48,6 +48,7 @@ type RPCDispatcher struct {
 	limiter     ratelimitapp.Checker
 	connections ConnectionTool
 	store       StoreTool
+	inventory   InventoryTool
 	storeScoper appstore.Scoper
 	handlers    map[string]rpcHandler
 }
@@ -75,6 +76,13 @@ func NewRPCDispatcher(
 		"prompts/list":             d.listPrompts,
 		"prompts/get":              d.getPrompt,
 	}
+	return d
+}
+
+// WithInventoryTool wires the meta-tool that lists the caller's whole surface
+// server by server. Optional: a plane without it simply does not offer the tool.
+func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatcher {
+	d.inventory = inventory
 	return d
 }
 
@@ -154,11 +162,14 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if err := d.plugins.PreResponseDiscovery(ctx, req.consumer, raw); err != nil {
 		return nil, err
 	}
-	if d.connections != nil && connectionToolPermitted(req.consumer) {
+	if d.connections != nil && metaToolsPermitted(req.consumer) {
 		tools = appendGatewayTools(tools, d.connections.Definitions(ctx, req.consumer))
 	}
 	if d.store != nil && req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
 		tools = appendGatewayTools(tools, d.store.Definitions(ctx, req.consumer))
+	}
+	if d.inventory != nil && metaToolsPermitted(req.consumer) {
+		tools = appendGatewayTools(tools, d.inventory.Definitions(ctx, req.consumer))
 	}
 	result["tools"] = tools
 	return result, nil
@@ -176,10 +187,16 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		return nil, err
 	}
 	if d.connections != nil && d.connections.Handles(params.Name) {
-		if !connectionToolPermitted(req.consumer) {
+		if !metaToolsPermitted(req.consumer) {
 			return nil, &ToolNotPermittedError{Tool: params.Name}
 		}
 		return d.connections.Call(ctx, req.consumer, req.baseURL, params.Name)
+	}
+	if d.inventory != nil && d.inventory.Handles(params.Name) {
+		if !metaToolsPermitted(req.consumer) {
+			return nil, &ToolNotPermittedError{Tool: params.Name}
+		}
+		return d.inventory.Call(ctx, req.consumer, params.Name, params.Arguments)
 	}
 	if d.store != nil && d.store.Handles(params.Name) {
 		if req.consumer == nil || !consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
@@ -330,7 +347,12 @@ func appendGatewayTools(tools []Tool, gatewayTools []Tool) []Tool {
 	return tools
 }
 
-func connectionToolPermitted(consumer *appconsumer.RoutableConsumer) bool {
+// metaToolsPermitted reports whether the gateway may add its own tools to this
+// consumer's surface. A consumer carrying a toolkit that names no tool at all is
+// deny-all: it is meant to expose nothing, so the gateway adds nothing either —
+// not a connect link, and not an inventory that would name the servers behind
+// the empty surface. Every other consumer gets them.
+func metaToolsPermitted(consumer *appconsumer.RoutableConsumer) bool {
 	if consumer == nil || consumer.Consumer == nil {
 		return false
 	}

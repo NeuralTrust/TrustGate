@@ -878,3 +878,46 @@ What this means in practice:
   only ever granted catalog servers and instances — never consumers. The
   Applications tab there is a directory of consumers, not a place they are
   governed.
+
+## 16. `trustgate_list_tools`: the surface a caller cannot otherwise see
+
+`tools/list` can only carry the tools of servers that answered discovery. A
+server the user has but has not connected contributes nothing to it — the
+composer skips it on `ConsentRequiredError` so the connected ones still federate
+(§12.3) — and neither does one that is down, or one whose tools the consumer's
+toolkit turns away. The result is a list that is silent about exactly the servers
+someone needs to act on: an agent asked "can you query Notion?" sees no Notion
+tool and answers no, when the truth is "you have Notion, it needs one click".
+
+`trustgate_list_tools` (`pkg/app/mcp/inventory_tool.go`) is the view that is not
+silent. It answers server by server, each with a state:
+
+| State | Meaning | What fixes it |
+| --- | --- | --- |
+| `ready` | the server answered; its tools are callable now | — |
+| `needs_connect` | bound, but waiting for this principal's upstream account | the `trustgate_connect_*` tool named in the entry, or the connect page |
+| `unavailable` | the gateway could not reach it | operational |
+| `no_tools` | it answered but offers this consumer nothing | the consumer's toolkit |
+
+Three decisions worth keeping:
+
+- **One discovery pass feeds both views.** `compose` and the inventory read the
+  same `serverSurface` list (`pkg/app/mcp/composer.go`), and the inventory runs
+  the same `resolveNames` over the reachable bindings, so a name it advertises is
+  a name `tools/call` accepts. Two passes would eventually disagree, and a caller
+  told a name the gateway does not answer to is worse off than one told nothing.
+- **A server that is not serving is described from the catalog.** Its tools come
+  from `catalogdomain.MCPServer.Tools` — the unauthenticated snapshot the catalog
+  already carries — and are returned with `callable: false`. That is what turns
+  "Notion is not connected" into "Notion is not connected, and these are the
+  fifteen tools you would get". The names are the server's own; qualification
+  happens when it starts serving, which is why they are never marked callable.
+- **The upstream's failure text stays in the log.** An `unavailable` entry says
+  the gateway could not reach the server, not which host refused the connection.
+  The caller cannot act on the latter, and it is not theirs to read.
+
+It is offered to every consumer with an MCP server bound, and withheld from a
+deny-all toolkit — a consumer meant to expose nothing gets no gateway tools
+either, the rule the connect tool already followed (`metaToolsPermitted`).
+Descriptions are truncated per entry: a caller wanting a tool's full schema gets
+it from `tools/list` once the tool is callable.
