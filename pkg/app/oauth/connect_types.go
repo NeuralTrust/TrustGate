@@ -54,6 +54,12 @@ type ConnectTicket struct {
 	// the request, and the form has no way to ask. A request without one is
 	// refused (appstore.ErrReasonRequired), so it has to travel.
 	Reason string `json:"reason,omitempty"`
+	// AskReason marks a ticket whose form must collect the reason itself: the
+	// install was refused for want of one, and the requester is the only
+	// acceptable author. An agent asked for a reason invents one from the task it
+	// was given, so the meta tool does not accept one at all and hands the user
+	// this form instead.
+	AskReason bool `json:"ask_reason,omitempty"`
 }
 
 type ConnectState struct {
