@@ -92,6 +92,13 @@ func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoaut
 	return &c, nil
 }
 
+func (s *Store) DeleteGatewayClient(ctx context.Context, clientID string) error {
+	if err := s.rdb.Del(ctx, gatewayClientPrefix+clientID).Err(); err != nil {
+		return fmt.Errorf("oauth flow store: delete client: %w", err)
+	}
+	return nil
+}
+
 // SaveSession stores the record until rec.ExpiresAt, the absolute deadline the
 // proxy fixed at login. Re-saving a rotated record therefore shortens the TTL
 // rather than resetting it: the session cannot be kept alive indefinitely by
