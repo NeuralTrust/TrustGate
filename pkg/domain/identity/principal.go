@@ -22,11 +22,42 @@ import (
 type Method string
 
 const (
-	MethodAPIKey        Method = "api_key"
+	MethodAPIKey Method = "api_key"
+	// MethodJWT is the undifferentiated value every bearer JWT carried before
+	// RUN-1501, when a customer identity provider's token and a token the
+	// gateway itself issued were indistinguishable in telemetry. Nothing emits
+	// it any more, but it stays accepted everywhere a bearer token is
+	// authorized: a principal that still carries it must keep facing the checks
+	// it faced before, never fall through to a permissive default.
 	MethodJWT           Method = "jwt"
+	MethodExternalJWT   Method = "external_jwt"
+	MethodOAuth         Method = "oauth"
 	MethodIntrospection Method = "introspection"
 	MethodMTLS          Method = "mtls"
 )
+
+// IsBearerToken reports whether the method identifies a principal established
+// from a bearer token: a JWT verified against a customer identity provider, a
+// token the gateway itself issued at its own interactive login, an opaque token
+// resolved by introspection, or the legacy undifferentiated JWT value.
+func (m Method) IsBearerToken() bool {
+	switch m {
+	case MethodJWT, MethodExternalJWT, MethodOAuth, MethodIntrospection:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsExternalIdPAssertion reports whether the method identifies a principal
+// whose raw token was minted by a customer identity provider, and so can be
+// presented back to that provider as an assertion. A token the gateway issued
+// itself is excluded: the gateway mints session claims fresh and never carries
+// the upstream token into them, so there is no assertion any provider would
+// accept.
+func (m Method) IsExternalIdPAssertion() bool {
+	return m == MethodExternalJWT || m == MethodJWT
+}
 
 const (
 	// ClaimOrg is the claim carrying the platform tenant (team) the principal

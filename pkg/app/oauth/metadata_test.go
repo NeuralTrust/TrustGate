@@ -359,7 +359,7 @@ func TestRegisterClient(t *testing.T) {
 	store := newMemFlowStore()
 	svc := NewMetadataService(finder, nil, nil, store)
 
-	res, err := svc.RegisterClient(context.Background(), RegisterRequest{
+	res, err := svc.RegisterClient(context.Background(), testBaseURL, RegisterRequest{
 		RedirectURIs: []string{"cursor://anysphere.cursor-mcp/oauth/callback"},
 		ClientName:   "Cursor",
 	})
@@ -398,7 +398,7 @@ func TestRegisterClientAcceptsPrivateUseRedirects(t *testing.T) {
 		"vscode://neuraltrust.trustgate/oauth/callback",
 		"com.example.agent:/oauth2redirect",
 	} {
-		if _, err := svc.RegisterClient(context.Background(), RegisterRequest{RedirectURIs: []string{uri}}); err != nil {
+		if _, err := svc.RegisterClient(context.Background(), testBaseURL, RegisterRequest{RedirectURIs: []string{uri}}); err != nil {
 			t.Fatalf("expected private-use redirect %q to be accepted, got %v", uri, err)
 		}
 	}
@@ -417,7 +417,7 @@ func TestRegisterClientRejectsUnsafeRedirects(t *testing.T) {
 		"https://ok.example.com/cb#frag",
 		"",
 	} {
-		if _, err := svc.RegisterClient(context.Background(), RegisterRequest{RedirectURIs: []string{uri}}); err == nil {
+		if _, err := svc.RegisterClient(context.Background(), testBaseURL, RegisterRequest{RedirectURIs: []string{uri}}); err == nil {
 			t.Fatalf("expected rejection for redirect uri %q", uri)
 		}
 	}
@@ -430,7 +430,7 @@ func TestRegisterClientUnavailable(t *testing.T) {
 	validateOnly := oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"})
 	validateOnly.Config.OAuth2.ClientID = ""
 	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}}, nil, nil, newMemFlowStore())
-	if _, err := svc.RegisterClient(context.Background(), RegisterRequest{}); !errors.Is(err, ErrRegistrationUnavailable) {
+	if _, err := svc.RegisterClient(context.Background(), testBaseURL, RegisterRequest{}); !errors.Is(err, ErrRegistrationUnavailable) {
 		t.Fatalf("expected ErrRegistrationUnavailable, got %v", err)
 	}
 }

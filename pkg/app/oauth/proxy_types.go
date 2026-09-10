@@ -108,6 +108,13 @@ type RegisteredGatewayClient struct {
 	ClientID     string   `json:"client_id"`
 	RedirectURIs []string `json:"redirect_uris"`
 	ClientName   string   `json:"client_name,omitempty"`
+	// RegistrationTokenHash is the SHA-256 of the RFC 7592 registration access
+	// token handed to the client once, at registration. Only the digest is kept:
+	// the token authenticates management of this registration, so a Redis dump
+	// must not be enough to read, rewrite or withdraw a customer's client. An
+	// empty value belongs to a client registered before RUN-1501 added the
+	// management endpoints and can never be managed through them.
+	RegistrationTokenHash string `json:"registration_token_hash,omitempty"`
 }
 
 type FlowStore interface {
@@ -117,6 +124,7 @@ type FlowStore interface {
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
+	DeleteGatewayClient(ctx context.Context, clientID string) error
 	// SaveSession persists the record until rec.ExpiresAt. Saving a rotated
 	// record again must not extend that deadline: the session's lifetime is
 	// fixed at login, not renewed by use.

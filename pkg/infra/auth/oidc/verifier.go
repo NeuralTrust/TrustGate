@@ -149,7 +149,7 @@ func (v *Verifier) verifyWithCandidates(
 		scopes := scopesFromClaims(claimMap)
 		return &appauth.VerifiedClaims{
 			Subject: subject,
-			Method:  identity.MethodJWT,
+			Method:  identity.MethodExternalJWT,
 			Issuer:  identity.StringClaim(claimMap, "iss"),
 			Claims:  claimMap,
 			Scopes:  scopes,
