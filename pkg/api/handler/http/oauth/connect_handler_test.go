@@ -31,6 +31,7 @@ type stubConnectService struct {
 	page        *appoauth.ConnectPage
 	err         error
 	gotProvider string
+	gotInstance string
 	gotBaseURL  string
 }
 
@@ -63,9 +64,10 @@ func (s *stubConnectService) Statuses(context.Context, ids.GatewayID, string, st
 	return nil, nil
 }
 
-func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider string) (string, error) {
+func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider, instanceID string) (string, error) {
 	s.gotBaseURL = baseURL
 	s.gotProvider = provider
+	s.gotInstance = instanceID
 	return "https://github.com/login/oauth/authorize?x=1", nil
 }
 
@@ -74,7 +76,7 @@ func (s *stubConnectService) Callback(_ context.Context, baseURL, _, _, _, _, _ 
 	return "t", nil
 }
 
-func (s *stubConnectService) Disconnect(context.Context, string, string) error { return nil }
+func (s *stubConnectService) Disconnect(context.Context, string, string, string) error { return nil }
 
 func (s *stubConnectService) RefreshAuth(context.Context, ids.GatewayID, *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
 	return nil, nil

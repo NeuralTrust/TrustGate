@@ -213,7 +213,7 @@ func (p *principalPreview) fillConnection(
 	if p.vault == nil {
 		return nil
 	}
-	cred, err := p.vault.Find(ctx, gatewayID, principalSub, conn.Provider)
+	cred, err := p.vault.Find(ctx, gatewayID, principalSub, registrydomain.ForwardedVaultProvider(reg))
 	switch {
 	case err == nil:
 		conn.Linked = true

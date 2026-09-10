@@ -173,6 +173,7 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		ResumeURL:    ticket.ResumeURL,
 		Providers:    providers,
 		Code:         ticket.Code,
+		Instance:     ticket.InstanceID,
 	}, nil
 }
 
@@ -214,11 +215,15 @@ func (s *connectService) providerStatuses(
 		if !connectProviderAllowed(ticket, data, rc, cfg.Provider) {
 			continue
 		}
-		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
+		status := ProviderStatus{
+			Provider: cfg.Provider,
+			Registry: reg.Name,
+			Instance: reg.ID.String(),
+		}
 		if reg.MCPTarget != nil {
 			status.Code = reg.MCPTarget.Code
 		}
-		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
+		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
 		switch {
 		case err == nil:
 			status.Linked = true
@@ -243,7 +248,10 @@ func (s *connectService) providerStatuses(
 	return providers, nil
 }
 
-func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider string) (string, error) {
+func (s *connectService) Start(
+	ctx context.Context,
+	baseURL, ticketID, provider, instanceID string,
+) (string, error) {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return "", err
@@ -251,7 +259,7 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return "", ErrProviderNotFound
 	}
-	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
+	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
 	if reg == nil {
 		return "", ErrProviderNotFound
 	}
@@ -267,10 +275,15 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	if err != nil {
 		return "", err
 	}
+	// The callback stores the credential for the instance this authorization was
+	// started from, so the instance travels in the state and is not re-derived
+	// there: two instances of one provider are otherwise indistinguishable on
+	// the way back, and the first one always won.
 	if err := s.store.SaveConnect(ctx, state, ConnectState{
 		Ticket:   *ticket,
 		TicketID: ticketID,
 		Provider: provider,
+		Instance: reg.ID.String(),
 		Verifier: verifier,
 	}); err != nil {
 		return "", err
@@ -296,7 +309,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
 		return st.TicketID, ErrProviderNotFound
 	}
-	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
+	reg := connectRegistry(data.EffectiveRegistries(rc), provider, st.Instance, st.Ticket.InstanceID)
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
@@ -309,7 +322,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, cfg.Provider,
+		gatewayID, st.Ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg),
 		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
@@ -325,7 +338,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	return st.TicketID, nil
 }
 
-func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
+func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, instanceID string) error {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
@@ -333,11 +346,50 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider stri
 	if !connectProviderAllowed(ticket, data, rc, provider) {
 		return ErrProviderNotFound
 	}
-	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider); err != nil {
+	// Revoking is keyed by instance while the instance is there, and by provider
+	// once it is not: a ticket pinned to a provider whose registry the admin has
+	// since removed must still be able to clear the stored credential, or the
+	// user is left holding an account they cannot revoke.
+	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+	} else {
+		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
+	}
+	if err != nil {
 		return err
 	}
 	if identity, ok := connectAuditIdentity(ticket); ok {
 		s.auditor.ProviderUnlinked(ctx, identity, provider)
+	}
+	return nil
+}
+
+// deleteProviderCredentials clears every credential this principal holds for a
+// provider, whichever upstream each was minted against. It is the fallback for
+// a revoke that can no longer name an instance, so it answers ErrNotFound when
+// the principal holds none — the same answer a keyed delete gives, which is
+// what keeps two concurrent revokes to one audit entry.
+func (s *connectService) deleteProviderCredentials(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, provider string,
+) error {
+	creds, err := s.vault.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return err
+	}
+	deleted := 0
+	for _, cred := range creds {
+		if registrydomain.ForwardedVaultProviderName(cred.Provider) != provider {
+			continue
+		}
+		if err := s.vault.Delete(ctx, gatewayID, principalSub, cred.Provider); err != nil {
+			return err
+		}
+		deleted++
+	}
+	if deleted == 0 {
+		return vaultdomain.ErrNotFound
 	}
 	return nil
 }
@@ -512,6 +564,34 @@ func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 		return nil
 	}
 	return reg.MCPTarget.Auth
+}
+
+// connectRegistry picks the instance a connect action acts on: the one the
+// caller named (a per-instance button on the connect page), else the one the
+// ticket was minted for (a Store install's single-server page), else the sole
+// registry serving that provider.
+//
+// The named instance still has to serve the provider, so a stale or foreign id
+// cannot redirect the credential somewhere the ticket does not reach.
+func connectRegistry(
+	regs []*registrydomain.Registry,
+	provider string,
+	instanceIDs ...string,
+) *registrydomain.Registry {
+	for _, instanceID := range instanceIDs {
+		if strings.TrimSpace(instanceID) == "" {
+			continue
+		}
+		for _, reg := range regs {
+			if reg.ID.String() != instanceID {
+				continue
+			}
+			if cfg := forwardedAuth(reg); cfg != nil && cfg.Provider == provider {
+				return reg
+			}
+		}
+	}
+	return providerRegistry(regs, provider)
 }
 
 func providerRegistry(regs []*registrydomain.Registry, provider string) *registrydomain.Registry {

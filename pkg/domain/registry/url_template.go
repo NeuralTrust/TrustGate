@@ -81,9 +81,9 @@ var numericHost = regexp.MustCompile(`^[0-9.]+$`)
 
 // urlVariableVaultPrefix namespaces a secret URL variable's per-user value in the
 // vault, keeping it distinct from OAuth/forwarded provider credentials (keyed by
-// the bare catalog code). Both the writer (the configure flow) and the reader
-// (the dial-time resolver) derive the key through URLVariableVaultProvider so
-// they always agree.
+// provider and upstream resource — see ForwardedVaultProvider). Both the writer
+// (the configure flow) and the reader (the dial-time resolver) derive the key
+// through URLVariableVaultProvider so they always agree.
 const urlVariableVaultPrefix = "urlvar:"
 
 // URLVariableVaultProvider is the vault "provider" key under which a secret URL
