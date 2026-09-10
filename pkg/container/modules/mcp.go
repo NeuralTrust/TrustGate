@@ -172,9 +172,10 @@ func MCP(c *container.Container) error {
 type mcpHandlerParams struct {
 	dig.In
 
-	Gateway  *mcphttp.RPCGateway
-	Vault    vaultdomain.Repository
-	Installs installationdomain.Repository `optional:"true"`
+	Gateway   *mcphttp.RPCGateway
+	Vault     vaultdomain.Repository
+	Installs  installationdomain.Repository `optional:"true"`
+	Consumers appconsumer.DataFinder        `optional:"true"`
 }
 
 func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
@@ -182,7 +183,7 @@ func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
 	// dispatcher applies to tools/list, so an admin revoking a grant pushes
 	// tools/list_changed to the affected user's clients.
 	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs, appmcp.WithSurfaceScoper(p.Gateway.StoreScoper()))
-	return mcphttp.NewHandler(p.Gateway, surface)
+	return mcphttp.NewHandler(p.Gateway, surface, mcphttp.WithConsumerFinder(p.Consumers))
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the
