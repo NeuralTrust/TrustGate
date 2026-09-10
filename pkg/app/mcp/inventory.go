@@ -61,7 +61,7 @@ type InventoryServer struct {
 	// already knows.
 	Cause string
 	State string
-	Tools    []InventoryEntry
+	Tools []InventoryEntry
 	// Denied are the server's tool names this consumer's toolkit turns away.
 	// Listing them keeps a caller from hunting for a tool policy has removed.
 	Denied []string

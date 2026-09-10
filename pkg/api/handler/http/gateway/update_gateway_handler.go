@@ -91,7 +91,6 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
 		Entitlements:    req.Entitlements,
-		StoreMode:       req.StoreMode,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

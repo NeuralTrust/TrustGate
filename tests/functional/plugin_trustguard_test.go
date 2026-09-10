@@ -17,7 +17,7 @@ import (
 func trustGuardPolicySettings() map[string]any {
 	return map[string]any{
 		"collector_id": trustGuardFunctionalCollectorID,
-		"inspect":      "request",
+		"direction":    "request",
 	}
 }
 
@@ -168,7 +168,7 @@ func TestPluginE2E_TrustGuard_StreamingResponseSendsReasoningAndToolCalls(t *tes
 	up := newTrustGuardRichStreamUpstream(t)
 	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", map[string]any{
 		"collector_id": trustGuardFunctionalCollectorID,
-		"inspect":      "response",
+		"direction":    "response",
 	}))
 
 	req := trustGuardChatRequest("stream please")

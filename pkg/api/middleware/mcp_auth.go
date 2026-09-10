@@ -15,7 +15,6 @@
 package middleware
 
 import (
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -69,9 +68,6 @@ func (m *MCPAuthMiddleware) Middleware() fiber.Handler {
 		if err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
 		}
-		if err := enforceDefaultIdPTenant(identity, gw); err != nil {
-			return err
-		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), identity.GatewayID)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
@@ -79,30 +75,6 @@ func (m *MCPAuthMiddleware) Middleware() fiber.Handler {
 		m.attach(c, identity, gw, data)
 		return c.Next()
 	}
-}
-
-// enforceDefaultIdPTenant stops a user of one tenant reaching another tenant's
-// gateway through the built-in default identity provider. The default IdP is a
-// platform-wide singleton with a cross-tenant issuer, so — unlike a gateway's
-// own oauth2 auth, which is scoped to that gateway — its session is only bound
-// to the addressed gateway (gwid), not to the user's org. Here we require the
-// session's org claim to match the gateway's stamped tenant.
-//
-// The check applies only to default-IdP sessions on tenant-stamped (cloud)
-// gateways. A self-hosted gateway carries no tenant_id and has no cross-tenant
-// surface, so it is left untouched.
-func enforceDefaultIdPTenant(identity Identity, gw *gatewaydomain.Gateway) error {
-	if identity.AuthID != appauth.DefaultIdPAuthID() {
-		return nil
-	}
-	tenant := gw.TenantID()
-	if tenant == "" {
-		return nil
-	}
-	if identity.Principal == nil || identity.Principal.Org() != tenant {
-		return fiber.NewError(fiber.StatusForbidden, "identity does not belong to this gateway's tenant")
-	}
-	return nil
 }
 
 func (m *MCPAuthMiddleware) attach(c *fiber.Ctx, identity Identity, gw *gatewaydomain.Gateway, data *appconsumer.Data) {

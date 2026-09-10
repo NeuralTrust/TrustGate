@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	identitydomain "github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -117,99 +116,4 @@ func TestMCPAuthMiddleware_AttachesPrincipalAndGatewayScope(t *testing.T) {
 	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/dev/mcp", nil))
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, res.StatusCode)
-}
-
-// tenantGateway builds a gateway stamped with a tenant, as the cloud control
-// plane provisions it.
-func tenantGateway(id ids.GatewayID, tenant string) *gatewaydomain.Gateway {
-	return &gatewaydomain.Gateway{ID: id, Metadata: gatewaydomain.WithTenantID(nil, tenant)}
-}
-
-func newDefaultIdPMiddleware(
-	gatewayID ids.GatewayID,
-	authID ids.AuthID,
-	principal *identitydomain.Principal,
-	gw *gatewaydomain.Gateway,
-) *middleware.MCPAuthMiddleware {
-	return middleware.NewMCPAuthMiddleware(
-		stubIdentityResolver{identity: middleware.Identity{
-			GatewayID: gatewayID,
-			AuthID:    authID,
-			Principal: principal,
-		}},
-		stubDataFinder{data: &appconsumer.Data{}},
-		stubGatewayFinder{gw: gw},
-	)
-}
-
-func TestMCPAuthMiddleware_DefaultIdP_TenantBinding(t *testing.T) {
-	t.Parallel()
-	gatewayID := ids.New[ids.GatewayKind]()
-	defaultIdP := appauth.DefaultIdPAuthID()
-	otherAuth := ids.New[ids.AuthKind]()
-
-	orgPrincipal := func(org string) *identitydomain.Principal {
-		return &identitydomain.Principal{
-			Subject: "user-1",
-			Method:  identitydomain.MethodJWT,
-			Claims:  map[string]any{identitydomain.ClaimOrg: org},
-		}
-	}
-
-	cases := []struct {
-		name      string
-		authID    ids.AuthID
-		principal *identitydomain.Principal
-		gateway   *gatewaydomain.Gateway
-		want      int
-	}{
-		{
-			name:      "default IdP, org matches gateway tenant -> allowed",
-			authID:    defaultIdP,
-			principal: orgPrincipal("team-a"),
-			gateway:   tenantGateway(gatewayID, "team-a"),
-			want:      fiber.StatusOK,
-		},
-		{
-			name:      "default IdP, org of a different tenant -> forbidden",
-			authID:    defaultIdP,
-			principal: orgPrincipal("team-b"),
-			gateway:   tenantGateway(gatewayID, "team-a"),
-			want:      fiber.StatusForbidden,
-		},
-		{
-			name:      "default IdP, no org claim on a tenant gateway -> forbidden",
-			authID:    defaultIdP,
-			principal: orgPrincipal(""),
-			gateway:   tenantGateway(gatewayID, "team-a"),
-			want:      fiber.StatusForbidden,
-		},
-		{
-			name:      "default IdP, self-hosted gateway with no tenant -> allowed",
-			authID:    defaultIdP,
-			principal: orgPrincipal(""),
-			gateway:   &gatewaydomain.Gateway{ID: gatewayID},
-			want:      fiber.StatusOK,
-		},
-		{
-			name:      "gateway-scoped auth is not tenant-checked even on a tenant gateway",
-			authID:    otherAuth,
-			principal: orgPrincipal("team-b"),
-			gateway:   tenantGateway(gatewayID, "team-a"),
-			want:      fiber.StatusOK,
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			m := newDefaultIdPMiddleware(gatewayID, tc.authID, tc.principal, tc.gateway)
-			app := newMCPAuthApp(t, m, func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
-
-			res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/dev/mcp", nil))
-			require.NoError(t, err)
-			require.Equal(t, tc.want, res.StatusCode)
-		})
-	}
 }

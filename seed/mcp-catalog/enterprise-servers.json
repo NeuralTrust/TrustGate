@@ -16318,6 +16318,162 @@
           "description": "Retrieve a Zoom Doc as Markdown"
         }
       ]
+    },
+    {
+      "name": "com.amazon.aws/mcp",
+      "vendor": "AWS",
+      "category": "Cloud Platform",
+      "description": "Search AWS documentation and securely operate AWS services, including Amazon S3 buckets, through IAM-authorized APIs.",
+      "transport": "streamable-http",
+      "server_url": "https://aws-mcp.{region}.api.aws/mcp",
+      "url_variables": [
+        {
+          "name": "region",
+          "description": "AWS MCP endpoint region: us-east-1 or eu-central-1.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "self_service": true,
+      "multi_instance": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true
+      },
+      "config_guide": {
+        "summary": "Grant your AWS identity OAuth access to AWS MCP Server.",
+        "steps": [
+          "Attach arn:aws:iam::aws:policy/AWSMCPSignInOAuthAccessPolicy to the IAM role or user that will sign in.",
+          "Enter the endpoint region: us-east-1 or eu-central-1.",
+          "Select Connect and complete AWS Sign-In; TrustGate registers its own OAuth client."
+        ],
+        "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html",
+        "note": "AWS Sign-In only issues DCR clients for allowlisted redirect URIs, so this gateway's callback must be approved by AWS."
+      },
+      "relevance": 95,
+      "tools": [
+        {
+          "name": "aws___retrieve_skill",
+          "description": "Retrieve domain-specific expertise for a particular AWS domain. Skills provide workflows, context, best practices, decision frameworks, and step-by-step procedures. When called with a skill name, returns the full skill content including reference materials. Use aws___search_documentation to discover available skills."
+        },
+        {
+          "name": "aws___search_documentation",
+          "description": "Search across all AWS documentation, including API references, best practices, service guides, and skills (formerly Agent SOPs). Use the topic filter to search skills exclusively, or see skills alongside general knowledge search results."
+        },
+        {
+          "name": "aws___read_documentation",
+          "description": "Retrieve and convert AWS documentation pages to markdown format for easy consumption by AI assistants."
+        },
+        {
+          "name": "aws___list_regions",
+          "description": "Retrieve a list of all AWS regions, including their identifiers and names."
+        },
+        {
+          "name": "aws___get_regional_availability",
+          "description": "Check AWS regional availability information for services, features, SDK APIs, and CloudFormation resources."
+        },
+        {
+          "name": "aws___run_script",
+          "description": "Execute Python code in a sandboxed environment with AWS API access. Use for tasks that involve listing resources and checking their properties, parallel API calls, multi-step workflows, cross-service checks, and retry logic."
+        },
+        {
+          "name": "aws___get_presigned_url",
+          "description": "Generate pre-signed Amazon S3 URLs for uploading or downloading files. Use this tool for direct Amazon S3 uploads and downloads, or when an AWS CLI command requires a local file path."
+        },
+        {
+          "name": "aws___get_tasks",
+          "description": "Poll the status of long-running tasks started by aws___call_aws or aws___run_script. Use when a previous tool call returns a task ID with a working status."
+        }
+      ]
+    },
+    {
+      "name": "com.microsoft/outlook",
+      "vendor": "Outlook",
+      "category": "Productivity & Docs",
+      "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; tenant needs Microsoft 365 Copilot).",
+      "transport": "streamable-http",
+      "server_url": "https://agent365.svc.cloud.microsoft/agents/tenants/{tenantId}/servers/mcp_MailTools",
+      "url_variables": [
+        {
+          "name": "tenantId",
+          "description": "Microsoft Entra tenant ID (Directory ID) that hosts the mailbox.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "self_service": false,
+      "multi_instance": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "scopes": [
+          "offline_access",
+          "openid",
+          "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
+        ]
+      },
+      "config_guide": {
+        "summary": "Create a public Entra app for the Work IQ Mail server.",
+        "steps": [
+          "Copy the Directory (tenant) ID from Entra ID → Overview.",
+          "Add the Agent 365 Tools delegated permission McpServers.Mail.All and grant admin consent.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.microsoft/outlook as a SPA redirect URI.",
+          "Enter the app's client ID; no client secret is required."
+        ],
+        "docs_url": "https://learn.microsoft.com/en-us/microsoft-agent-365/tooling-servers-overview",
+        "note": "Requires Microsoft 365 Copilot and an enabled Work IQ/Agent 365 tenant."
+      },
+      "relevance": 92,
+      "tools": [
+        {
+          "name": "mcp_MailTools_graph_mail_createMessage",
+          "description": "Create a draft email. Supports HTML by setting body.body.contentType = \"HTML\"."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_deleteMessage",
+          "description": "Deletes a message from the signed-in user's mailbox."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_getMessage",
+          "description": "Gets a message by ID from the signed-in user's mailbox. Use preferHtml to request HTML body."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_listSent",
+          "description": "List messages in sent items."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_reply",
+          "description": "Send a reply to an existing message. Supports HTML via preferHtml or headers."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_replyAll",
+          "description": "Send a reply-all to an existing message. Supports HTML via preferHtml or headers."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_searchMessages",
+          "description": "Search Outlook messages using Microsoft Graph Search API with keyword query language (KQL) style queries."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_sendDraft",
+          "description": "Send an existing draft message by ID."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_sendMail",
+          "description": "Send an email as the signed-in user."
+        },
+        {
+          "name": "mcp_MailTools_graph_mail_updateMessage",
+          "description": "Updates a message's mutable properties, such as the subject, body, and categories."
+        }
+      ]
     }
   ]
 }

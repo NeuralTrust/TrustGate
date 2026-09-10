@@ -51,7 +51,7 @@ func resolvePlaygroundToken(
 	rc *appconsumer.RoutableConsumer,
 ) (*appauth.AuthContext, error) {
 	t.Helper()
-	r := NewPlaygroundIdentityResolver(infrajwt.NewJwtManager(&config.ServerConfig{SecretKey: secret}))
+	r := NewPlaygroundIdentityResolver(infrajwt.NewPlaygroundVerifier(&config.ServerConfig{SecretKey: secret}, nil))
 
 	var authCtx *appauth.AuthContext
 	var resolveErr error

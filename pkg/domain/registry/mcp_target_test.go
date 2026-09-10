@@ -98,6 +98,10 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 			m.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "github", ClientID: "id", AuthorizeURL: "https://x/a", TokenURL: "not-a-url"}
 			return m
 		}},
+		{"forwarded with only authorize_url", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "github", ClientID: "id", AuthorizeURL: "https://x/a"}
+			return m
+		}},
 		{"forwarded auto with pre-registered client", func(m *MCPTarget) *MCPTarget {
 			m.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "linear", Registration: RegistrationAuto, ClientID: "id"}
 			return m
@@ -140,6 +144,21 @@ func TestMCPAuth_ForwardedAutoNeedsNoClient(t *testing.T) {
 	target.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "linear", Registration: RegistrationAuto}
 	if _, err := NewMCPRegistry(gwID, "linear-mcp", "", target); err != nil {
 		t.Fatalf("auto registration without client_id should be valid, got %v", err)
+	}
+}
+
+func TestMCPAuth_ForwardedManualCanDiscoverEndpoints(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	target := validMCPTarget()
+	target.Auth = &MCPAuth{
+		Mode:         MCPAuthModeForwarded,
+		Provider:     "com.snowflake/mcp",
+		Registration: RegistrationManual,
+		ClientID:     "client-id",
+	}
+	if _, err := NewMCPRegistry(gwID, "snowflake-mcp", "", target); err != nil {
+		t.Fatalf("manual registration without endpoints should be valid for discovery, got %v", err)
 	}
 }
 

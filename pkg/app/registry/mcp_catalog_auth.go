@@ -107,11 +107,18 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 		target.Auth.Registration = domain.RegistrationManual
 	}
 	if target.Auth.Registration != domain.RegistrationAuto {
-		if strings.TrimSpace(entry.OAuth.AuthorizeURL) == "" || strings.TrimSpace(entry.OAuth.TokenURL) == "" {
+		hasAuthorizeURL := strings.TrimSpace(entry.OAuth.AuthorizeURL) != ""
+		hasTokenURL := strings.TrimSpace(entry.OAuth.TokenURL) != ""
+		if hasAuthorizeURL != hasTokenURL {
 			return fmt.Errorf("%w: catalog entry %q is missing oauth.authorize_url/token_url", commonerrors.ErrValidation, code)
 		}
-		target.Auth.AuthorizeURL = entry.OAuth.AuthorizeURL
-		target.Auth.TokenURL = entry.OAuth.TokenURL
+		if !hasAuthorizeURL && !entry.OAuth.ResourceMetadata {
+			return fmt.Errorf("%w: catalog entry %q cannot discover oauth.authorize_url/token_url", commonerrors.ErrValidation, code)
+		}
+		if hasAuthorizeURL {
+			target.Auth.AuthorizeURL = entry.OAuth.AuthorizeURL
+			target.Auth.TokenURL = entry.OAuth.TokenURL
+		}
 	} else {
 		if entry.OAuth.AuthorizeURL != "" {
 			target.Auth.AuthorizeURL = entry.OAuth.AuthorizeURL
