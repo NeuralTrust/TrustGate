@@ -110,7 +110,7 @@ func (w *surfaceWatcher) WatchSnapshot(
 	}
 	key := rc.Consumer.GatewayID.String() + "|" + principal.Subject
 	if value, ok := w.cachedSnapshot(key); ok {
-		return value
+		return joinWatchSnapshot(value, consumerBindings(rc))
 	}
 	result := w.flight.DoChan(key, func() (any, error) {
 		if value, ok := w.cachedSnapshot(key); ok {
@@ -143,7 +143,8 @@ func (w *surfaceWatcher) WatchSnapshot(
 		if completed.Err != nil {
 			return ""
 		}
-		return completed.Val.(string)
+		dynamic, _ := completed.Val.(string)
+		return joinWatchSnapshot(dynamic, consumerBindings(rc))
 	}
 }
 
@@ -189,6 +190,38 @@ func (w *surfaceWatcher) storeSnapshot(key, value string, now time.Time) {
 func (w *surfaceWatcher) removeSnapshot(entry *surfaceWatchEntry) {
 	delete(w.cache, entry.key)
 	w.lru.Remove(entry.element)
+}
+
+func joinWatchSnapshot(dynamic string, bindings []string) string {
+	if len(bindings) == 0 {
+		return dynamic
+	}
+	extra := strings.Join(bindings, "|")
+	if dynamic == "" {
+		return extra
+	}
+	return dynamic + "|" + extra
+}
+
+// consumerBindings fingerprints the servers an admin bound to this consumer.
+// Vault credentials and Store installs do not move when a registry is
+// attached or detached, so without these parts the SSE watch stays quiet and
+// the client keeps the tool list from handshake.
+func consumerBindings(rc *appconsumer.RoutableConsumer) []string {
+	if rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	parts := make([]string, 0, len(rc.Registries))
+	for _, registry := range rc.Registries {
+		if registry != nil && registry.IsMCP() {
+			parts = append(parts, "rg:"+registry.ID.String()+"@"+registry.UpdatedAt.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	for _, entry := range rc.Consumer.Toolkit() {
+		parts = append(parts, "tk:"+entry.RegistryID.String()+"/"+entry.Tool+"/"+entry.Prompt+"/"+entry.Resource+"/"+entry.ExposeAs)
+	}
+	sort.Strings(parts)
+	return parts
 }
 
 func SurfaceFingerprint(rc *appconsumer.RoutableConsumer, dynamic []string) string {
