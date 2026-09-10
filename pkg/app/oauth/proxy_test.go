@@ -114,6 +114,13 @@ func (s *memFlowStore) GetGatewayClient(_ context.Context, clientID string) (*Re
 	return &c, nil
 }
 
+func (s *memFlowStore) DeleteGatewayClient(_ context.Context, clientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, clientID)
+	return nil
+}
+
 func (s *memFlowStore) SavePending(_ context.Context, state string, p PendingAuthorization) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
