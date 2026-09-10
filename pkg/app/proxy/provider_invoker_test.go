@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -214,6 +216,32 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 		"a failed attempt must still say which route was tried")
 }
 
+func TestProviderInvoke_CrossFormatBackendErrorUsesIngressEnvelope(t *testing.T) {
+	errBody := []byte(`{"error":{"message":"bad request","type":"invalid_request_error"}}`)
+	be := registrydomain.NewBackendHTTPError(http.StatusBadRequest, errBody, http.Header{"Retry-After": []string{"2"}})
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, be).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{
+		Body:         []byte(anthropicRequestBody),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(resp.Body), `"type":"error"`)
+	assert.Contains(t, string(resp.Body), `"invalid_request_error"`)
+	assert.Contains(t, string(resp.Body), "bad request")
+	assert.Equal(t, []string{"2"}, resp.Headers["Retry-After"])
+}
+
 func TestProviderInvoke_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
@@ -301,7 +329,8 @@ func TestProviderInvoke_DoesNotRetryReasoningToolsOutsideExactCase(t *testing.T)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.status, resp.StatusCode)
-			assert.JSONEq(t, reasoningToolsError, string(resp.Body))
+			assert.Contains(t, string(resp.Body), `"type":"error"`)
+			assert.Contains(t, string(resp.Body), "Function tools with reasoning_effort")
 		})
 	}
 }
@@ -446,4 +475,137 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+const maxTokensTooLarge = `{"error":{"type":"invalid_request_error","param":"max_tokens","message":"max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."}}`
+
+type stubCatalog struct {
+	models map[string]*catalogdomain.Model
+}
+
+func (s stubCatalog) FindModel(_ context.Context, providerCode, slug string) (*catalogdomain.Model, error) {
+	if s.models == nil {
+		return nil, commonerrors.ErrNotFound
+	}
+	m, ok := s.models[providerCode+":"+slug]
+	if !ok {
+		return nil, commonerrors.ErrNotFound
+	}
+	return m, nil
+}
+
+func TestProviderInvoke_ClampsFromCatalog(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+			sent = append([]byte(nil), body...)
+			return []byte(openaiResponseBody), nil
+		}).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	cat := stubCatalog{models: map[string]*catalogdomain.Model{
+		"openai:gpt-4o-mini": {MaxOutput: 16384},
+	}}
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(cat))
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"gpt-4o-mini","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.Contains(t, string(sent), `"max_completion_tokens":16384`)
+	assert.NotContains(t, string(sent), `"max_tokens"`)
+}
+
+func TestProviderInvoke_RetriesMaxTokensAndLearns(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":32000`)
+		})).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, []byte(maxTokensTooLarge))).
+		Once()
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil)
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	reqBody := []byte(`{"model":"unknown-model","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`)
+	req := &infracontext.RequestContext{Body: reqBody, SourceFormat: string(adapter.FormatAnthropic)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+	resp, err = inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Body: reqBody, SourceFormat: string(adapter.FormatAnthropic),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+}
+
+func TestProviderInvoke_DoesNotRetryUnrelatedMaxTokensParam(t *testing.T) {
+	errBody := []byte(`{"error":{"type":"invalid_request_error","param":"messages","message":"This model supports at most 16384"}}`)
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, registrydomain.NewBackendError(http.StatusBadRequest, errBody)).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	req := &infracontext.RequestContext{
+		Body: []byte(`{"model":"gpt-4","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+	}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Empty(t, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.JSONEq(t, string(errBody), string(resp.Body))
+}
+
+func TestProviderInvoke_LeavesMaxTokensWithinLimit(t *testing.T) {
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+			sent = append([]byte(nil), body...)
+			return []byte(openaiResponseBody), nil
+		}).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	cat := stubCatalog{models: map[string]*catalogdomain.Model{
+		"openai:gpt-4": {MaxOutput: 16384},
+	}}
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(cat))
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
+
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Empty(t, resp.Headers["X-Max-Tokens-Clamped"])
+	assert.NotContains(t, string(sent), `"max_completion_tokens"`)
 }

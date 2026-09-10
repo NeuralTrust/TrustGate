@@ -39,31 +39,31 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
 var newline = []byte("\n")
 
-var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
-
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
 const (
-	errCodePluginRejected       = "plugin_rejected"
-	errCodeUnauthenticated      = "unauthenticated"
-	errCodeForbidden            = "forbidden"
-	errCodeNotFound             = "not_found"
-	errCodeNoBackendAvailable   = "no_backend_available"
-	errCodeInvalidRequest       = "invalid_request"
-	errCodeInvalidModel         = "invalid_model"
-	errCodeModelNotAllowed      = "model_not_allowed"
-	errCodeModelNotSupported    = "model_not_supported"
-	errCodeProviderCredential   = "provider_credential_error"
-	errCodeBackendError         = "backend_error"
-	errCodeRateLimitUnavailable = "rate_limit_unavailable"
+	errCodePluginRejected        = "plugin_rejected"
+	errCodeUnauthenticated       = "unauthenticated"
+	errCodeForbidden             = "forbidden"
+	errCodeNotFound              = "not_found"
+	errCodeNoBackendAvailable    = "no_backend_available"
+	errCodeInvalidRequest        = "invalid_request"
+	errCodeContextLengthExceeded = "context_length_exceeded"
+	errCodeInvalidModel          = "invalid_model"
+	errCodeModelNotAllowed       = "model_not_allowed"
+	errCodeModelNotSupported     = "model_not_supported"
+	errCodeProviderCredential    = "provider_credential_error"
+	errCodeBackendError          = "backend_error"
+	errCodeRateLimitUnavailable  = "rate_limit_unavailable"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -192,15 +192,16 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 		}
 		for line, err := range result.Stream {
 			if err != nil {
-				// The response is already a 200 SSE stream, so a mid-stream
-				// failure cannot change the status code. Emit an explicit error
-				// event (instead of a silent truncation that looks like a clean
-				// finish) so clients can distinguish an aborted stream.
+				format := adapter.FormatOpenAI
+				if req != nil {
+					format = adapter.Format(req.SourceFormat)
+				}
+				event := adapter.StreamErrorEvent(format, "upstream stream terminated unexpectedly")
 				if finalizer != nil {
-					captured.Write(streamErrorEvent)
+					captured.Write(event)
 					captured.Write(newline)
 				}
-				_, _ = w.Write(streamErrorEvent)
+				_, _ = w.Write(event)
 				_, _ = w.Write(newline)
 				_, _ = w.Write(newline)
 				_ = w.Flush()
@@ -410,6 +411,17 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetStatusReason(body.Error)
 	}
+	format := adapter.FormatOpenAI
+	if route, rerr := proxyRoute(c); rerr == nil && route.SourceFormat != "" {
+		format = route.SourceFormat
+	}
+	if adapter.NeedsAdaptedError(format) {
+		msg := body.Message
+		if msg == "" {
+			msg = err.Error()
+		}
+		return c.Status(status).Type("json").Send(adapter.EncodeErrorBody(format, status, msg))
+	}
 	return c.Status(status).JSON(body)
 }
 
@@ -435,6 +447,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrContextWindowExceeded):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeContextLengthExceeded, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}

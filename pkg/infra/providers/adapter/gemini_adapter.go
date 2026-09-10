@@ -304,7 +304,7 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			decls = append(decls, geminiFuncDecl{
 				Name:        t.Name,
 				Description: t.Description,
-				Parameters:  jsonSchemaToGeminiSchema(t.Schema),
+				Parameters:  sanitizeGeminiParameters(t.Schema),
 			})
 		}
 		out.Tools = []geminiToolGroup{{FunctionDeclarations: decls}}
@@ -551,6 +551,7 @@ var geminiToJSONSchemaType = map[string]string{
 	"INTEGER": "integer",
 	"BOOLEAN": "boolean",
 	"ARRAY":   "array",
+	"NULL":    "null",
 }
 
 var jsonSchemaToGeminiType = map[string]string{
@@ -560,6 +561,7 @@ var jsonSchemaToGeminiType = map[string]string{
 	"integer": "INTEGER",
 	"boolean": "BOOLEAN",
 	"array":   "ARRAY",
+	"null":    "NULL",
 }
 
 func geminiSchemaToJSONSchema(schema map[string]interface{}) map[string]interface{} {
@@ -584,40 +586,6 @@ func geminiSchemaToJSONSchema(schema map[string]interface{}) map[string]interfac
 			for i, item := range val {
 				if m, ok := item.(map[string]interface{}); ok {
 					arr[i] = geminiSchemaToJSONSchema(m)
-				} else {
-					arr[i] = item
-				}
-			}
-			out[k] = arr
-		default:
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func jsonSchemaToGeminiSchema(schema map[string]interface{}) map[string]interface{} {
-	if schema == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(schema))
-	for k, v := range schema {
-		if k == "type" {
-			if s, ok := v.(string); ok {
-				if upper, found := jsonSchemaToGeminiType[s]; found {
-					out[k] = upper
-					continue
-				}
-			}
-		}
-		switch val := v.(type) {
-		case map[string]interface{}:
-			out[k] = jsonSchemaToGeminiSchema(val)
-		case []interface{}:
-			arr := make([]interface{}, len(val))
-			for i, item := range val {
-				if m, ok := item.(map[string]interface{}); ok {
-					arr[i] = jsonSchemaToGeminiSchema(m)
 				} else {
 					arr[i] = item
 				}
