@@ -68,7 +68,8 @@ func WantsEventStream(c *fiber.Ctx) bool {
 // consumer. This stream watches credentials, Store installs, and the consumer's
 // current MCP bindings, and pushes notifications/tools/list_changed when any
 // of them change — the only signal that makes a client re-list without
-// reconnecting.
+// reconnecting. It also pushes one on GET open so a recycled stream still
+// refreshes a client that missed a change while the previous GET was down.
 func (h *Handler) Stream(c *fiber.Ctx) error {
 	skipMetrics(c)
 	if !WantsEventStream(c) {
@@ -119,6 +120,12 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTimings) {
 	previous := snapshot()
 	if !flushFrame(w, streamKeepAliveFrame) {
+		return
+	}
+	// The GET recycles every ~45s. If the surface changed while the previous
+	// stream was down, previous already equals current and a delta-only watch
+	// would stay quiet — the client keeps the tools/list from last time.
+	if !flushFrame(w, toolsListChangedFrame) {
 		return
 	}
 	poll := time.NewTicker(timings.poll)
