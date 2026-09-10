@@ -926,3 +926,53 @@ func TestInstallGrantedNeedsNoReason(t *testing.T) {
 		}
 	}
 }
+
+// A server with required per-user endpoint values could not be requested at
+// all: the missing values were reported before the access decision, so no row
+// was ever written and no approver saw the ask — while the caller was told to
+// go and finish the setup. The values belong to using the server, not to asking
+// for it, so the request is filed and they are collected when it is installed.
+func TestInstallRequestIsFiledEvenWhenPerUserConfigIsMissing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{}
+	// snowflake declares required plain URL variables (account_url, database)
+	// and nobody granted it: curated mode with no grant makes this a request.
+	res, err := newInstaller(t, &fakeRegistries{}, installs).
+		Install(context.Background(), req(gw, "snowflake"))
+
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.RequiresConfig {
+		t.Fatalf("a request must not ask for per-user values first, got %+v", res)
+	}
+	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("want a pending request, got %+v", res)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("the approver must have a row to decide on, got %+v", installs.upserts)
+	}
+	if installs.upserts[0].Reason == "" {
+		t.Fatal("the row must carry the requester's reason")
+	}
+}
+
+// The same values do stop an install: that one is recorded as usable, and a
+// half-configured row would dial a broken URL.
+func TestInstallGrantedStillAsksForPerUserConfig(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	installs := &fakeInstalls{}
+	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+		Install(context.Background(), openReq(gw, "snowflake"))
+
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.RequiresConfig || len(res.ConfigVariables) == 0 {
+		t.Fatalf("an install must collect its per-user values, got %+v", res)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("nothing is recorded until they are supplied, got %+v", installs.upserts)
+	}
+}

@@ -216,24 +216,14 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
-	// Per-user endpoint configuration (URL variables). Reject malformed input.
-	// Plain values can be supplied inline; missing required plain values stop the
-	// install and are reported for the caller to collect (inline or via the form).
-	// Secret values are never inline — they are entered through the hosted form —
-	// so their presence does not block recording the install; the install stands
-	// and the dial fails closed until the secret is provided.
+	// Per-user endpoint configuration (URL variables). Malformed input is refused
+	// here; what is *missing* is held until the access decision is known, because
+	// only an install needs it (see below). Secret values are never inline — they
+	// are entered through the hosted form — so their absence never blocks
+	// recording: the install stands and the dial fails closed until they arrive.
 	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config)
 	if err != nil {
 		return nil, err
-	}
-	if len(missingPlain) > 0 {
-		return &InstallResult{
-			Code:            code,
-			Name:            displayName(entry, code),
-			RequiresConfig:  true,
-			RequiresAuth:    entry.RequiresAuth,
-			ConfigVariables: missingPlain,
-		}, nil
 	}
 
 	// Which configured instance (registry) does this install bind to, and does it
@@ -265,6 +255,22 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	if decision.status == installationdomain.StatusPendingApproval &&
 		strings.TrimSpace(in.Reason) == "" {
 		return nil, ErrReasonRequired
+	}
+	// Missing per-user endpoint values stop an install, never a request. A
+	// request asks an approver whether the user may have the server at all, and
+	// their own account URL or database name has no bearing on that answer —
+	// asked first, it stopped the request from ever being filed, so a server with
+	// required variables could not be requested at all: the caller was told to
+	// finish the setup while nothing had been recorded and no approver ever saw
+	// it. The values are collected when the approved install is made.
+	if len(missingPlain) > 0 && decision.status != installationdomain.StatusPendingApproval {
+		return &InstallResult{
+			Code:            code,
+			Name:            displayName(entry, code),
+			RequiresConfig:  true,
+			RequiresAuth:    entry.RequiresAuth,
+			ConfigVariables: missingPlain,
+		}, nil
 	}
 
 	// A principal may hold several instances of one code. An install bound to the
