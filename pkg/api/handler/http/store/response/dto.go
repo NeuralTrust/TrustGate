@@ -87,6 +87,17 @@ type Principal struct {
 	Connections  []PrincipalConnection `json:"connections"`
 }
 
+// PrincipalConnectLink is a connect ticket for one user's own account on one
+// Store server. Like a consumer's, the URL is composed by the caller from the
+// gateway's public MCP host and consumer_path: the admin API answers on another
+// host and only the MCP one serves the connect page.
+type PrincipalConnectLink struct {
+	Ticket       string    `json:"ticket"`
+	ConsumerPath string    `json:"consumer_path"`
+	ConnectPath  string    `json:"connect_path"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
 type PendingRequest struct {
 	InstanceID   string `json:"instance_id"`
 	PrincipalSub string `json:"principal_sub"`

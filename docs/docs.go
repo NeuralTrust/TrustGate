@@ -3159,6 +3159,77 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/principal/connect-link": {
+            "post": {
+                "description": "Mints the connect ticket the user opens to sign in to one Store server with their own account, and returns where it is redeemed. Only for the caller themselves: the ticket completes OAuth as that principal, so asking for another user's is refused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Link a user's own account to a Store server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which server, for whom",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "principal_sub is not the caller",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/principal/installs": {
             "post": {
                 "description": "Runs the Store installer as the given user (their live access level applies): installs at once when allowed, records an approval request otherwise. Same outcome the user's own client would get.",
@@ -6511,6 +6582,21 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "description": "InstanceID pins the link to one installed instance of Code, for a server\nthe gateway holds more than once. Empty opens the code's own card.",
+                    "type": "string"
+                },
+                "principal_sub": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide": {
             "type": "object",
             "properties": {
@@ -6813,6 +6899,23 @@ const docTemplate = `{
                     }
                 },
                 "principal_sub": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink": {
+            "type": "object",
+            "properties": {
+                "connect_path": {
+                    "type": "string"
+                },
+                "consumer_path": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "ticket": {
                     "type": "string"
                 }
             }

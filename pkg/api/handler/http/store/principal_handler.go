@@ -19,21 +19,31 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
 	storeresponse "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/response"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/gofiber/fiber/v2"
 	"strings"
+	"time"
 )
 
 type PrincipalHandler struct {
 	preview   appstore.PrincipalPreview
 	installer appstore.PrincipalInstaller
+	// linker mints the connect link a user opens to sign in to a server with
+	// their own account. Nil on planes without the OAuth connect service, and
+	// the endpoint then reports itself unavailable.
+	linker appstore.PrincipalConnectLinker
 }
 
-func NewPrincipalHandler(preview appstore.PrincipalPreview, installer appstore.PrincipalInstaller) *PrincipalHandler {
-	return &PrincipalHandler{preview: preview, installer: installer}
+func NewPrincipalHandler(
+	preview appstore.PrincipalPreview,
+	installer appstore.PrincipalInstaller,
+	linker appstore.PrincipalConnectLinker,
+) *PrincipalHandler {
+	return &PrincipalHandler{preview: preview, installer: installer, linker: linker}
 }
 
 func validateInstall(r storerequest.Install) error {
@@ -185,4 +195,71 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 		out.InstanceChoices = append(out.InstanceChoices, storeresponse.InstanceChoice{RegistryID: choice.RegistryID.String(), Name: choice.Name})
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// ConnectLink godoc
+// @Summary      Link a user's own account to a Store server
+// @Description  Mints the connect ticket the user opens to sign in to one Store server with their own account, and returns where it is redeemed. Only for the caller themselves: the ticket completes OAuth as that principal, so asking for another user's is refused.
+// @Tags         store
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                    true  "Gateway id"  format(uuid)
+// @Param        body        body      storerequest.ConnectLink  true  "Which server, for whom"
+// @Success      200         {object}  storeresponse.PrincipalConnectLink
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody  "principal_sub is not the caller"
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/store/principal/connect-link [post]
+func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
+	if h.linker == nil {
+		return httpio.WriteError(c, fmt.Errorf("store connect link: %w", commonerrors.ErrNotFound))
+	}
+	gatewayID, err := httpio.ParseGatewayID(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	var req storerequest.ConnectLink
+	if err := c.BodyParser(&req); err != nil {
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	}
+	principalSub := strings.TrimSpace(req.PrincipalSub)
+	if principalSub == "" {
+		return httpio.WriteError(c, fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation))
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		return httpio.WriteError(c, fmt.Errorf("code is required: %w", commonerrors.ErrValidation))
+	}
+	// A connect ticket is a bearer capability to complete OAuth as its
+	// principal and store the resulting credential under their name. Nobody can
+	// consent to an upstream on someone else's behalf, so this is the caller's
+	// own link or nothing — an admin previewing a user's Portal included.
+	caller := callerSubject(c)
+	if caller == "" || caller != principalSub {
+		return httpio.WriteError(c, fmt.Errorf("a connect link can only be minted for yourself: %w", commonerrors.ErrForbidden))
+	}
+	var registryID ids.RegistryID
+	if raw := strings.TrimSpace(req.InstanceID); raw != "" {
+		parsed, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid instance_id: %w", commonerrors.ErrValidation))
+		}
+		registryID = parsed
+	}
+	link, err := h.linker.LinkFor(c.UserContext(), appstore.PrincipalConnectRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: principalSub,
+		Code:         strings.TrimSpace(req.Code),
+		RegistryID:   registryID,
+	})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteOK(c, storeresponse.PrincipalConnectLink{
+		Ticket:       link.Ticket,
+		ConsumerPath: link.ConsumerPath,
+		ConnectPath:  link.ConsumerPath + "/connect",
+		ExpiresAt:    time.Now().UTC().Add(appoauth.ConnectTicketTTL),
+	})
 }

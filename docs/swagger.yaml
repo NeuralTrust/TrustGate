@@ -1638,6 +1638,18 @@ definitions:
       status_code:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink:
+    properties:
+      code:
+        type: string
+      instance_id:
+        description: |-
+          InstanceID pins the link to one installed instance of Code, for a server
+          the gateway holds more than once. Empty opens the code's own card.
+        type: string
+      principal_sub:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide:
     properties:
       code:
@@ -1841,6 +1853,17 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall'
         type: array
       principal_sub:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink:
+    properties:
+      connect_path:
+        type: string
+      consumer_path:
+        type: string
+      expires_at:
+        type: string
+      ticket:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnection:
@@ -5104,6 +5127,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Preview a principal's MCP Store state
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/principal/connect-link:
+    post:
+      consumes:
+      - application/json
+      description: 'Mints the connect ticket the user opens to sign in to one Store
+        server with their own account, and returns where it is redeemed. Only for
+        the caller themselves: the ticket completes OAuth as that principal, so asking
+        for another user''s is refused.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Which server, for whom
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: principal_sub is not the caller
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Link a user's own account to a Store server
       tags:
       - store
   /v1/gateways/{gateway_id}/store/principal/installs:
