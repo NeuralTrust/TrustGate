@@ -114,6 +114,12 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	if msg.StorePolicies, err = encodeJSON(data.StorePolicies, "store policy", func(_ int, blob []byte) *snapshotpb.StorePolicy { return &snapshotpb.StorePolicy{Json: blob} }); err != nil {
 		return nil, err
 	}
+	for i := range data.PlaygroundTokenKeys {
+		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
+			Kid: data.PlaygroundTokenKeys[i].KID,
+			Pem: data.PlaygroundTokenKeys[i].PEM,
+		})
+	}
 
 	return msg, nil
 }
@@ -179,6 +185,12 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	}
 	if data.StorePolicies, err = decodeJSON[*snapshotpb.StorePolicy, storeaccessdomain.Policy](msg.GetStorePolicies(), "store policy", func(m *snapshotpb.StorePolicy) []byte { return m.GetJson() }, nil); err != nil {
 		return readmodel.Data{}, err
+	}
+	for _, m := range msg.GetPlaygroundTokenKeys() {
+		data.PlaygroundTokenKeys = append(data.PlaygroundTokenKeys, readmodel.VerificationKey{
+			KID: m.GetKid(),
+			PEM: m.GetPem(),
+		})
 	}
 
 	return data, nil

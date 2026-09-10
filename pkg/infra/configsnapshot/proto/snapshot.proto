@@ -32,8 +32,22 @@ message Snapshot {
   reserved "roles";
   repeated Provider providers = 8;
   repeated CatalogModel catalog_models = 9;
-  repeated StoreGrant store_grants = 10;
-  repeated StorePolicy store_policies = 11;
+  // Public keys data planes use to verify RS256 playground tokens minted by
+  // the control plane. Verification material only — nothing here can sign.
+  repeated VerificationKey playground_token_keys = 10;
+  // Fields 10 and 11 carried store_grants and store_policies on develop while
+  // main was using 10 for playground_token_keys. Production data planes are
+  // already decoding 10 as the playground keys, so the Store fields moved to
+  // 12/13 instead: they had only ever shipped to dev. 11 stays reserved so a
+  // snapshot predating the move cannot be decoded as the wrong field.
+  reserved 11;
+  repeated StoreGrant store_grants = 12;
+  repeated StorePolicy store_policies = 13;
+}
+
+message VerificationKey {
+  string kid = 1;
+  string pem = 2;
 }
 
 message Gateway {

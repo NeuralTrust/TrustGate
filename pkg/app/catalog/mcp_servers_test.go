@@ -345,6 +345,105 @@ func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 	require.NotEmpty(t, halo.AuthHeaders)
 }
 
+// AWS publishes region-specific OAuth endpoints through protected-resource
+// metadata, so the seed carries no authorize_url/token_url/resource of its own:
+// discovery resolves them against the region the operator picked. Connecting
+// also depends on AWS Sign-In allowlisting the deployment's redirect URI for
+// dynamic client registration, which is why the guide calls that out.
+func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	server, ok := cat.GetByCode("com.amazon.aws/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://aws-mcp.{region}.api.aws/mcp", server.URL)
+	require.Equal(t, "AWS", server.Vendor)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.RequiresConfig)
+	require.Len(t, server.URLVariables, 1)
+	require.Equal(t, "region", server.URLVariables[0].Name)
+	require.True(t, server.URLVariables[0].Required)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, "auto", server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.True(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Empty(t, server.OAuth.AuthorizeURL)
+	require.Empty(t, server.OAuth.TokenURL)
+	require.Empty(t, server.OAuth.Resource)
+	require.NotNil(t, server.ConfigGuide)
+	require.Contains(t, server.ConfigGuide.Steps[0], "AWSMCPSignInOAuthAccessPolicy")
+}
+
+// A templated oauth.resource never reaches substitution: the registry
+// canonicalizer copies it verbatim and the provider client sends it as the
+// RFC 8707 resource indicator, so the authorization server would receive a
+// literal "{placeholder}" and reject the grant. Entries that need a
+// per-instance audience set resource_metadata instead, which resolves to the
+// registry's own URL after URL variables are applied.
+func TestCuratedCatalog_HasNoTemplatedOAuthResource(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, server := range cat.ListMCPServers() {
+		if server.OAuth == nil {
+			continue
+		}
+		require.NotContains(t, server.OAuth.Resource, "{",
+			"catalog entry %q declares a templated oauth.resource", server.Code)
+	}
+}
+
+func TestCuratedCatalog_ConfigurableServersHaveSetupGuides(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, server := range cat.ListMCPServers() {
+		if !server.RequiresConfig {
+			continue
+		}
+		require.NotNil(t, server.ConfigGuide, "catalog entry %q has no config guide", server.Code)
+		require.NotEmpty(t, server.ConfigGuide.Summary, "catalog entry %q has no config guide summary", server.Code)
+		require.NotEmpty(t, server.ConfigGuide.Steps, "catalog entry %q has no config guide steps", server.Code)
+	}
+}
+
+func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	server, ok := cat.GetByCode("com.microsoft/outlook")
+	require.True(t, ok)
+	require.Equal(t, "https://agent365.svc.cloud.microsoft/agents/tenants/{tenantId}/servers/mcp_MailTools", server.URL)
+	require.Equal(t, "Outlook", server.Vendor)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.RequiresConfig)
+	require.Len(t, server.URLVariables, 1)
+	require.Equal(t, "tenantId", server.URLVariables[0].Name)
+	require.True(t, server.URLVariables[0].Required)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, "manual", server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.False(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", server.OAuth.AuthorizeURL)
+	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", server.OAuth.TokenURL)
+	require.Contains(t, server.OAuth.Scopes, "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All")
+	require.Empty(t, server.OAuth.Resource)
+	require.NotNil(t, server.ConfigGuide)
+	require.Contains(t, server.ConfigGuide.Note, "Microsoft 365 Copilot")
+}
+
 func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 	t.Parallel()
 
