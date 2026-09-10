@@ -17360,10 +17360,9 @@
         "registration": "auto",
         "dcr": true,
         "pkce": true,
-        "authorize_url": "https://app.vanta.com/oauth/authorize",
+        "authorize_url": "https://api.vanta.com/oauth/authorize",
         "token_url": "https://api.vanta.com/oauth/token",
         "scopes": [
-          "mcp-api.all:read",
           "mcp-api.all:write"
         ],
         "resource": "https://mcp.vanta.com"
