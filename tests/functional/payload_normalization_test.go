@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,6 +61,38 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 		assert.Contains(t, string(up.LastBody()), `"max_completion_tokens":128`,
 			"openai upstreams take max_completion_tokens")
 		assert.NotContains(t, string(up.LastBody()), `"max_tokens"`)
+	})
+
+	t.Run("claude code payload is normalized and unnamed tools are dropped", func(t *testing.T) {
+		up := newJSONUpstream(t, "claude-code-served")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		tools := make([]map[string]any, 0, 41)
+		desc := strings.Repeat("schema ", 80)
+		for i := 0; i < 40; i++ {
+			tools = append(tools, map[string]any{
+				"name":        "lookup_" + strings.Repeat("a", 1),
+				"description": desc,
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"q": map[string]any{"type": "string"},
+					},
+				},
+			})
+		}
+		tools = append(tools, map[string]any{"type": "web_search_20250305"})
+		payload := anthropicChatRequest("@openai/gpt-4o-mini")
+		payload["max_tokens"] = 32000
+		payload["tools"] = tools
+
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/messages", payload)
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		sent := string(up.LastBody())
+		assert.Contains(t, sent, `"max_completion_tokens"`)
+		assert.NotContains(t, sent, `"max_tokens"`)
+		assert.NotContains(t, sent, "web_search_20250305")
 	})
 
 	t.Run("anthropic streaming request receives anthropic SSE events", func(t *testing.T) {
@@ -228,7 +261,7 @@ func TestQualifiedPin_Authorization(t *testing.T) {
 			anthropicChatRequest("@anthropic/claude-sonnet-4"))
 
 		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
-		assert.Contains(t, string(body), "model_not_allowed")
+		assert.Contains(t, string(body), `"permission_error"`)
 		assert.Equal(t, 0, up.Hits())
 	})
 
@@ -240,7 +273,7 @@ func TestQualifiedPin_Authorization(t *testing.T) {
 			anthropicChatRequest("@openai/gpt-4-forbidden"))
 
 		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
-		assert.Contains(t, string(body), "model_not_allowed")
+		assert.Contains(t, string(body), `"permission_error"`)
 		assert.Equal(t, 0, up.Hits())
 	})
 
