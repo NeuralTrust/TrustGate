@@ -30,6 +30,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -463,6 +464,31 @@ type fakePathResolver struct {
 
 func (f *fakePathResolver) Match(_ context.Context, _, path string) ([]appconsumer.PathMatch, error) {
 	return f.byPath[path], nil
+}
+
+// mcpConsumer takes the identity whole rather than an acts_for_users bool:
+// Normalize forces the platform source whenever that bool is set, so a bool
+// parameter can never produce an app-source consumer and the identity source
+// — the axis that decides whether a login may be brokered — stays untested
+// (RUN-1501).
+func mcpConsumer(gatewayID ids.GatewayID, identity consumerdomain.Identity) *consumerdomain.Consumer {
+	c := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gatewayID,
+		Type:      consumerdomain.TypeMCP,
+		Active:    true,
+		Identity:  identity,
+	}
+	c.Identity.Normalize(c.Type)
+	return c
+}
+
+func platformUsersIdentity() consumerdomain.Identity {
+	return consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform}
+}
+
+func appUsersIdentity() consumerdomain.Identity {
+	return consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp}
 }
 
 // enabledOAuth2Auth builds an Auth entry that passes the Enabled/Type filters

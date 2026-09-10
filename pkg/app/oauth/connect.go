@@ -112,6 +112,7 @@ func (s *connectService) CreateAppTicket(
 	consumerID ids.ConsumerID,
 	authID ids.AuthID,
 	providers []string,
+	code string,
 ) (string, error) {
 	// A non-nil snapshot is what marks the ticket as pinned to a provider list;
 	// nil means "any forwarded provider of the consumer". An empty list must stay
@@ -127,6 +128,7 @@ func (s *connectService) CreateAppTicket(
 		ConsumerPath: consumerPath,
 		ConsumerID:   consumerID.String(),
 		Providers:    &providerSnapshot,
+		Code:         strings.TrimSpace(code),
 	}
 	// A nil auth id must stay an empty string, not the zero uuid: it is what
 	// marks the ticket as standing on the consumer alone.
@@ -224,6 +226,12 @@ func (s *connectService) providerStatuses(
 			status.Scopes = cred.Scopes
 			status.ExpiresAt = cred.ExpiresAt
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+			if !status.NeedsReconnect {
+				// A lookup failure answers "usable" (see CredentialUsable), so a
+				// cache blip cannot tell every user to reconnect.
+				usable, _ := s.CredentialUsable(ctx, gatewayID, reg)
+				status.NeedsReconnect = !usable
+			}
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
 			status.Linked = true
 			status.NeedsReconnect = true

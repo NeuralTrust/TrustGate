@@ -49,6 +49,7 @@ type AppTicketIssuer interface {
 		consumerID ids.ConsumerID,
 		authID ids.AuthID,
 		providers []string,
+		code string,
 	) (string, error)
 }
 
@@ -126,6 +127,9 @@ func (s *apiKeyConnectService) CreateTicket(
 		target.Consumer.ID,
 		auth.ID,
 		forwardedProviderIDs(data.EffectiveRegistries(target)),
+		// The self-service page is the application's whole list, so no server to
+		// focus on: this is where the picker belongs.
+		"",
 	)
 	if err != nil {
 		return "", fmt.Errorf("oauth api-key connect: create ticket: %w", err)

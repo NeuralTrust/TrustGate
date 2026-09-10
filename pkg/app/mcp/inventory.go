@@ -55,7 +55,12 @@ type InventoryServer struct {
 	Code string
 	// Provider names the upstream account a server awaiting consent needs.
 	Provider string
-	State    string
+	// Cause is why a needs_connect server is not serving, as one of the
+	// ConsentCause codes. Empty for every other state. It is what keeps a
+	// client from having to guess ("the session expired") when the gateway
+	// already knows.
+	Cause string
+	State string
 	Tools    []InventoryEntry
 	// Denied are the server's tool names this consumer's toolkit turns away.
 	// Listing them keeps a caller from hunting for a tool policy has removed.
@@ -124,6 +129,7 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 		case surface.consent != nil:
 			server.State = InventoryStateNeedsConnect
 			server.Provider = surface.consent.Provider
+			server.Cause = surface.consent.Cause
 		case surface.err != nil:
 			// The upstream's own error is logged, not handed to the caller: it
 			// carries hosts and transport detail the caller cannot act on.
