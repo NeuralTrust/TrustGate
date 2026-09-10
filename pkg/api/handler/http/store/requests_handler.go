@@ -205,6 +205,14 @@ func (h *RequestsHandler) parseDecide(c *fiber.Ctx) (gatewayID ids.GatewayID, re
 	return gid, req, nil
 }
 
+// callerSubject is who the admin API authenticated, as the same user id the
+// gateway sees as a Store principal. Unlike callerActor it never falls back to
+// the email: it is compared against a principal_sub, not shown to a human.
+func callerSubject(c *fiber.Ctx) string {
+	id, _ := c.Locals(string(infracontext.UserIDContextKey)).(string)
+	return strings.TrimSpace(id)
+}
+
 func callerActor(c *fiber.Ctx) string {
 	if email, ok := c.Locals(string(infracontext.UserEmailContextKey)).(string); ok && email != "" {
 		return email

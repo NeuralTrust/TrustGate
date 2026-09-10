@@ -37,6 +37,18 @@ type Install struct {
 	Reason string `json:"reason"`
 }
 
+// ConnectLink asks for the link one user opens to sign in to a Store server
+// with their own account. Only the caller's own subject is accepted: the ticket
+// it mints completes OAuth as that principal, so nobody may ask for someone
+// else's.
+type ConnectLink struct {
+	PrincipalSub string `json:"principal_sub"`
+	Code         string `json:"code"`
+	// InstanceID pins the link to one installed instance of Code, for a server
+	// the gateway holds more than once. Empty opens the code's own card.
+	InstanceID string `json:"instance_id"`
+}
+
 type Decide struct {
 	PrincipalSub string `json:"principal_sub"`
 	Code         string `json:"code"`

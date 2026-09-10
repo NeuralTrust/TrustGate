@@ -140,8 +140,9 @@ type storePrincipalParams struct {
 	Ensurer  appstore.RegistryEnsurer
 	Gateways gatewaydomain.Repository `optional:"true"`
 	// Connect answers whether a linked credential can still be refreshed, so the
-	// Portal does not call an account connected that every tool call refuses.
-	// Absent on planes without the OAuth connect service.
+	// Portal does not call an account connected that every tool call refuses,
+	// and mints the connect link the Portal's own sign-in button opens. Absent
+	// on planes without the OAuth connect service.
 	Connect appoauth.ConnectService `optional:"true"`
 }
 
@@ -168,7 +169,16 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 	if err != nil {
 		return nil, err
 	}
-	return storehttp.NewPrincipalHandler(preview, onBehalf), nil
+	// The connect link needs the OAuth connect service to mint its ticket; on a
+	// plane without one the Portal simply gets no Connect button.
+	var linker appstore.PrincipalConnectLinker
+	if p.Connect != nil {
+		linker, err = appstore.NewPrincipalConnectLinker(p.Connect)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return storehttp.NewPrincipalHandler(preview, onBehalf, linker), nil
 }
 
 type storeApprovalParams struct {
