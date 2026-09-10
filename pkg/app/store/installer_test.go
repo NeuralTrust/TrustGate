@@ -265,8 +265,19 @@ func newInstallerWith(t *testing.T, regs *fakeRegistries, installs *fakeInstalls
 	return inst
 }
 
+// req carries a reason so a request it files is a valid one: a request without
+// one is refused (see TestInstallRequestWithoutAReasonIsRefused), and these
+// tests are about the decision, not about that rule. An install keeps none —
+// the installer drops it when nobody has to decide.
 func req(gw ids.GatewayID, code string, groups ...string) InstallRequest {
-	return InstallRequest{GatewayID: gw, PrincipalSub: "ana", Code: code, InstalledBy: "ana", Groups: groups}
+	return InstallRequest{
+		GatewayID:    gw,
+		PrincipalSub: "ana",
+		Code:         code,
+		InstalledBy:  "ana",
+		Groups:       groups,
+		Reason:       "triaging incoming issues",
+	}
 }
 
 // openReq is a self-service (open Store) install request.
@@ -492,7 +503,10 @@ func TestInstallUserGating(t *testing.T) {
 	}
 
 	// A different subject, matching neither Users nor Groups, files a request.
-	other := InstallRequest{GatewayID: gw, PrincipalSub: "bob", Code: "github", InstalledBy: "bob"}
+	other := InstallRequest{
+		GatewayID: gw, PrincipalSub: "bob", Code: "github", InstalledBy: "bob",
+		Reason: "covering the on-call rotation",
+	}
 	res, err = inst.Install(context.Background(), other)
 	if err != nil {
 		t.Fatalf("other subject Install: %v", err)
@@ -865,5 +879,50 @@ func TestInstallDifferentConfigCreatesNewInstance(t *testing.T) {
 	}
 	if len(installs.upserts) != 1 || !installs.upserts[0].SameConfig(configB) {
 		t.Fatal("expected an upsert carrying the new config")
+	}
+}
+
+// A request is decided by a person, and the requester's reason is the only
+// thing they hear from them. It is refused before anything is recorded, so the
+// caller can ask the user and retry — the Portal asks in the panel, the install
+// meta-tool answers requires_reason.
+func TestInstallRequestWithoutAReasonIsRefused(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{}
+	in := req(gw, "github")
+	in.Reason = "   "
+
+	_, err := newInstaller(t, &fakeRegistries{}, installs).Install(context.Background(), in)
+
+	if !errors.Is(err, ErrReasonRequired) {
+		t.Fatalf("error = %v, want ErrReasonRequired", err)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("nothing may be recorded: %+v", installs.upserts)
+	}
+}
+
+// An install the principal's grants already allow asks nobody, so it needs no
+// reason — and carries none even when one is passed.
+func TestInstallGrantedNeedsNoReason(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	installs := &fakeInstalls{}
+	in := openReq(gw, "github")
+	in.Reason = ""
+
+	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+		Install(context.Background(), in)
+
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Pending {
+		t.Fatalf("a self-service install is not a request: %+v", res)
+	}
+	for _, row := range installs.upserts {
+		if row.Reason != "" {
+			t.Fatalf("an install carries no reason, got %q", row.Reason)
+		}
 	}
 }
