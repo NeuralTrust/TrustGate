@@ -160,6 +160,9 @@ func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 		if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "http://gw.example.com" {
 			t.Fatalf("%s: unexpected authorization_servers %v", path, meta.AuthorizationServers)
 		}
+		if meta.ScopesSupported == nil {
+			t.Fatalf("%s: scopes_supported must be present even when empty", path)
+		}
 	}
 }
 
