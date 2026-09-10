@@ -162,6 +162,35 @@ func TestCanonicalizeMCPAuthFromCatalog_ManualOAuthFillsEndpoints(t *testing.T) 
 	require.Empty(t, target.Auth.ClientID)
 }
 
+func TestCanonicalizeMCPAuthFromCatalog_ManualOAuthAllowsEndpointDiscovery(t *testing.T) {
+	t.Parallel()
+	cat := stubCatalog{entries: map[string]catalogdomain.MCPServer{
+		"com.snowflake/mcp": {
+			Code: "com.snowflake/mcp",
+			OAuth: &catalogdomain.MCPOAuth{
+				Required:         true,
+				ResourceMetadata: true,
+				Registration:     "manual",
+			},
+		},
+	}}
+	target := &domain.MCPTarget{
+		Code: "com.snowflake/mcp",
+		URL:  "https://account.snowflakecomputing.com/api/v2/databases/db/schemas/public/mcp-servers/agent",
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Registration: domain.RegistrationManual,
+			ClientID:     "client-id",
+		},
+	}
+
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, cat))
+	require.Empty(t, target.Auth.AuthorizeURL)
+	require.Empty(t, target.Auth.TokenURL)
+	require.Equal(t, target.URL, target.Auth.Resource)
+	require.NoError(t, target.Validate())
+}
+
 func TestCanonicalizeMCPAuthFromCatalog_InjectsSharedOAuth(t *testing.T) {
 	t.Parallel()
 	cat := gmailCatalog(map[string]stubSharedOAuth{

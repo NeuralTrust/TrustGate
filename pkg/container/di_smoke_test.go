@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
@@ -142,6 +143,16 @@ func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
 				}
 			}); err != nil {
 				t.Fatalf("Invoke(snapshot repositories): %v", err)
+			}
+			// The diagnostics probes must resolve without a database: their
+			// registry, catalog and availability collaborators all come from
+			// the config snapshot on this plane.
+			if err := c.Invoke(func(
+				_ *diagnosticshttp.TestConnectionHandler,
+				_ *diagnosticshttp.ListRegistryModelsHandler,
+			) {
+			}); err != nil {
+				t.Fatalf("Invoke(data-plane diagnostics handlers): %v", err)
 			}
 		})
 	}

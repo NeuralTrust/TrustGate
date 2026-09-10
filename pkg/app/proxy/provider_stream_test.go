@@ -91,6 +91,43 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 	}, got)
 }
 
+func TestInvokeStream_RetriesReasoningToolsWithoutEffort(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`data: {"id":"chatcmpl-test","model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant"}}]}`),
+		{},
+		[]byte(`data: {"id":"chatcmpl-test","model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"TG695_STREAM_OK"}}]}`),
+		{},
+		[]byte(`data: {"id":"chatcmpl-test","model":"gpt-5.6-luna","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`),
+		{},
+		[]byte("data: [DONE]"),
+	}
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return !strings.Contains(string(body), `"reasoning_effort"`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(reasoningToolsError))).
+		Once()
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"reasoning_effort":"none"`) &&
+				strings.Contains(string(body), `"stream":true`)
+		})).
+		Return(seqOf(lines...), nil).
+		Once()
+
+	inv := newStreamInvoker(t, "openai", client)
+	req := &infracontext.RequestContext{Body: []byte(reasoningToolsBody), SourceFormat: string(adapter.FormatAnthropic)}
+
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	got := strings.Join(collectStream(t, resp.Stream), "\n")
+	assert.Contains(t, got, "TG695_STREAM_OK")
+	assert.Contains(t, got, `"type":"message_start"`)
+	assert.Contains(t, got, `"type":"message_stop"`)
+}
+
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
 	const defaultModel = "gpt-4o-mini"
 	client := providermocks.NewClient(t)

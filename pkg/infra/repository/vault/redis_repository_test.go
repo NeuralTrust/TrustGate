@@ -273,6 +273,72 @@ func TestRedisRepository_DeleteConcurrentExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestRedisRepository_RefreshLockSerializesOwners(t *testing.T) {
+	repo, _, _ := newRedisVaultRepo(t)
+	locker, ok := repo.(interface {
+		AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+	})
+	if !ok {
+		t.Fatal("redis repository does not implement refresh locking")
+	}
+	gw := ids.New[ids.GatewayKind]()
+	ctx := context.Background()
+	unlock, err := locker.AcquireRefreshLock(ctx, gw, "user", "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	defer cancel()
+	if _, err := locker.AcquireRefreshLock(waitCtx, gw, "user", "com.notion/mcp"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contending lock error = %v, want deadline exceeded", err)
+	}
+	if err := unlock(ctx); err != nil {
+		t.Fatalf("release first lock: %v", err)
+	}
+
+	unlock, err = locker.AcquireRefreshLock(ctx, gw, "user", "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
+	}
+	if err := unlock(ctx); err != nil {
+		t.Fatalf("release second lock: %v", err)
+	}
+}
+
+func TestRedisRepository_RefreshLockReleaseChecksOwner(t *testing.T) {
+	repo, server, _ := newRedisVaultRepo(t)
+	locker, ok := repo.(interface {
+		AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+	})
+	if !ok {
+		t.Fatal("redis repository does not implement refresh locking")
+	}
+	gw := ids.New[ids.GatewayKind]()
+	ctx := context.Background()
+	staleUnlock, err := locker.AcquireRefreshLock(ctx, gw, "user", "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	server.FastForward(46 * time.Second)
+	currentUnlock, err := locker.AcquireRefreshLock(ctx, gw, "user", "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("replacement lock: %v", err)
+	}
+	if err := staleUnlock(ctx); err != nil {
+		t.Fatalf("release stale lock: %v", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	defer cancel()
+	if _, err := locker.AcquireRefreshLock(waitCtx, gw, "user", "com.notion/mcp"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lock after stale release error = %v, want deadline exceeded", err)
+	}
+	if err := currentUnlock(ctx); err != nil {
+		t.Fatalf("release current lock: %v", err)
+	}
+}
+
 func TestRedisRepository_DeleteCorruptPayloadReturnsNotFound(t *testing.T) {
 	repo, server, _ := newRedisVaultRepo(t)
 	ctx := context.Background()

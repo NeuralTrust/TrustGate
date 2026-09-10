@@ -39,6 +39,130 @@ const docTemplate = `{
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/registries/test-connection": {
+            "post": {
+                "description": "Runs the registry connection probe from this data plane's own network, so the result reflects what serving traffic will actually reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Accepts the same body as the admin test-connection endpoint: a stored registry (registry_id, which must have synced to this plane — stage \"not_synced\" means retry) or an inline candidate (provider + auth).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "Test a backend connection from the data plane",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Connection to test",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/__diagnostics/gateways/{gateway_id}/registries/{registry_id}/models": {
+            "get": {
+                "description": "Returns the model catalog narrowed to what this registry's credentials can actually invoke, resolved from this data plane's own network: AWS Bedrock registries are checked against the AWS control plane, every other provider against its authenticated models listing. It answers the same shape as the admin catalog endpoint, and exists because on a hybrid deployment only this plane can reach a provider endpoint that lives inside the customer's network. Authorized by a control-plane-minted diagnostics token bound to the gateway. A registry that has not reached this plane's config snapshot yet answers 404, so the caller can fall back to the unnarrowed catalog.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "List a registry's available models from the data plane",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "registry_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
@@ -4777,7 +4901,7 @@ const docTemplate = `{
                     ]
                 },
                 "auths": {
-                    "description": "Auths replaces the whole auth association set: auths absent from the list\nare detached. Omit the field to leave the associations as they are; send an\nempty list to detach every auth. Detaching every auth from a consumer\nwhose users sign in widens access from the identity provider it pinned to\nany built-in default identity-provider login on this gateway. At most 64\nids.",
+                    "description": "Auths replaces the whole auth association set with the listed auth ids:\nauths absent from the list are detached. Omit the field to leave the\nassociations as they are; send an empty list to detach every auth.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -5012,7 +5136,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "principal_sub": {
-                    "description": "PrincipalSub is the identity the upstream accounts hang off:\napp:<consumer_id>, the application itself.",
+                    "description": "PrincipalSub is the identity the upstream accounts hang off:\napp:\u003cconsumer_id\u003e, the application itself.",
                     "type": "string"
                 },
                 "slug": {
@@ -5371,10 +5495,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
-                },
-                "store_mode": {
-                    "description": "StoreMode curates the MCP Store: \"open\" (default) or \"curated\".",
                     "type": "string"
                 },
                 "telemetry": {
@@ -7082,6 +7202,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide": {
+            "type": "object",
+            "properties": {
+                "docs_url": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth": {
             "type": "object",
             "properties": {
@@ -7156,6 +7296,9 @@ const docTemplate = `{
                 },
                 "code": {
                     "type": "string"
+                },
+                "config_guide": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPConfigGuide"
                 },
                 "description": {
                     "type": "string"
@@ -7273,6 +7416,10 @@ const docTemplate = `{
             "properties": {
                 "burst_per_min": {
                     "type": "integer"
+                },
+                "data_plane": {
+                    "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the SaaS proxy, hybrid means a customer-run\ndata plane. Proxies that are not hybrid data planes refuse to serve\nhybrid gateways so payloads never cross the customer boundary through a\nhosted proxy (its deployment-level exporters, TrustGuard calls and\nplayground trace store all live outside that boundary).",
+                    "type": "string"
                 },
                 "max_instances": {
                     "type": "integer"

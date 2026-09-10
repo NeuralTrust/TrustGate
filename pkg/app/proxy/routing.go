@@ -28,6 +28,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -470,6 +471,9 @@ func (f *forwarder) stampRoutingPolicy(
 		defaultModel = route.Default
 	}
 	dto.request.AllowedModels = allowed
+	if modelmatch.IsPattern(defaultModel) {
+		defaultModel = ""
+	}
 	dto.request.DefaultModel = defaultModel
 }
 

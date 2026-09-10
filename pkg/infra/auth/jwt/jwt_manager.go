@@ -65,6 +65,9 @@ type Claims struct {
 	Purpose string `json:"purpose,omitempty"`
 	// ConsumerSlug binds a playground token to a single consumer route.
 	ConsumerSlug string `json:"consumer_slug,omitempty"`
+	// GatewayID binds a diagnostics token to a single gateway, so a leaked
+	// token cannot probe anything beyond it.
+	GatewayID string `json:"gateway_id,omitempty"`
 	// TokenUse marks machine-to-machine credentials. Those are verified against
 	// the asymmetric issuer key, so seeing it on a shared-secret token means the
 	// token is being replayed on the wrong verifier and must be rejected.
