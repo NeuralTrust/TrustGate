@@ -67,7 +67,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 	}
 	principal := &identity.Principal{
 		Subject:  subjectFor(verified, cfg.SubjectClaim),
-		Method:   identity.MethodJWT,
+		Method:   identity.MethodExternalJWT,
 		Issuer:   cfg.Issuer,
 		Claims:   verified.Claims,
 		Scopes:   enrichScopes(verified),

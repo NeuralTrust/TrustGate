@@ -57,7 +57,7 @@ func TestRequestContextOwnsBuffersBeforeStreaming(t *testing.T) {
 }
 
 func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
-	for _, method := range []identity.Method{identity.MethodJWT, identity.MethodIntrospection, identity.MethodMTLS, ""} {
+	for _, method := range []identity.Method{identity.MethodExternalJWT, identity.MethodOAuth, identity.MethodJWT, identity.MethodIntrospection, identity.MethodMTLS, ""} {
 		t.Run(string(method), func(t *testing.T) {
 			app := fiber.New()
 			c := app.AcquireCtx(&fasthttp.RequestCtx{})

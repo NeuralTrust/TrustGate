@@ -620,10 +620,10 @@ func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.
 	if principal == nil {
 		return true
 	}
-	switch principal.Method {
-	case identity.MethodJWT, identity.MethodIntrospection:
+	switch {
+	case principal.Method.IsBearerToken():
 		return cons.AuthBinding.AllowsClient(principal.Claims)
-	case identity.MethodMTLS:
+	case principal.Method == identity.MethodMTLS:
 		return cons.AuthBinding.AllowsCertificateClaims(principal.Claims)
 	default:
 		return true
