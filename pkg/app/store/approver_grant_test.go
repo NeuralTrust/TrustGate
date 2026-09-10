@@ -237,3 +237,104 @@ func TestApprover_ListDecided(t *testing.T) {
 		t.Fatalf("want ErrHistoryUnavailable, got %v", err)
 	}
 }
+
+// TestApprover_Approve_GrantToGroupOnTheOnlyInstance: the everyday shape of
+// "approve for the whole group". The Portal binds its request to the sole
+// configured instance, but a server with one instance is granted as the server:
+// that is the row the admin reads it back on, and a code grant is not orphaned
+// when the instance is re-materialised. Every member of the group passes
+// without a request of their own.
+func TestApprover_Approve_GrantToGroupOnTheOnlyInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("github", "finance")
+	p := pendingInstall(t, gw, "ana", "github")
+	p.RegistryID = finance.ID
+	installs := &fakeInstalls{findValue: p}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance}}
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", InstanceID: p.ID.String(), GrantToGroup: "sales",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 1 {
+		t.Fatalf("approve must write the grant once, got %d", len(grants.upserts))
+	}
+	g := grants.upserts[0]
+	if !g.RegistryID.IsNil() {
+		t.Fatalf("a server with one instance is granted as the server, got registry %s", g.RegistryID)
+	}
+	if len(g.Groups) != 1 || g.Groups[0] != "sales" || len(g.Users) != 0 {
+		t.Fatalf("approve with a group grants that group only, got groups=%v users=%v", g.Groups, g.Users)
+	}
+	set := storeaccessdomain.Index(grants.items)
+	// Another member of the group, who never filed a request.
+	if !set.CodeAllows("github", []string{"sales"}, "bruno") {
+		t.Fatal("every member of the granted group must pass")
+	}
+	// And it reaches the instance the request was bound to.
+	if !set.InstanceAllows("github", finance.ID, []string{"sales"}, "bruno") {
+		t.Fatal("the code grant must cover the server's instance")
+	}
+	if set.CodeAllows("github", nil, "ana") {
+		t.Fatal("the requester passes through the group, not on their own")
+	}
+}
+
+// TestApprover_Approve_GrantToGroupKeepsAMeaningfulBinding: with several
+// instances the request names a real choice, so the group is granted on that
+// instance and the others stay untouched.
+func TestApprover_Approve_GrantToGroupKeepsAMeaningfulBinding(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("github", "finance")
+	analytics := namedRegistry("github", "analytics")
+	p := pendingInstall(t, gw, "ana", "github")
+	p.RegistryID = finance.ID
+	installs := &fakeInstalls{findValue: p}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", InstanceID: p.ID.String(), GrantToGroup: "sales",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 1 || grants.upserts[0].RegistryID != finance.ID {
+		t.Fatalf("approve must grant the bound instance, got %+v", grants.upserts)
+	}
+	set := storeaccessdomain.Index(grants.items)
+	if !set.InstanceAllows("github", finance.ID, []string{"sales"}, "bruno") {
+		t.Fatal("the group must pass on the bound instance")
+	}
+	if set.InstanceAllows("github", analytics.ID, []string{"sales"}, "bruno") ||
+		set.CodeAllows("github", []string{"sales"}, "") {
+		t.Fatal("approve must not widen the grant beyond the bound instance")
+	}
+}
+
+// TestApprover_Approve_GrantToGroupKeepsExistingMembers: granting a group must
+// extend the grant, not replace it — the users and groups already on it keep
+// their access.
+func TestApprover_Approve_GrantToGroupKeepsExistingMembers(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf(codeGrant(gw, "github", []string{"sre"}, []string{"dora"}))
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: "sales",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	set := storeaccessdomain.Index(grants.items)
+	if !set.CodeAllows("github", []string{"sales"}, "") {
+		t.Fatal("the newly granted group must pass")
+	}
+	if !set.CodeAllows("github", []string{"sre"}, "") || !set.CodeAllows("github", nil, "dora") {
+		t.Fatal("granting a group must not drop who was already granted")
+	}
+}

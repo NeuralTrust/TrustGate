@@ -75,7 +75,7 @@ func (r *consumerRepository) Save(_ context.Context, _ *domain.Consumer) error {
 	return configsync.ErrReadOnly
 }
 
-func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *domain.RegistryBindings) error {
+func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *domain.RegistryBindings, _ *[]ids.AuthID) error {
 	return configsync.ErrReadOnly
 }
 

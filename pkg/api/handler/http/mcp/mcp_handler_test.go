@@ -300,6 +300,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
+			Cause: appmcp.ConsentCauseRegisteredClientLost,
 		}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -319,6 +320,12 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	connectURL, _ := data["connect_url"].(string)
 	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
 		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
+	}
+	// Which condition asked for the reconnect. Without it a client reports every
+	// cause as "the session expired" and the real one is only in the gateway's
+	// logs.
+	if data["cause"] != appmcp.ConsentCauseRegisteredClientLost {
+		t.Fatalf("cause = %v, want the condition that produced the prompt", data["cause"])
 	}
 }
 

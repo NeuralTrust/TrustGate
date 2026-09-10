@@ -549,6 +549,17 @@ definitions:
         description: |-
           AuthBinding replaces the whole binding. Omit to keep it; send empty lists
           to clear it.
+      auths:
+        description: |-
+          Auths replaces the whole auth association set: auths absent from the list
+          are detached. Omit the field to leave the associations as they are; send an
+          empty list to detach every auth. Detaching every auth from a consumer
+          whose users sign in widens access from the identity provider it pinned to
+          any built-in default identity-provider login on this gateway. At most 64
+          ids.
+        items:
+          type: string
+        type: array
       fail_mode:
         type: string
       fallback:
@@ -3569,8 +3580,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing consumer. The optional `registries` field replaces
-        the whole registry association set in the same atomic request.
+      description: Updates an existing consumer. The optional `registries` and `auths`
+        fields each replace the whole association set of that kind in the same atomic
+        request, so an identity change and the auths it needs travel together.
       parameters:
       - description: Gateway id
         format: uuid

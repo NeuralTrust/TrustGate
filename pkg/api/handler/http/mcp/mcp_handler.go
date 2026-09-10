@@ -86,12 +86,24 @@ const (
 )
 
 type Handler struct {
-	gateway *RPCGateway
-	surface appmcp.SurfaceWatcher
-	timings streamTimings
+	gateway   *RPCGateway
+	surface   appmcp.SurfaceWatcher
+	consumers appconsumer.DataFinder
+	timings   streamTimings
 }
 
 type HandlerOption func(*Handler)
+
+// WithConsumerFinder lets the notification stream re-read the consumer on
+// each poll so an admin attach or detach is visible. Without it the stream
+// keeps the RoutableConsumer resolved when the GET opened.
+func WithConsumerFinder(finder appconsumer.DataFinder) HandlerOption {
+	return func(h *Handler) {
+		if finder != nil {
+			h.consumers = finder
+		}
+	}
+}
 
 func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{
@@ -323,6 +335,10 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
+			// Why the gateway is asking. Without it every cause reads as "the
+			// session expired", and which one it was could only be recovered
+			// from the gateway's logs.
+			"cause": consentErr.Cause,
 		})
 		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
 		// clients treat any non-2xx on this endpoint as a transport failure: they
