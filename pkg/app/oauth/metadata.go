@@ -43,7 +43,7 @@ type ProtectedResourceMetadata struct {
 	Resource               string   `json:"resource"`
 	AuthorizationServers   []string `json:"authorization_servers,omitempty"`
 	BearerMethodsSupported []string `json:"bearer_methods_supported"`
-	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+	ScopesSupported        []string `json:"scopes_supported"`
 }
 
 type RegisterRequest struct {
@@ -349,7 +349,7 @@ func issuersOf(auths []*authdomain.Auth) []string {
 
 func scopesOf(auths []*authdomain.Auth) []string {
 	seen := map[string]struct{}{}
-	var out []string
+	out := make([]string, 0)
 	for _, a := range auths {
 		cfg := a.Config.OAuth2
 		if cfg == nil {
