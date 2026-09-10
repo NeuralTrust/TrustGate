@@ -17438,13 +17438,14 @@
         "resource": "https://mcp.vanta.com"
       },
       "config_guide": {
-        "summary": "Sign in as a Vanta Admin. DCR is open for HTTPS callbacks.",
+        "summary": "Vanta DCR succeeds, but consent blocks unofficial MCP callbacks until Vanta allowlists TrustGate.",
         "steps": [
-          "Use a Vanta Admin account (non-admins cannot authorize MCP).",
-          "Select Connect and complete Vanta OAuth. TrustGate registers its own client."
+          "Ask Vanta (support@vanta.com) to mark TrustGate as an official MCP client and allowlist {gatewayBaseUrl}/oauth/callback/com.vanta/mcp.",
+          "Sign in as a Vanta Organization Admin (non-admins cannot authorize MCP).",
+          "This tile is the US endpoint (mcp.vanta.com). EU/AUS tenants need Custom MCP at mcp.eu.vanta.com or mcp.aus.vanta.com."
         ],
         "docs_url": "https://developer.vanta.com/docs/vanta-mcp",
-        "note": "Live DCR accepts hosted HTTPS redirect URIs. Consent is Admin-only; unofficial clients may show a warning. https://localhost is rejected (use http://localhost or a public HTTPS callback)."
+        "note": "Consent shows Unrecognized redirect URL for hosted TrustGate callbacks, then Uh oh, something went wrong. Official clients (Claude, Cursor, localhost) skip that path. DCR itself returns 201."
       },
       "relevance": 65,
       "tools": [

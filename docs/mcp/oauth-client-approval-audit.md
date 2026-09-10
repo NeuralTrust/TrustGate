@@ -20,7 +20,7 @@ success (`http://localhost`) does **not** mean a hosted gateway works.
 |--------------|--------|----------|-----------------|
 | *(not in catalog)* | **Figma** (`https://mcp.figma.com/mcp`) | `POST https://api.figma.com/v1/oauth/mcp/register` → **403 Forbidden** | Join the [Figma MCP Catalog](https://www.figma.com/mcp-catalog/) waitlist / account team. Only listed clients (Claude, Cursor, VS Code, …) may use `mcp:connect`. |
 | `com.dropbox/mcp` | Dropbox | **403** `registration_not_supported`: “Only pre-registered MCP trusted partners are allowed.” | [Get Help](https://help.dropbox.com/integrations/connect-dropbox-mcp-server) to add TrustGate as a trusted DCR client (today: Claude, ChatGPT, Cursor). Other clients can still use a **manual** Dropbox app. |
-| `com.vercel/mcp` | Vercel | **400** `invalid_redirect_uri`: “redirect URIs are not approved” | Ask Vercel to allowlist TrustGate’s callback (or issue an approved `client_id`). Docs: reviewed clients only ([Vercel MCP](https://vercel.com/docs/agent-resources/vercel-mcp)). |
+| `com.vanta/mcp` | Vanta | DCR **201**; consent then **Uh oh, something went wrong** for unofficial redirects | Ask Vanta to allowlist `{gateway}/oauth/callback/com.vanta/mcp` as an official MCP client. See §2. |
 
 Figma is the same failure mode as the 403 vendor-allowlist mentioned in
 `docs/mcp/testing-guide.md`. It is **not** seeded; adding it as
@@ -63,27 +63,40 @@ that app can call MCP:
 | `com.github/copilot-mcp` | GitHub | Org MCP policy can block the connection even after OAuth. |
 | `com.asana/mcp` `com.box/mcp` `com.frontapp/mcp` `com.hubspot/mcp` `us.zoom/*` `com.pagerduty/mcp` `com.salesforce/mcp` `com.snowflake/mcp` `com.servicenow/mcp` `com.microsoft/*` `com.netsuite/ai-connector` | various | Operator must register a first-party OAuth app (and often pass that vendor’s app review / tenant admin consent). Not a TrustGate-specific allowlist, but Connect is not zero-config. |
 
-## 2. Vanta (`com.vanta/mcp`) — not a DCR allowlist today
+## 2. Vanta (`com.vanta/mcp`) — DCR works; consent treats TrustGate as unofficial
 
-Vanta is the example that **looks** like Figma in the docs but is different
-on the wire.
+Vanta is **not** Figma: DCR succeeds. The failure is on Vanta's **Authorize
+App** page after the user is signed in.
 
-- Catalog: `registration: auto`, `dcr: true`.
-- `POST https://api.vanta.com/oauth/register` **created** clients for:
-  - `https://connect.neuraltrust.ai/oauth/callback/com.vanta/mcp`
-  - `https://example.com/oauth/callback`
-  - `https://unapproved-audit.invalid/oauth/callback`
-- It **rejects** `https://localhost/...` with text about localhost, custom
-  schemes (`cursor://`, `vscode://`), or trusted callbacks such as
-  `https://claude.ai/api/mcp/auth_callback`. That message is leftover
-  policy for loopback/`https://localhost`, not a live HTTPS host allowlist.
-- Docs still say only Vanta **Admins** can connect, and unofficial clients may
-  see a warning at consent ([Vanta MCP](https://developer.vanta.com/docs/vanta-mcp)).
+Live production (`https://gateway-mcp.neuraltrust.ai/oauth/callback/com.vanta/mcp`):
 
-If Connect still fails for Vanta in production, it is likely **admin-only
-consent / tenant policy**, not Figma-style DCR 403. Re-check the authorize
-page error; if they tighten the trusted-callback list again, Vanta moves
-back to §1b.
+1. `POST https://api.vanta.com/oauth/register` returns **201** and a `vci_…`
+   client (TrustGate `client_name` + hosted HTTPS callback).
+2. Discovery: PRM `https://mcp.vanta.com/.well-known/oauth-protected-resource`
+   → AS `https://api.vanta.com/mcp` →
+   `authorization_endpoint` `https://api.vanta.com/oauth/authorize` (302 to
+   `https://app.vanta.com/oauth/authorize`). Token URL
+   `https://api.vanta.com/oauth/token`.
+3. Consent renders **TrustGate MCP Gateway** plus:
+   - **Unrecognized redirect URL** — the callback is not an “official Vanta
+     supported MCP” (their allowlist is localhost, `cursor://` / `vscode://`,
+     and `https://claude.ai/api/mcp/auth_callback`). Docs say unofficial tools
+     show a warning and the user can continue.
+   - **Link your US Vanta instance to TrustGate MCP Gateway** — unofficial
+     clients go through an extra tenant-link step that official Cursor/Claude
+     skip.
+   - Hard fail: **Uh oh, something went wrong! Contact support@vanta.com**.
+     That toast is Vanta's SPA/API, not TrustGate. Allow never completes, so
+     no `code` reaches `/oauth/callback/com.vanta/mcp`.
+
+Ask Vanta (support@vanta.com / account team) to add TrustGate as an official
+MCP client with redirect
+`https://gateway-mcp.neuraltrust.ai/oauth/callback/com.vanta/mcp`
+(and any extra gateway hosts). Until then Connect cannot finish.
+
+Also required: the signer must be a **Vanta Organization Admin**. The catalog
+tile is US (`mcp.vanta.com`); EU/AUS tenants need
+`mcp.eu.vanta.com` / `mcp.aus.vanta.com` as Custom MCP.
 
 ## 3. Open DCR for a hosted TrustGate callback (no vendor pre-approval)
 

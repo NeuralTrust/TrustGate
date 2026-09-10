@@ -600,5 +600,5 @@ func TestCuratedCatalog_VendorApprovalGuidesStayOnZeroConfigServers(t *testing.T
 	require.True(t, ok)
 	require.False(t, vanta.RequiresConfig)
 	require.NotNil(t, vanta.ConfigGuide)
-	require.Contains(t, vanta.ConfigGuide.Note, "Admin-only")
+	require.Contains(t, vanta.ConfigGuide.Note, "Unrecognized redirect URL")
 }
