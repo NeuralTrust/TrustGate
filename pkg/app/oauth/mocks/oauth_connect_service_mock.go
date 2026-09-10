@@ -127,8 +127,8 @@ func (_c *ConnectService_ChainURL_Call) RunAndReturn(run func(context.Context, s
 	return _c
 }
 
-func (_m *ConnectService) CreateAppTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string) (string, error) {
-	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+func (_m *ConnectService) CreateAppTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string, code string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateAppTicket")
@@ -136,17 +136,17 @@ func (_m *ConnectService) CreateAppTicket(ctx context.Context, gatewayID ids.ID[
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)); ok {
-		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) string); ok {
-		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) error); ok {
-		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -158,13 +158,13 @@ type ConnectService_CreateAppTicket_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) CreateAppTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}) *ConnectService_CreateAppTicket_Call {
-	return &ConnectService_CreateAppTicket_Call{Call: _e.mock.On("CreateAppTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)}
+func (_e *ConnectService_Expecter) CreateAppTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}, code interface{}) *ConnectService_CreateAppTicket_Call {
+	return &ConnectService_CreateAppTicket_Call{Call: _e.mock.On("CreateAppTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)}
 }
 
-func (_c *ConnectService_CreateAppTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string)) *ConnectService_CreateAppTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string, code string)) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string), args[7].(string))
 	})
 	return _c
 }
@@ -174,7 +174,59 @@ func (_c *ConnectService_CreateAppTicket_Call) Return(_a0 string, _a1 error) *Co
 	return _c
 }
 
-func (_c *ConnectService_CreateAppTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)) *ConnectService_CreateAppTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) (string, error)) *ConnectService_CreateAppTicket_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) CredentialUsable(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry) (bool, error) {
+	ret := _m.Called(ctx, gatewayID, reg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CredentialUsable")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)); ok {
+		return rf(ctx, gatewayID, reg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) bool); ok {
+		r0 = rf(ctx, gatewayID, reg)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) error); ok {
+		r1 = rf(ctx, gatewayID, reg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CredentialUsable_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CredentialUsable(ctx interface{}, gatewayID interface{}, reg interface{}) *ConnectService_CredentialUsable_Call {
+	return &ConnectService_CredentialUsable_Call{Call: _e.mock.On("CredentialUsable", ctx, gatewayID, reg)}
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry)) *ConnectService_CredentialUsable_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(*registry.Registry))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Return(_a0 bool, _a1 error) *ConnectService_CredentialUsable_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)) *ConnectService_CredentialUsable_Call {
 	_c.Call.Return(run)
 	return _c
 }

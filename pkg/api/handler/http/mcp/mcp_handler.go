@@ -323,6 +323,10 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
+			// Why the gateway is asking. Without it every cause reads as "the
+			// session expired", and which one it was could only be recovered
+			// from the gateway's logs.
+			"cause": consentErr.Cause,
 		})
 		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
 		// clients treat any non-2xx on this endpoint as a transport failure: they

@@ -216,7 +216,7 @@ func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
 	saveWithRegistries(t, f, c)
 
 	c.RegistryIDs = []ids.RegistryID{third, second}
-	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}); err != nil {
+	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -615,7 +615,7 @@ func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
 
 	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
 	c.UpdatedAt = time.Now().UTC()
-	err := f.repo.Update(ctx, c, nil)
+	err := f.repo.Update(ctx, c, nil, nil)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -626,7 +626,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-u2")
 	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
-	err := f.repo.Update(context.Background(), c, nil)
+	err := f.repo.Update(context.Background(), c, nil, nil)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
