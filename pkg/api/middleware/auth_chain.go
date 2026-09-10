@@ -25,7 +25,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -150,7 +149,7 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	hasEnabledAuth := false
 	signInMatch := false
 	for _, m := range matches {
-		if wantsSignIn(m.Consumer) {
+		if m.Consumer.WantsSignIn() {
 			signInMatch = true
 		}
 		for _, a := range m.Auths {
@@ -170,11 +169,12 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	// carry no identity provider of their own. Two things exclude it. An enabled
 	// credential on the path — an api key, mTLS, or its own oauth2 IdP — is then
 	// the only way in: falling back here would let any platform login reach the
-	// consumer without it. And a consumer that authenticates as an application
-	// (acts_for_users = false) is never entered by a person, so it must not be
-	// rescued when it holds no credential: revoking its last api key would
-	// otherwise not lock it down but open it up, since an empty auth binding
-	// accepts any client the provider verifies.
+	// consumer without it. And a consumer that is not entered by a person —
+	// acts_for_users off, or the app source, where the application authenticates
+	// as itself and names its end users — must not be rescued when it holds no
+	// credential: revoking its last api key would otherwise not lock it down but
+	// open it up, since an empty auth binding accepts any client the provider
+	// verifies.
 	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth && signInMatch
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
@@ -213,17 +213,6 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 		return r.resolveJWT(ctx, token, candidates, scope)
 	}
 	return r.resolveOpaque(ctx, token, candidates, scope)
-}
-
-// wantsSignIn reports whether a matched consumer is entered by people signing
-// in — the platform identity, or the Store, which is that identity by
-// construction. A consumer with no identity of its own is not: acts_for_users
-// defaults to false, which means the application authenticates as itself.
-func wantsSignIn(cons *consumerdomain.Consumer) bool {
-	if cons == nil {
-		return false
-	}
-	return cons.Identity.PlatformUsers() || consumerdomain.IsStoreConsumer(cons)
 }
 
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
