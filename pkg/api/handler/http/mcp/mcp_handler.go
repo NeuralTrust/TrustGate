@@ -86,12 +86,24 @@ const (
 )
 
 type Handler struct {
-	gateway *RPCGateway
-	surface appmcp.SurfaceWatcher
-	timings streamTimings
+	gateway   *RPCGateway
+	surface   appmcp.SurfaceWatcher
+	consumers appconsumer.DataFinder
+	timings   streamTimings
 }
 
 type HandlerOption func(*Handler)
+
+// WithConsumerFinder lets the notification stream re-read the consumer on
+// each poll so an admin attach or detach is visible. Without it the stream
+// keeps the RoutableConsumer resolved when the GET opened.
+func WithConsumerFinder(finder appconsumer.DataFinder) HandlerOption {
+	return func(h *Handler) {
+		if finder != nil {
+			h.consumers = finder
+		}
+	}
+}
 
 func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{

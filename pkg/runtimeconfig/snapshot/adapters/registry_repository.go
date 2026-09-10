@@ -63,8 +63,12 @@ func (r *registryRepository) Update(_ context.Context, _ *domain.Registry) error
 	return configsync.ErrReadOnly
 }
 
-func (r *registryRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.RegistryID) error {
-	return configsync.ErrReadOnly
+func (r *registryRepository) Delete(
+	_ context.Context,
+	_ ids.GatewayID,
+	_ ids.RegistryID,
+) (domain.PruneReport, error) {
+	return domain.PruneReport{}, configsync.ErrReadOnly
 }
 
 // List returns a paginated defensive copy of a gateway's registries.

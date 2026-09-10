@@ -216,7 +216,8 @@ func TestRegistryAdapterScopingAndSecrets(t *testing.T) {
 	assert.Nil(t, empty)
 
 	assert.ErrorIs(t, repo.Save(ctx, &registrydomain.Registry{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.reg.ID), configsync.ErrReadOnly)
+	_, deleteErr := repo.Delete(ctx, f.gateway.ID, f.reg.ID)
+	assert.ErrorIs(t, deleteErr, configsync.ErrReadOnly)
 }
 
 func TestRegistryAdapterList(t *testing.T) {

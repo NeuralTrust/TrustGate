@@ -73,7 +73,7 @@ type ConsentRequiredError struct {
 // they are what a client reports and what an operator greps for.
 const (
 	// ConsentCauseNoCredential: this user never linked an account here.
-	ConsentCauseNoCredential = "no_credential" // #nosec G101 -- diagnostic cause code, not a credential
+	ConsentCauseNoCredential = "no_credential" // #nosec G101 -- OAuth cause code, not a secret
 	// ConsentCauseUndecryptable: the credential is stored but cannot be read
 	// with the current vault key.
 	ConsentCauseUndecryptable = "credential_undecryptable"
@@ -86,7 +86,7 @@ const (
 	// before and is not retried until the user reconnects.
 	ConsentCauseRefreshAlreadyRejected = "refresh_already_rejected"
 	// ConsentCauseCredentialVanished: the credential disappeared mid-refresh.
-	ConsentCauseCredentialVanished = "credential_vanished" // #nosec G101 -- diagnostic cause code, not a credential
+	ConsentCauseCredentialVanished = "credential_vanished" // #nosec G101 -- OAuth cause code, not a secret
 	// ConsentCauseRegisteredClientLost: the dynamically registered OAuth client
 	// the grant was issued to is gone, so the token cannot be redeemed.
 	ConsentCauseRegisteredClientLost = "registered_client_lost"
