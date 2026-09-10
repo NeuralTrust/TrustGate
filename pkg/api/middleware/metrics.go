@@ -154,7 +154,7 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		query.Add(string(key), string(value))
 	}
 
-	return &infracontext.RequestContext{
+	req := &infracontext.RequestContext{
 		GatewayID: gatewayID,
 		Headers:   headers,
 		Method:    strings.Clone(c.Method()),
@@ -163,6 +163,8 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		Body:      append([]byte(nil), c.Body()...),
 		IP:        strings.Clone(c.IP()),
 	}
+	stampRequestTarget(c, req)
+	return req
 }
 
 func gatewayIDFromContext(c *fiber.Ctx) string {
