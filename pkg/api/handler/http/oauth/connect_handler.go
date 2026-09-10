@@ -41,9 +41,9 @@ type ConnectHandler struct {
 
 type ConnectFlow interface {
 	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
-	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
+	Start(ctx context.Context, baseURL, ticketID, provider, instanceID string) (string, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
-	Disconnect(ctx context.Context, ticketID, provider string) error
+	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 }
 
 // NewConnectHandler builds the MCP upstream-connect OAuth handlers.
@@ -71,7 +71,9 @@ func (h *ConnectHandler) Page(c *fiber.Ctx) error {
 }
 
 func (h *ConnectHandler) Start(c *fiber.Ctx) error {
-	location, err := h.connect.Start(c.UserContext(), h.connectBaseURL(c), c.Query("ticket"), providerParam(c))
+	location, err := h.connect.Start(
+		c.UserContext(), h.connectBaseURL(c), c.Query("ticket"), providerParam(c), c.Query("instance"),
+	)
 	if err != nil {
 		return h.pageError(c, err)
 	}
@@ -96,7 +98,7 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 
 func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
 	ticket := c.Query("ticket")
-	if err := h.connect.Disconnect(c.UserContext(), ticket, providerParam(c)); err != nil {
+	if err := h.connect.Disconnect(c.UserContext(), ticket, providerParam(c), c.Query("instance")); err != nil {
 		return h.pageError(c, err)
 	}
 	return h.showPage(c, ticket, "")

@@ -225,7 +225,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return ErrNoPrincipal
 	}
 	gatewayID := rc.Consumer.GatewayID
-	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
+	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, registrydomain.ForwardedVaultProvider(reg))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
 		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
 			ConsentCauseNoCredential, "no stored credential for this user and provider")
@@ -294,9 +294,14 @@ func (r *credentialResolver) refreshCredential(
 	gatewayID ids.GatewayID,
 	subject, provider, rejectedAccessToken string,
 ) (*vaultdomain.Credential, error) {
-	key := gatewayID.String() + "|" + subject + "|" + provider
+	// The credential is keyed by the instance's upstream resource, not by the
+	// provider name: two instances of one catalog code pointing at different
+	// deployments hold different credentials, and the guards around a refresh
+	// (singleflight, cooldown, dead grant) have to divide the same way.
+	vaultProvider := registrydomain.ForwardedVaultProvider(reg)
+	key := gatewayID.String() + "|" + subject + "|" + vaultProvider
 	v, err, _ := r.refresh.Do(key, func() (any, error) {
-		cred, err := r.vault.Find(ctx, gatewayID, subject, provider)
+		cred, err := r.vault.Find(ctx, gatewayID, subject, vaultProvider)
 		if err != nil {
 			return nil, err
 		}
@@ -336,13 +341,14 @@ func (r *credentialResolver) refreshCredential(
 			// giving up: if the stored credential is usable again the peer's
 			// refresh succeeded and there is nothing for the user to consent to.
 			if errors.Is(err, appoauth.ErrInvalidGrant) {
-				latest, findErr := r.vault.Find(ctx, gatewayID, subject, provider)
+				latest, findErr := r.vault.Find(ctx, gatewayID, subject, vaultProvider)
 				peerRefreshed := findErr == nil && ((rejectedAccessToken != "" &&
 					latest.AccessToken != rejectedAccessToken) ||
 					(rejectedAccessToken == "" && !latest.Expired(vaultRefreshSkew)))
 				if peerRefreshed {
 					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
-						"provider", provider, "principal_ref", logref.Opaque(subject), "gateway_id", gatewayID.String())
+						"provider", provider, "credential_scope", vaultProvider,
+						"principal_ref", logref.Opaque(subject), "gateway_id", gatewayID.String())
 					return latest, nil
 				}
 				r.markGrantDead(key, cred.RefreshToken)
@@ -370,6 +376,7 @@ func (r *credentialResolver) refreshCredential(
 		// Divergent outputs for the same input help identify concurrent refreshes.
 		r.logger.Info("mcp credentials: refresh token rotated",
 			"provider", provider,
+			"credential_scope", vaultProvider,
 			"subject", subject,
 			"gateway_id", gatewayID.String(),
 			"from", grantFingerprint(previousRefreshToken),

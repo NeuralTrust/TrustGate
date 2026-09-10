@@ -348,24 +348,25 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 </div>{{end}}
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 <p class="empty" id="no-match" hidden>No matching MCP servers.</p>
-<div class="grid">{{range .Providers}}<article class="tile" data-filter="{{.DisplayName}} {{.Subtitle}} {{.Provider}}">
+<div class="grid">{{range .Providers}}<article class="tile" data-filter="{{.DisplayName}} {{.InstanceName}} {{.Subtitle}} {{.Provider}}">
   <div class="tile-body">
     <div class="logo"><img src="{{.LogoURL}}" alt="" width="40" height="40" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
     <div>
       <p class="name">{{.DisplayName}}</p>
+      {{if .InstanceName}}<p class="reg">{{.InstanceName}}</p>{{end}}
       <p class="desc">{{.Description}}</p>
     </div>
   </div>
   <div class="tile-foot">{{if .NeedsReconnect}}
     <span class="badge red">Expired</span>
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn secondary" type="submit">Reconnect</button></form>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}&amp;instance={{.Instance}}"><button class="btn secondary" type="submit">Reconnect</button></form>
   {{else if .Linked}}
     <div>{{if .AccountRef}}<span class="reg">{{.AccountRef}}</span>{{end}}
     <span class="badge green">` + badgeCheck + `Connected</span></div>
-    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
+    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}&amp;instance={{.Instance}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
   {{else}}
     <span></span>
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn secondary" type="submit">Connect</button></form>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}&amp;instance={{.Instance}}"><button class="btn secondary" type="submit">Connect</button></form>
   {{end}}</div>
 </article>{{end}}</div>
 {{if .ResumeURL}}<div class="resume">
@@ -447,13 +448,13 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
 <div class="card-foot">
 {{if .Found}}
   {{if .NeedsReconnect}}
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary block" type="submit">Reconnect {{.ServerName}}</button></form>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Reconnect {{.ServerName}}</button></form>
     {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
   {{else if .Linked}}
     {{if .ResumeURL}}<a class="btn primary block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
-    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn ghost-danger block" type="submit">Disconnect {{.ServerName}}</button></form>
+    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn ghost-danger block" type="submit">Disconnect {{.ServerName}}</button></form>
   {{else}}
-    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn primary block" type="submit">Connect account</button></form>
+    <form method="post" action="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}&amp;instance={{.Instance}}"><button class="btn primary block" type="submit">Connect account</button></form>
     {{if .ResumeURL}}<a class="btn ghost block" href="{{.ResumeURL}}">Return to your app</a>{{end}}
   {{end}}
 {{else if .ResumeURL}}
