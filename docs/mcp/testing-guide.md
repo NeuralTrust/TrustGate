@@ -413,9 +413,10 @@ Known seed hides (not shown in catalog API):
 - SSE unsupported: Replicate (`com.replicate/mcp`), InVideo (`io.invideo/mcp`)
 - Probe `broken_*`: DocuSign, SonarCloud, Zapier, Rube, Datadog, PayPal
 
-Figma (`com.figma/mcp`) may return **401** (keep; OAuth) or **403** (vendor
-allowlist) depending on network — only hide when the probe reports
-`broken_forbidden`.
+Figma is **not** in the catalog: its DCR endpoint allowlists MCP clients
+(`POST /v1/oauth/mcp/register` → 403 for TrustGate). See
+[`oauth-client-approval-audit.md`](oauth-client-approval-audit.md) for the
+full vendor-approval list (Dropbox, Vercel, Cal.com, Intercom, …).
 
 ### Setup guide documentation links
 
