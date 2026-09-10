@@ -94,6 +94,14 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.WellKnownProtectedResourcePath+"/*", r.protectedResourceHandler.Handle)
 	app.Get(oauthhttp.WellKnownAuthorizationServerPath, r.authorizationServerHandler.Handle)
 	app.Post(oauthhttp.RegisterPath, r.registerHandler.Handle)
+	// The RFC 7592 management URI authenticates with the registration access
+	// token the registration response returned, not with the gateway's auth
+	// chain, so it sits here on the base transport. It must also precede the
+	// catch-all GET and DELETE routes below, which Fiber would otherwise match
+	// first and answer with the MCP stream or a 405.
+	app.Get(oauthhttp.RegisterClientPath, r.registerHandler.Read)
+	app.Put(oauthhttp.RegisterClientPath, r.registerHandler.Update)
+	app.Delete(oauthhttp.RegisterClientPath, r.registerHandler.Delete)
 	app.Get(oauthhttp.AuthorizePath, r.authorizeHandler.Handle)
 	app.Get(appoauth.CallbackPath, r.callbackHandler.Handle)
 	app.Post(oauthhttp.TokenPath, r.tokenHandler.Handle)
