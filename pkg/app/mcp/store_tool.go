@@ -29,7 +29,6 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
@@ -197,10 +196,6 @@ type storeInstallArgs struct {
 	// Instance is the configured instance (registry id) to install when the
 	// server has several, from a prior requires_instance_choice response.
 	Instance string `json:"instance,omitempty"`
-	// Reason is why the user wants the server, in their own words. It is kept
-	// only when the install becomes a request an approver must decide, and shown
-	// to them there.
-	Reason string `json:"reason,omitempty"`
 }
 
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
@@ -249,12 +244,11 @@ func (t *storeTool) install(
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
 		RegistryID:   registryID,
-		Reason:       trimReason(args.Reason),
 	})
 	if errors.Is(err, appstore.ErrReasonRequired) {
-		// Not an error the caller can only report: it is the one thing missing,
-		// and the caller can get it from the user and try again.
-		return reasonRequired(args.Code)
+		// Not an error the caller can only report: what is missing is the
+		// requester's own words, so hand them the form that asks for them.
+		return t.reasonRequired(ctx, rc, baseURL, args.Code, registryID, principal)
 	}
 	if err != nil {
 		return nil, err
@@ -271,7 +265,7 @@ func (t *storeTool) install(
 	configureURL := ""
 	if res.RequiresConfig {
 		configureURL, err = t.configureLink(
-			ctx, rc, baseURL, res.Code, res.InstanceID, trimReason(args.Reason), principal,
+			ctx, rc, baseURL, res.Code, res.InstanceID, principal, false,
 		)
 		if err != nil {
 			return nil, err
@@ -315,19 +309,6 @@ func (t *storeTool) install(
 	return marshalToolResult(installMessage(res, configureURL, connectURL), structured)
 }
 
-// trimReason bounds what a client may send as the requester's words. The domain
-// refuses an over-long one, and failing an install for it would be a poor trade:
-// the caller is a model relaying a sentence, so the sentence is cut and the
-// install proceeds.
-func trimReason(reason string) string {
-	reason = strings.TrimSpace(reason)
-	runes := []rune(reason)
-	if len(runes) <= installationdomain.MaxReasonLength {
-		return reason
-	}
-	return strings.TrimSpace(string(runes[:installationdomain.MaxReasonLength]))
-}
-
 // linkMarkdown renders a URL as a labeled markdown link so the client shows the
 // label (e.g. "Connect Linear") rather than the raw URL.
 func linkMarkdown(label, url string) string {
@@ -358,13 +339,15 @@ func (t *storeTool) connectLink(
 	return url, nil
 }
 
-// configureLink mints the hosted form's URL. reason travels with the ticket:
-// the install the submit files may be a request, and the form cannot ask.
+// configureLink mints the hosted form's URL. askReason makes that form collect
+// the requester's words as well: submitting it is what files the request, and
+// the requester is the only acceptable author of the reason it carries.
 func (t *storeTool) configureLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code, instanceID, reason string,
+	baseURL, code, instanceID string,
 	principal *identity.Principal,
+	askReason bool,
 ) (string, error) {
 	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
 		return "", nil
@@ -380,7 +363,7 @@ func (t *storeTool) configureLink(
 		Code:         code,
 		InstanceID:   instanceID,
 		Groups:       principal.Groups(),
-		Reason:       reason,
+		AskReason:    askReason,
 	})
 	if err != nil {
 		return "", fmt.Errorf("%w: create configuration ticket: %w", ErrStoreToolUnavailable, err)
@@ -504,23 +487,51 @@ func instanceChoices(res *appstore.InstallResult) (json.RawMessage, error) {
 	})
 }
 
-// reasonRequired returns a structured "why?" result: the server is outside the
-// user's access, so installing it files a request a person decides on, and the
-// requester's own words are what that person reads (Access → Approvals). Like
-// the instance picker, it is a normal result — the caller asks the user and
-// re-issues install with `reason`.
-func reasonRequired(code string) (json.RawMessage, error) {
+// reasonRequired hands back the form the requester says why on: the server is
+// outside their access, so installing it files a request a person decides on,
+// and the requester's own words are what that person reads (Access →
+// Approvals).
+//
+// The words are not asked of the caller. An agent asked for a reason writes one
+// from the task it was given — a paraphrase of its own prompt, presented to an
+// approver as the user's justification — so the install tool does not accept a
+// reason at all, and the request is filed by the person submitting this form.
+func (t *storeTool) reasonRequired(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL, code string,
+	registryID ids.RegistryID,
+	principal *identity.Principal,
+) (json.RawMessage, error) {
+	instanceID := ""
+	if !registryID.IsNil() {
+		instanceID = registryID.String()
+	}
+	requestURL, err := t.configureLink(ctx, rc, baseURL, code, instanceID, principal, true)
+	if err != nil {
+		return nil, err
+	}
+	text := fmt.Sprintf(
+		"%s is outside your access, so getting it files a request an administrator has to decide on.",
+		code,
+	)
+	structured := map[string]any{
+		"code":            code,
+		"requires_reason": true,
+	}
+	if requestURL == "" {
+		// No hosted form on this plane: say so plainly rather than inviting the
+		// caller to invent the justification an approver will read.
+		return marshalToolResult(
+			text+" Ask an administrator for access to it; this Store cannot file the request from here.",
+			structured,
+		)
+	}
+	structured["request_url"] = requestURL
 	return marshalToolResult(
-		fmt.Sprintf(
-			"%s is outside your access, so installing it files a request an administrator has to decide on. "+
-				"Ask the user why they need it and what they will use it for, then re-run install with their answer in `reason`. "+
-				"Do not write one on their behalf.",
-			code,
-		),
-		map[string]any{
-			"code":            code,
-			"requires_reason": true,
-		},
+		text+" Give the user this link and let them write, in their own words, why they need it: "+requestURL+
+			" — the request is filed when they submit it. Do not write the reason for them, and do not re-run install.",
+		structured,
 	)
 }
 
@@ -892,7 +903,7 @@ func storeInstallDefinition() (Tool, error) {
 		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
 			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
 			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
-			"Governed by the user's role; a server outside it becomes a request an administrator decides on, so pass `reason` with why the user wants it. " +
+			"Governed by the user's role: a server outside it cannot be installed here, and this returns requires_reason with a request_url — hand that link to the user, who writes why they need it and files the request themselves. " +
 			"A server that needs the user's own account returns a connect link for them to authorize before its tools work." + GatewayToolDisclaimer,
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -909,13 +920,6 @@ func storeInstallDefinition() (Tool, error) {
 				"instance": map[string]any{
 					"type":        "string",
 					"description": "Which configured instance of the server to install, when the administrator connected several (from a prior requires_instance_choice response). Omit otherwise.",
-				},
-				"reason": map[string]any{
-					"type": "string",
-					"description": "Why the user wants this server, in their own words — the task they are trying to do. " +
-						"Required when the server is outside the user's access: installing it then files a request an administrator has to decide on, and this is what they read when deciding (the install is refused without it, and answers requires_reason). " +
-						"Do not invent one; if the user has not said why, ask them.",
-					"maxLength": installationdomain.MaxReasonLength,
 				},
 			},
 			"required":             []string{"code"},

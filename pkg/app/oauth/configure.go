@@ -45,6 +45,16 @@ var ErrConfigureIncomplete = fmt.Errorf("%w: all required values must be provide
 // that were not.
 var ErrConfigureAmbiguous = fmt.Errorf("%w: several instances installed; configure from the install result", ErrConfigureInvalid)
 
+// ErrConfigureReasonRequired is returned when a form that must collect the
+// requester's words is submitted without them. The request is what an
+// administrator decides on, and it is decided on those words.
+var ErrConfigureReasonRequired = fmt.Errorf("%w: tell the administrator why you need this server", ErrConfigureInvalid)
+
+// ReasonFormField is the form field the hosted page collects the requester's
+// words in. It is prefixed so it cannot be mistaken for a catalog server's own
+// URL variable.
+const ReasonFormField = "__reason"
+
 // ErrConfigureInstallUnavailable is returned when a configure-before-install
 // would need to record the installation but no installer is wired, so the
 // governed install path cannot run. The user installs first, then configures.
@@ -74,6 +84,10 @@ type ConfigurePage struct {
 	// admin approval (the server is governed), so the page can say so rather than
 	// implying the tools are live.
 	Pending bool
+	// AskReason is true when this form is where the requester says why they need
+	// the server: the install is outside their access, so submitting files a
+	// request an administrator decides on, and these are the words they read.
+	AskReason bool
 }
 
 // ConfigureTicketRequest scopes a configure ticket: the (gateway, principal,
@@ -93,6 +107,10 @@ type ConfigureTicketRequest struct {
 	// Reason is the requester's words from the install that needs this form, kept
 	// so the install the submit files can be a request (see ConnectTicket.Reason).
 	Reason string
+	// AskReason makes this form collect those words itself, for an install that
+	// was refused for want of them. The requester writes them here because they
+	// are the only acceptable author (see ConnectTicket.AskReason).
+	AskReason bool
 }
 
 // ConfigureInstaller is the governed install path the configure flow records a
@@ -188,6 +206,7 @@ func (s *configureService) CreateTicket(ctx context.Context, in ConfigureTicketR
 		InstanceID:   strings.TrimSpace(in.InstanceID),
 		Groups:       append([]string(nil), in.Groups...),
 		Reason:       strings.TrimSpace(in.Reason),
+		AskReason:    in.AskReason,
 	}); err != nil {
 		return "", err
 	}
@@ -211,6 +230,15 @@ func (s *configureService) Submit(
 	if err != nil {
 		return nil, err
 	}
+	// The requester's own words, when this form is the one that asks for them.
+	// Taken before the variables are read so the reserved field is never
+	// mistaken for one the catalog declared.
+	if reason := trimReason(values[ReasonFormField]); ticket.AskReason {
+		if reason == "" {
+			return nil, ErrConfigureReasonRequired
+		}
+		ticket.Reason = reason
+	}
 	byName := make(map[string]catalogdomain.MCPURLVariable, len(entry.URLVariables))
 	for _, v := range entry.URLVariables {
 		byName[strings.TrimSpace(v.Name)] = v
@@ -218,6 +246,9 @@ func (s *configureService) Submit(
 	plain := map[string]string{}
 	secrets := map[string]string{}
 	for k, raw := range values {
+		if k == ReasonFormField {
+			continue
+		}
 		val := strings.TrimSpace(raw)
 		if val == "" {
 			continue
@@ -238,7 +269,9 @@ func (s *configureService) Submit(
 	// Plain values first: a first-time configuration is a governed install, and
 	// nothing (not even the secrets) is stored if it is refused.
 	pending := false
-	if len(plain) > 0 {
+	if len(plain) > 0 || ticket.AskReason {
+		// A reason-only form has nothing to store: submitting it is what files the
+		// request, so the governed install still has to run.
 		pending, err = s.storePlain(ctx, gatewayID, ticket, plain)
 		if err != nil {
 			return nil, err
@@ -308,6 +341,9 @@ func (s *configureService) page(
 		Variables:    vars,
 		Saved:        saved,
 		Pending:      pending,
+		// Answered once, the field is done: the page that follows a submit
+		// reports what happened instead of asking again.
+		AskReason: ticket.AskReason && !saved,
 	}, nil
 }
 
@@ -472,6 +508,17 @@ func (s *configureService) installConfigured(
 	// form target it even if another instance of the code appears meanwhile.
 	ticket.InstanceID = res.InstanceID
 	return res.Pending, nil
+}
+
+// trimReason bounds what the form may submit as the requester's words to what
+// the domain keeps, so a long answer is shortened rather than refused.
+func trimReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	runes := []rune(reason)
+	if len(runes) <= installationdomain.MaxReasonLength {
+		return reason
+	}
+	return strings.TrimSpace(string(runes[:installationdomain.MaxReasonLength]))
 }
 
 func toRegistryURLVar(v catalogdomain.MCPURLVariable) registrydomain.MCPURLVariable {

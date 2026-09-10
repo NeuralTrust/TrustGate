@@ -196,6 +196,12 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 .input input:placeholder-shown:not(:focus)+label{
   top:50%;transform:translateY(-50%);font-size:.875rem;line-height:18px;
 }
+.input.area{height:auto;align-items:stretch;padding:24px 16px 10px}
+.input.area textarea{
+  width:100%;border:0;background:transparent;color:var(--fg-default);
+  font-family:inherit;font-size:.875rem;line-height:1.35rem;font-weight:500;padding:0;outline:none;resize:vertical;
+}
+.input.area textarea::placeholder{color:transparent}
 .connect-form{display:flex;flex-direction:column;gap:16px}
 .connect-form .btn{align-self:flex-start}
 
@@ -398,18 +404,24 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
-<title>Configure {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
+<title>{{if .AskReason}}Request {{else}}Configure {{end}}{{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body class="dotted"><div class="card">` + brandHeader + `
-<h1>Configure {{.ServerName}}</h1>
-<p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>
-{{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>Saved. You can return to your application.</div></div>{{end}}
-<form class="connect-form" method="post">
+{{if .AskReason}}<h1>Request access to {{.ServerName}}</h1>
+<p class="sub">{{.ServerName}} is outside your access, so asking for it goes to an administrator. Tell them why you need it, in your own words — this is what they read when they decide.</p>
+{{else}}<h1>Configure {{.ServerName}}</h1>
+<p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>{{end}}
+{{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>{{if .Pending}}Sent. An administrator has to approve it; you can return to your application.{{else}}Saved. You can return to your application.{{end}}</div></div>{{end}}
+{{if not .Saved}}<form class="connect-form" method="post">
   {{range .Variables}}<div class="input">
     <input id="{{.Name}}" name="{{.Name}}" type="{{if .Secret}}password{{else}}text{{end}}" autocomplete="off"{{if and .Required (not .Set)}} required{{end}} placeholder=" ">
     <label for="{{.Name}}">{{.Name}}{{if .Set}} (set — leave blank to keep){{else if not .Required}} (optional){{end}}</label>
   </div>{{end}}
-  <button class="btn primary" type="submit">Save</button>
-</form>
+  {{if .AskReason}}<div class="input area">
+    <textarea id="{{.ReasonField}}" name="{{.ReasonField}}" rows="4" maxlength="{{.ReasonMaxChars}}" autocomplete="off" required placeholder=" "></textarea>
+    <label for="{{.ReasonField}}">Why do you need it?</label>
+  </div>{{end}}
+  <button class="btn primary" type="submit">{{if .AskReason}}Send request{{else}}Save{{end}}</button>
+</form>{{end}}
 </div></body></html>`))
 
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
