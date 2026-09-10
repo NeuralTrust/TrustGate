@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // Command mcp-catalog-probe probes curated MCP server URLs and optionally marks
-// broken entries as hidden in seed/mcp-catalog/enterprise-servers.json.
+// broken entries as hidden in seed/mcp-catalog/enterprise-servers.json. With
+// -check-docs it instead verifies that every config_guide documentation link
+// still resolves.
 package main
 
 import (
@@ -68,6 +70,7 @@ func main() {
 	apply := flag.Bool("apply", false, "write hidden/hidden_reason back into the catalog for broken_* results")
 	includeHidden := flag.Bool("include-hidden", false, "also probe entries that are already hidden")
 	only := flag.String("only", "", "comma-separated server names to probe")
+	checkDocs := flag.Bool("check-docs", false, "verify config_guide.docs_url links instead of probing MCP endpoints")
 	flag.Parse()
 
 	raw, err := os.ReadFile(*catalogPath)
@@ -77,6 +80,11 @@ func main() {
 	var cat catalogFile
 	if err := json.Unmarshal(raw, &cat); err != nil {
 		fatalf("parse catalog: %v", err)
+	}
+
+	if *checkDocs {
+		checkDocsLinks(cat, *timeout, max(1, *concurrency))
+		return
 	}
 
 	onlySet := map[string]struct{}{}
@@ -184,6 +192,106 @@ func main() {
 		fatalf("write catalog: %v", err)
 	}
 	fmt.Fprintf(os.Stderr, "applied hidden updates to %d entries in %s\n", changed, *catalogPath)
+}
+
+type docsLink struct {
+	URL   string
+	Codes []string
+}
+
+// checkDocsLinks reports setup guides whose documentation link no longer serves
+// the page it claims to. A link that redirects elsewhere counts as broken: a
+// vendor moving its docs to a generic landing page is exactly how a guide
+// silently stops answering the question it was added for.
+func checkDocsLinks(cat catalogFile, timeout time.Duration, concurrency int) {
+	byURL := map[string][]string{}
+	for _, s := range cat.Servers {
+		guide, _ := s["config_guide"].(map[string]any)
+		if guide == nil {
+			continue
+		}
+		link, _ := guide["docs_url"].(string)
+		link = strings.TrimSpace(link)
+		if link == "" {
+			continue
+		}
+		name, _ := s["name"].(string)
+		byURL[link] = append(byURL[link], name)
+	}
+
+	links := make([]docsLink, 0, len(byURL))
+	for url, codes := range byURL {
+		links = append(links, docsLink{URL: url, Codes: codes})
+	}
+
+	// Redirect-following is manual so the final URL can be compared with the
+	// documented one.
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	problems := make([]string, len(links))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i, link := range links {
+		wg.Add(1)
+		go func(i int, link docsLink) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if detail := checkDocsLink(client, timeout, link.URL); detail != "" {
+				problems[i] = fmt.Sprintf("%s\n  used by: %s\n  %s", link.URL, strings.Join(link.Codes, ", "), detail)
+			}
+		}(i, link)
+	}
+	wg.Wait()
+
+	broken := 0
+	for _, p := range problems {
+		if p == "" {
+			continue
+		}
+		broken++
+		fmt.Fprintln(os.Stderr, p)
+	}
+	fmt.Fprintf(os.Stderr, "checked %d documentation links: ok=%d broken=%d\n", len(links), len(links)-broken, broken)
+	if broken > 0 {
+		os.Exit(1)
+	}
+}
+
+func checkDocsLink(client *http.Client, timeout time.Duration, url string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return truncate(err.Error(), 160)
+	}
+	// Several vendor docs sites serve a redirect or a challenge to non-browser
+	// clients, so present a browser-shaped request.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; TrustGate catalog docs check)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return truncate(err.Error(), 160)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+
+	switch {
+	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
+		// Bot protection, not a dead link.
+		return ""
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return fmt.Sprintf("HTTP %d redirects to %s", resp.StatusCode, resp.Header.Get("Location"))
+	case resp.StatusCode != http.StatusOK:
+		return fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	return ""
 }
 
 func hideReason(r probeResult) string {

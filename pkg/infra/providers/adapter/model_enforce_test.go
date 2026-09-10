@@ -147,3 +147,83 @@ func TestCheckAllowedModel(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 }
+
+func TestEnforceModelWildcardAllowList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pattern admits a matching model", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4.1"}`)
+		out, model, err := EnforceModel(body, []string{"gpt-*"}, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "gpt-4.1" {
+			t.Fatalf("model = %q", model)
+		}
+		if string(out) != string(body) {
+			t.Fatalf("body changed: %s", out)
+		}
+	})
+
+	t.Run("pattern denies a model outside the family", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := EnforceModel([]byte(`{"model":"claude-3-opus"}`), []string{"gpt-*"}, "")
+		if !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("expected ErrModelNotAllowed, got %v", err)
+		}
+	})
+
+	t.Run("a pattern never authorizes itself", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := EnforceModel([]byte(`{"model":"gpt-*"}`), []string{"gpt-*"}, "")
+		if !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("expected ErrModelNotAllowed, got %v", err)
+		}
+		if err := CheckAllowedModel("gpt-*", []string{"gpt-*"}); !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("expected ErrModelNotAllowed, got %v", err)
+		}
+	})
+
+	t.Run("a pattern default is never injected into the body", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"messages":[]}`)
+		out, _, err := EnforceModel(body, []string{"gpt-*"}, "gpt-*")
+		if !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("expected ErrModelNotAllowed, got %v", err)
+		}
+		if string(out) != string(body) {
+			t.Fatalf("body must be left untouched, got %s", out)
+		}
+	})
+
+	t.Run("a concrete default under a pattern allow-list is injected", func(t *testing.T) {
+		t.Parallel()
+		out, model, err := EnforceModel([]byte(`{"messages":[]}`), []string{"gpt-*"}, "gpt-4o-mini")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "gpt-4o-mini" {
+			t.Fatalf("model = %q", model)
+		}
+		var probe struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(out, &probe); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if probe.Model != "gpt-4o-mini" {
+			t.Fatalf("injected model = %q", probe.Model)
+		}
+	})
+}
+
+func TestCheckAllowedModelRejectsPatternWithOpenAllowList(t *testing.T) {
+	t.Parallel()
+	if err := CheckAllowedModel("gpt-*", nil); !errors.Is(err, ErrModelNotAllowed) {
+		t.Fatalf("an open allow-list must still refuse a pattern subject, got %v", err)
+	}
+	if err := CheckAllowedModel("gpt-4o", nil); err != nil {
+		t.Fatalf("an open allow-list must accept a concrete model: %v", err)
+	}
+}

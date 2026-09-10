@@ -307,7 +307,7 @@ func TestVerifierSignedClaimValidation(t *testing.T) {
 				return
 			}
 			requireNoError(t, err)
-			if got.Method != identity.MethodJWT || got.Issuer != cfg.Issuer || got.Subject != "alice" || got.Email() != "alice@example.com" {
+			if got.Method != identity.MethodExternalJWT || got.Issuer != cfg.Issuer || got.Subject != "alice" || got.Email() != "alice@example.com" {
 				t.Fatalf("verified identity not preserved: %+v", got)
 			}
 		})

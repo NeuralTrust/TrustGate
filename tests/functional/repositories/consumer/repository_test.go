@@ -216,7 +216,7 @@ func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
 	saveWithRegistries(t, f, c)
 
 	c.RegistryIDs = []ids.RegistryID{third, second}
-	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}); err != nil {
+	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -615,7 +615,7 @@ func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
 
 	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
 	c.UpdatedAt = time.Now().UTC()
-	err := f.repo.Update(ctx, c, nil)
+	err := f.repo.Update(ctx, c, nil, nil)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -626,7 +626,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-u2")
 	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
-	err := f.repo.Update(context.Background(), c, nil)
+	err := f.repo.Update(context.Background(), c, nil, nil)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -700,7 +700,7 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	c := validConsumer(t, gwID, "uses-be", beID)
 	saveWithRegistries(t, f, c)
 
-	if err := f.be.Delete(ctx, gwID, beID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, beID); err != nil {
 		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
 	}
 
@@ -713,7 +713,10 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	}
 }
 
-func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.T) {
+// RUN-1501 replaced the ErrHasDependents guard on an active consumer's fallback
+// chain: a registry delete now prunes every routing reference instead of
+// refusing the ones that sit in a fallback chain.
+func TestRepository_DeleteRegistry_PrunesActiveConsumerFallbackChain(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-fbd")
@@ -725,15 +728,28 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    registrydomain.Registries{fbBE},
+		Chain:    registrydomain.Registries{fbBE, poolBE},
 	}
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, fbBE)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, fbBE)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's chain pruned", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedFallback}, nil)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback == nil {
+		t.Fatal("Fallback was dropped even though the pool step remains")
+	}
+	if len(got.Fallback.Chain) != 1 || got.Fallback.Chain[0] != poolBE {
+		t.Fatalf("Chain = %v, want [%s]", got.Fallback.Chain, poolBE)
 	}
 }
 
@@ -756,7 +772,7 @@ func TestRepository_DeleteRegistry_IgnoresCrossGatewayFallbackConsumer(t *testin
 		t.Fatalf("Save: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwReg, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwReg, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (cross-gateway consumer must not block)", err)
 	}
 }
@@ -782,12 +798,12 @@ func TestRepository_DeleteRegistry_IgnoresInactiveConsumer(t *testing.T) {
 		t.Fatalf("deactivate consumer: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwID, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (inactive consumer must not block)", err)
 	}
 }
 
-func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing.T) {
+func TestRepository_DeleteRegistry_NullsActiveConsumerFallbackLosingItsLastStep(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "gw-block")
@@ -805,8 +821,21 @@ func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, regID)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, regID)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's fallback nulled", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, nil, []string{registrydomain.PrunedFallback})
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback != nil {
+		t.Fatalf("Fallback = %+v, want nil once its only step is gone", got.Fallback)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("pruned consumer no longer validates: %v", err)
 	}
 }

@@ -30,6 +30,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -113,6 +114,9 @@ func TestOAuth2TokenValidator_ValidToken(t *testing.T) {
 	}
 	if principal.Subject != "user-1" {
 		t.Fatalf("subject = %q", principal.Subject)
+	}
+	if principal.Method != identity.MethodExternalJWT {
+		t.Fatalf("method = %q, want external_jwt: a customer identity provider's token must be distinguishable from one the gateway issued", principal.Method)
 	}
 	if len(principal.Scopes) != 2 {
 		t.Fatalf("scopes = %v", principal.Scopes)

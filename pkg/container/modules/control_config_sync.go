@@ -32,6 +32,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
@@ -67,9 +68,17 @@ type compilerReaders struct {
 // write use cases call. The dispatcher and gRPC server are started in the
 // control/run run funcs; nothing here resolves on the data plane graph.
 func ControlConfigSync(c *container.Container) error {
-	if err := c.Provide(func(r compilerReaders, logger *slog.Logger) *appsnapshot.Compiler {
-		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
-			appsnapshot.WithStoreGrants(r.Grants), appsnapshot.WithStorePolicies(r.StorePolicies))
+	if err := c.Provide(func(r compilerReaders, cfg *config.Config, logger *slog.Logger) (*appsnapshot.Compiler, error) {
+		keys, err := playgroundSnapshotKeys(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return appsnapshot.NewCompiler(
+			r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
+			appsnapshot.WithStoreGrants(r.Grants),
+			appsnapshot.WithStorePolicies(r.StorePolicies),
+			appsnapshot.WithPlaygroundTokenKeys(keys),
+		), nil
 	}); err != nil {
 		return err
 	}
@@ -164,4 +173,26 @@ func ControlConfigSync(c *container.Container) error {
 		return err
 	}
 	return c.Provide(subscriber.NewSnapshotDirtyEventSubscriber)
+}
+
+// playgroundSnapshotKeys turns the configured playground verification keys into
+// the snapshot entries every compiled snapshot carries, with PEMs normalized so
+// data planes parse them as-is. Parsing here fails boot on a malformed key
+// rather than shipping a key no data plane can use.
+func playgroundSnapshotKeys(cfg *config.Config) ([]readmodel.VerificationKey, error) {
+	entries := cfg.Playground.TokenPublicKeys
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	if _, err := jwt.StaticPlaygroundKeys(entries); err != nil {
+		return nil, err
+	}
+	keys := make([]readmodel.VerificationKey, 0, len(entries))
+	for _, entry := range entries {
+		keys = append(keys, readmodel.VerificationKey{
+			KID: entry.KID,
+			PEM: jwt.NormalizeVerificationPEM(entry.PEM),
+		})
+	}
+	return keys, nil
 }

@@ -103,6 +103,7 @@ type providerErrorBody struct {
 	Type    string `json:"type"`
 	Code    string `json:"code"`
 	Status  string `json:"status"`
+	Param   string `json:"param"`
 	Message string `json:"message"`
 }
 
@@ -126,4 +127,30 @@ func BodyCarriesRetryableError(body []byte) bool {
 		}
 	}
 	return false
+}
+
+// BodyRequiresReasoningEffortNone reports whether OpenAI rejected function
+// tools because the model's default reasoning effort is incompatible with the
+// Chat Completions surface.
+func BodyRequiresReasoningEffortNone(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var env providerErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil || env.Error == nil {
+		return false
+	}
+	if env.Error.Type != "" && !strings.EqualFold(env.Error.Type, "invalid_request_error") {
+		return false
+	}
+	if env.Error.Param != "" && !strings.EqualFold(env.Error.Param, "reasoning_effort") {
+		return false
+	}
+	message := strings.ToLower(env.Error.Message)
+	return strings.Contains(message, "function tools") &&
+		strings.Contains(message, "reasoning_effort") &&
+		strings.Contains(message, "not supported") &&
+		(strings.Contains(message, "set reasoning_effort to 'none'") ||
+			strings.Contains(message, `set reasoning_effort to "none"`) ||
+			strings.Contains(message, "set reasoning_effort to none"))
 }

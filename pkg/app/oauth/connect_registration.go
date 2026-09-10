@@ -30,7 +30,15 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
+		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
+			return effective, nil
+		}
+		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		if err != nil {
+			return nil, err
+		}
+		return manualAuth(effective, meta), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -49,7 +57,15 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
+		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
+			return effective, nil
+		}
+		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		if err != nil {
+			return nil, err
+		}
+		return manualAuth(effective, meta), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -113,6 +129,19 @@ func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *Reg
 	out := *cfg
 	out.ClientID = client.ClientID
 	out.ClientSecret = client.ClientSecret
+	out.AuthorizeURL = meta.AuthorizationEndpoint
+	out.TokenURL = meta.TokenEndpoint
+	if len(out.Scopes) == 0 {
+		out.Scopes = meta.ScopesSupported
+	}
+	if out.Resource == "" {
+		out.Resource = meta.Resource
+	}
+	return &out
+}
+
+func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registrydomain.MCPAuth {
+	out := *cfg
 	out.AuthorizeURL = meta.AuthorizationEndpoint
 	out.TokenURL = meta.TokenEndpoint
 	if len(out.Scopes) == 0 {

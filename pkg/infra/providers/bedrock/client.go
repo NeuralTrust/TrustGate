@@ -28,6 +28,7 @@ import (
 	"time"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -81,9 +82,9 @@ func (c *client) Completions(
 	cfg *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
-	model := c.resolveModel(reqBody, cfg)
-	if model == "" {
-		return nil, fmt.Errorf("model is required")
+	model, err := c.requireModel(reqBody, cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	reqBody = stripBedrockFields(reqBody)
@@ -113,9 +114,9 @@ func (c *client) Embeddings(
 	cfg *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
-	model := c.resolveModel(reqBody, cfg)
-	if model == "" {
-		return nil, fmt.Errorf("model is required")
+	model, err := c.requireModel(reqBody, cfg)
+	if err != nil {
+		return nil, err
 	}
 	if !isTitanEmbedModel(model) {
 		return nil, fmt.Errorf("bedrock embeddings support Titan embed models only, got %q", model)
@@ -297,9 +298,9 @@ func (c *client) CompletionsStream(
 	cfg *providers.Config,
 	reqBody []byte,
 ) (iter.Seq2[[]byte, error], error) {
-	model := c.resolveModel(reqBody, cfg)
-	if model == "" {
-		return nil, fmt.Errorf("model is required")
+	model, err := c.requireModel(reqBody, cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	reqBody = stripBedrockFields(reqBody)
@@ -518,8 +519,17 @@ func stripBedrockFields(body []byte) []byte {
 	return out
 }
 
-// Cross-format adaptation strips the model from the body (Bedrock resolves it
-// from the InvokeModel path), so it falls back to cfg.
+func (c *client) requireModel(reqBody []byte, cfg *providers.Config) (string, error) {
+	model := c.resolveModel(reqBody, cfg)
+	if model == "" {
+		return "", fmt.Errorf("model is required")
+	}
+	if err := modelmatch.RequireConcrete("model", model); err != nil {
+		return "", err
+	}
+	return model, nil
+}
+
 func (c *client) resolveModel(reqBody []byte, cfg *providers.Config) string {
 	if modelID, err := extractBedrockModelID(reqBody); err == nil && modelID != "" {
 		return modelID

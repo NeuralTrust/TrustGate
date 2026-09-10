@@ -107,7 +107,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 198, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
 
 	multi, self := 0, 0
 	for _, s := range servers {
@@ -150,8 +150,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 
 	// Canaries: a change in these counts means entries moved between the two
 	// answers, which is worth looking at deliberately.
-	require.Equal(t, 96, multi, "multi_instance count changed")
-	require.Equal(t, 114, self, "self_service count changed")
+	require.Equal(t, 98, multi, "multi_instance count changed")
+	require.Equal(t, 115, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth

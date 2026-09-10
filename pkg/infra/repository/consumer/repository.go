@@ -139,7 +139,12 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries *domain.RegistryBindings) error {
+func (r *Repository) Update(
+	ctx context.Context,
+	c *domain.Consumer,
+	registries *domain.RegistryBindings,
+	auths *[]ids.AuthID,
+) error {
 	if c == nil {
 		return errors.New("consumer repository: nil consumer")
 	}
@@ -203,6 +208,9 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		if err := replaceRegistryLinks(ctx, tx, c, registries); err != nil {
 			return err
 		}
+		if err := replaceAuthLinks(ctx, tx, c, auths); err != nil {
+			return err
+		}
 		return ensureRegistryRefsAssociated(ctx, tx, c)
 	})
 }
@@ -228,6 +236,46 @@ func replaceRegistryLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, re
 		weight := clampRegistryWeight(registries.Weights[registryID])
 		if _, err := tx.Exec(ctx, upsertLink, c.ID, registryID, weight, position); err != nil {
 			return mapPgError(err)
+		}
+	}
+	return nil
+}
+
+// replaceAuthLinks makes consumer_auth match the requested set. The insert
+// selects the auth from the consumer's own gateway, so the statement itself is
+// what enforces tenant isolation: an auth moved or deleted between the
+// updater's validation and this commit matches nothing and the write is
+// rejected, rather than cross-attaching on any caller of Update that skips the
+// updater (RUN-1501).
+func replaceAuthLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, auths *[]ids.AuthID) error {
+	if auths == nil {
+		return nil
+	}
+	const detachRemoved = `
+		DELETE FROM consumer_auth
+		 WHERE consumer_id = $1
+		   AND auth_id <> ALL($2::uuid[])`
+	keep := ids.ToUUIDs(*auths)
+	if keep == nil {
+		keep = []uuid.UUID{}
+	}
+	if _, err := tx.Exec(ctx, detachRemoved, c.ID, keep); err != nil {
+		return mapPgError(err)
+	}
+	// The no-op DO UPDATE keeps an already-attached auth reporting one affected
+	// row, so re-attaching what the consumer already holds stays idempotent and
+	// only a genuinely unmatched auth reports zero.
+	const attachLink = `
+		INSERT INTO consumer_auth (consumer_id, auth_id)
+		SELECT $1, id FROM auths WHERE id = $2 AND gateway_id = $3
+		ON CONFLICT (consumer_id, auth_id) DO UPDATE SET auth_id = EXCLUDED.auth_id`
+	for _, authID := range *auths {
+		cmd, err := tx.Exec(ctx, attachLink, c.ID, authID, c.GatewayID)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: auth %s does not belong to the consumer's gateway", commonerrors.ErrConflict, authID)
 		}
 	}
 	return nil

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -31,20 +32,25 @@ import (
 
 type proxyMiddlewares struct {
 	dig.In
-	PanicRecover    *middleware.PanicRecoverMiddleware
-	AccessLog       *middleware.AccessLogMiddleware
-	SecurityHeaders *middleware.SecurityHeadersMiddleware
-	Session         *middleware.SessionMiddleware
-	Auth            *middleware.AuthMiddleware
-	Metrics         *middleware.MetricsMiddleware
+	PanicRecover       *middleware.PanicRecoverMiddleware
+	AccessLog          *middleware.AccessLogMiddleware
+	SecurityHeaders    *middleware.SecurityHeadersMiddleware
+	Session            *middleware.SessionMiddleware
+	Auth               *middleware.AuthMiddleware
+	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
+	Metrics            *middleware.MetricsMiddleware
 }
 
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
+	// HybridGatewayGuard sits right after Auth (which resolves the gateway) and
+	// before Metrics so a refused hybrid gateway emits no telemetry event and no
+	// plugin or forwarder ever sees its payload.
 	return middleware.NewTransport(
 		m.SecurityHeaders,
 		m.PanicRecover,
 		m.AccessLog,
 		m.Auth,
+		m.HybridGatewayGuard,
 		m.Session,
 		m.Metrics,
 	)
@@ -52,10 +58,12 @@ func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 
 type proxyRouterParams struct {
 	dig.In
-	Transport     *middleware.Transport `name:"proxy"`
-	HealthHandler *apihandler.HealthHandler
-	ProxyHandler  *proxyhttp.ForwardedHandler
-	OpsMetrics    *o11y.Provider
+	Transport      *middleware.Transport `name:"proxy"`
+	HealthHandler  *apihandler.HealthHandler
+	ProxyHandler   *proxyhttp.ForwardedHandler
+	Diagnostics    *diagnosticshttp.TestConnectionHandler
+	RegistryModels *diagnosticshttp.ListRegistryModelsHandler
+	OpsMetrics     *o11y.Provider
 }
 
 type proxyServerParams struct {
@@ -72,7 +80,8 @@ func ServerProxy(c *container.Container) error {
 	if err := c.Provide(
 		func(p proxyRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneProxy)
-			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler, ops)
+			return router.NewProxyRouter(
+				p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics, p.RegistryModels)
 		},
 		dig.Name("proxy"),
 	); err != nil {

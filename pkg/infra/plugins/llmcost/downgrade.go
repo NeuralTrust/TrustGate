@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -35,7 +36,7 @@ func ResolveDowngrade(provider, target string, allowed []string) (string, bool) 
 	if err != nil {
 		return "", false
 	}
-	if intent.PoolAlias != "" || intent.Model == "" {
+	if intent.PoolAlias != "" || intent.Model == "" || modelmatch.IsPattern(intent.Model) {
 		return "", false
 	}
 	if intent.Provider != "" && !strings.EqualFold(intent.Provider, provider) {
@@ -48,12 +49,8 @@ func ResolveDowngrade(provider, target string, allowed []string) (string, bool) 
 }
 
 func modelAllowed(model string, allowed []string) bool {
-	for _, m := range allowed {
-		if m == model {
-			return true
-		}
-	}
-	return false
+	_, ok := modelmatch.MatchAny(model, allowed)
+	return ok
 }
 
 // ApplyDowngrade rewrites the request body to target when the downgrade is
