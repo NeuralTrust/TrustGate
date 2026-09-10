@@ -185,6 +185,43 @@ func TestConnectionToolCallRequiresPrincipalAndValidOrigin(t *testing.T) {
 	require.ErrorIs(t, err, appmcp.ErrConnectionToolUnavailable)
 }
 
+func TestConnectionToolCallSatisfiesPublishedOutputSchema(t *testing.T) {
+	t.Parallel()
+	gw := &recordingGateway{
+		ticket:   "ticket",
+		statuses: []appoauth.ProviderStatus{{Provider: "notion", Registry: "notion-mcp"}},
+	}
+	tool, err := appmcp.NewConnectionTool(gw)
+	require.NoError(t, err)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Slug:      "research",
+	}}
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+
+	defs := tool.Definitions(ctx, rc)
+	require.Len(t, defs, 1)
+	schema, ok := marshalTool(t, defs[0])["outputSchema"].(map[string]any)
+	require.True(t, ok)
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, schema["additionalProperties"])
+
+	raw, err := tool.Call(ctx, rc, "https://mcp.example.com", "trustgate_connect_notion")
+	require.NoError(t, err)
+	var result struct {
+		StructuredContent map[string]string `json:"structuredContent"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.NotEmpty(t, result.StructuredContent)
+	for key := range result.StructuredContent {
+		require.Contains(t, properties, key, "structuredContent key %q missing from outputSchema", key)
+	}
+	for _, required := range schema["required"].([]any) {
+		require.Contains(t, result.StructuredContent, required.(string))
+	}
+}
+
 func TestConnectionToolCallWrapsTicketFailure(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("store unavailable")
