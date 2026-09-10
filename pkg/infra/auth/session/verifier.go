@@ -111,7 +111,7 @@ func (v *Verifier) Verify(_ context.Context, raw string) (*identity.Principal, e
 	}
 	return &identity.Principal{
 		Subject:  subject,
-		Method:   identity.MethodJWT,
+		Method:   identity.MethodOAuth,
 		Issuer:   v.issuer,
 		Claims:   map[string]any(claims),
 		Scopes:   scopes,

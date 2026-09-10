@@ -39,9 +39,12 @@ func Consumer(c *container.Container) error {
 }
 
 func provideConsumerRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *consumerrepo.Repository {
 		return consumerrepo.NewRepository(conn, appender)
-	})
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r })
 }
 
 // provideConsumerRepositoryViews exposes the consumer repository under its

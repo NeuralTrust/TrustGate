@@ -410,7 +410,7 @@ func newAuthTestAppWithResolver(
 ) *fiber.App {
 	t.Helper()
 	playground := resolver.NewPlaygroundIdentityResolver(
-		jwt.NewJwtManager(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}),
+		jwt.NewPlaygroundVerifier(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}, nil),
 	)
 	apiKey := resolver.NewAPIKeyIdentityResolver()
 	oauth2 := resolver.NewOAuth2IdentityResolver(

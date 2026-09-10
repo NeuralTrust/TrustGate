@@ -31,7 +31,9 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, b *Registry) error
 	Update(ctx context.Context, b *Registry) error
-	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error
+	// Delete removes the registry and reports the consumer routing it had to
+	// prune to do so, which no foreign key can cascade.
+	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) (PruneReport, error)
 	FindByID(ctx context.Context, id ids.RegistryID) (*Registry, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) ([]*Registry, error)
 	List(ctx context.Context, filter ListFilter) (items []*Registry, total int, err error)

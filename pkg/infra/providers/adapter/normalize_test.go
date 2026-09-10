@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -371,5 +372,62 @@ func TestIsEmptyOrNull(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expect, isEmptyOrNull(tt.input))
 		})
+	}
+}
+
+func TestPrefersMaxCompletionTokens_ClassifiesEverySupportedProvider(t *testing.T) {
+	for _, p := range provider.Supported() {
+		want := p == provider.OpenAI || p == provider.Azure
+		assert.Equal(t, want, prefersMaxCompletionTokens(p), p)
+	}
+}
+
+func TestNormalizeRequestForProvider_TokenParamKey(t *testing.T) {
+	openaiWire := []string{provider.OpenAI, provider.Azure}
+	others := []string{provider.Cerebras, provider.OpenAICompatible, provider.Groq, provider.DeepSeek, provider.XAI, provider.OpenRouter}
+
+	tests := []struct {
+		name              string
+		providers         []string
+		target            Format
+		in                string
+		wantMaxTokens     any
+		wantMaxCompletion any
+		byteIdentical     bool
+	}{
+		{name: "max_tokens moves to max_completion_tokens", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":10,"messages":[]}`, wantMaxCompletion: 10},
+		{name: "client max_completion_tokens wins over max_tokens", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":10,"max_completion_tokens":20,"messages":[]}`, wantMaxCompletion: 20},
+		{name: "null max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":null,"messages":[]}`, byteIdentical: true},
+		{name: "zero max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":0,"messages":[]}`, byteIdentical: true},
+		{name: "string max_tokens is left alone", providers: openaiWire, in: `{"model":"gpt-5","max_tokens":"100","messages":[]}`, byteIdentical: true},
+		{name: "absent max_tokens is a no-op", providers: openaiWire, in: `{"model":"gpt-5","messages":[]}`, byteIdentical: true},
+		{name: "other openai-wire providers keep max_tokens", providers: others, in: `{"model":"m","max_tokens":10,"messages":[]}`, wantMaxTokens: 10},
+		{name: "responses api is untouched", providers: []string{provider.OpenAI}, target: FormatOpenAIResponses, in: `{"model":"gpt-5","max_tokens":10,"input":"hi"}`, byteIdentical: true},
+	}
+
+	for _, tc := range tests {
+		for _, p := range tc.providers {
+			t.Run(tc.name+"/"+p, func(t *testing.T) {
+				target := tc.target
+				if target == "" {
+					target = ResolveTargetFormat(p, nil)
+				}
+				out := NormalizeRequestForProvider(p, target, []byte(tc.in))
+				if tc.byteIdentical {
+					assert.Equal(t, tc.in, string(out))
+					return
+				}
+				var got map[string]any
+				require.NoError(t, json.Unmarshal(out, &got))
+				if tc.wantMaxTokens != nil {
+					assert.EqualValues(t, tc.wantMaxTokens, got["max_tokens"])
+					assert.NotContains(t, got, "max_completion_tokens")
+				}
+				if tc.wantMaxCompletion != nil {
+					assert.EqualValues(t, tc.wantMaxCompletion, got["max_completion_tokens"])
+					assert.NotContains(t, got, "max_tokens")
+				}
+			})
+		}
 	}
 }

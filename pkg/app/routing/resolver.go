@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
 
 const (
@@ -88,7 +89,7 @@ func inlineCandidate(
 			Sources:  []string{source},
 		}
 	}
-	defaultModel := policy.Default
+	defaultModel := concreteModel(policy.Default)
 	if defaultModel == "" {
 		defaultModel = pinned[reg.ID]
 	}
@@ -148,12 +149,24 @@ func memberAllowed(member consumerdomain.LBPoolMember, policy consumerdomain.Mod
 
 func memberDefault(member consumerdomain.LBPoolMember, policy consumerdomain.ModelPolicy) string {
 	if len(member.Models) == 0 {
-		return policy.Default
+		return concreteModel(policy.Default)
 	}
 	for _, model := range member.Models {
 		if model == policy.Default {
-			return policy.Default
+			return concreteModel(policy.Default)
 		}
 	}
-	return member.Models[0]
+	for _, model := range member.Models {
+		if !modelmatch.IsPattern(model) {
+			return model
+		}
+	}
+	return concreteModel(policy.Default)
+}
+
+func concreteModel(model string) string {
+	if modelmatch.IsPattern(model) {
+		return ""
+	}
+	return model
 }

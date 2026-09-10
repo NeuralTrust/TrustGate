@@ -20,7 +20,9 @@ import (
 	"strings"
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -62,9 +64,12 @@ func WantsEventStream(c *fiber.Ctx) bool {
 // transport. Federation skips upstreams pending consent, so a user who connects
 // an account on the connect page gains tools without the MCP session knowing:
 // the client cached its tool list at handshake time and nothing invalidates it.
-// This stream watches the caller's stored credentials and pushes
-// notifications/tools/list_changed when they change, which is the only signal
-// that makes a client re-list without reconnecting.
+// The same is true of an admin attaching or detaching a registry on a custom
+// consumer. This stream watches credentials, Store installs, and the consumer's
+// current MCP bindings, and pushes notifications/tools/list_changed when any
+// of them change — the only signal that makes a client re-list without
+// reconnecting. It also pushes one on GET open so a recycled stream still
+// refreshes a client that missed a change while the previous GET was down.
 func (h *Handler) Stream(c *fiber.Ctx) error {
 	skipMetrics(c)
 	if !WantsEventStream(c) {
@@ -76,13 +81,19 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	}
 	principal := identity.PrincipalFromContext(c.UserContext())
 	streamCtx := c.UserContext()
+	path := c.Path()
+	gatewayID, _ := appconsumer.GatewayIDFromContext(streamCtx)
 	snapshot := func() string {
 		ctx, cancel := context.WithTimeout(streamCtx, 5*time.Second)
 		defer cancel()
 		if h.surface == nil {
 			return ""
 		}
-		return h.surface.WatchSnapshot(ctx, rc, principal)
+		live := rc
+		if next := h.liveConsumer(ctx, gatewayID, path); next != nil {
+			live = next
+		}
+		return h.surface.WatchSnapshot(ctx, live, principal)
 	}
 
 	c.Set(fiber.HeaderContentType, eventStreamContentType)
@@ -111,6 +122,12 @@ func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTi
 	if !flushFrame(w, streamKeepAliveFrame) {
 		return
 	}
+	// The GET recycles every ~45s. If the surface changed while the previous
+	// stream was down, previous already equals current and a delta-only watch
+	// would stay quiet — the client keeps the tools/list from last time.
+	if !flushFrame(w, toolsListChangedFrame) {
+		return
+	}
 	poll := time.NewTicker(timings.poll)
 	defer poll.Stop()
 	keepAlive := time.NewTicker(timings.keepAlive)
@@ -135,6 +152,21 @@ func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTi
 			}
 		}
 	}
+}
+
+func (h *Handler) liveConsumer(ctx context.Context, gatewayID ids.GatewayID, path string) *appconsumer.RoutableConsumer {
+	if h == nil || h.consumers == nil || gatewayID.IsNil() {
+		return nil
+	}
+	data, err := h.consumers.FindByGateway(ctx, gatewayID)
+	if err != nil || data == nil {
+		return nil
+	}
+	rc, ok := data.MatchPath(path)
+	if !ok {
+		return nil
+	}
+	return rc
 }
 
 func flushFrame(w *bufio.Writer, frame string) bool {
