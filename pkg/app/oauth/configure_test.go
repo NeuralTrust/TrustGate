@@ -202,9 +202,12 @@ func configureFixtureGranted(t *testing.T, open bool, grants []*storeaccessdomai
 
 func (f configureFixtureT) ticket(t *testing.T, code, instanceID string, groups ...string) string {
 	t.Helper()
+	// The reason travels with the ticket: submitting the form is what files a
+	// request, and a request without one is refused.
 	id, err := f.svc.CreateTicket(context.Background(), oauth.ConfigureTicketRequest{
 		GatewayID: f.gw, PrincipalSub: "ana", ConsumerPath: appconsumer.MCPPath("dev"),
 		Code: code, InstanceID: instanceID, Groups: groups,
+		Reason: "loading the quarterly revenue model",
 	})
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
@@ -502,5 +505,28 @@ func TestConfigure_UnknownTicketFails(t *testing.T) {
 	f := configureFixture(t, true)
 	if _, err := f.svc.Page(context.Background(), "nope"); !errors.Is(err, oauth.ErrTicketNotFound) {
 		t.Fatalf("unknown ticket must fail, got %v", err)
+	}
+}
+
+// The hosted form cannot ask why, so the reason has to arrive with the ticket.
+// Without this the whole configure-then-request path was dead: the submit filed
+// a request the installer refuses for having no reason.
+func TestConfigure_CarriesTheRequestersReasonToTheRequest(t *testing.T) {
+	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
+	id := f.ticket(t, "snowflake", "", "marketing")
+
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"account_url": "acme.snowflakecomputing.com",
+		"database":    "ANALYTICS",
+	}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	rows := f.rows(t, "snowflake")
+	if len(rows) != 1 || rows[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("want one pending request, got %+v", rows)
+	}
+	if rows[0].Reason != "loading the quarterly revenue model" {
+		t.Fatalf("reason = %q, want the words the install was started with", rows[0].Reason)
 	}
 }
