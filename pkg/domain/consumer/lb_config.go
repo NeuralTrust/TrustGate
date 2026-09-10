@@ -123,6 +123,26 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 	}
 }
 
+// ValidateTierRegistries checks the smart-routing ladder against the registries
+// the consumer knows about. It runs even when the pool is disabled, so a tier
+// can never persist a registry_id that no longer resolves.
+func (l *LBConfig) ValidateTierRegistries(known map[ids.RegistryID]struct{}) error {
+	if l == nil || l.SmartRouting == nil {
+		return nil
+	}
+	for i, tier := range l.SmartRouting.Tiers {
+		if tier.RegistryID.IsNil() {
+			return fmt.Errorf("%w: smart_routing.tiers[%d].registry_id is required", ErrInvalidLBConfig, i)
+		}
+		if _, ok := known[tier.RegistryID]; !ok {
+			return fmt.Errorf(
+				"%w: smart_routing.tiers[%d].registry_id %s is not a registry of the consumer",
+				ErrInvalidLBConfig, i, tier.RegistryID)
+		}
+	}
+	return nil
+}
+
 func (l *LBConfig) validateRouteIdentity() error {
 	type routeKey struct {
 		registryID ids.RegistryID

@@ -248,6 +248,9 @@ func (c *Consumer) Validate() error {
 	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
 		return err
 	}
+	if err := c.LBConfig.ValidateTierRegistries(c.knownRegistryIDs()); err != nil {
+		return err
+	}
 	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
 		return err
 	}
