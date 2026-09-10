@@ -16,8 +16,17 @@ package adapter
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var maxTokensAtMost = regexp.MustCompile(`(?i)supports at most (\d+)`)
+var maxTokenParams = map[string]struct{}{
+	"max_tokens":            {},
+	"max_completion_tokens": {},
+	"max_output_tokens":     {},
+}
 
 var retryableErrorMarkers = []string{
 	"overloaded",
@@ -153,4 +162,33 @@ func BodyRequiresReasoningEffortNone(body []byte) bool {
 		(strings.Contains(message, "set reasoning_effort to 'none'") ||
 			strings.Contains(message, `set reasoning_effort to "none"`) ||
 			strings.Contains(message, "set reasoning_effort to none"))
+}
+
+// BodyExceedsMaxTokens reports the upstream output-token cap when a 400
+// complains that max_tokens (or an alias) is larger than the model allows.
+func BodyExceedsMaxTokens(body []byte) (int, bool) {
+	if len(body) == 0 {
+		return 0, false
+	}
+	var env providerErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil || env.Error == nil {
+		return 0, false
+	}
+	if env.Error.Type != "" && !strings.EqualFold(env.Error.Type, "invalid_request_error") {
+		return 0, false
+	}
+	if env.Error.Param != "" {
+		if _, ok := maxTokenParams[strings.ToLower(env.Error.Param)]; !ok {
+			return 0, false
+		}
+	}
+	match := maxTokensAtMost.FindStringSubmatch(env.Error.Message)
+	if len(match) != 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(match[1])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }

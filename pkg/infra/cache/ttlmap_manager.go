@@ -36,6 +36,7 @@ const (
 	// hot path after the first lookup.
 	CatalogModelTTLName   = "catalog_model"
 	CatalogListingTTLName = "catalog_listing"
+	OutputLimitTTLName    = "output_limit"
 	ConsumerPathTTLName   = "consumer_path"
 	MCPToolsTTLName       = "mcp_tools"
 )
@@ -51,6 +52,7 @@ const (
 	LoadBalancerCacheTTL   = 5 * time.Minute
 	CatalogModelCacheTTL   = 24 * time.Hour
 	CatalogListingCacheTTL = 24 * time.Hour
+	OutputLimitCacheTTL    = 24 * time.Hour
 	MCPToolsCacheTTL       = 5 * time.Minute
 )
 

@@ -128,6 +128,41 @@ func TestInvokeStream_RetriesReasoningToolsWithoutEffort(t *testing.T) {
 	assert.Contains(t, got, `"type":"message_stop"`)
 }
 
+func TestInvokeStream_RetriesMaxTokensOnce(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`data: {"id":"chatcmpl-test","choices":[{"index":0,"delta":{"content":"ok"}}]}`),
+		{},
+		[]byte("data: [DONE]"),
+	}
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":32000`)
+		})).
+		Return(nil, registrydomain.NewBackendError(400, []byte(maxTokensTooLarge))).
+		Once()
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+			return strings.Contains(string(body), `"max_completion_tokens":16384`)
+		})).
+		Return(seqOf(lines...), nil).
+		Once()
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger(), appproxy.WithCatalog(stubCatalog{}))
+	req := &infracontext.RequestContext{
+		Body:         []byte(`{"model":"unknown-model","max_tokens":32000,"messages":[{"role":"user","content":"hi"}]}`),
+		SourceFormat: string(adapter.FormatAnthropic),
+	}
+
+	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"16384"}, resp.Headers["X-Max-Tokens-Clamped"])
+	got := strings.Join(collectStream(t, resp.Stream), "\n")
+	assert.Contains(t, got, "ok")
+}
+
 func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
 	const defaultModel = "gpt-4o-mini"
 	client := providermocks.NewClient(t)

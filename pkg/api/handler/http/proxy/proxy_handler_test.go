@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -475,6 +476,88 @@ func TestHandle_InvalidRequestPayload(t *testing.T) {
 	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request" {
 		t.Fatalf("error = %q, want invalid_request", eb.Error)
 	}
+}
+
+func TestHandle_InvalidRequestPayload_AnthropicEnvelope(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrInvalidRequestPayload).
+		Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"type":"error"`) {
+		t.Fatalf("body = %s, want anthropic error envelope", raw)
+	}
+	if !strings.Contains(string(raw), `"invalid_request_error"`) {
+		t.Fatalf("body = %s, want invalid_request_error", raw)
+	}
+}
+
+func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
+	stream := func(yield func([]byte, error) bool) {
+		if !yield([]byte("data: a"), nil) {
+			return
+		}
+		_ = yield(nil, errors.New("boom"))
+	}
+
+	t.Run("messages", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "event: error") {
+			t.Fatalf("body = %s, want event: error", body)
+		}
+		if !strings.Contains(string(body), `"type":"error"`) {
+			t.Fatalf("body = %s, want type error", body)
+		}
+	})
+
+	t.Run("chat completions", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), `"type":"upstream_error"`) {
+			t.Fatalf("body = %s, want openai stream error", body)
+		}
+		if strings.Contains(string(body), "event: error") {
+			t.Fatalf("openai stream must not emit event: error")
+		}
+	})
 }
 
 func TestHandle_CapabilityNotSupported(t *testing.T) {
