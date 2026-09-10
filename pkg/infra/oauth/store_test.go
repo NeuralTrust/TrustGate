@@ -260,3 +260,95 @@ func TestStoreTakePendingIsSingleUse(t *testing.T) {
 		t.Fatal("a consumed state must not be consumable again")
 	}
 }
+
+// TestStoreGatewayClientTTLIsSlidingOnRead verifies the thirty-day sliding TTL
+// on dynamically registered clients. The RUN-1501 report claimed dynamic client
+// registration has no expiry or cleanup; it does, so no garbage collector is
+// warranted. An unused registration disappears on its own, and one that is
+// still being read stays.
+func TestStoreGatewayClientTTLIsSlidingOnRead(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SaveGatewayClient(ctx, appoauth.RegisteredGatewayClient{
+		ClientID:     "agw-abc",
+		RedirectURIs: []string{"https://app.example.com/cb"},
+	}); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	ttl := mr.TTL("oauth:gwclient:agw-abc")
+	if ttl != 30*24*time.Hour {
+		t.Fatalf("registration TTL = %v, want 30 days", ttl)
+	}
+
+	mr.FastForward(20 * 24 * time.Hour)
+	got, err := store.GetGatewayClient(ctx, "agw-abc")
+	if err != nil || got == nil {
+		t.Fatalf("client must survive 20 days: %v (err %v)", got, err)
+	}
+	if ttl := mr.TTL("oauth:gwclient:agw-abc"); ttl != 30*24*time.Hour {
+		t.Fatalf("TTL after a read = %v, want it refreshed to 30 days", ttl)
+	}
+
+	mr.FastForward(31 * 24 * time.Hour)
+	gone, err := store.GetGatewayClient(ctx, "agw-abc")
+	if err != nil {
+		t.Fatalf("get expired client: %v", err)
+	}
+	if gone != nil {
+		t.Fatalf("an untouched registration must expire on its own, got %+v", gone)
+	}
+}
+
+// TestStoreGatewayClientManagementKeepsTheTTLSensible covers a client that is
+// only ever managed, never used to sign anyone in: reading and updating its
+// registration through the RFC 7592 endpoints keeps it alive on the same
+// thirty-day sliding window, and deleting it withdraws it at once.
+func TestStoreGatewayClientManagementKeepsTheTTLSensible(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+	key := "oauth:gwclient:agw-managed"
+
+	client := appoauth.RegisteredGatewayClient{
+		ClientID:              "agw-managed",
+		RedirectURIs:          []string{"https://app.example.com/cb"},
+		RegistrationTokenHash: "digest",
+	}
+	if err := store.SaveGatewayClient(ctx, client); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	mr.FastForward(25 * 24 * time.Hour)
+	client.RedirectURIs = []string{"https://app.example.com/cb2"}
+	if err := store.SaveGatewayClient(ctx, client); err != nil {
+		t.Fatalf("update client: %v", err)
+	}
+	if ttl := mr.TTL(key); ttl != 30*24*time.Hour {
+		t.Fatalf("TTL after an update = %v, want 30 days", ttl)
+	}
+
+	got, err := store.GetGatewayClient(ctx, "agw-managed")
+	if err != nil || got == nil {
+		t.Fatalf("read updated client: %v (err %v)", got, err)
+	}
+	if got.RedirectURIs[0] != "https://app.example.com/cb2" || got.RegistrationTokenHash != "digest" {
+		t.Fatalf("update must replace metadata and keep the digest, got %+v", got)
+	}
+
+	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
+		t.Fatalf("delete client: %v", err)
+	}
+	gone, err := store.GetGatewayClient(ctx, "agw-managed")
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if gone != nil {
+		t.Fatalf("delete must withdraw the registration, got %+v", gone)
+	}
+	// Deleting an absent registration is not an error: a client retrying a lost
+	// DELETE must not see a failure.
+	if err := store.DeleteGatewayClient(ctx, "agw-managed"); err != nil {
+		t.Fatalf("delete is idempotent: %v", err)
+	}
+}

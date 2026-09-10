@@ -69,3 +69,65 @@ func TestConsumerAdmitsPrincipal(t *testing.T) {
 		t.Fatal("an API key is bound to one consumer already; the binding does not apply")
 	}
 }
+
+// TestConsumerAdmitsPrincipalBindsEveryBearerMethod pins the RUN-1501 split of
+// the single "jwt" method into a gateway-issued and an external-IdP value. Each
+// bearer method must still reach the consumer's client binding: a method that
+// fell through to the permissive default would let a token issued to any client
+// enter a consumer that named the clients it accepts.
+func TestConsumerAdmitsPrincipalBindsEveryBearerMethod(t *testing.T) {
+	bound := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, AuthBinding: consumerdomain.AuthBinding{
+		AllowedClientIDs: []string{"app-a"},
+	}}
+
+	tests := map[string]struct {
+		method identity.Method
+		bound  bool
+	}{
+		"a gateway-issued session token": {identity.MethodOAuth, true},
+		"an external identity provider":  {identity.MethodExternalJWT, true},
+		"the legacy undifferentiated":    {identity.MethodJWT, true},
+		"an introspected opaque token":   {identity.MethodIntrospection, true},
+		"an api key":                     {identity.MethodAPIKey, false},
+		"a client certificate":           {identity.MethodMTLS, false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			allowed := &identity.Principal{Method: tc.method, Subject: "user", Claims: map[string]any{"azp": "app-a"}}
+			refused := &identity.Principal{Method: tc.method, Subject: "user", Claims: map[string]any{"azp": "app-b"}}
+			if !consumerAdmitsPrincipal(bound, allowed) {
+				t.Fatalf("%s naming an allowed client must be admitted", name)
+			}
+			if got := consumerAdmitsPrincipal(bound, refused); got == tc.bound {
+				t.Fatalf("%s naming a disallowed client: admitted=%v, want bound=%v", name, got, tc.bound)
+			}
+		})
+	}
+}
+
+func TestMethodPredicates(t *testing.T) {
+	tests := map[identity.Method]struct {
+		bearer    bool
+		assertion bool
+	}{
+		identity.MethodOAuth:         {true, false},
+		identity.MethodExternalJWT:   {true, true},
+		identity.MethodJWT:           {true, true},
+		identity.MethodIntrospection: {true, false},
+		identity.MethodAPIKey:        {false, false},
+		identity.MethodMTLS:          {false, false},
+		identity.Method(""):          {false, false},
+	}
+
+	for method, want := range tests {
+		t.Run(string(method), func(t *testing.T) {
+			if got := method.IsBearerToken(); got != want.bearer {
+				t.Fatalf("%q.IsBearerToken() = %v, want %v", method, got, want.bearer)
+			}
+			if got := method.IsExternalIdPAssertion(); got != want.assertion {
+				t.Fatalf("%q.IsExternalIdPAssertion() = %v, want %v", method, got, want.assertion)
+			}
+		})
+	}
+}

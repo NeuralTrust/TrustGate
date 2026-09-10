@@ -571,7 +571,7 @@ func TestChain_SessionToken_ResolvesByAuthID(t *testing.T) {
 	require.Equal(t, a.ID, id.AuthID)
 	require.NotNil(t, id.Principal)
 	require.Equal(t, "user-123", id.Principal.Subject)
-	require.Equal(t, identity.MethodJWT, id.Principal.Method)
+	require.Equal(t, identity.MethodOAuth, id.Principal.Method)
 	require.Equal(t, sessionIssuer, id.Principal.Issuer)
 	require.Equal(t, 0, jwtVal.calls)
 }

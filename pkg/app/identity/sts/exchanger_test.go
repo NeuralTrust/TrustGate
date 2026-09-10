@@ -110,7 +110,7 @@ func (f *fakeIdP) Call(_ context.Context, issuer string, form url.Values) (*Toke
 func userPrincipal() *identity.Principal {
 	return &identity.Principal{
 		Subject:  "alice",
-		Method:   identity.MethodJWT,
+		Method:   identity.MethodExternalJWT,
 		Issuer:   "https://idp.example.com",
 		RawToken: "inbound-token",
 		Scopes:   []string{"mcp.access"},
@@ -324,5 +324,59 @@ func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
 	}
 	if !freshAlive {
 		t.Fatal("fresh entry must be cached")
+	}
+}
+
+// TestExchanger_ExchangeRequiresAnExternalIdPAssertion covers the RUN-1501 split
+// of identity.MethodJWT. Both exchange patterns present the principal's raw
+// token back to the customer's identity provider, so only a token that provider
+// minted is a usable assertion. A token the gateway issued at its own login is
+// not: mintSession builds fresh claims and never carries the upstream token, so
+// the raw token is the gateway's own. The legacy "jwt" value stays accepted, so
+// a principal that predates the split keeps exchanging as it did.
+func TestExchanger_ExchangeRequiresAnExternalIdPAssertion(t *testing.T) {
+	t.Parallel()
+	patterns := map[string]registrydomain.MCPExchangePattern{
+		"on-behalf-of":   registrydomain.ExchangeOBO,
+		"token-exchange": registrydomain.ExchangeTokenExchange,
+	}
+	methods := map[string]struct {
+		method    identity.Method
+		exchanges bool
+	}{
+		"an external identity provider":  {identity.MethodExternalJWT, true},
+		"the pre-split legacy value":     {identity.MethodJWT, true},
+		"a gateway-issued session token": {identity.MethodOAuth, false},
+		"an api key":                     {identity.MethodAPIKey, false},
+		"a client certificate":           {identity.MethodMTLS, false},
+	}
+
+	for patternName, pattern := range patterns {
+		for name, tc := range methods {
+			t.Run(patternName+"/"+name, func(t *testing.T) {
+				idp := &fakeIdP{token: &Token{AccessToken: "upstream", ExpiresAt: time.Now().Add(time.Hour)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, idp)
+				cfg := &registrydomain.MCPAuth{
+					Mode: registrydomain.MCPAuthModeExchange, Pattern: pattern,
+					Scope: "x/.default", Audience: "https://up.example.com",
+				}
+				p := userPrincipal()
+				p.Method = tc.method
+
+				_, err := ex.Exchange(context.Background(), p, ids.GatewayID{}, cfg, patternName+name)
+				if tc.exchanges {
+					if err != nil {
+						t.Fatalf("%s must reach the identity provider, got %v", name, err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrNoUserIdentity) {
+					t.Fatalf("%s: error = %v, want ErrNoUserIdentity", name, err)
+				}
+				if idp.gotForm != nil {
+					t.Fatalf("%s must never reach the identity provider, got form %v", name, idp.gotForm)
+				}
+			})
+		}
 	}
 }
