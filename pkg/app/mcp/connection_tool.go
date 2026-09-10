@@ -188,9 +188,10 @@ func pendingConnectionDefinition(name string, status appoauth.ProviderStatus) (T
 		"outputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"connect_url": map[string]any{"type": "string", "format": "uri"},
-				"action":      map[string]any{"type": "string", "const": "user_confirmation_required"},
-				"tool":        map[string]any{"type": "string"},
+				"connect_url":   map[string]any{"type": "string", "format": "uri"},
+				"connect_label": map[string]any{"type": "string"},
+				"action":        map[string]any{"type": "string", "const": "user_confirmation_required"},
+				"tool":          map[string]any{"type": "string"},
 			},
 			"required":             []string{"connect_url", "action"},
 			"additionalProperties": false,
