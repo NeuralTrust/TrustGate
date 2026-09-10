@@ -202,3 +202,40 @@ func TestValidateAuthConfig_PlatformUsersNeedAnInteractiveIdP(t *testing.T) {
 		t.Fatalf("nil consumer is a no-op, got %v", err)
 	}
 }
+
+// WantsSignIn is shared by the request-time auth chain and the authorize-time
+// provider selection, so its contract is pinned here rather than in either
+// caller (RUN-1501).
+func TestConsumer_WantsSignIn(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+
+	tests := []struct {
+		name string
+		c    *Consumer
+		want bool
+	}{
+		// A nil consumer means the resource matched nothing. Callers read this
+		// as "may broker a login", so it must stay false and fail closed.
+		{name: "nil consumer fails closed"},
+		{
+			name: "platform source",
+			c:    &Consumer{Type: TypeMCP, Identity: Identity{ActsForUsers: true, Source: IdentitySourcePlatform}},
+			want: true,
+		},
+		{
+			name: "app source names its own users and authenticates as a machine",
+			c:    &Consumer{Type: TypeMCP, Identity: Identity{ActsForUsers: true, Source: IdentitySourceApp}},
+		},
+		{name: "no identity", c: &Consumer{Type: TypeMCP}},
+		{name: "store consumer", c: BuildStoreConsumer(gw), want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.c.WantsSignIn(); got != tt.want {
+				t.Fatalf("WantsSignIn() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

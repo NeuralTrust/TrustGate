@@ -73,6 +73,7 @@ func TestAPIKeyConnectService_CreateTicket(t *testing.T) {
 			target.Consumer.ID,
 			authID,
 			[]string{},
+			"",
 		).
 		Return("ticket-123", nil).
 		Once()
@@ -132,6 +133,7 @@ func TestAPIKeyConnectService_CreateTicketSnapshotsProviders(t *testing.T) {
 			target.Consumer.ID,
 			authID,
 			[]string{"provider-a", "provider-z"},
+			"",
 		).
 		Return("ticket-123", nil).
 		Once()
@@ -304,6 +306,7 @@ func TestAPIKeyConnectService_CreateTicketConsumerBoundary(t *testing.T) {
 			target.Consumer.ID,
 			authID,
 			[]string{},
+			"",
 		).
 		Return("ticket-123", nil).
 		Times(100)
@@ -531,6 +534,7 @@ func TestAPIKeyConnectService_CreateTicketWrapsDependencyErrors(t *testing.T) {
 							target.Consumer.ID,
 							authID,
 							[]string{},
+							"",
 						).
 						Return("", dependencyErr).
 						Once()

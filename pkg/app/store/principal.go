@@ -78,21 +78,48 @@ type principalPreview struct {
 	registries RegistryLister
 	catalog    CatalogReader
 	vault      vaultdomain.Repository
+	health     ConnectionHealth
 }
 
 // NewPrincipalPreview wires the preview read. vault may be nil (a plane without
 // a credential store): connections then report every forwarded-auth source as
 // not linked.
+// ConnectionHealth answers whether a credential the vault holds can still be
+// redeemed. The vault is not the whole answer: a dynamically registered OAuth
+// client lives in the shared cache, and a refresh token cannot be redeemed
+// without the client it was issued to, so a credential can outlive what makes
+// it usable. Implemented by the OAuth connect service.
+type ConnectionHealth interface {
+	CredentialUsable(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (bool, error)
+}
+
+// PrincipalPreviewOption tunes NewPrincipalPreview.
+type PrincipalPreviewOption func(*principalPreview)
+
+// WithConnectionHealth lets the preview report an account as needing a
+// reconnect when its stored credential can no longer be refreshed. Without it
+// the preview answers from the vault alone, as it used to.
+func WithConnectionHealth(h ConnectionHealth) PrincipalPreviewOption {
+	return func(p *principalPreview) { p.health = h }
+}
+
 func NewPrincipalPreview(
 	installs installationdomain.Repository,
 	registries RegistryLister,
 	catalog CatalogReader,
 	vault vaultdomain.Repository,
+	opts ...PrincipalPreviewOption,
 ) (PrincipalPreview, error) {
 	if installs == nil || registries == nil || catalog == nil {
 		return nil, ErrUnavailable
 	}
-	return &principalPreview{installs: installs, registries: registries, catalog: catalog, vault: vault}, nil
+	p := &principalPreview{installs: installs, registries: registries, catalog: catalog, vault: vault}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+	return p, nil
 }
 
 func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (*PrincipalState, error) {
@@ -164,7 +191,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 			RegistryID: reg.ID,
 			Registry:   reg.Name,
 		}
-		if err := p.fillConnection(ctx, gatewayID, principalSub, &conn); err != nil {
+		if err := p.fillConnection(ctx, gatewayID, principalSub, reg, &conn); err != nil {
 			return nil, err
 		}
 		state.Connections = append(state.Connections, conn)
@@ -176,7 +203,13 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 // no refresh token counts as needing a reconnect.
 const credentialExpiryGrace = 60 * time.Second
 
-func (p *principalPreview) fillConnection(ctx context.Context, gatewayID ids.GatewayID, principalSub string, conn *PrincipalConnection) error {
+func (p *principalPreview) fillConnection(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	conn *PrincipalConnection,
+) error {
 	if p.vault == nil {
 		return nil
 	}
@@ -187,6 +220,15 @@ func (p *principalPreview) fillConnection(ctx context.Context, gatewayID ids.Gat
 		conn.AccountRef = cred.AccountRef
 		conn.ExpiresAt = cred.ExpiresAt
 		conn.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+		if !conn.NeedsReconnect && p.health != nil {
+			// A credential whose refresh can no longer be redeemed is not a
+			// connected account: the next tool call asks the user to connect.
+			// A failed check answers "usable", so a cache blip does not send
+			// everyone round the reconnect loop.
+			if usable, _ := p.health.CredentialUsable(ctx, gatewayID, reg); !usable {
+				conn.NeedsReconnect = true
+			}
+		}
 	case errors.Is(err, vaultdomain.ErrUndecryptable):
 		// The credential exists but the vault key rotated: the user must link again.
 		conn.Linked = true

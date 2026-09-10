@@ -46,10 +46,10 @@ type Reader interface {
 // Writer persists consumer aggregate lifecycle changes.
 type Writer interface {
 	Save(ctx context.Context, c *Consumer) error
-	// Update persists the consumer row and, when registries is non-nil, replaces
-	// its registry association set in the same transaction. A nil registries
-	// leaves the existing links untouched.
-	Update(ctx context.Context, c *Consumer, registries *RegistryBindings) error
+	// Update persists the consumer row and, when registries or auths is
+	// non-nil, replaces that association set in the same transaction. A nil
+	// argument leaves the existing links of that kind untouched.
+	Update(ctx context.Context, c *Consumer, registries *RegistryBindings, auths *[]ids.AuthID) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error
 }
 
@@ -64,7 +64,7 @@ type Associator interface {
 	DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 }
 
-//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=consumer_repository_mock.go --case=underscore --with-expecter
+//go:generate go run github.com/vektra/mockery/v2@v2.53.5 --name=Repository --dir=. --output=./mocks --filename=consumer_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Reader
 	Writer

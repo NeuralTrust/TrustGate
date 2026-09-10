@@ -232,6 +232,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		fixture.consumerID,
 		fixture.authID,
 		[]string{connectAuditProviderID},
+		"",
 	)
 	require.NoError(t, err)
 	require.Equal(t, completeConnectTicket(fixture), fixture.store.tickets[ticketID])
@@ -481,6 +482,7 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 		fixture.consumerID,
 		fixture.authID,
 		[]string{connectAuditProviderID},
+		"",
 	)
 	require.NoError(t, err)
 	credential, err := vaultdomain.NewCredential(
@@ -838,6 +840,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		fixture.consumerID,
 		fixture.authID,
 		[]string{connectAuditProviderID},
+		"",
 	)
 	require.NoError(t, err)
 	location, err := fixture.service.Start(
@@ -1038,6 +1041,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 					fixture.consumerID,
 					fixture.authID,
 					[]string{connectAuditProviderID},
+					"",
 				)
 				return err
 			},

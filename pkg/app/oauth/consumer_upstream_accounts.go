@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -188,17 +189,22 @@ func (s *consumerUpstreamAccounts) Link(
 	}
 	path := appconsumer.MCPPath(rc.Consumer.Slug)
 	registries := data.EffectiveRegistries(rc)
+	// A link for one server opens on that server's own card, the same page the
+	// user sees when a tool call asks them to connect — not the picker, which
+	// would offer one card and a search box for it.
+	var code string
 	if !registryID.IsNil() {
 		registries, err = onlyRegistry(registries, registryID)
 		if err != nil {
 			return nil, err
 		}
+		code = focusedCode(registries)
 	}
 	providers := forwardedProviderIDs(registries)
 	// No auth id: the admin holds no api key of this application, and the link
 	// does not need one — the accounts are the consumer's.
 	ticket, err := s.connect.CreateAppTicket(
-		ctx, gatewayID, consumerdomain.AppSubject(rc.Consumer.ID), path, rc.Consumer.ID, ids.AuthID{}, providers)
+		ctx, gatewayID, consumerdomain.AppSubject(rc.Consumer.ID), path, rc.Consumer.ID, ids.AuthID{}, providers, code)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +267,20 @@ func onlyRegistry(
 		return []*registrydomain.Registry{reg}, nil
 	}
 	return nil, fmt.Errorf("registry %s is not bound to this consumer: %w", registryID, commonerrors.ErrNotFound)
+}
+
+// focusedCode is the catalog code of a single-registry selection, which the
+// connect page matches its provider on. A custom (non-catalog) server carries
+// no code and falls back to the picker, where it is the only card.
+func focusedCode(registries []*registrydomain.Registry) string {
+	if len(registries) != 1 {
+		return ""
+	}
+	reg := registries[0]
+	if reg == nil || reg.MCPTarget == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.MCPTarget.Code)
 }
 
 func routableByID(data *appconsumer.Data, consumerID ids.ConsumerID) *appconsumer.RoutableConsumer {

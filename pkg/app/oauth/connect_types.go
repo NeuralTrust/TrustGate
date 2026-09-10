@@ -102,6 +102,11 @@ type ConnectService interface {
 	// time. authID is the api key the ticket was minted from, so revoking that
 	// key kills it; pass a nil id for a ticket an admin minted, whose authority
 	// was the admin API and which stands on the consumer alone.
+	//
+	// code is the catalog code of the one server the ticket is focused on, which
+	// opens the connect page on that server's own card instead of the picker —
+	// what an admin authorizing a single row asked for. Empty covers every
+	// forwarded server of the application, and the picker is then the point.
 	CreateAppTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
@@ -110,6 +115,7 @@ type ConnectService interface {
 		consumerID ids.ConsumerID,
 		authID ids.AuthID,
 		providers []string,
+		code string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
@@ -117,5 +123,10 @@ type ConnectService interface {
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
+	// CredentialUsable reports whether a credential stored for this registry can
+	// still be redeemed: for a dynamically registered client, that registration
+	// has to still exist. It is what keeps a reader of the vault from calling an
+	// account connected while every tool call on it asks the user to connect.
+	CredentialUsable(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (bool, error)
 	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)
 }

@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -139,14 +140,15 @@ func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
 func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T) {
 	t.Parallel()
 	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
-	gatewayID := ids.New[ids.GatewayKind]()
+	gatewayID := idp.GatewayID
 	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":    {{GatewayID: gatewayID}},
+		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":         {{GatewayID: gatewayID}},
+		"/nil-consumer/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
 	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
 
@@ -157,6 +159,17 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 	if len(meta.AuthorizationServers) != 0 {
 		t.Fatalf("expected no authorization server for an api-key consumer, got %v", meta.AuthorizationServers)
 	}
+	if len(meta.ScopesSupported) != 0 {
+		t.Fatalf("expected no scopes for an api-key consumer, got %v", meta.ScopesSupported)
+	}
+
+	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/nil-consumer/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 0 {
+		t.Fatalf("expected no authorization server without a resolved consumer, got %v", meta.AuthorizationServers)
+	}
 
 	// A consumer with no credential of its own still reaches the fallback.
 	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/bare/mcp")
@@ -165,6 +178,114 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 	}
 	if len(meta.AuthorizationServers) != 1 {
 		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
+	}
+}
+
+// A consumer that acts on behalf of end users brokers logins even when a
+// residual api key is still linked: RUN-1501 had it advertised as
+// credential protected, so clients got neither an authorization server nor
+// scopes and could not sign in at all.
+func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *testing.T) {
+	t.Parallel()
+	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
+	gatewayID := idp.GatewayID
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "residual", true)
+	if err != nil {
+		t.Fatalf("build api key auth: %v", err)
+	}
+	disabledKey, err := authdomain.NewAPIKeyAuth(gatewayID, "disabled", false)
+	if err != nil {
+		t.Fatalf("build disabled api key auth: %v", err)
+	}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/users/mcp": {{
+			GatewayID: gatewayID,
+			Consumer:  mcpConsumer(gatewayID, platformUsersIdentity()),
+			Auths:     []*authdomain.Auth{apiKey, disabledKey},
+		}},
+	}}
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/users/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "https://gw.example.com" {
+		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
+	}
+	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "mcp:use" {
+		t.Fatalf("expected the gateway IdP scopes, got %v", meta.ScopesSupported)
+	}
+}
+
+// An app-source consumer's api key is its only legal credential, never a
+// residual row, so the unauthenticated document must not advertise an
+// authorization server or scopes for it: the auth chain would refuse the
+// session a client obtained by following them (RUN-1501).
+func TestProtectedResourceMetadataAppSourceConsumerAdvertisesNoLogin(t *testing.T) {
+	t.Parallel()
+	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
+	gatewayID := idp.GatewayID
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "app-key", true)
+	if err != nil {
+		t.Fatalf("build api key auth: %v", err)
+	}
+	mtls := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gatewayID,
+		Type:      authdomain.TypeMTLS,
+		Enabled:   true,
+	}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/app-key/mcp": {{
+			GatewayID: gatewayID,
+			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Auths:     []*authdomain.Auth{apiKey},
+		}},
+		"/app-mtls/mcp": {{
+			GatewayID: gatewayID,
+			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Auths:     []*authdomain.Auth{mtls},
+		}},
+	}}
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
+
+	for _, path := range []string{"/app-key/mcp", "/app-mtls/mcp"} {
+		meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com"+path)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", path, err)
+		}
+		if len(meta.AuthorizationServers) != 0 {
+			t.Fatalf("%s: expected no authorization server, got %v", path, meta.AuthorizationServers)
+		}
+		if len(meta.ScopesSupported) != 0 {
+			t.Fatalf("%s: expected no scopes, got %v", path, meta.ScopesSupported)
+		}
+	}
+}
+
+// The protected-resource document is unauthenticated, so the fallback taken
+// when the matched consumer pinned no provider must be scoped to that
+// consumer's gateway. The platform-wide lookup published the union of every
+// tenant's RequiredScopes here (RUN-1501).
+func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testing.T) {
+	t.Parallel()
+	ourIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://ours.example.com", RequiredScopes: []string{"ours:use"}})
+	otherIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://theirs.example.com", RequiredScopes: []string{"theirs:secret-project"}})
+	gatewayID := ourIdP.GatewayID
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/bare/mcp": {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, platformUsersIdentity())}},
+	}}
+	svc := NewMetadataService(
+		&fakeCredentialFinder{oauth2: []*authdomain.Auth{ourIdP, otherIdP}}, paths, nil, newMemFlowStore(),
+	)
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/bare/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "ours:use" {
+		t.Fatalf("expected only this gateway's scopes, got %v", meta.ScopesSupported)
 	}
 }
 
