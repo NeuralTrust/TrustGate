@@ -131,7 +131,11 @@ Fixed decisions:
 - **Shared registry within the gateway.** Installing a catalog entry resolves to a *single* shared
   registry per catalog code per gateway (created on first install, or pre-seeded), never one per
   user. Per-user auth stays per-principal in the vault (`vault.Find(gatewayID, principalSub,
-  provider)`), so sharing the registry never shares credentials. A per-user endpoint override (URL
+  ForwardedVaultProvider(reg))`), so sharing the registry never shares credentials. The vault key is
+  the provider plus a fingerprint of the instance's upstream resource, and the dynamically
+  registered OAuth client is cached under the same key: two instances of one code on the same
+  deployment share a credential (connect once), two on different deployments hold one each, and a
+  refresh always presents the client the token was issued to. A per-user endpoint override (URL
   variables) rides on the installation, not a separate registry. This keeps the registry count at
   ~one-per-MCP and the config-snapshot small; installations scale outside it.
 - **Role toolkits show up inside the Store.** The Store surface for a principal is

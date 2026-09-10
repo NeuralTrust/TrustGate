@@ -153,8 +153,18 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 	return &out
 }
 
+// clientKey caches a dynamically registered OAuth client under the same key the
+// credential it mints is stored under (registrydomain.ForwardedVaultProvider),
+// never under the registry id.
+//
+// A refresh token can only be redeemed by the client it was issued to. Keyed by
+// registry, two instances of one catalog code — the same provider, so one shared
+// credential — each registered their own client, and whichever instance a call
+// arrived through refreshed the other's token with the wrong client_id: the
+// upstream answered invalid_grant and the user was told their session had
+// expired while the connect page still said connected.
 func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
-	return gatewayID.String() + "|" + reg.ID.String()
+	return gatewayID.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
 }
 
 // CredentialUsable reports whether a credential stored for this registry can

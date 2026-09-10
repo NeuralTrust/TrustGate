@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -147,8 +148,20 @@ func (m *memVaultRepo) Find(_ context.Context, gw ids.GatewayID, sub, p string) 
 	return c, nil
 }
 
-func (m *memVaultRepo) ListByPrincipal(context.Context, ids.GatewayID, string) ([]*vaultdomain.Credential, error) {
-	return nil, nil
+func (m *memVaultRepo) ListByPrincipal(
+	_ context.Context,
+	gw ids.GatewayID,
+	sub string,
+) ([]*vaultdomain.Credential, error) {
+	out := make([]*vaultdomain.Credential, 0, len(m.creds))
+	for _, c := range m.creds {
+		if c.GatewayID == gw && c.PrincipalSub == sub {
+			out = append(out, c)
+		}
+	}
+	// Stable order: callers sweep this list and delete as they go.
+	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
+	return out, nil
 }
 
 func (m *memVaultRepo) Delete(_ context.Context, gw ids.GatewayID, sub, p string) error {
@@ -269,7 +282,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -394,7 +407,7 @@ func TestConnectService_OverlaysCatalogGmailModifyScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -461,7 +474,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatalf("page = %+v, want one unlinked github provider", page)
 	}
 
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "github")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "github", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -488,7 +501,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatalf("token form = %v", gotForm)
 	}
 
-	cred, err := vault.Find(ctx, gw, "alice", "github")
+	cred, err := vault.Find(ctx, gw, "alice", vaultKey(t, "github", "https://up.example.com/mcp"))
 	if err != nil {
 		t.Fatalf("vault.Find: %v", err)
 	}
@@ -507,7 +520,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatalf("page AccountRef = %q", page.Providers[0].AccountRef)
 	}
 
-	if err := svc.Disconnect(ctx, ticket, "github"); err != nil {
+	if err := svc.Disconnect(ctx, ticket, "github", ""); err != nil {
 		t.Fatalf("Disconnect: %v", err)
 	}
 	if _, err := vault.Find(ctx, gw, "alice", "github"); !errors.Is(err, vaultdomain.ErrNotFound) {
@@ -603,7 +616,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -637,7 +650,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	if tokenForm.Get("client_id") != "dcr-client-1" {
 		t.Fatalf("token client_id = %q", tokenForm.Get("client_id"))
 	}
-	cred, err := vault.Find(ctx, gw, "alice", "linear")
+	cred, err := vault.Find(ctx, gw, "alice", registrydomain.ForwardedVaultProvider(reg))
 	if err != nil || cred.AccessToken != "linear-access" {
 		t.Fatalf("vaulted credential = %+v, err = %v", cred, err)
 	}
@@ -645,7 +658,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		t.Fatalf("registrations = %d, want exactly 1 (Callback must reuse the cached client)", registrations)
 	}
 
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear"); err != nil {
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", ""); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
 	if registrations != 1 {
@@ -706,7 +719,7 @@ func TestConnectService_ManualClientDiscoversEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(context.Background(), "https://gw.example.com", ticket, "com.snowflake/mcp")
+	location, err := svc.Start(context.Background(), "https://gw.example.com", ticket, "com.snowflake/mcp", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -767,7 +780,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 	)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy"); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
+	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy", ""); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
 		t.Fatalf("error = %v, want oauth.ErrUpstreamNotDiscoverable", err)
 	}
 }
@@ -781,7 +794,7 @@ func TestConnectService_StateIsSingleUse(t *testing.T) {
 	svc, _, gw := connectFixture(t, provider.URL)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	location, _ := svc.Start(ctx, "https://gw", ticket, "github")
+	location, _ := svc.Start(ctx, "https://gw", ticket, "github", "")
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
@@ -801,7 +814,7 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 		t.Fatalf("error = %v, want oauth.ErrTicketNotFound", err)
 	}
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "slack"); !errors.Is(err, oauth.ErrProviderNotFound) {
+	if _, err := svc.Start(ctx, "https://gw", ticket, "slack", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("error = %v, want oauth.ErrProviderNotFound", err)
 	}
 }
@@ -815,7 +828,8 @@ func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
 		t.Fatalf("CreateTicket: %v", err)
 	}
 
-	dead, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "", nil, time.Now().Add(-time.Hour))
+	dead, err := vaultdomain.NewCredential(gw, "alice", vaultKey(t, "github", "https://up.example.com/mcp"),
+		"", "tok", "", nil, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
@@ -830,7 +844,8 @@ func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
 		t.Fatalf("status = %+v, want NeedsReconnect for an expired grant with no refresh token", page.Providers[0])
 	}
 
-	renewable, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "ref", nil, time.Now().Add(-time.Hour))
+	renewable, err := vaultdomain.NewCredential(gw, "alice", vaultKey(t, "github", "https://up.example.com/mcp"),
+		"", "tok", "ref", nil, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
@@ -868,7 +883,8 @@ func TestConnectService_ChainURL(t *testing.T) {
 		t.Fatalf("page resume = %q, want parked client redirect", page.ResumeURL)
 	}
 
-	cred, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "ref", nil, time.Now().Add(time.Hour))
+	cred, err := vaultdomain.NewCredential(gw, "alice", vaultKey(t, "github", "https://up.example.com/mcp"),
+		"", "tok", "ref", nil, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
@@ -899,7 +915,7 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	svc, vault, gw := connectFixture(t, "https://unused")
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
-	location, _ := svc.Start(ctx, "https://gw", ticket, "github")
+	location, _ := svc.Start(ctx, "https://gw", ticket, "github", "")
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
@@ -989,7 +1005,7 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 	}
 
 	// Start mints an authorize URL, proving forwarded auth resolves end to end.
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1058,7 +1074,7 @@ func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
 
 	// Still pinned to nothing: the ticket cannot be used to connect a provider
 	// that gets added to the consumer later.
-	if _, err := svc.Start(ctx, "https://gw", ticketID, "github"); !errors.Is(err, oauth.ErrProviderNotFound) {
+	if _, err := svc.Start(ctx, "https://gw", ticketID, "github", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("Start error = %v, want oauth.ErrProviderNotFound", err)
 	}
 }
@@ -1099,7 +1115,7 @@ func TestConnectService_PageReportsAReconnectWhenTheRegisteredClientIsGone(t *te
 	vault := &memVaultRepo{}
 	// A live credential: a fresh access token and a refresh token. Nothing about
 	// it says "reconnect".
-	cred, err := vaultdomain.NewCredential(gw, "alice", "linear", "alice@corp",
+	cred, err := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "alice@corp",
 		"at", "rt", []string{"read"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
@@ -1141,7 +1157,7 @@ func TestConnectService_PageReportsAReconnectWhenTheRegisteredClientIsGone(t *te
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear"); err != nil {
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", ""); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	statuses, err = svc.Statuses(ctx, gw, "alice", "/dev/mcp")
@@ -1181,7 +1197,7 @@ func TestConnectService_ConfiguredClientNeedsNoRegistrationCheck(t *testing.T) {
 	}})
 	store := newMemConnectStore()
 	vault := &memVaultRepo{}
-	cred, err := vaultdomain.NewCredential(gw, "alice", "notion", "alice@corp",
+	cred, err := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "alice@corp",
 		"at", "rt", []string{"read"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
@@ -1208,5 +1224,220 @@ func TestConnectService_ConfiguredClientNeedsNoRegistrationCheck(t *testing.T) {
 	}
 	if len(statuses) != 1 || !statuses[0].Linked || statuses[0].NeedsReconnect {
 		t.Fatalf("a configured client stays connected, got %+v", statuses)
+	}
+}
+
+// Two instances of one catalog code, each on its own upstream: the credential
+// belongs to the instance that was connected, and connecting one says nothing
+// about the other. Before the vault was keyed by the instance's resource, both
+// rows shared the provider's single credential, so connecting Develop reported
+// Prod as connected too and Prod's calls forwarded Develop's token.
+func TestConnectService_TwoInstancesOfOneProviderConnectSeparately(t *testing.T) {
+	t.Parallel()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "prod-access", "refresh_token": "prod-refresh", "expires_in": 3600,
+		})
+	}))
+	defer tokenServer.Close()
+
+	gw := ids.New[ids.GatewayKind]()
+	instance := func(name, upstream string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			URL:  upstream,
+			Code: "app.linear/mcp",
+			Auth: &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeForwarded, Provider: "app.linear/mcp",
+				ClientID: "cid", ClientSecret: "csecret",
+				AuthorizeURL: "https://linear.app/oauth/authorize",
+				TokenURL:     tokenServer.URL,
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		return reg
+	}
+	develop := instance("Linear Develop", "https://develop.linear.app/mcp")
+	prod := instance("Linear Prod", "https://prod.linear.app/mcp")
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{develop, prod},
+	}})
+	store := newMemConnectStore()
+	vault := &memVaultRepo{}
+	svc := oauth.NewConnectService(
+		store,
+		vault,
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	// The page offers a row per instance, each naming the one it acts on.
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if len(page.Providers) != 2 {
+		t.Fatalf("providers = %+v, want a row per instance", page.Providers)
+	}
+	if page.Providers[0].Instance == page.Providers[1].Instance {
+		t.Fatalf("both rows name the same instance: %+v", page.Providers)
+	}
+
+	// Connect the second instance, naming it: the flow must not fall back to
+	// whichever registry happens to serve the provider first.
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "app.linear/mcp", prod.ID.String())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	if _, err := svc.Callback(
+		ctx, "https://gw.example.com", "app.linear/mcp", parsed.Query().Get("state"), "the-code", "", "",
+	); err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+
+	if _, err := vault.Find(ctx, gw, "alice", registrydomain.ForwardedVaultProvider(prod)); err != nil {
+		t.Fatalf("the connected instance holds the credential: %v", err)
+	}
+	if _, err := vault.Find(ctx, gw, "alice", registrydomain.ForwardedVaultProvider(develop)); err == nil {
+		t.Fatal("connecting one instance must not connect the other")
+	}
+
+	page, err = svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page after connect: %v", err)
+	}
+	byInstance := map[string]bool{}
+	for _, status := range page.Providers {
+		byInstance[status.Instance] = status.Linked
+	}
+	if !byInstance[prod.ID.String()] {
+		t.Fatalf("the connected instance reads as linked: %+v", page.Providers)
+	}
+	if byInstance[develop.ID.String()] {
+		t.Fatalf("the other instance still reads as linked: %+v", page.Providers)
+	}
+
+	// Revoking is per instance too.
+	if err := svc.Disconnect(ctx, ticket, "app.linear/mcp", prod.ID.String()); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if _, err := vault.Find(ctx, gw, "alice", registrydomain.ForwardedVaultProvider(prod)); err == nil {
+		t.Fatal("the revoked credential is gone")
+	}
+}
+
+// A dynamically registered client is cached under the same key as the
+// credential it mints, so a refresh always redeems a token with the client it
+// was issued to. Keyed by registry instead, two instances of one provider
+// registered two clients over one shared credential and the refresh presented
+// the wrong client_id — the upstream answered invalid_grant, which the user saw
+// as an expired session on a page that still said connected.
+func TestConnectService_RegisteredClientFollowsTheCredentialNotTheRegistry(t *testing.T) {
+	t.Parallel()
+	registrations := 0
+	var tokenForm url.Values
+	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
+	otherRegistrations := 0
+	var otherTokenForm url.Values
+	otherUpstream := fakeSpecUpstream(t, &otherRegistrations, &otherTokenForm)
+
+	gw := ids.New[ids.GatewayKind]()
+	instance := func(name, upstreamURL string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			URL: upstreamURL,
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     "linear",
+				Registration: registrydomain.RegistrationAuto,
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		return reg
+	}
+	// Same deployment as `connected`, a second registry over it: one credential,
+	// so it must share the client too.
+	connected := instance("linear-mcp", upstream.URL+"/mcp")
+	sameDeployment := instance("linear-mcp-readonly", upstream.URL+"/mcp")
+	elsewhere := instance("linear-mcp-other", otherUpstream.URL+"/mcp")
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{connected, sameDeployment, elsewhere},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear", connected.ID.String()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	refreshCfg, err := svc.RefreshAuth(ctx, gw, connected)
+	if err != nil {
+		t.Fatalf("RefreshAuth for the connected instance: %v", err)
+	}
+	if refreshCfg.ClientID != "dcr-client-1" {
+		t.Fatalf("client id = %q, want the one the authorization was started with", refreshCfg.ClientID)
+	}
+
+	// The second registry over the same deployment shares the credential, so it
+	// shares the client — no second registration.
+	shared, err := svc.RefreshAuth(ctx, gw, sameDeployment)
+	if err != nil {
+		t.Fatalf("RefreshAuth for a registry on the same deployment: %v", err)
+	}
+	if shared.ClientID != refreshCfg.ClientID {
+		t.Fatalf("client id = %q, want the shared %q", shared.ClientID, refreshCfg.ClientID)
+	}
+	if registrations != 1 {
+		t.Fatalf("registrations = %d, want exactly 1 for one deployment", registrations)
+	}
+
+	// A different deployment holds a different credential, so its client is its
+	// own and is not there until it is connected in turn.
+	if _, err := svc.RefreshAuth(ctx, gw, elsewhere); !errors.Is(err, oauth.ErrNoRegisteredClient) {
+		t.Fatalf("error = %v, want oauth.ErrNoRegisteredClient for an unconnected deployment", err)
+	}
+	if otherRegistrations != 0 {
+		t.Fatalf("registrations against the other deployment = %d, want none", otherRegistrations)
 	}
 }

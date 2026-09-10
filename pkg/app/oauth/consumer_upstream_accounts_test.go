@@ -157,7 +157,8 @@ func TestConsumerUpstreamAccounts_ReportsALinkedAccount(t *testing.T) {
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 	cred, err := vaultdomain.NewCredential(
-		f.gatewayID, consumerdomain.AppSubject(f.consumerID), "com.notion/mcp", "victor@corp.com",
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID),
+		vaultKey(t, "com.notion/mcp", "https://notion.example.com/mcp"), "victor@corp.com",
 		"access", "refresh", []string{"read"}, time.Now().Add(time.Hour),
 	)
 	require.NoError(t, err)
@@ -301,7 +302,8 @@ func TestConsumerUpstreamAccounts_EveryCredentialReachesTheSameAccounts(t *testi
 		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
 	ctx := context.Background()
 	cred, err := vaultdomain.NewCredential(
-		f.gatewayID, consumerdomain.AppSubject(f.consumerID), "com.notion/mcp", "ops@corp.com",
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID),
+		vaultKey(t, "com.notion/mcp", "https://notion.example.com/mcp"), "ops@corp.com",
 		"access", "refresh", []string{"read"}, time.Now().Add(time.Hour),
 	)
 	require.NoError(t, err)
