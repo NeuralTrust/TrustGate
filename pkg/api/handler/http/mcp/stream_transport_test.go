@@ -170,3 +170,111 @@ func TestStreamPushesListChangedOverRealConnection(t *testing.T) {
 		t.Fatal("no tools/list_changed frame arrived after the account was connected")
 	}
 }
+
+type mutatingConsumerFinder struct {
+	mu   sync.Mutex
+	data *appconsumer.Data
+}
+
+func (f *mutatingConsumerFinder) FindByGateway(context.Context, ids.GatewayID) (*appconsumer.Data, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.data, nil
+}
+
+func (f *mutatingConsumerFinder) replace(data *appconsumer.Data) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.data = data
+}
+
+func TestStreamPushesListChangedWhenRegistryIsAttached(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	linear, err := registrydomain.NewMCPRegistry(gwID, "linear", "", &registrydomain.MCPTarget{
+		URL: "https://linear.example.com/mcp",
+	})
+	require.NoError(t, err)
+	notion, err := registrydomain.NewMCPRegistry(gwID, "notion", "", &registrydomain.MCPTarget{
+		URL: "https://mcp.notion.com/mcp",
+	})
+	require.NoError(t, err)
+	consumer := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	opened := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: consumer, Registries: []*registrydomain.Registry{linear}},
+	})
+	finder := &mutatingConsumerFinder{data: opened}
+
+	handler := NewHandler(nil, appmcp.NewSurfaceWatcher(nil, nil), WithConsumerFinder(finder))
+	handler.timings = streamTimings{
+		poll:      10 * time.Millisecond,
+		keepAlive: 20 * time.Millisecond,
+		lifetime:  5 * time.Second,
+	}
+
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, opened)
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: "alice", Method: identity.MethodJWT})
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	app.Get("/*", handler.Stream)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = app.Listener(listener) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	request, err := http.NewRequest(http.MethodGet, "http://"+listener.Addr().String()+"/virtual/mcp", nil)
+	require.NoError(t, err)
+	request.Header.Set("Accept", "text/event-stream")
+	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = response.Body.Close() })
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	frames := make(chan string, 1)
+	go func() {
+		reader := bufio.NewReader(response.Body)
+		var seen strings.Builder
+		for {
+			line, readErr := reader.ReadString('\n')
+			seen.WriteString(line)
+			if strings.Contains(seen.String(), "notifications/tools/list_changed") {
+				frames <- seen.String()
+				return
+			}
+			if readErr != nil {
+				frames <- seen.String()
+				return
+			}
+		}
+	}()
+
+	select {
+	case body := <-frames:
+		t.Fatalf("stream pushed before the registry was attached: %q", body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	finder.replace(appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: consumer, Registries: []*registrydomain.Registry{linear, notion}},
+	}))
+
+	select {
+	case body := <-frames:
+		require.Contains(t, body, "notifications/tools/list_changed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no tools/list_changed frame arrived after Notion was attached")
+	}
+}
