@@ -36,7 +36,7 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 
 // Handle godoc
 // @Summary      Update a consumer
-// @Description  Updates an existing consumer. The optional `registries` field replaces the whole registry association set in the same atomic request.
+// @Description  Updates an existing consumer. The optional `registries` and `auths` fields each replace the whole association set of that kind in the same atomic request, so an identity change and the auths it needs travel together.
 // @Tags         consumers
 // @Accept       json
 // @Produce      json
@@ -84,6 +84,10 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
+	authIDs, err := req.ToAuthIDs()
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
 		ID:            id,
@@ -95,6 +99,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Active:        req.Active,
 		Fallback:      fallback,
 		Registries:    registries,
+		Auths:         authIDs,
 		ModelPolicies: modelPolicies,
 		Toolkit:       toolkit,
 		FailMode:      req.ToFailMode(),

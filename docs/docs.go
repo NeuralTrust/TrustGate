@@ -888,7 +888,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` field replaces the whole registry association set in the same atomic request.",
+                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` and ` + "`" + `auths` + "`" + ` fields each replace the whole association set of that kind in the same atomic request, so an identity change and the auths it needs travel together.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4775,6 +4775,13 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AuthBindingRequest"
                         }
                     ]
+                },
+                "auths": {
+                    "description": "Auths replaces the whole auth association set: auths absent from the list\nare detached. Omit the field to leave the associations as they are; send an\nempty list to detach every auth. Detaching every auth from a consumer\nwhose users sign in widens access from the identity provider it pinned to\nany built-in default identity-provider login on this gateway. At most 64\nids.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "fail_mode": {
                     "type": "string"

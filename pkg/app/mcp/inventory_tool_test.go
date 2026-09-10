@@ -59,6 +59,7 @@ func twoServerInventory() *ToolInventory {
 			Code:     "com.notion/mcp",
 			State:    InventoryStateNeedsConnect,
 			Provider: "com.notion/mcp",
+			Cause:    ConsentCauseRegisteredClientLost,
 		},
 	}}
 }
@@ -152,6 +153,27 @@ func TestInventoryTool_ListsEveryServerAndItsState(t *testing.T) {
 	// the connection meta-tool for its account comes back with it.
 	if got := servers[1]["connect_tool"]; got != ConnectToolName("com.notion/mcp") {
 		t.Fatalf("connect_tool = %v, want %q", got, ConnectToolName("com.notion/mcp"))
+	}
+	// And why it is not serving: a client that is not told invents a reason,
+	// and it invents "the session expired" whatever happened.
+	if got := servers[1]["cause"]; got != ConsentCauseRegisteredClientLost {
+		t.Fatalf("cause = %v, want the condition behind needs_connect", got)
+	}
+	if servers[0]["cause"] != nil {
+		t.Fatalf("a ready server has no cause, got %v", servers[0]["cause"])
+	}
+}
+
+// The text body carries it too: many clients hand only the text to the model.
+func TestInventoryTool_TextBodyNamesWhyAServerIsNotConnected(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: twoServerInventory()}, nil)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	text := resultText(t, callInventory(t, tool, ""))
+	if !strings.Contains(text, ConsentCauseRegisteredClientLost) {
+		t.Fatalf("text body must name the cause, got: %s", text)
 	}
 }
 

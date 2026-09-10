@@ -974,7 +974,7 @@ func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	ticketID, err := svc.CreateAppTicket(ctx, gw, "prod", "/dev/mcp", consumerID, authID, nil)
+	ticketID, err := svc.CreateAppTicket(ctx, gw, "prod", "/dev/mcp", consumerID, authID, nil, "")
 	if err != nil {
 		t.Fatalf("CreateAppTicket: %v", err)
 	}
@@ -991,5 +991,153 @@ func TestConnectService_APIKeyTicketWithNoForwardedProviders(t *testing.T) {
 	// that gets added to the consumer later.
 	if _, err := svc.Start(ctx, "https://gw", ticketID, "github"); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("Start error = %v, want oauth.ErrProviderNotFound", err)
+	}
+}
+
+// TestConnectService_PageReportsAReconnectWhenTheRegisteredClientIsGone: the
+// vault is not the whole answer. A dynamically registered client lives in the
+// shared cache and the credential in the vault, so the credential outlives it
+// whenever that cache is lost — and the refresh token, issued to that client,
+// cannot be redeemed without it. Reading the vault alone made the connect page
+// and the Portal call such an account connected while every tool call on it was
+// refused with "user consent required".
+func TestConnectService_PageReportsAReconnectWhenTheRegisteredClientIsGone(t *testing.T) {
+	t.Parallel()
+	registrations := 0
+	var tokenForm url.Values
+	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
+		URL: upstream.URL + "/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "linear",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	vault := &memVaultRepo{}
+	// A live credential: a fresh access token and a refresh token. Nothing about
+	// it says "reconnect".
+	cred, err := vaultdomain.NewCredential(gw, "alice", "linear", "alice@corp",
+		"at", "rt", []string{"read"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	if err := vault.Upsert(context.Background(), cred); err != nil {
+		t.Fatalf("seed vault: %v", err)
+	}
+	svc := oauth.NewConnectService(
+		store,
+		vault,
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	ctx := context.Background()
+
+	// No client registered yet (the cache was lost): the account needs one.
+	statuses, err := svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want the one forwarded provider", len(statuses))
+	}
+	if !statuses[0].Linked {
+		t.Fatal("the credential is stored, so the account is linked")
+	}
+	if !statuses[0].NeedsReconnect {
+		t.Fatal("without the client its refresh token was issued to, the account needs a reconnect")
+	}
+
+	// Registering the client again (what connecting does) settles it.
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	statuses, err = svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if statuses[0].NeedsReconnect {
+		t.Fatal("with the client registered the stored credential is usable again")
+	}
+}
+
+// A registry whose OAuth client is configured has nothing that can go missing
+// in the cache, so the check must not invent a reconnect for it.
+func TestConnectService_ConfiguredClientNeedsNoRegistrationCheck(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "notion-mcp", "", &registrydomain.MCPTarget{
+		URL: "https://mcp.notion.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "notion",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "configured-client",
+			AuthorizeURL: "https://idp.example.com/a",
+			TokenURL:     "https://idp.example.com/t",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	vault := &memVaultRepo{}
+	cred, err := vaultdomain.NewCredential(gw, "alice", "notion", "alice@corp",
+		"at", "rt", []string{"read"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	if err := vault.Upsert(context.Background(), cred); err != nil {
+		t.Fatalf("seed vault: %v", err)
+	}
+	svc := oauth.NewConnectService(
+		store,
+		vault,
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	statuses, err := svc.Statuses(context.Background(), gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if len(statuses) != 1 || !statuses[0].Linked || statuses[0].NeedsReconnect {
+		t.Fatalf("a configured client stays connected, got %+v", statuses)
 	}
 }

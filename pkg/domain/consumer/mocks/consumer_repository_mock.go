@@ -770,17 +770,17 @@ func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *consumer
 	return _c
 }
 
-// Update provides a mock function with given fields: ctx, c, registries
-func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings) error {
-	ret := _m.Called(ctx, c, registries)
+// Update provides a mock function with given fields: ctx, c, registries, auths
+func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings, auths *[]ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, c, registries, auths)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error); ok {
-		r0 = rf(ctx, c, registries)
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer, *consumer.RegistryBindings, *[]ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, c, registries, auths)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -797,13 +797,14 @@ type Repository_Update_Call struct {
 //   - ctx context.Context
 //   - c *consumer.Consumer
 //   - registries *consumer.RegistryBindings
-func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}, registries interface{}) *Repository_Update_Call {
-	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c, registries)}
+//   - auths *[]ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}, registries interface{}, auths interface{}) *Repository_Update_Call {
+	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c, registries, auths)}
 }
 
-func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings)) *Repository_Update_Call {
+func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings, auths *[]ids.ID[ids.AuthKind])) *Repository_Update_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*consumer.Consumer), args[2].(*consumer.RegistryBindings))
+		run(args[0].(context.Context), args[1].(*consumer.Consumer), args[2].(*consumer.RegistryBindings), args[3].(*[]ids.ID[ids.AuthKind]))
 	})
 	return _c
 }
@@ -813,7 +814,7 @@ func (_c *Repository_Update_Call) Return(_a0 error) *Repository_Update_Call {
 	return _c
 }
 
-func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error) *Repository_Update_Call {
+func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer, *consumer.RegistryBindings, *[]ids.ID[ids.AuthKind]) error) *Repository_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }
