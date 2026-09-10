@@ -43,7 +43,6 @@ func fullModules() []container.Option {
 		container.WithModule(Registry),
 		container.WithModule(Consumer),
 		container.WithModule(Catalog),
-		container.WithModule(Store),
 		container.WithModule(Providers),
 		container.WithModule(RateLimit),
 		container.WithModule(Proxy),

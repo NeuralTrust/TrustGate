@@ -45,10 +45,13 @@ type Snapshot struct {
 	Auths         []*Auth                `protobuf:"bytes,6,rep,name=auths,proto3" json:"auths,omitempty"`
 	Providers     []*Provider            `protobuf:"bytes,8,rep,name=providers,proto3" json:"providers,omitempty"`
 	CatalogModels []*CatalogModel        `protobuf:"bytes,9,rep,name=catalog_models,json=catalogModels,proto3" json:"catalog_models,omitempty"`
-	StoreGrants   []*StoreGrant          `protobuf:"bytes,10,rep,name=store_grants,json=storeGrants,proto3" json:"store_grants,omitempty"`
-	StorePolicies []*StorePolicy         `protobuf:"bytes,11,rep,name=store_policies,json=storePolicies,proto3" json:"store_policies,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Public keys data planes use to verify RS256 playground tokens minted by
+	// the control plane. Verification material only — nothing here can sign.
+	PlaygroundTokenKeys []*VerificationKey `protobuf:"bytes,10,rep,name=playground_token_keys,json=playgroundTokenKeys,proto3" json:"playground_token_keys,omitempty"`
+	StoreGrants         []*StoreGrant      `protobuf:"bytes,12,rep,name=store_grants,json=storeGrants,proto3" json:"store_grants,omitempty"`
+	StorePolicies       []*StorePolicy     `protobuf:"bytes,13,rep,name=store_policies,json=storePolicies,proto3" json:"store_policies,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Snapshot) Reset() {
@@ -137,6 +140,13 @@ func (x *Snapshot) GetCatalogModels() []*CatalogModel {
 	return nil
 }
 
+func (x *Snapshot) GetPlaygroundTokenKeys() []*VerificationKey {
+	if x != nil {
+		return x.PlaygroundTokenKeys
+	}
+	return nil
+}
+
 func (x *Snapshot) GetStoreGrants() []*StoreGrant {
 	if x != nil {
 		return x.StoreGrants
@@ -151,6 +161,58 @@ func (x *Snapshot) GetStorePolicies() []*StorePolicy {
 	return nil
 }
 
+type VerificationKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kid           string                 `protobuf:"bytes,1,opt,name=kid,proto3" json:"kid,omitempty"`
+	Pem           string                 `protobuf:"bytes,2,opt,name=pem,proto3" json:"pem,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerificationKey) Reset() {
+	*x = VerificationKey{}
+	mi := &file_snapshot_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerificationKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerificationKey) ProtoMessage() {}
+
+func (x *VerificationKey) ProtoReflect() protoreflect.Message {
+	mi := &file_snapshot_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerificationKey.ProtoReflect.Descriptor instead.
+func (*VerificationKey) Descriptor() ([]byte, []int) {
+	return file_snapshot_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *VerificationKey) GetKid() string {
+	if x != nil {
+		return x.Kid
+	}
+	return ""
+}
+
+func (x *VerificationKey) GetPem() string {
+	if x != nil {
+		return x.Pem
+	}
+	return ""
+}
+
 type Gateway struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
@@ -160,7 +222,7 @@ type Gateway struct {
 
 func (x *Gateway) Reset() {
 	*x = Gateway{}
-	mi := &file_snapshot_proto_msgTypes[1]
+	mi := &file_snapshot_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -172,7 +234,7 @@ func (x *Gateway) String() string {
 func (*Gateway) ProtoMessage() {}
 
 func (x *Gateway) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[1]
+	mi := &file_snapshot_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -185,7 +247,7 @@ func (x *Gateway) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Gateway.ProtoReflect.Descriptor instead.
 func (*Gateway) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{1}
+	return file_snapshot_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Gateway) GetJson() []byte {
@@ -204,7 +266,7 @@ type Consumer struct {
 
 func (x *Consumer) Reset() {
 	*x = Consumer{}
-	mi := &file_snapshot_proto_msgTypes[2]
+	mi := &file_snapshot_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -216,7 +278,7 @@ func (x *Consumer) String() string {
 func (*Consumer) ProtoMessage() {}
 
 func (x *Consumer) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[2]
+	mi := &file_snapshot_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -229,7 +291,7 @@ func (x *Consumer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Consumer.ProtoReflect.Descriptor instead.
 func (*Consumer) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{2}
+	return file_snapshot_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Consumer) GetJson() []byte {
@@ -248,7 +310,7 @@ type Registry struct {
 
 func (x *Registry) Reset() {
 	*x = Registry{}
-	mi := &file_snapshot_proto_msgTypes[3]
+	mi := &file_snapshot_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -260,7 +322,7 @@ func (x *Registry) String() string {
 func (*Registry) ProtoMessage() {}
 
 func (x *Registry) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[3]
+	mi := &file_snapshot_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -273,7 +335,7 @@ func (x *Registry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Registry.ProtoReflect.Descriptor instead.
 func (*Registry) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{3}
+	return file_snapshot_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Registry) GetJson() []byte {
@@ -294,7 +356,7 @@ type StoreGrant struct {
 
 func (x *StoreGrant) Reset() {
 	*x = StoreGrant{}
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -306,7 +368,7 @@ func (x *StoreGrant) String() string {
 func (*StoreGrant) ProtoMessage() {}
 
 func (x *StoreGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -319,7 +381,7 @@ func (x *StoreGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreGrant.ProtoReflect.Descriptor instead.
 func (*StoreGrant) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{4}
+	return file_snapshot_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StoreGrant) GetJson() []byte {
@@ -340,7 +402,7 @@ type StorePolicy struct {
 
 func (x *StorePolicy) Reset() {
 	*x = StorePolicy{}
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +414,7 @@ func (x *StorePolicy) String() string {
 func (*StorePolicy) ProtoMessage() {}
 
 func (x *StorePolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -365,7 +427,7 @@ func (x *StorePolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorePolicy.ProtoReflect.Descriptor instead.
 func (*StorePolicy) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{5}
+	return file_snapshot_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StorePolicy) GetJson() []byte {
@@ -384,7 +446,7 @@ type Policy struct {
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -396,7 +458,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -409,7 +471,7 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{6}
+	return file_snapshot_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Policy) GetJson() []byte {
@@ -429,7 +491,7 @@ type Auth struct {
 
 func (x *Auth) Reset() {
 	*x = Auth{}
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -441,7 +503,7 @@ func (x *Auth) String() string {
 func (*Auth) ProtoMessage() {}
 
 func (x *Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -454,7 +516,7 @@ func (x *Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Auth.ProtoReflect.Descriptor instead.
 func (*Auth) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{7}
+	return file_snapshot_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Auth) GetJson() []byte {
@@ -480,7 +542,7 @@ type Provider struct {
 
 func (x *Provider) Reset() {
 	*x = Provider{}
-	mi := &file_snapshot_proto_msgTypes[8]
+	mi := &file_snapshot_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +554,7 @@ func (x *Provider) String() string {
 func (*Provider) ProtoMessage() {}
 
 func (x *Provider) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[8]
+	mi := &file_snapshot_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +567,7 @@ func (x *Provider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Provider.ProtoReflect.Descriptor instead.
 func (*Provider) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{8}
+	return file_snapshot_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Provider) GetJson() []byte {
@@ -525,7 +587,7 @@ type CatalogModel struct {
 
 func (x *CatalogModel) Reset() {
 	*x = CatalogModel{}
-	mi := &file_snapshot_proto_msgTypes[9]
+	mi := &file_snapshot_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -537,7 +599,7 @@ func (x *CatalogModel) String() string {
 func (*CatalogModel) ProtoMessage() {}
 
 func (x *CatalogModel) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[9]
+	mi := &file_snapshot_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -550,7 +612,7 @@ func (x *CatalogModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CatalogModel.ProtoReflect.Descriptor instead.
 func (*CatalogModel) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{9}
+	return file_snapshot_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CatalogModel) GetJson() []byte {
@@ -572,7 +634,7 @@ var File_snapshot_proto protoreflect.FileDescriptor
 const file_snapshot_proto_rawDesc = "" +
 	"\n" +
 	"\x0esnapshot.proto\x12\n" +
-	"snapshotpb\"\x94\x04\n" +
+	"snapshotpb\"\xeb\x04\n" +
 	"\bSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12/\n" +
 	"\bgateways\x18\x02 \x03(\v2\x13.snapshotpb.GatewayR\bgateways\x122\n" +
@@ -583,10 +645,14 @@ const file_snapshot_proto_rawDesc = "" +
 	"\bpolicies\x18\x05 \x03(\v2\x12.snapshotpb.PolicyR\bpolicies\x12&\n" +
 	"\x05auths\x18\x06 \x03(\v2\x10.snapshotpb.AuthR\x05auths\x122\n" +
 	"\tproviders\x18\b \x03(\v2\x14.snapshotpb.ProviderR\tproviders\x12?\n" +
-	"\x0ecatalog_models\x18\t \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\x129\n" +
-	"\fstore_grants\x18\n" +
-	" \x03(\v2\x16.snapshotpb.StoreGrantR\vstoreGrants\x12>\n" +
-	"\x0estore_policies\x18\v \x03(\v2\x17.snapshotpb.StorePolicyR\rstorePoliciesJ\x04\b\a\x10\bR\x05roles\"\x1d\n" +
+	"\x0ecatalog_models\x18\t \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\x12O\n" +
+	"\x15playground_token_keys\x18\n" +
+	" \x03(\v2\x1b.snapshotpb.VerificationKeyR\x13playgroundTokenKeys\x129\n" +
+	"\fstore_grants\x18\f \x03(\v2\x16.snapshotpb.StoreGrantR\vstoreGrants\x12>\n" +
+	"\x0estore_policies\x18\r \x03(\v2\x17.snapshotpb.StorePolicyR\rstorePoliciesJ\x04\b\a\x10\bJ\x04\b\v\x10\fR\x05roles\"5\n" +
+	"\x0fVerificationKey\x12\x10\n" +
+	"\x03kid\x18\x01 \x01(\tR\x03kid\x12\x10\n" +
+	"\x03pem\x18\x02 \x01(\tR\x03pem\"\x1d\n" +
 	"\aGateway\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
 	"\bConsumer\x12\x12\n" +
@@ -621,34 +687,36 @@ func file_snapshot_proto_rawDescGZIP() []byte {
 	return file_snapshot_proto_rawDescData
 }
 
-var file_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_snapshot_proto_goTypes = []any{
-	(*Snapshot)(nil),     // 0: snapshotpb.Snapshot
-	(*Gateway)(nil),      // 1: snapshotpb.Gateway
-	(*Consumer)(nil),     // 2: snapshotpb.Consumer
-	(*Registry)(nil),     // 3: snapshotpb.Registry
-	(*StoreGrant)(nil),   // 4: snapshotpb.StoreGrant
-	(*StorePolicy)(nil),  // 5: snapshotpb.StorePolicy
-	(*Policy)(nil),       // 6: snapshotpb.Policy
-	(*Auth)(nil),         // 7: snapshotpb.Auth
-	(*Provider)(nil),     // 8: snapshotpb.Provider
-	(*CatalogModel)(nil), // 9: snapshotpb.CatalogModel
+	(*Snapshot)(nil),        // 0: snapshotpb.Snapshot
+	(*VerificationKey)(nil), // 1: snapshotpb.VerificationKey
+	(*Gateway)(nil),         // 2: snapshotpb.Gateway
+	(*Consumer)(nil),        // 3: snapshotpb.Consumer
+	(*Registry)(nil),        // 4: snapshotpb.Registry
+	(*StoreGrant)(nil),      // 5: snapshotpb.StoreGrant
+	(*StorePolicy)(nil),     // 6: snapshotpb.StorePolicy
+	(*Policy)(nil),          // 7: snapshotpb.Policy
+	(*Auth)(nil),            // 8: snapshotpb.Auth
+	(*Provider)(nil),        // 9: snapshotpb.Provider
+	(*CatalogModel)(nil),    // 10: snapshotpb.CatalogModel
 }
 var file_snapshot_proto_depIdxs = []int32{
-	1, // 0: snapshotpb.Snapshot.gateways:type_name -> snapshotpb.Gateway
-	2, // 1: snapshotpb.Snapshot.consumers:type_name -> snapshotpb.Consumer
-	3, // 2: snapshotpb.Snapshot.registries:type_name -> snapshotpb.Registry
-	6, // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
-	7, // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
-	8, // 5: snapshotpb.Snapshot.providers:type_name -> snapshotpb.Provider
-	9, // 6: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
-	4, // 7: snapshotpb.Snapshot.store_grants:type_name -> snapshotpb.StoreGrant
-	5, // 8: snapshotpb.Snapshot.store_policies:type_name -> snapshotpb.StorePolicy
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	2,  // 0: snapshotpb.Snapshot.gateways:type_name -> snapshotpb.Gateway
+	3,  // 1: snapshotpb.Snapshot.consumers:type_name -> snapshotpb.Consumer
+	4,  // 2: snapshotpb.Snapshot.registries:type_name -> snapshotpb.Registry
+	7,  // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
+	8,  // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
+	9,  // 5: snapshotpb.Snapshot.providers:type_name -> snapshotpb.Provider
+	10, // 6: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
+	1,  // 7: snapshotpb.Snapshot.playground_token_keys:type_name -> snapshotpb.VerificationKey
+	5,  // 8: snapshotpb.Snapshot.store_grants:type_name -> snapshotpb.StoreGrant
+	6,  // 9: snapshotpb.Snapshot.store_policies:type_name -> snapshotpb.StorePolicy
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_snapshot_proto_init() }
@@ -662,7 +730,7 @@ func file_snapshot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_snapshot_proto_rawDesc), len(file_snapshot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

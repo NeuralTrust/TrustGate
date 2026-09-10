@@ -16,6 +16,8 @@ package vault
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +35,8 @@ var _ domain.Repository = (*redisRepository)(nil)
 const (
 	redisKeyPrefix     = "vault"
 	redisScanBatchSize = 100
+	refreshLockTTL     = 45 * time.Second
+	refreshLockRetry   = 25 * time.Millisecond
 )
 
 var deleteCredentialScript = redis.NewScript(`
@@ -50,6 +54,13 @@ end
 return redis.call("DEL", KEYS[1])
 `)
 
+var releaseRefreshLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
 type redisRepository struct {
 	rc     *redis.Client
 	cipher domain.Encrypter
@@ -57,6 +68,40 @@ type redisRepository struct {
 
 func NewRedisRepository(rc *redis.Client, cipher domain.Encrypter) *redisRepository {
 	return &redisRepository{rc: rc, cipher: cipher}
+}
+
+func (r *redisRepository) AcquireRefreshLock(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, provider string,
+) (func(context.Context) error, error) {
+	ownerBytes := make([]byte, 16)
+	if _, err := rand.Read(ownerBytes); err != nil {
+		return nil, fmt.Errorf("vault repository: generate refresh lock owner: %w", err)
+	}
+	owner := hex.EncodeToString(ownerBytes)
+	key := refreshLockKey(gatewayID, principalSub, provider)
+	ticker := time.NewTicker(refreshLockRetry)
+	defer ticker.Stop()
+	for {
+		acquired, err := r.rc.SetNX(ctx, key, owner, refreshLockTTL).Result()
+		if err != nil {
+			return nil, fmt.Errorf("vault repository: acquire refresh lock: %w", err)
+		}
+		if acquired {
+			return func(releaseCtx context.Context) error {
+				if err := releaseRefreshLockScript.Run(releaseCtx, r.rc, []string{key}, owner).Err(); err != nil {
+					return fmt.Errorf("vault repository: release refresh lock: %w", err)
+				}
+				return nil
+			}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("vault repository: wait for refresh lock: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 type storedCredential struct {
@@ -116,6 +161,7 @@ func (r *redisRepository) Upsert(ctx context.Context, c *domain.Credential) erro
 		CreatedAt:    createdAt,
 		UpdatedAt:    time.Now().UTC(),
 	}
+	// #nosec G117 -- token fields are encrypted before this struct is marshaled.
 	payload, err := json.Marshal(stored)
 	if err != nil {
 		return fmt.Errorf("vault repository: marshal credential: %w", err)
@@ -238,6 +284,10 @@ func (r *redisRepository) decrypt(stored *storedCredential) (*domain.Credential,
 
 func redisKey(gatewayID ids.GatewayID, principalSub, provider string) string {
 	return fmt.Sprintf("%s:%s:%s:%s", redisKeyPrefix, gatewayID.String(), principalSub, provider)
+}
+
+func refreshLockKey(gatewayID ids.GatewayID, principalSub, provider string) string {
+	return fmt.Sprintf("vault-refresh-lock:%s:%s:%s", gatewayID.String(), principalSub, provider)
 }
 
 func escapeGlob(s string) string {

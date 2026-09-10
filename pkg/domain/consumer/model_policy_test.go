@@ -69,6 +69,56 @@ func TestModelPolicies_Validate(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "literal default under a pattern allow-list is valid",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-*"}, Default: "gpt-4o-mini"}},
+			wantErr:  false,
+		},
+		{
+			name:     "leading wildcard covers the default",
+			policies: ModelPolicies{be1: {Allowed: []string{"*-mini"}, Default: "gpt-4o-mini"}},
+			wantErr:  false,
+		},
+		{
+			name:     "literal and covering pattern coexist",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-4o", "gpt-*"}, Default: "gpt-4o"}},
+			wantErr:  false,
+		},
+		{
+			name:     "pattern allow-list without a default is valid",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-*"}}},
+			wantErr:  false,
+		},
+		{
+			name:     "default outside every pattern",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-*"}, Default: "claude-3"}},
+			wantErr:  true,
+		},
+		{
+			name:     "a pattern default is rejected",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-*"}, Default: "gpt-*"}},
+			wantErr:  true,
+		},
+		{
+			name:     "duplicate pattern",
+			policies: ModelPolicies{be1: {Allowed: []string{"gpt-*", "gpt-*"}}},
+			wantErr:  true,
+		},
+		{
+			name:     "bare wildcard entry is rejected",
+			policies: ModelPolicies{be1: {Allowed: []string{"*"}}},
+			wantErr:  true,
+		},
+		{
+			name:     "double wildcard entry is rejected",
+			policies: ModelPolicies{be1: {Allowed: []string{"**"}}},
+			wantErr:  true,
+		},
+		{
+			name:     "padded entry is rejected",
+			policies: ModelPolicies{be1: {Allowed: []string{" gpt-* "}}},
+			wantErr:  true,
+		},
+		{
 			name:     "default without allowed is allowed",
 			policies: ModelPolicies{be2: {Default: "any-model"}},
 			wantErr:  false,

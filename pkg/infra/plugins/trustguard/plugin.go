@@ -131,6 +131,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if !cfg.selectsStage(in.Stage) {
+		// A leg the policy excludes. Logged because "not inspected" and
+		// "inspected, nothing found" are otherwise indistinguishable from the
+		// outside: no event, no finding, no trace of the decision anywhere.
+		p.debug(ctx, "trustguard leg not selected by policy, skipping",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", cfg.Direction),
+		)
 		return passThrough(), nil
 	}
 
@@ -436,8 +444,7 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 
 func configCacheKey(settings map[string]any) string {
 	return fmt.Sprintf(
-		"%v\x00%v\x00%v\x00%v",
-		settings["inspect"],
+		"%v\x00%v\x00%v",
 		settings["direction"],
 		settings["collector_id"],
 		settings["on_error"],
@@ -570,6 +577,13 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
+	if p.logger == nil {
+		return
+	}
+	p.logger.DebugContext(ctx, msg, attrs...)
 }
 
 func (p *Plugin) error(ctx context.Context, msg string, attrs ...any) {

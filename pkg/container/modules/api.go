@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -28,6 +29,7 @@ import (
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
@@ -40,6 +42,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
@@ -48,6 +51,32 @@ import (
 type healthParams struct {
 	dig.In
 	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
+type playgroundVerifierParams struct {
+	dig.In
+	Cfg *config.Config
+	// Store is only bound on DB-less data planes, where the snapshot carries
+	// the playground verification keys published by the control plane.
+	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
+// diagnosticsVerifier builds the verifier every data-plane diagnostics probe
+// authenticates with: RS256 against the control plane's issuer keys, or HS256
+// against the local SERVER_SECRET_KEY on installs that share it. On DB-less
+// data planes the config-sync snapshot is a second, live key source, so the
+// control plane can introduce or rotate keys without the customer touching any
+// config.
+func diagnosticsVerifier(p playgroundVerifierParams) (jwt.ProxyTokenVerifier, error) {
+	static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+	if err != nil {
+		return nil, err
+	}
+	var snapshotKeys jwt.PlaygroundKeySource
+	if p.Store != nil {
+		snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
+	}
+	return jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys)), nil
 }
 
 func API(c *container.Container) error {
@@ -85,6 +114,9 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewMetricsMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewHybridGatewayGuardMiddleware); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
@@ -163,7 +195,44 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewPlaygroundIdentityResolver); err != nil {
+	if err := c.Provide(func(p playgroundVerifierParams) (*resolver.PlaygroundIdentityResolver, error) {
+		static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+		if err != nil {
+			return nil, err
+		}
+		// On DB-less data planes the config-sync snapshot is a second, live key
+		// source, so the control plane can introduce or rotate keys without the
+		// customer touching any config.
+		var snapshotKeys jwt.PlaygroundKeySource
+		if p.Store != nil {
+			snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
+		}
+		verifier := jwt.NewPlaygroundVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys))
+		return resolver.NewPlaygroundIdentityResolver(verifier), nil
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(p playgroundVerifierParams, tester appregistry.ConnectionTester) (*diagnosticshttp.TestConnectionHandler, error) {
+		verifier, err := diagnosticsVerifier(p)
+		if err != nil {
+			return nil, err
+		}
+		return diagnosticshttp.NewTestConnectionHandler(verifier, tester), nil
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		p playgroundVerifierParams,
+		finder appregistry.Finder,
+		catalog appcatalog.Service,
+		availability appcatalog.RegistryAvailability,
+	) (*diagnosticshttp.ListRegistryModelsHandler, error) {
+		verifier, err := diagnosticsVerifier(p)
+		if err != nil {
+			return nil, err
+		}
+		return diagnosticshttp.NewListRegistryModelsHandler(verifier, finder, catalog, availability), nil
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
