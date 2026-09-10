@@ -236,6 +236,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.StorePrincipal != nil {
 			store.Get("/principal", r.deps.StorePrincipal.Get)
 			store.Post("/principal/installs", r.deps.StorePrincipal.Install)
+			store.Post("/principal/connect-link", r.deps.StorePrincipal.ConnectLink)
 		}
 	}
 

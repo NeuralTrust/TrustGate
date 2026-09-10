@@ -720,58 +720,41 @@ func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
 	}
 }
 
-// A user asking their own client for a server is the other way a request gets
-// filed, so the tool takes the reason too — the approver reads the same column
-// whichever way it arrived.
-func TestStoreInstallForwardsTheReason(t *testing.T) {
-	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", Pending: true}}
+// An agent asked why the user needs a server answers from its own prompt: the
+// screenshots that prompted this had one file "Contar las iniciativas
+// existentes en Linear" as the user's justification. So the tool takes no
+// reason at all, and a client that sends one anyway is not believed.
+func TestStoreInstallNeverTakesAReasonFromTheCaller(t *testing.T) {
+	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", Status: installationdomain.StatusInstalled}}
 	tool := storeToolWithInstaller(t, installer)
 
 	_, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName,
-		json.RawMessage(`{"code":"github","reason":"  triaging platform issues  "}`))
+		json.RawMessage(`{"code":"github","reason":"triaging platform issues"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if installer.lastReason != "triaging platform issues" {
-		t.Fatalf("reason = %q, want the user's words, trimmed", installer.lastReason)
+	if installer.lastReason != "" {
+		t.Fatalf("reason = %q, want nothing the caller wrote to reach the installer", installer.lastReason)
 	}
 }
 
-// The caller here is a model relaying a sentence, and failing the install over
-// its length would serve nobody: the sentence is cut, the install proceeds.
-func TestStoreInstallTrimsAnOverlongReason(t *testing.T) {
-	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", Pending: true}}
-	tool := storeToolWithInstaller(t, installer)
-
-	long := strings.Repeat("x", installationdomain.MaxReasonLength+50)
-	_, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName,
-		json.RawMessage(`{"code":"github","reason":"`+long+`"}`))
-	if err != nil {
-		t.Fatalf("install: %v", err)
-	}
-	if got := len([]rune(installer.lastReason)); got != installationdomain.MaxReasonLength {
-		t.Fatalf("reason length = %d, want it cut to %d", got, installationdomain.MaxReasonLength)
-	}
-}
-
-// The definition tells the model what the field is for, and not to invent one.
-func TestStoreInstallDefinitionAsksForTheReason(t *testing.T) {
+// The definition points the model at the form instead of at a field of its own.
+func TestStoreInstallDefinitionSendsTheUserToTheRequestForm(t *testing.T) {
 	tool := storeToolWithInstaller(t, &fakeInstaller{})
 	for _, def := range tool.Definitions(context.Background(), storeRC()) {
 		if def.Name != StoreInstallToolName {
 			continue
 		}
-		description := toolDescription(t, def)
-		if !strings.Contains(description, "reason") {
-			t.Fatalf("install must ask for a reason: %q", description)
-		}
 		raw, err := json.Marshal(def)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		for _, want := range []string{`"reason"`, "in their own words", "Do not invent one"} {
+		if strings.Contains(string(raw), `"reason"`) {
+			t.Fatalf("install must not offer a reason argument: %s", raw)
+		}
+		for _, want := range []string{"requires_reason", "request_url", "files the request themselves"} {
 			if !strings.Contains(string(raw), want) {
-				t.Fatalf("the reason argument must say %q: %s", want, raw)
+				t.Fatalf("the definition must say %q: %s", want, raw)
 			}
 		}
 		return
@@ -779,12 +762,17 @@ func TestStoreInstallDefinitionAsksForTheReason(t *testing.T) {
 	t.Fatalf("%s not offered", StoreInstallToolName)
 }
 
-// A request an administrator will read needs the requester's words, and the
-// agent is the one who can get them: the refusal comes back as a normal result
-// asking for a reason, not as a tool error the model can only report.
-func TestStoreInstallWithoutAReasonAsksForOne(t *testing.T) {
+// A request an administrator will read needs the requester's own words, and the
+// requester is the only acceptable author: the refusal comes back as a normal
+// result carrying the link they write them on, not as a tool error and not as a
+// field for the model to fill.
+func TestStoreInstallWithoutAReasonHandsBackTheRequestForm(t *testing.T) {
 	inst := &fakeInstaller{installErr: appstore.ErrReasonRequired}
-	tool := storeToolWithInstaller(t, inst)
+	configure := &e2eConfigure{}
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), inst, nil, nil, configure, nil)
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
 
 	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
 		json.RawMessage(`{"code":"github"}`))
@@ -792,18 +780,19 @@ func TestStoreInstallWithoutAReasonAsksForOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install must answer, not fail: %v", err)
 	}
+	// The form is the one that asks, so the ticket has to say so.
+	if !configure.last.AskReason {
+		t.Fatalf("the request ticket must ask for the reason: %+v", configure.last)
+	}
 	sc := decodeStructured(t, raw)
 	if sc["requires_reason"] != true || sc["code"] != "github" {
 		t.Fatalf("expected requires_reason for the code, got %+v", sc)
 	}
-
-	// With the user's answer it goes through, and the reason reaches the installer.
-	inst.installErr = nil
-	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
-		json.RawMessage(`{"code":"github","reason":"triaging incoming issues"}`)); err != nil {
-		t.Fatalf("install with a reason: %v", err)
+	url, _ := sc["request_url"].(string)
+	if !strings.Contains(url, "/configure?ticket=") {
+		t.Fatalf("expected the hosted request form, got %q", url)
 	}
-	if inst.lastReason != "triaging incoming issues" {
-		t.Fatalf("reason = %q, want the user's words", inst.lastReason)
+	if !strings.Contains(decodeText(t, raw), url) {
+		t.Fatalf("the link must be in the text the user is shown: %s", raw)
 	}
 }

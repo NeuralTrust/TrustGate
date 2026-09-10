@@ -23,6 +23,7 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	domaincatalog "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -281,6 +282,13 @@ type configurePageView struct {
 	ServerName string
 	Variables  []configureVarView
 	Saved      bool
+	Pending    bool
+	// AskReason renders the "why do you need this?" field: the install is
+	// outside this user's access, so submitting files a request an administrator
+	// decides on, and this is what they read.
+	AskReason      bool
+	ReasonField    string
+	ReasonMaxChars int
 }
 
 func renderConfigurePage(c *fiber.Ctx, page *appoauth.ConfigurePage) error {
@@ -295,9 +303,13 @@ func renderConfigurePage(c *fiber.Ctx, page *appoauth.ConfigurePage) error {
 		})
 	}
 	return renderHTML(c, configurePageTmpl, configurePageView{
-		ServerName: page.ServerName,
-		Variables:  vars,
-		Saved:      page.Saved,
+		ServerName:     page.ServerName,
+		Variables:      vars,
+		Saved:          page.Saved,
+		Pending:        page.Pending,
+		AskReason:      page.AskReason,
+		ReasonField:    appoauth.ReasonFormField,
+		ReasonMaxChars: installationdomain.MaxReasonLength,
 	})
 }
 
