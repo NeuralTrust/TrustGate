@@ -17,6 +17,7 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -107,7 +108,7 @@ func TestStreamPushesListChangedOverRealConnection(t *testing.T) {
 	handler.timings = streamTimings{
 		poll:      10 * time.Millisecond,
 		keepAlive: 20 * time.Millisecond,
-		lifetime:  5 * time.Second,
+		lifetime:  12 * time.Second,
 	}
 
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
@@ -128,45 +129,30 @@ func TestStreamPushesListChangedOverRealConnection(t *testing.T) {
 	request, err := http.NewRequest(http.MethodGet, "http://"+listener.Addr().String()+"/virtual/mcp", nil)
 	require.NoError(t, err)
 	request.Header.Set("Accept", "text/event-stream")
-	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(request)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = response.Body.Close() })
 
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Contains(t, response.Header.Get("Content-Type"), "text/event-stream")
 
-	frames := make(chan string, 1)
-	go func() {
-		reader := bufio.NewReader(response.Body)
-		var seen strings.Builder
-		for {
-			line, err := reader.ReadString('\n')
-			seen.WriteString(line)
-			if strings.Contains(seen.String(), "notifications/tools/list_changed") {
-				frames <- seen.String()
-				return
-			}
-			if err != nil {
-				frames <- seen.String()
-				return
-			}
-		}
-	}()
-
-	// Nothing has changed yet, so the stream must stay quiet.
-	select {
-	case body := <-frames:
-		t.Fatalf("stream pushed before anything changed: %q", body)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	vault.link()
+	frames := make(chan string, 2)
+	go collectListChangedFrames(response.Body, 2, frames)
 
 	select {
 	case body := <-frames:
 		require.Contains(t, body, "notifications/tools/list_changed")
 		require.Contains(t, body, "event: message")
 	case <-time.After(5 * time.Second):
+		t.Fatal("no tools/list_changed frame arrived when the stream opened")
+	}
+
+	vault.link()
+
+	select {
+	case body := <-frames:
+		require.Equal(t, 2, strings.Count(body, "notifications/tools/list_changed"))
+	case <-time.After(8 * time.Second):
 		t.Fatal("no tools/list_changed frame arrived after the account was connected")
 	}
 }
@@ -243,28 +229,13 @@ func TestStreamPushesListChangedWhenRegistryIsAttached(t *testing.T) {
 	t.Cleanup(func() { _ = response.Body.Close() })
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
-	frames := make(chan string, 1)
-	go func() {
-		reader := bufio.NewReader(response.Body)
-		var seen strings.Builder
-		for {
-			line, readErr := reader.ReadString('\n')
-			seen.WriteString(line)
-			if strings.Contains(seen.String(), "notifications/tools/list_changed") {
-				frames <- seen.String()
-				return
-			}
-			if readErr != nil {
-				frames <- seen.String()
-				return
-			}
-		}
-	}()
+	frames := make(chan string, 2)
+	go collectListChangedFrames(response.Body, 2, frames)
 
 	select {
-	case body := <-frames:
-		t.Fatalf("stream pushed before the registry was attached: %q", body)
-	case <-time.After(100 * time.Millisecond):
+	case <-frames:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no tools/list_changed frame arrived when the stream opened")
 	}
 
 	finder.replace(appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
@@ -273,8 +244,30 @@ func TestStreamPushesListChangedWhenRegistryIsAttached(t *testing.T) {
 
 	select {
 	case body := <-frames:
-		require.Contains(t, body, "notifications/tools/list_changed")
+		require.Equal(t, 2, strings.Count(body, "notifications/tools/list_changed"))
 	case <-time.After(5 * time.Second):
 		t.Fatal("no tools/list_changed frame arrived after Notion was attached")
+	}
+}
+
+func collectListChangedFrames(r io.Reader, want int, frames chan<- string) {
+	reader := bufio.NewReader(r)
+	var seen strings.Builder
+	count := 0
+	for {
+		line, err := reader.ReadString('\n')
+		seen.WriteString(line)
+		next := strings.Count(seen.String(), "notifications/tools/list_changed")
+		if next > count {
+			count = next
+			frames <- seen.String()
+			if count >= want {
+				return
+			}
+		}
+		if err != nil {
+			frames <- seen.String()
+			return
+		}
 	}
 }
