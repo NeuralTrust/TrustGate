@@ -577,3 +577,28 @@ func TestNewMCPServerCatalog_GmailIncludesModifyScope(t *testing.T) {
 	require.Contains(t, tools, "label_thread")
 	require.Contains(t, tools, "create_label")
 }
+
+func TestCuratedCatalog_VendorApprovalGuidesStayOnZeroConfigServers(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	dropbox, ok := cat.GetByCode("com.dropbox/mcp")
+	require.True(t, ok)
+	require.False(t, dropbox.RequiresConfig)
+	require.NotNil(t, dropbox.ConfigGuide)
+	require.Contains(t, dropbox.ConfigGuide.Note, "registration_not_supported")
+
+	vercel, ok := cat.GetByCode("com.vercel/mcp")
+	require.True(t, ok)
+	require.False(t, vercel.RequiresConfig)
+	require.NotNil(t, vercel.ConfigGuide)
+	require.Contains(t, vercel.ConfigGuide.Note, "allowlist")
+
+	vanta, ok := cat.GetByCode("com.vanta/mcp")
+	require.True(t, ok)
+	require.False(t, vanta.RequiresConfig)
+	require.NotNil(t, vanta.ConfigGuide)
+	require.Contains(t, vanta.ConfigGuide.Note, "Admin-only")
+}

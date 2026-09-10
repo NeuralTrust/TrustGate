@@ -171,11 +171,13 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 }
 
 func configGuide(s rawServer) *domain.MCPConfigGuide {
-	if !requiresConfig(s) {
-		return nil
-	}
+	// Keep a seeded guide even when Connect is zero-config (for example a
+	// DCR server whose vendor still has to allowlist TrustGate's callback).
 	if s.ConfigGuide != nil {
 		return s.ConfigGuide
+	}
+	if !requiresConfig(s) {
+		return nil
 	}
 
 	steps := make([]string, 0, len(s.URLVariables)+len(s.AuthHeaders)+1)

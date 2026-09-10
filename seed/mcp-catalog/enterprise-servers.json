@@ -2674,6 +2674,15 @@
         "token_url": "https://mcp.cal.com/oauth/token",
         "resource": "https://mcp.cal.com"
       },
+      "config_guide": {
+        "summary": "Cal.com DCR only accepts allowlisted redirect hosts.",
+        "steps": [
+          "Ask Cal.com to allowlist this gateway host for MCP OAuth.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.cal/mcp."
+        ],
+        "docs_url": "https://cal.com/docs/mcp-server",
+        "note": "Localhost DCR works; hosted TrustGate callbacks are rejected until the hostname is on Cal.com's allowed list."
+      },
       "relevance": 55,
       "tools": [
         {
@@ -3198,6 +3207,15 @@
           "openid"
         ],
         "resource": "https://mcp.checkr.com/"
+      },
+      "config_guide": {
+        "summary": "Checkr DCR rejects redirect URIs that are not on its allowlist.",
+        "steps": [
+          "Ask Checkr to allowlist {gatewayBaseUrl}/oauth/callback/com.checkr/mcp.",
+          "Select Connect after the callback is approved."
+        ],
+        "docs_url": "https://docs.checkr.com/mcp/",
+        "note": "Checkr advertises DCR, but hosted TrustGate callbacks return invalid_redirect_uri until the URI is allowed."
       },
       "tools": [
         {
@@ -5841,6 +5859,15 @@
           "sharing.write"
         ],
         "resource": "https://mcp.dropbox.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Dropbox DCR is limited to trusted MCP partners.",
+        "steps": [
+          "Ask Dropbox to add TrustGate as a trusted MCP client, or create a Dropbox app and use Custom MCP with that client ID.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.dropbox/mcp on the Dropbox app if using the manual path."
+        ],
+        "docs_url": "https://help.dropbox.com/integrations/connect-dropbox-mcp-server",
+        "note": "DCR returns 403 registration_not_supported for non-partner clients (Claude, ChatGPT, and Cursor are allowlisted)."
       },
       "relevance": 80,
       "tools": [
@@ -9104,6 +9131,15 @@
         "authorize_url": "https://mcp.intercom.com/authorize",
         "token_url": "https://mcp.intercom.com/token",
         "resource": "https://mcp.intercom.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Intercom DCR only accepts allowlisted redirect URIs.",
+        "steps": [
+          "Ask Intercom Customer Support to allowlist {gatewayBaseUrl}/oauth/callback/com.intercom/mcp.",
+          "Select Connect after the callback is approved."
+        ],
+        "docs_url": "https://developers.intercom.com/docs/guides/mcp",
+        "note": "DCR error: Redirect URI is not in the allowlist; localhost clients can register, hosted gateways cannot until Intercom adds the host."
       },
       "relevance": 75,
       "tools": [
@@ -13808,6 +13844,14 @@
         "token_url": "https://mcp.prismic.io/token",
         "resource": "https://mcp.prismic.io/mcp"
       },
+      "config_guide": {
+        "summary": "Prismic DCR only accepts allowlisted redirect URIs.",
+        "steps": [
+          "Ask Prismic to allowlist {gatewayBaseUrl}/oauth/callback/io.prismic/mcp.",
+          "Select Connect after the callback is approved."
+        ],
+        "note": "DCR returns Redirect URI not allowed for hosted TrustGate callbacks."
+      },
       "tools": [
         {
           "name": "list_repositories",
@@ -14717,6 +14761,14 @@
         ],
         "resource": "https://mcp.semrush.com/v1/mcp"
       },
+      "config_guide": {
+        "summary": "Semrush DCR only accepts allowlisted redirect URIs.",
+        "steps": [
+          "Ask Semrush to allowlist {gatewayBaseUrl}/oauth/callback/com.semrush/mcp.",
+          "Select Connect after the callback is approved."
+        ],
+        "note": "Hosted TrustGate callbacks return 400 redirect URI is not allowed; localhost DCR succeeds."
+      },
       "relevance": 55,
       "tools": [
         {
@@ -15018,6 +15070,14 @@
           "openid"
         ],
         "resource": "https://mcp.shortcut.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Shortcut DCR only accepts approved redirect URIs.",
+        "steps": [
+          "Ask Shortcut to approve {gatewayBaseUrl}/oauth/callback/com.shortcut/mcp.",
+          "Select Connect after the callback is approved."
+        ],
+        "note": "DCR returns invalid_client_metadata: must be an approved redirect URI."
       },
       "tools": [
         {
@@ -15704,6 +15764,15 @@
           "MERCHANT_PROFILE_READ"
         ],
         "resource": "https://mcp.squareup.com/mcp"
+      },
+      "config_guide": {
+        "summary": "Square MCP DCR only accepts allowlisted redirect domains.",
+        "steps": [
+          "Ask Square to allowlist this gateway host for MCP OAuth.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.squareup/mcp."
+        ],
+        "docs_url": "https://developer.squareup.com/docs/mcp",
+        "note": "DCR returns invalid_redirect_uri: domain not in allowlist. Localhost DCR succeeds."
       },
       "relevance": 70,
       "tools": [
@@ -17368,6 +17437,15 @@
         ],
         "resource": "https://mcp.vanta.com"
       },
+      "config_guide": {
+        "summary": "Sign in as a Vanta Admin. DCR is open for HTTPS callbacks.",
+        "steps": [
+          "Use a Vanta Admin account (non-admins cannot authorize MCP).",
+          "Select Connect and complete Vanta OAuth. TrustGate registers its own client."
+        ],
+        "docs_url": "https://developer.vanta.com/docs/vanta-mcp",
+        "note": "Live DCR accepts hosted HTTPS redirect URIs. Consent is Admin-only; unofficial clients may show a warning. https://localhost is rejected (use http://localhost or a public HTTPS callback)."
+      },
       "relevance": 65,
       "tools": [
         {
@@ -17451,6 +17529,15 @@
           "offline_access"
         ],
         "resource": "https://mcp.vercel.com/"
+      },
+      "config_guide": {
+        "summary": "Vercel MCP only authorizes reviewed MCP clients.",
+        "steps": [
+          "Ask Vercel to allowlist {gatewayBaseUrl}/oauth/callback/com.vercel/mcp (or issue an approved client ID).",
+          "Until that callback is approved, Connect via DCR fails with invalid_redirect_uri."
+        ],
+        "docs_url": "https://vercel.com/docs/agent-resources/vercel-mcp",
+        "note": "Vercel MCP maintains an allowlist of approved AI clients; TrustGate is not on it until Vercel approves the redirect URI."
       },
       "relevance": 85,
       "tools": [
