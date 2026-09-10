@@ -466,6 +466,41 @@ func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 	assert.Equal(t, 0.5, gc["temperature"])
 }
 
+func TestAdaptRequest_AnthropicToGemini(t *testing.T) {
+	input := `{
+		"model": "claude-3-sonnet",
+		"system": "Be concise.",
+		"max_tokens": 50,
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi"}
+		],
+		"tools": [{
+			"name": "lookup",
+			"description": "find",
+			"input_schema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {"q": {"type": "string"}}
+			}
+		}]
+	}`
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatGemini)
+	require.NoError(t, err)
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.Contains(t, result, "systemInstruction")
+	contents := result["contents"].([]interface{})
+	assert.Len(t, contents, 2)
+	gc := result["generationConfig"].(map[string]interface{})
+	assert.Equal(t, float64(50), gc["maxOutputTokens"])
+	params := geminiToolParameters(t, out)
+	assert.Equal(t, "OBJECT", params["type"])
+	assert.NotContains(t, params, "$schema")
+	assert.NotContains(t, params, "additionalProperties")
+}
+
 func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	input := `{
 		"model": "anthropic.claude-3-sonnet",

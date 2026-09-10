@@ -94,3 +94,37 @@ func TestBodyCarriesModelNotFound(t *testing.T) {
 		})
 	}
 }
+
+func TestBodyExceedsMaxTokens(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+		want int
+		ok   bool
+	}{
+		{"empty", "", 0, false},
+		{"not json", "plain", 0, false},
+		{
+			"openai max_tokens",
+			`{"error":{"type":"invalid_request_error","param":"max_tokens","message":"max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."}}`,
+			16384, true,
+		},
+		{
+			"openai max_completion_tokens param",
+			`{"error":{"type":"invalid_request_error","param":"max_completion_tokens","message":"This model supports at most 4096"}}`,
+			4096, true,
+		},
+		{"wrong param", `{"error":{"type":"invalid_request_error","param":"messages","message":"This model supports at most 16384"}}`, 0, false},
+		{"wrong type", `{"error":{"type":"overloaded_error","message":"This model supports at most 16384"}}`, 0, false},
+		{"no number", `{"error":{"type":"invalid_request_error","param":"max_tokens","message":"too many tokens"}}`, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := BodyExceedsMaxTokens([]byte(tc.body))
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("BodyExceedsMaxTokens() = (%d,%v), want (%d,%v)", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}

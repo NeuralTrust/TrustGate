@@ -38,6 +38,44 @@ func normalizeMaxCompletionTokens(body []byte) []byte {
 	return marshalOrOriginal(raw, body)
 }
 
+var maxOutputTokenFields = []string{"max_completion_tokens", "max_tokens", "max_output_tokens"}
+
+// ClampMaxOutputTokens lowers the first present output-token field to limit
+// when the requested value exceeds it. The body is unchanged when the field
+// is absent, unparseable, not positive, or already within the limit.
+func ClampMaxOutputTokens(body []byte, limit int) (out []byte, requested int, clamped bool) {
+	if limit <= 0 || len(body) == 0 {
+		return body, 0, false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body, 0, false
+	}
+	field := ""
+	var n int
+	for _, name := range maxOutputTokenFields {
+		rawN, ok := raw[name]
+		if !ok {
+			continue
+		}
+		if err := json.Unmarshal(rawN, &n); err != nil || n <= 0 {
+			return body, 0, false
+		}
+		field = name
+		break
+	}
+	if field == "" || n <= limit {
+		return body, n, false
+	}
+	encoded, err := json.Marshal(limit)
+	if err != nil {
+		return body, n, false
+	}
+	raw[field] = encoded
+	out = marshalOrOriginal(raw, body)
+	return out, n, true
+}
+
 func marshalOrOriginal(raw map[string]json.RawMessage, original []byte) []byte {
 	out, err := json.Marshal(raw)
 	if err != nil {
