@@ -49,6 +49,11 @@ type ConnectTicket struct {
 	// install (configure before install) applies the same group gate the install
 	// tool applied — the browser submitting the form carries no token.
 	Groups []string `json:"groups,omitempty"`
+	// Reason carries the requester's words from the install that minted this
+	// ticket, for the same reason Groups does: submitting the form is what files
+	// the request, and the form has no way to ask. A request without one is
+	// refused (appstore.ErrReasonRequired), so it has to travel.
+	Reason string `json:"reason,omitempty"`
 }
 
 type ConnectState struct {

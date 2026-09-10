@@ -62,6 +62,15 @@ var (
 	// beyond MaxInstancesPerCode or MaxInstancesPerPrincipal. It wraps
 	// ErrValidation so the HTTP layer maps it to a client error.
 	ErrTooManyInstances = fmt.Errorf("store: too many instances installed: %w", commonerrors.ErrValidation)
+	// ErrReasonRequired is returned when an install would become a request and
+	// carries no reason. A request is decided by a person, and the reason is the
+	// only thing the requester tells them; a queue of reasonless requests is a
+	// queue an approver cannot triage. An install that needs no approval is
+	// unaffected — it asks nobody, so it needs no reason.
+	ErrReasonRequired = fmt.Errorf(
+		"store: a request needs a reason for the approver to decide on: %w", commonerrors.ErrValidation,
+	)
+
 	// ErrUnknownInstance is returned when an install names a configured instance
 	// (registry) that does not exist on the gateway or is not an instance of the
 	// requested catalog code.
@@ -250,6 +259,12 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 			RequiresInstanceChoice: true,
 			InstanceChoices:        decision.choices,
 		}, nil
+	}
+	// Refused before anything is recorded: a request filed without a reason
+	// cannot be triaged, and the caller can still ask the user and retry.
+	if decision.status == installationdomain.StatusPendingApproval &&
+		strings.TrimSpace(in.Reason) == "" {
+		return nil, ErrReasonRequired
 	}
 
 	// A principal may hold several instances of one code. An install bound to the

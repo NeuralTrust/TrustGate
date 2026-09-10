@@ -90,6 +90,9 @@ type ConfigureTicketRequest struct {
 	InstanceID string
 	// Groups are the principal's IdP groups at mint time (from their token).
 	Groups []string
+	// Reason is the requester's words from the install that needs this form, kept
+	// so the install the submit files can be a request (see ConnectTicket.Reason).
+	Reason string
 }
 
 // ConfigureInstaller is the governed install path the configure flow records a
@@ -184,6 +187,7 @@ func (s *configureService) CreateTicket(ctx context.Context, in ConfigureTicketR
 		Code:         code,
 		InstanceID:   strings.TrimSpace(in.InstanceID),
 		Groups:       append([]string(nil), in.Groups...),
+		Reason:       strings.TrimSpace(in.Reason),
 	}); err != nil {
 		return "", err
 	}
@@ -446,6 +450,7 @@ func (s *configureService) installConfigured(
 		Groups:       ticket.Groups,
 		OpenMode:     open,
 		Config:       plain,
+		Reason:       ticket.Reason,
 	})
 	if err != nil {
 		if errors.Is(err, appstore.ErrConfigInvalid) {

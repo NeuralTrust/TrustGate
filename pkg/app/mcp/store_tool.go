@@ -251,6 +251,11 @@ func (t *storeTool) install(
 		RegistryID:   registryID,
 		Reason:       trimReason(args.Reason),
 	})
+	if errors.Is(err, appstore.ErrReasonRequired) {
+		// Not an error the caller can only report: it is the one thing missing,
+		// and the caller can get it from the user and try again.
+		return reasonRequired(args.Code)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +270,9 @@ func (t *storeTool) install(
 	// form writes to that exact instance.
 	configureURL := ""
 	if res.RequiresConfig {
-		configureURL, err = t.configureLink(ctx, rc, baseURL, res.Code, res.InstanceID, principal)
+		configureURL, err = t.configureLink(
+			ctx, rc, baseURL, res.Code, res.InstanceID, trimReason(args.Reason), principal,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -351,10 +358,12 @@ func (t *storeTool) connectLink(
 	return url, nil
 }
 
+// configureLink mints the hosted form's URL. reason travels with the ticket:
+// the install the submit files may be a request, and the form cannot ask.
 func (t *storeTool) configureLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code, instanceID string,
+	baseURL, code, instanceID, reason string,
 	principal *identity.Principal,
 ) (string, error) {
 	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
@@ -371,6 +380,7 @@ func (t *storeTool) configureLink(
 		Code:         code,
 		InstanceID:   instanceID,
 		Groups:       principal.Groups(),
+		Reason:       reason,
 	})
 	if err != nil {
 		return "", fmt.Errorf("%w: create configuration ticket: %w", ErrStoreToolUnavailable, err)
@@ -492,6 +502,26 @@ func instanceChoices(res *appstore.InstallResult) (json.RawMessage, error) {
 		"requires_instance_choice": true,
 		"instances":                list,
 	})
+}
+
+// reasonRequired returns a structured "why?" result: the server is outside the
+// user's access, so installing it files a request a person decides on, and the
+// requester's own words are what that person reads (Access → Approvals). Like
+// the instance picker, it is a normal result — the caller asks the user and
+// re-issues install with `reason`.
+func reasonRequired(code string) (json.RawMessage, error) {
+	return marshalToolResult(
+		fmt.Sprintf(
+			"%s is outside your access, so installing it files a request an administrator has to decide on. "+
+				"Ask the user why they need it and what they will use it for, then re-run install with their answer in `reason`. "+
+				"Do not write one on their behalf.",
+			code,
+		),
+		map[string]any{
+			"code":            code,
+			"requires_reason": true,
+		},
+	)
 }
 
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
@@ -883,8 +913,8 @@ func storeInstallDefinition() (Tool, error) {
 				"reason": map[string]any{
 					"type": "string",
 					"description": "Why the user wants this server, in their own words — the task they are trying to do. " +
-						"Pass it whenever you know it: a server outside the user's access becomes a request an administrator has to decide on, and this is what they read when deciding. " +
-						"Do not invent one; if the user has not said why, ask them or leave it out.",
+						"Required when the server is outside the user's access: installing it then files a request an administrator has to decide on, and this is what they read when deciding (the install is refused without it, and answers requires_reason). " +
+						"Do not invent one; if the user has not said why, ask them.",
 					"maxLength": installationdomain.MaxReasonLength,
 				},
 			},

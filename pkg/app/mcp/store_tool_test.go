@@ -450,6 +450,7 @@ type fakeInstaller struct {
 	instances    []*installationdomain.Installation
 	uninstallErr error
 	lastReason   string
+	installErr   error
 	result       *appstore.InstallResult
 }
 
@@ -470,6 +471,9 @@ func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (
 	f.lastGroups = in.Groups
 	f.lastRegistry = in.RegistryID
 	f.lastReason = in.Reason
+	if f.installErr != nil {
+		return nil, f.installErr
+	}
 	if f.result != nil {
 		return f.result, nil
 	}
@@ -773,4 +777,33 @@ func TestStoreInstallDefinitionAsksForTheReason(t *testing.T) {
 		return
 	}
 	t.Fatalf("%s not offered", StoreInstallToolName)
+}
+
+// A request an administrator will read needs the requester's words, and the
+// agent is the one who can get them: the refusal comes back as a normal result
+// asking for a reason, not as a tool error the model can only report.
+func TestStoreInstallWithoutAReasonAsksForOne(t *testing.T) {
+	inst := &fakeInstaller{installErr: appstore.ErrReasonRequired}
+	tool := storeToolWithInstaller(t, inst)
+
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github"}`))
+
+	if err != nil {
+		t.Fatalf("install must answer, not fail: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["requires_reason"] != true || sc["code"] != "github" {
+		t.Fatalf("expected requires_reason for the code, got %+v", sc)
+	}
+
+	// With the user's answer it goes through, and the reason reaches the installer.
+	inst.installErr = nil
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","reason":"triaging incoming issues"}`)); err != nil {
+		t.Fatalf("install with a reason: %v", err)
+	}
+	if inst.lastReason != "triaging incoming issues" {
+		t.Fatalf("reason = %q, want the user's words", inst.lastReason)
+	}
 }
