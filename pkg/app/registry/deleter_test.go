@@ -43,7 +43,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	id := ids.New[ids.RegistryKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Registry{ID: id, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.PruneReport{}, nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.RegistryTTLName).Set(id.String(), "junk")
