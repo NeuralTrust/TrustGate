@@ -395,7 +395,7 @@ func TestStoreInstall_SelfServiceHonoursGovernance(t *testing.T) {
 	h := newE2EHarness(t, notionLike())
 	gw := &gatewaydomain.Gateway{Entitlements: gatewaydomain.Entitlements{Tier: "standard"}, Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeNone)}
 	ctx := appgateway.WithGateway(ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone), gw)
-	if _, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp","reason":"drafting the launch checklist"}`)); err == nil {
+	if _, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`)); err == nil {
 		t.Fatal("store_access=none on a self-service gateway must refuse the install")
 	}
 	if h.creator.created != 0 {
@@ -409,15 +409,16 @@ func TestStoreInstall_SelfServiceHonoursGovernance(t *testing.T) {
 		t.Fatalf("a closed self-service Store must browse nothing, got %+v", sc)
 	}
 	// A stamped curated mode on a free tier is enforced too: a non-shelf server
-	// becomes a pending request instead of being materialised.
+	// cannot be installed from here — it hands back the request form instead of
+	// being materialised.
 	curated := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}),
 		&gatewaydomain.Gateway{Entitlements: gatewaydomain.Entitlements{Tier: "free"}, Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)})
-	raw, err = h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp","reason":"drafting the launch checklist"}`))
+	raw, err = h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if sc := decodeStructured(t, raw); sc["pending"] != true || h.creator.created != 0 {
-		t.Fatalf("curated self-service install of a non-shelf server must be a pending request, got %+v (created=%d)", sc, h.creator.created)
+	if sc := decodeStructured(t, raw); sc["requires_reason"] != true || sc["request_url"] == nil || h.creator.created != 0 {
+		t.Fatalf("curated self-service install of a non-shelf server must hand back the request form, got %+v (created=%d)", sc, h.creator.created)
 	}
 }
 
@@ -426,16 +427,16 @@ func TestStoreInstall_SelfServiceHonoursGovernance(t *testing.T) {
 func TestStoreInstall_EnterpriseHonoursClaimAndMode(t *testing.T) {
 	h := newE2EHarness(t, notionLike())
 	closed := appgateway.WithGateway(ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone), enterpriseGateway(gatewaydomain.StoreModeOpen))
-	if _, err := h.tool.Call(closed, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp","reason":"drafting the launch checklist"}`)); err == nil {
+	if _, err := h.tool.Call(closed, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`)); err == nil {
 		t.Fatal("store_access=none on an enterprise gateway must refuse the install")
 	}
 	curated := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}), enterpriseGateway(gatewaydomain.StoreModeCurated))
-	raw, err := h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp","reason":"drafting the launch checklist"}`))
+	raw, err := h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if sc := decodeStructured(t, raw); sc["pending"] != true || h.creator.created != 0 {
-		t.Fatalf("curated enterprise install of a non-shelf server must be a pending request without materialisation, got %+v (created=%d)", sc, h.creator.created)
+	if sc := decodeStructured(t, raw); sc["requires_reason"] != true || sc["request_url"] == nil || h.creator.created != 0 {
+		t.Fatalf("curated enterprise install of a non-shelf server must hand back the request form without materialisation, got %+v (created=%d)", sc, h.creator.created)
 	}
 }
 
@@ -444,11 +445,11 @@ func TestStoreInstall_EnterpriseHonoursClaimAndMode(t *testing.T) {
 // rather than being materialised.
 func TestStoreInstall_NoGatewayInContextFailsClosed(t *testing.T) {
 	h := newE2EHarness(t, notionLike())
-	raw, err := h.tool.Call(ctxWithPrincipal(), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp","reason":"drafting the launch checklist"}`))
+	raw, err := h.tool.Call(ctxWithPrincipal(), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if sc := decodeStructured(t, raw); sc["pending"] != true || h.creator.created != 0 {
+	if sc := decodeStructured(t, raw); sc["requires_reason"] != true || h.creator.created != 0 {
 		t.Fatalf("missing gateway must fail closed to curated, got %+v (created=%d)", sc, h.creator.created)
 	}
 	// Search without a gateway reports curated: the catalog is browsable but a

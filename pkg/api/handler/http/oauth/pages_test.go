@@ -441,3 +441,61 @@ func TestConnectPage_StartIsAPostNotALink(t *testing.T) {
 		t.Fatalf("connect start must be a POST form naming the instance:\n%s", body)
 	}
 }
+
+// The request form is where the person who wants the server says why, so the
+// page has to ask them for it in words an approver will read.
+func TestConfigurePage_AsksTheRequesterWhy(t *testing.T) {
+	t.Parallel()
+	html := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConfigurePage(c, &appoauth.ConfigurePage{
+			Code: "com.ahrefs/mcp", ServerName: "Ahrefs", AskReason: true,
+		})
+	})
+	for _, want := range []string{
+		"Request access to Ahrefs",
+		"in your own words",
+		`name="` + appoauth.ReasonFormField + `"`,
+		"<textarea",
+		"required",
+		"Send request",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("the request form must contain %q: %s", want, html)
+		}
+	}
+}
+
+// Once it is sent, the page reports what happened instead of offering the field
+// again — a second submit would file a second request.
+func TestConfigurePage_ASentRequestSaysSoAndStopsAsking(t *testing.T) {
+	t.Parallel()
+	html := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConfigurePage(c, &appoauth.ConfigurePage{
+			Code: "com.ahrefs/mcp", ServerName: "Ahrefs", Saved: true, Pending: true,
+		})
+	})
+	if strings.Contains(html, "<textarea") || strings.Contains(html, "<form") {
+		t.Fatalf("a sent request must not re-offer the form: %s", html)
+	}
+	if !strings.Contains(html, "An administrator has to approve it") {
+		t.Fatalf("a sent request must say it is waiting on an approver: %s", html)
+	}
+}
+
+// A configure form is unchanged: it asks for the server's own values and says
+// nothing about requests.
+func TestConfigurePage_StillConfiguresWithoutAskingTheReason(t *testing.T) {
+	t.Parallel()
+	html := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConfigurePage(c, &appoauth.ConfigurePage{
+			Code: "snowflake", ServerName: "Snowflake",
+			Variables: []appoauth.ConfigureVariable{{Name: "account_url", Required: true}},
+		})
+	})
+	if strings.Contains(html, "<textarea") || strings.Contains(html, "Request access") {
+		t.Fatalf("a configure form must not ask for a reason: %s", html)
+	}
+	if !strings.Contains(html, `name="account_url"`) || !strings.Contains(html, "Configure Snowflake") {
+		t.Fatalf("a configure form must still collect its variables: %s", html)
+	}
+}

@@ -158,6 +158,9 @@ func configureCatalog() fakeConfigCatalog {
 				{Name: "database", Required: true},
 			},
 		},
+		// No per-user variables: the only thing its form can ask for is why the
+		// requester wants it.
+		"com.ahrefs/mcp": {Code: "com.ahrefs/mcp", DisplayName: "Ahrefs"},
 		"com.brightdata/mcp": {
 			Code: "com.brightdata/mcp", DisplayName: "Bright Data",
 			URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
@@ -208,6 +211,20 @@ func (f configureFixtureT) ticket(t *testing.T, code, instanceID string, groups 
 		GatewayID: f.gw, PrincipalSub: "ana", ConsumerPath: appconsumer.MCPPath("dev"),
 		Code: code, InstanceID: instanceID, Groups: groups,
 		Reason: "loading the quarterly revenue model",
+	})
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	return id
+}
+
+// reasonTicket mints the form the requester says why on: no reason travels with
+// it, because collecting one is the form's job.
+func (f configureFixtureT) reasonTicket(t *testing.T, code string, groups ...string) string {
+	t.Helper()
+	id, err := f.svc.CreateTicket(context.Background(), oauth.ConfigureTicketRequest{
+		GatewayID: f.gw, PrincipalSub: "ana", ConsumerPath: appconsumer.MCPPath("dev"),
+		Code: code, Groups: groups, AskReason: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
@@ -528,5 +545,92 @@ func TestConfigure_CarriesTheRequestersReasonToTheRequest(t *testing.T) {
 	}
 	if rows[0].Reason != "loading the quarterly revenue model" {
 		t.Fatalf("reason = %q, want the words the install was started with", rows[0].Reason)
+	}
+}
+
+// An agent asked why the user needs a server writes the justification itself,
+// out of the task it was given. So the install tool takes no reason and hands
+// the requester this form: submitting it is what files the request, and the
+// words on it are theirs.
+func TestConfigure_TheRequestFormCollectsTheRequestersOwnWords(t *testing.T) {
+	f := configureFixture(t, false)
+	id := f.reasonTicket(t, "com.ahrefs/mcp")
+
+	page, err := f.svc.Page(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !page.AskReason || len(page.Variables) != 0 {
+		t.Fatalf("the form must ask for the reason and nothing else, got %+v", page)
+	}
+
+	page, err = f.svc.Submit(context.Background(), id, map[string]string{
+		oauth.ReasonFormField: "  I answer support tickets and need the backlinks report  ",
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !page.Pending || page.AskReason {
+		t.Fatalf("a filed request must report itself pending and stop asking, got %+v", page)
+	}
+	rows := f.rows(t, "com.ahrefs/mcp")
+	if len(rows) != 1 || rows[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("the submit must file the request, got %+v", rows)
+	}
+	if rows[0].Reason != "I answer support tickets and need the backlinks report" {
+		t.Fatalf("reason = %q, want the requester's words, trimmed", rows[0].Reason)
+	}
+}
+
+func TestConfigure_ARequestFormSubmittedEmptyFilesNothing(t *testing.T) {
+	f := configureFixture(t, false)
+	id := f.reasonTicket(t, "com.ahrefs/mcp")
+
+	for _, values := range []map[string]string{{}, {oauth.ReasonFormField: "   "}} {
+		if _, err := f.svc.Submit(context.Background(), id, values); !errors.Is(err, oauth.ErrConfigureReasonRequired) {
+			t.Fatalf("a request without words must be refused, got %v", err)
+		}
+	}
+	if rows := f.rows(t, "com.ahrefs/mcp"); len(rows) != 0 {
+		t.Fatalf("nothing may be recorded, got %+v", rows)
+	}
+}
+
+// The reason field shares the form with a server's own variables, so it must
+// not be read as one of them.
+func TestConfigure_TheReasonFieldIsNotACatalogVariable(t *testing.T) {
+	f := configureFixture(t, false)
+	id := f.reasonTicket(t, "snowflake")
+	page, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"account_url":         "acme.snowflakecomputing.com",
+		"database":            "ANALYTICS",
+		oauth.ReasonFormField: "loading the quarterly revenue model",
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !page.Pending {
+		t.Fatalf("a governed first install must be a request, got %+v", page)
+	}
+	rows := f.rows(t, "snowflake")
+	if len(rows) != 1 || rows[0].Reason != "loading the quarterly revenue model" {
+		t.Fatalf("the reason must reach the request and the variables their own places, got %+v", rows)
+	}
+	if rows[0].Config["account_url"] != "acme.snowflakecomputing.com" {
+		t.Fatalf("variables must still be stored, got %+v", rows[0].Config)
+	}
+}
+
+// The reserved field is never read as a variable, so a form that was not minted
+// to ask ignores it rather than failing on an unknown name. Anything else
+// unexpected is still a mistake worth reporting.
+func TestConfigure_TheReasonFieldOnAFormThatDoesNotAskIsIgnored(t *testing.T) {
+	f := configureFixture(t, true, shelf("com.ahrefs/mcp"))
+	id := f.ticket(t, "com.ahrefs/mcp", "")
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{oauth.ReasonFormField: "x"}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"nonsense": "x"}); !errors.Is(err, oauth.ErrConfigureInvalid) {
+		t.Fatalf("an unknown variable must still be refused, got %v", err)
 	}
 }
