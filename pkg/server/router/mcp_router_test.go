@@ -94,7 +94,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		Return(&appoauth.ConnectPage{ConsumerPath: "/tools/mcp"}, nil).
 		Once()
 	connect.EXPECT().
-		Start(mock.Anything, mock.Anything, "oauth-ticket", "provider").
+		Start(mock.Anything, mock.Anything, "oauth-ticket", "provider", mock.Anything).
 		Return("https://provider.example/authorize", nil).
 		Once()
 

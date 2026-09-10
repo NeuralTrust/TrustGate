@@ -335,16 +335,16 @@ func (_c *ConnectService_CreateServerTicket_Call) RunAndReturn(run func(context.
 	return _c
 }
 
-func (_m *ConnectService) Disconnect(ctx context.Context, ticketID string, provider string) error {
-	ret := _m.Called(ctx, ticketID, provider)
+func (_m *ConnectService) Disconnect(ctx context.Context, ticketID string, provider string, instanceID string) error {
+	ret := _m.Called(ctx, ticketID, provider, instanceID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Disconnect")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
-		r0 = rf(ctx, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, ticketID, provider, instanceID)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -356,13 +356,13 @@ type ConnectService_Disconnect_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) Disconnect(ctx interface{}, ticketID interface{}, provider interface{}) *ConnectService_Disconnect_Call {
-	return &ConnectService_Disconnect_Call{Call: _e.mock.On("Disconnect", ctx, ticketID, provider)}
+func (_e *ConnectService_Expecter) Disconnect(ctx interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Disconnect_Call {
+	return &ConnectService_Disconnect_Call{Call: _e.mock.On("Disconnect", ctx, ticketID, provider, instanceID)}
 }
 
-func (_c *ConnectService_Disconnect_Call) Run(run func(ctx context.Context, ticketID string, provider string)) *ConnectService_Disconnect_Call {
+func (_c *ConnectService_Disconnect_Call) Run(run func(ctx context.Context, ticketID string, provider string, instanceID string)) *ConnectService_Disconnect_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
 	})
 	return _c
 }
@@ -372,7 +372,7 @@ func (_c *ConnectService_Disconnect_Call) Return(_a0 error) *ConnectService_Disc
 	return _c
 }
 
-func (_c *ConnectService_Disconnect_Call) RunAndReturn(run func(context.Context, string, string) error) *ConnectService_Disconnect_Call {
+func (_c *ConnectService_Disconnect_Call) RunAndReturn(run func(context.Context, string, string, string) error) *ConnectService_Disconnect_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -539,8 +539,8 @@ func (_c *ConnectService_RefreshAuth_Call) RunAndReturn(run func(context.Context
 	return _c
 }
 
-func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID string, provider string) (string, error) {
-	ret := _m.Called(ctx, baseURL, ticketID, provider)
+func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string) (string, error) {
+	ret := _m.Called(ctx, baseURL, ticketID, provider, instanceID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")
@@ -548,17 +548,17 @@ func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID st
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) (string, error)); ok {
-		return rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) (string, error)); ok {
+		return rf(ctx, baseURL, ticketID, provider, instanceID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) string); ok {
-		r0 = rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) string); ok {
+		r0 = rf(ctx, baseURL, ticketID, provider, instanceID)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
-		r1 = rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string) error); ok {
+		r1 = rf(ctx, baseURL, ticketID, provider, instanceID)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -570,13 +570,13 @@ type ConnectService_Start_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, ticketID interface{}, provider interface{}) *ConnectService_Start_Call {
-	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, ticketID, provider)}
+func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Start_Call {
+	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, ticketID, provider, instanceID)}
 }
 
-func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, ticketID string, provider string)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string)) *ConnectService_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string))
 	})
 	return _c
 }
@@ -586,7 +586,7 @@ func (_c *ConnectService_Start_Call) Return(_a0 string, _a1 error) *ConnectServi
 	return _c
 }
 
-func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string) (string, error)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string, string) (string, error)) *ConnectService_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

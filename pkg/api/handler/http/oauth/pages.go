@@ -27,7 +27,14 @@ import (
 )
 
 type providerView struct {
-	Provider       string
+	Provider string
+	// Instance is the registry id the row's connect/revoke acts on. Two
+	// instances of one catalog code render as two tiles sharing a Provider, and
+	// without it every tile would connect whichever instance came first.
+	Instance string
+	// InstanceName tells those two tiles apart: the registry's own name, set
+	// only when it says something the catalog's display name does not.
+	InstanceName   string
 	DisplayName    string
 	Subtitle       string
 	Description    string
@@ -61,8 +68,12 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 }
 
 type singleConnectView struct {
-	ServerName     string
-	Provider       string
+	ServerName string
+	Provider   string
+	// Instance and InstanceName pin the page to one instance of the server, so a
+	// code with several does not connect whichever came first (see providerView).
+	Instance       string
+	InstanceName   string
 	Ticket         string
 	Flash          string
 	LogoURL        template.URL
@@ -83,10 +94,31 @@ type singleConnectView struct {
 	ItemsMore   int
 }
 
+// providerRowsForPage narrows a page's rows to the server it is scoped to: the
+// instance the ticket names when that instance is still there, else every row of
+// the code.
+//
+// An install records the instance it wrote, so a ticket minted from it points at
+// one row of a code that may have several. Should that instance be gone by the
+// time the user opens the link, the code's rows are better than an empty page.
+func providerRowsForPage(page *appoauth.ConnectPage) []appoauth.ProviderStatus {
+	ofCode := make([]appoauth.ProviderStatus, 0, len(page.Providers))
+	for _, p := range page.Providers {
+		if p.Code != page.Code {
+			continue
+		}
+		if page.Instance != "" && p.Instance == page.Instance {
+			return []appoauth.ProviderStatus{p}
+		}
+		ofCode = append(ofCode, p)
+	}
+	return ofCode
+}
+
 // renderSingleConnectPage renders the focused, one-server connect page. It picks
-// the provider the ticket is scoped to (by catalog code) out of the consumer's
-// providers; if none matches, the server needs no connection (or is not on this
-// consumer) and the page says so.
+// the provider the ticket is scoped to (by catalog code, and by instance when it
+// names one) out of the consumer's providers; if none matches, the server needs
+// no connection (or is not on this consumer) and the page says so.
 func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
 	view := singleConnectView{
 		Ticket:    ticket,
@@ -94,14 +126,13 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
 	}
 	var granted []string
-	for _, p := range page.Providers {
-		if p.Code != page.Code {
-			continue
-		}
+	for _, p := range providerRowsForPage(page) {
 		decorated := decorateProvider(catalog, p)
 		granted = p.Scopes
 		view.ServerName = decorated.DisplayName
 		view.Provider = p.Provider
+		view.Instance = p.Instance
+		view.InstanceName = decorated.InstanceName
 		view.LogoURL = decorated.LogoURL
 		view.Linked = p.Linked
 		view.AccountRef = p.AccountRef
@@ -208,8 +239,14 @@ func decorateProvider(catalog appcatalog.MCPServerCatalog, p appoauth.ProviderSt
 	if desc == "" {
 		desc = subtitle
 	}
+	instanceName := strings.TrimSpace(p.Registry)
+	if instanceName == display {
+		instanceName = ""
+	}
 	return providerView{
 		Provider:       p.Provider,
+		Instance:       p.Instance,
+		InstanceName:   instanceName,
 		DisplayName:    display,
 		Subtitle:       subtitle,
 		Description:    desc,

@@ -55,7 +55,11 @@ type ConnectState struct {
 	Ticket   ConnectTicket `json:"ticket"`
 	TicketID string        `json:"ticket_id"`
 	Provider string        `json:"provider"`
-	Verifier string        `json:"verifier,omitempty"`
+	// Instance is the registry the authorization was started for, so the
+	// callback stores the credential for that instance instead of re-deriving it
+	// from the provider — which cannot tell two instances of one provider apart.
+	Instance string `json:"instance,omitempty"`
+	Verifier string `json:"verifier,omitempty"`
 }
 
 type ConnectStore interface {
@@ -66,8 +70,12 @@ type ConnectStore interface {
 }
 
 type ProviderStatus struct {
-	Provider   string
-	Registry   string
+	Provider string
+	Registry string
+	// Instance is the registry id this row is for. Two instances of one catalog
+	// code appear as two rows with the same Provider, and it is what a connect
+	// or revoke action names to act on this one.
+	Instance   string
 	Code       string
 	Linked     bool
 	AccountRef string
@@ -87,6 +95,10 @@ type ConnectPage struct {
 	// minted for one server, e.g. from a Store install) so the connect page shows
 	// just that server rather than every provider.
 	Code string
+	// Instance, when set, is the exact registry the ticket was minted for, so a
+	// single-server page of a code with several instances shows that one instead
+	// of whichever came first.
+	Instance string
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
@@ -119,9 +131,9 @@ type ConnectService interface {
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
-	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
+	Start(ctx context.Context, baseURL, ticketID, provider, instanceID string) (string, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
-	Disconnect(ctx context.Context, ticketID, provider string) error
+	Disconnect(ctx context.Context, ticketID, provider, instanceID string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
 	// CredentialUsable reports whether a credential stored for this registry can
 	// still be redeemed: for a dynamically registered client, that registration

@@ -46,6 +46,14 @@ import (
 
 const connectAuditProviderID = "provider-canonical"
 
+// connectAuditUpstreamURL is the fixture registry's upstream. The vault key of a
+// forwarded credential is derived from it, so seeds and the service agree.
+const connectAuditUpstreamURL = "https://upstream.example/mcp"
+
+// connectAuditAddedUpstreamURL is the upstream of a registry added to the
+// fixture after the ticket was minted (see addConnectAuditProvider).
+const connectAuditAddedUpstreamURL = "https://added.example/mcp"
+
 type connectAuditFixtureData struct {
 	service    oauth.ConnectService
 	store      *memConnectStore
@@ -67,7 +75,7 @@ func newConnectAuditFixture(
 	consumerID := ids.New[ids.ConsumerKind]()
 	authID := ids.New[ids.AuthKind]()
 	reg, err := registrydomain.NewMCPRegistry(gatewayID, "registry-name", "", &registrydomain.MCPTarget{
-		URL: "https://upstream.example/mcp",
+		URL: connectAuditUpstreamURL,
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
 			Provider:     connectAuditProviderID,
@@ -159,7 +167,7 @@ func addConnectAuditProvider(
 		name,
 		"",
 		&registrydomain.MCPTarget{
-			URL: "https://added.example/mcp",
+			URL: connectAuditAddedUpstreamURL,
 			Auth: &registrydomain.MCPAuth{
 				Mode:         registrydomain.MCPAuthModeForwarded,
 				Provider:     provider,
@@ -242,6 +250,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
+		"",
 	)
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
@@ -256,7 +265,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		"",
 	)
 	require.NoError(t, err)
-	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID, ""))
 }
 
 func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
@@ -278,6 +287,7 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 			"https://gateway.example",
 			"ticket-sentinel",
 			"added-provider",
+			"",
 		)
 
 		require.Empty(t, location)
@@ -360,6 +370,7 @@ func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
 			"https://gateway.example",
 			"ticket-sentinel",
 			connectAuditProviderID,
+			"",
 		)
 		require.NoError(t, err)
 		parsed, err := url.Parse(location)
@@ -401,7 +412,11 @@ func TestConnectServicePageUsesProviderSnapshot(t *testing.T) {
 		require.Len(t, page.Providers, 1)
 		require.Equal(t, connectAuditProviderID, page.Providers[0].Provider)
 		require.Equal(t, "registry-name", page.Providers[0].Registry)
-		require.Equal(t, []string{connectAuditProviderID}, fixture.vault.findProviders)
+		require.Equal(
+			t,
+			[]string{vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)},
+			fixture.vault.findProviders,
+		)
 	})
 
 	t.Run("valid snapshot provider is listed and queried", func(t *testing.T) {
@@ -420,7 +435,11 @@ func TestConnectServicePageUsesProviderSnapshot(t *testing.T) {
 		require.Len(t, page.Providers, 1)
 		require.Equal(t, connectAuditProviderID, page.Providers[0].Provider)
 		require.Equal(t, "registry-name", page.Providers[0].Registry)
-		require.Equal(t, []string{connectAuditProviderID}, fixture.vault.findProviders)
+		require.Equal(
+			t,
+			[]string{vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)},
+			fixture.vault.findProviders,
+		)
 	})
 
 	t.Run("legacy ticket lists and queries current providers", func(t *testing.T) {
@@ -444,7 +463,10 @@ func TestConnectServicePageUsesProviderSnapshot(t *testing.T) {
 		require.Len(t, page.Providers, 2)
 		require.Equal(
 			t,
-			[]string{connectAuditProviderID, "added-provider"},
+			[]string{
+				vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
+				vaultKey(t, "added-provider", connectAuditAddedUpstreamURL),
+			},
 			fixture.vault.findProviders,
 		)
 		require.ElementsMatch(
@@ -453,7 +475,7 @@ func TestConnectServicePageUsesProviderSnapshot(t *testing.T) {
 				{Provider: connectAuditProviderID, Registry: "registry-name"},
 				{Provider: "added-provider", Registry: "added-registry"},
 			},
-			page.Providers,
+			withoutInstanceIDs(t, page.Providers),
 		)
 	})
 }
@@ -488,7 +510,7 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 	credential, err := vaultdomain.NewCredential(
 		fixture.gatewayID,
 		"subject-sentinel",
-		connectAuditProviderID,
+		vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 		"",
 		"access-token-sentinel",
 		"",
@@ -497,13 +519,13 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 	)
 	require.NoError(t, err)
 	fixture.vault.creds = map[string]*vaultdomain.Credential{
-		fixture.vault.k(fixture.gatewayID, "subject-sentinel", connectAuditProviderID): credential,
+		fixture.vault.k(fixture.gatewayID, "subject-sentinel", vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)): credential,
 	}
 	target, ok := fixture.data.MatchSlug("runtime")
 	require.True(t, ok)
 	target.Registries = nil
 
-	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID, ""))
 	require.Empty(t, fixture.vault.creds)
 }
 
@@ -545,7 +567,7 @@ func TestConnectServiceDisconnectRejectsProviderOutsideSnapshot(t *testing.T) {
 	credential, err := vaultdomain.NewCredential(
 		fixture.gatewayID,
 		ticket.PrincipalSub,
-		"other-provider",
+		vaultKey(t, "other-provider", "https://other.example/mcp"),
 		"",
 		"access-token-sentinel",
 		"",
@@ -554,10 +576,14 @@ func TestConnectServiceDisconnectRejectsProviderOutsideSnapshot(t *testing.T) {
 	)
 	require.NoError(t, err)
 	fixture.vault.creds = map[string]*vaultdomain.Credential{
-		fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, "other-provider"): credential,
+		fixture.vault.k(
+			fixture.gatewayID,
+			ticket.PrincipalSub,
+			vaultKey(t, "other-provider", "https://other.example/mcp"),
+		): credential,
 	}
 
-	err = fixture.service.Disconnect(ctx, "ticket-sentinel", "other-provider")
+	err = fixture.service.Disconnect(ctx, "ticket-sentinel", "other-provider", "")
 
 	require.ErrorIs(t, err, oauth.ErrProviderNotFound)
 	require.Len(t, fixture.vault.creds, 1)
@@ -567,20 +593,23 @@ func TestConnectServiceDisconnectLegacyTicketUsesCurrentProviders(t *testing.T) 
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		provider   string
-		wantErr    error
-		wantStored int
+		name        string
+		provider    string
+		upstreamURL string
+		wantErr     error
+		wantStored  int
 	}{
 		{
-			name:     "configured provider",
-			provider: connectAuditProviderID,
+			name:        "configured provider",
+			provider:    connectAuditProviderID,
+			upstreamURL: connectAuditUpstreamURL,
 		},
 		{
-			name:       "unconfigured provider",
-			provider:   "other-provider",
-			wantErr:    oauth.ErrProviderNotFound,
-			wantStored: 1,
+			name:        "unconfigured provider",
+			provider:    "other-provider",
+			upstreamURL: "https://elsewhere.example/mcp",
+			wantErr:     oauth.ErrProviderNotFound,
+			wantStored:  1,
 		},
 	}
 
@@ -602,7 +631,7 @@ func TestConnectServiceDisconnectLegacyTicketUsesCurrentProviders(t *testing.T) 
 			credential, err := vaultdomain.NewCredential(
 				fixture.gatewayID,
 				ticket.PrincipalSub,
-				tt.provider,
+				vaultKey(t, tt.provider, tt.upstreamURL),
 				"",
 				"access-token-sentinel",
 				"",
@@ -611,13 +640,18 @@ func TestConnectServiceDisconnectLegacyTicketUsesCurrentProviders(t *testing.T) 
 			)
 			require.NoError(t, err)
 			fixture.vault.creds = map[string]*vaultdomain.Credential{
-				fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, tt.provider): credential,
+				fixture.vault.k(
+					fixture.gatewayID,
+					ticket.PrincipalSub,
+					vaultKey(t, tt.provider, tt.upstreamURL),
+				): credential,
 			}
 
 			err = fixture.service.Disconnect(
 				context.Background(),
 				"ticket-sentinel",
 				tt.provider,
+				"",
 			)
 
 			if tt.wantErr == nil {
@@ -673,7 +707,7 @@ func TestConnectServiceRejectsStaleAPIKeyTicketIdentity(t *testing.T) {
 			credential, err := vaultdomain.NewCredential(
 				fixture.gatewayID,
 				ticket.PrincipalSub,
-				connectAuditProviderID,
+				vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 				"",
 				"access-token-sentinel",
 				"",
@@ -685,7 +719,7 @@ func TestConnectServiceRejectsStaleAPIKeyTicketIdentity(t *testing.T) {
 				fixture.vault.k(
 					fixture.gatewayID,
 					ticket.PrincipalSub,
-					connectAuditProviderID,
+					vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 				): credential,
 			}
 			target, ok := fixture.data.MatchSlug("runtime")
@@ -696,6 +730,7 @@ func TestConnectServiceRejectsStaleAPIKeyTicketIdentity(t *testing.T) {
 				context.Background(),
 				"ticket-sentinel",
 				connectAuditProviderID,
+				"",
 			)
 
 			require.ErrorIs(t, err, oauth.ErrTicketNotFound)
@@ -732,7 +767,7 @@ func TestConnectServiceConcurrentDisconnectAuditsExactlyOnce(t *testing.T) {
 	credential, err := vaultdomain.NewCredential(
 		fixture.gatewayID,
 		ticket.PrincipalSub,
-		connectAuditProviderID,
+		vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 		"",
 		"access-token-sentinel",
 		"",
@@ -762,7 +797,7 @@ func TestConnectServiceConcurrentDisconnectAuditsExactlyOnce(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			results <- service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID)
+			results <- service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID, "")
 		}()
 	}
 	close(start)
@@ -815,7 +850,7 @@ func TestConnectServiceCorruptCredentialDoesNotAudit(t *testing.T) {
 		nil,
 	)
 
-	err = service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID)
+	err = service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID, "")
 
 	require.ErrorIs(t, err, vaultdomain.ErrNotFound)
 	raw, err := server.Get(key)
@@ -848,6 +883,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
+		"",
 	)
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
@@ -862,7 +898,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		"",
 	)
 	require.NoError(t, err)
-	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID, ""))
 
 	records := strings.Split(strings.TrimSpace(output.String()), "\n")
 	require.Len(t, records, 3)
@@ -895,6 +931,7 @@ func TestConnectServiceSkipsAuditForNonAPIKeyTicket(t *testing.T) {
 		"https://gateway.example",
 		ticketID,
 		connectAuditProviderID,
+		"",
 	)
 	require.NoError(t, err)
 	parsed, err := url.Parse(location)
@@ -909,7 +946,7 @@ func TestConnectServiceSkipsAuditForNonAPIKeyTicket(t *testing.T) {
 		"",
 	)
 	require.NoError(t, err)
-	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID, ""))
 
 	ticket := fixture.store.tickets[ticketID]
 	require.Empty(t, ticket.ConsumerID)
@@ -964,7 +1001,7 @@ func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 			credential, err := vaultdomain.NewCredential(
 				fixture.gatewayID,
 				ticket.PrincipalSub,
-				connectAuditProviderID,
+				vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 				"",
 				"access-token-sentinel",
 				"",
@@ -973,13 +1010,14 @@ func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 			)
 			require.NoError(t, err)
 			fixture.vault.creds = map[string]*vaultdomain.Credential{
-				fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID): credential,
+				fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)): credential,
 			}
 
 			err = fixture.service.Disconnect(
 				ctx,
 				"ticket-sentinel",
 				connectAuditProviderID,
+				"",
 			)
 
 			require.ErrorIs(t, err, oauth.ErrTicketNotFound)
@@ -1014,10 +1052,10 @@ func TestConnectServiceAcceptsAnAdminMintedTicketWithNoAPIKey(t *testing.T) {
 	)
 	require.NoError(t, err)
 	fixture.vault.creds = map[string]*vaultdomain.Credential{
-		fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID): credential,
+		fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)): credential,
 	}
 
-	require.NoError(t, fixture.service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID))
+	require.NoError(t, fixture.service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID, ""))
 	require.Empty(t, fixture.vault.creds)
 }
 
@@ -1056,6 +1094,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 					"https://gateway.example",
 					"ticket-sentinel",
 					connectAuditProviderID,
+					"",
 				)
 				require.NoError(t, err)
 				parsed, err := url.Parse(location)
@@ -1080,7 +1119,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 				credential, err := vaultdomain.NewCredential(
 					fixture.gatewayID,
 					ticket.PrincipalSub,
-					connectAuditProviderID,
+					vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL),
 					"",
 					"access-token-sentinel",
 					"",
@@ -1089,13 +1128,14 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 				)
 				require.NoError(t, err)
 				fixture.vault.creds = map[string]*vaultdomain.Credential{
-					fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID): credential,
+					fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, vaultKey(t, connectAuditProviderID, connectAuditUpstreamURL)): credential,
 				}
 				fixture.vault.deleteErr = dependencyErr
 				return fixture.service.Disconnect(
 					context.Background(),
 					"ticket-sentinel",
 					connectAuditProviderID,
+					"",
 				)
 			},
 		},
@@ -1111,4 +1151,19 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 			require.ErrorIs(t, tt.run(t, fixture), dependencyErr)
 		})
 	}
+}
+
+// withoutInstanceIDs drops the generated registry ids so a row can be compared
+// to a literal, while asserting every row does name the instance it acts on —
+// which is what lets the page connect one instance of a provider and not
+// whichever came first.
+func withoutInstanceIDs(t *testing.T, statuses []oauth.ProviderStatus) []oauth.ProviderStatus {
+	t.Helper()
+	out := make([]oauth.ProviderStatus, 0, len(statuses))
+	for _, status := range statuses {
+		require.NotEmpty(t, status.Instance, "provider %q names no instance", status.Provider)
+		status.Instance = ""
+		out = append(out, status)
+	}
+	return out
 }

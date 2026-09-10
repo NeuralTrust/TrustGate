@@ -427,13 +427,17 @@ func TestConnectPage_StartIsAPostNotALink(t *testing.T) {
 	body := renderToString(t, func(c *fiber.Ctx) error {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
-			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp"}},
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "linear", Registry: "linear-mcp", Instance: "reg-1"},
+			},
 		}, "tk", "", nil)
 	})
 	if strings.Contains(body, `href="/oauth/connect/`) {
 		t.Fatalf("connect start must not be a GET link:\n%s", body)
 	}
-	if !strings.Contains(body, `<form method="post" action="/oauth/connect/linear?ticket=tk">`) {
-		t.Fatalf("connect start must be a POST form:\n%s", body)
+	// The instance rides along so a provider with two of them connects the one
+	// whose tile was pressed.
+	if !strings.Contains(body, `<form method="post" action="/oauth/connect/linear?ticket=tk&amp;instance=reg-1">`) {
+		t.Fatalf("connect start must be a POST form naming the instance:\n%s", body)
 	}
 }
