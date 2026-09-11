@@ -64,6 +64,14 @@ func newPreviewT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, vau
 	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
 		"github": {Code: "github", DisplayName: "GitHub"},
 		"notion": {Code: "notion", DisplayName: "Notion"},
+		"snowflake": {
+			Code: "snowflake", DisplayName: "Snowflake",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+				{Name: "database", Required: true},
+				{Name: "note", Required: false},
+			},
+		},
 	}}
 	p, err := NewPrincipalPreview(installs, regs, cat, vault)
 	if err != nil {
@@ -286,5 +294,52 @@ func TestPrincipalPreview_SkipsTheCheckWhenAReconnectIsAlreadyDue(t *testing.T) 
 	}
 	if len(health.asked) != 0 {
 		t.Fatalf("no check needed when a reconnect is already due, asked %v", health.asked)
+	}
+}
+
+// An approved request is written the moment an approver says yes — before
+// anyone has asked the requester for their own account URL. The row read as
+// installed and its first tool call died on a missing placeholder, so the
+// preview now names what is still missing and the Portal can ask for it.
+func TestPrincipalPreview_NamesTheSettingsAnInstallStillNeeds(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	approved := mustInstall(t, gw, "ana", "snowflake")
+	approved.Config = map[string]string{"account_url": "acme.snowflakecomputing.com"}
+	configured := mustInstall(t, gw, "ana", "github")
+
+	p := newPreviewT(t,
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{approved, configured}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake"), shelfRegistry("github")}},
+		nil,
+	)
+	state, err := p.Preview(context.Background(), gw, "ana")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if got := state.Installs[0].NeedsConfig; len(got) != 1 || got[0] != "database" {
+		t.Fatalf("want the one missing required value, got %v", got)
+	}
+	if got := state.Installs[1].NeedsConfig; len(got) != 0 {
+		t.Fatalf("a server that declares nothing needs nothing, got %v", got)
+	}
+}
+
+// A denied row is nobody's setup to finish.
+func TestPrincipalPreview_ARevokedRowNeedsNothing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	denied := mustInstall(t, gw, "ana", "snowflake")
+	denied.Status = installationdomain.StatusRevoked
+
+	p := newPreviewT(t,
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{denied}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}},
+		nil,
+	)
+	state, err := p.Preview(context.Background(), gw, "ana")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if got := state.Installs[0].NeedsConfig; len(got) != 0 {
+		t.Fatalf("a revoked row needs nothing, got %v", got)
 	}
 }

@@ -97,6 +97,82 @@ func TestAssociator_AttachRegistry_Success(t *testing.T) {
 
 func intPtr(i int) *int { return &i }
 
+// A server whose address is completed from per-user values has nowhere to read
+// them for an application that acts as itself: it never installs from the Store,
+// so it holds no config and no vault entries, and there is no admin-level place
+// to supply them. The binding used to be accepted and every call then died at
+// dial time on a missing placeholder.
+func TestAssociator_AttachRegistry_RefusesPerUserURLOnAMachineConsumer(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	perUser := &registrydomain.Registry{
+		ID: registryID, GatewayID: gwID, Type: registrydomain.TypeMCP,
+		MCPTarget: &registrydomain.MCPTarget{
+			URL: "https://{account_url}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+			},
+		},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByID(mock.Anything, registryID).Return(perUser, nil).Once()
+
+	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t),
+		cachemocks.NewEventPublisher(t))
+	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
+	if !errors.Is(err, appconsumer.ErrPerUserURLOnMachineConsumer) {
+		t.Fatalf("want ErrPerUserURLOnMachineConsumer, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "account_url") {
+		t.Fatalf("the refusal must name the variables, got %v", err)
+	}
+}
+
+// The same server on a consumer that acts for users is fine: each caller brings
+// their own values.
+func TestAssociator_AttachRegistry_AllowsPerUserURLWhenActingForUsers(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	perUser := &registrydomain.Registry{
+		ID: registryID, GatewayID: gwID, Type: registrydomain.TypeMCP,
+		MCPTarget: &registrydomain.MCPTarget{
+			URL: "https://{account_url}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+			},
+		},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).Return(&domain.Consumer{
+		ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP,
+		Identity: domain.Identity{ActsForUsers: true, Source: domain.IdentitySourcePlatform},
+	}, nil).Once()
+	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, intPtr(1)).Return(nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByID(mock.Anything, registryID).Return(perUser, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).Once()
+
+	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
+	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1)); err != nil {
+		t.Fatalf("AttachRegistry error: %v", err)
+	}
+}
+
 func TestAssociator_AttachRegistry_RejectsForeignConsumer(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

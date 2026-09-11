@@ -49,6 +49,16 @@ type ConnectLink struct {
 	InstanceID string `json:"instance_id"`
 }
 
+// ConfigureLink asks for the hosted form one user fills in to finish setting up
+// a server they hold. Like ConnectLink it is only ever minted for the caller
+// themselves: the form writes that principal's own values.
+type ConfigureLink struct {
+	PrincipalSub string   `json:"principal_sub"`
+	Code         string   `json:"code"`
+	InstanceID   string   `json:"instance_id"`
+	Groups       []string `json:"groups"`
+}
+
 type Decide struct {
 	PrincipalSub string `json:"principal_sub"`
 	Code         string `json:"code"`

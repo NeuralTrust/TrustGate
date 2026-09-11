@@ -32,7 +32,7 @@ const pgForeignKeyViolation = "23503"
 
 const selectColumns = `
 	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-	       reason, decision, decided_by, decided_at, created_at, updated_at
+	       reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at
 	  FROM store_installations`
 
 var _ domain.Repository = (*Repository)(nil)
@@ -63,8 +63,8 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	const query = `
 		INSERT INTO store_installations
 			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id,
-			 reason, decision, decided_by, decided_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			 reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (
 			gateway_id,
 			principal_sub,
@@ -77,16 +77,21 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 			    -- A repeat request carries the user's newest words; an install
 			    -- carries none and must not erase what they wrote.
 			    reason       = CASE WHEN EXCLUDED.reason <> '' THEN EXCLUDED.reason ELSE store_installations.reason END,
+			    -- Same rule as the reason: a repeat request carries the groups the
+			    -- requester has now; an install carries none and must not erase them.
+			    requester_groups = CASE WHEN cardinality(EXCLUDED.requester_groups) > 0
+			                            THEN EXCLUDED.requester_groups
+			                            ELSE store_installations.requester_groups END,
 			    decision     = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decision ELSE store_installations.decision END,
 			    decided_by   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_by ELSE store_installations.decided_by END,
 			    decided_at   = CASE WHEN EXCLUDED.decision <> '' THEN EXCLUDED.decided_at ELSE store_installations.decided_at END,
 			    updated_at   = EXCLUDED.updated_at
-		RETURNING id, reason, decision, decided_by, decided_at, created_at, updated_at`
+		RETURNING id, reason, requester_groups, decision, decided_by, decided_at, created_at, updated_at`
 	if err := r.conn.Pool.QueryRow(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
-		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.Reason,
+		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.Reason, groupArray(in.RequesterGroups),
 		string(in.Decision), in.DecidedBy, nullableTime(in.DecidedAt), in.CreatedAt, in.UpdatedAt,
-	).Scan(&in.ID, &in.Reason, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
+	).Scan(&in.ID, &in.Reason, &in.RequesterGroups, &decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt); err != nil {
 		return mapPgError(err)
 	}
 	in.Decision = domain.Decision(decision)
@@ -283,7 +288,7 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
-		&in.InstalledBy, &configJSON, &registryID, &in.Reason,
+		&in.InstalledBy, &configJSON, &registryID, &in.Reason, &in.RequesterGroups,
 		&decision, &in.DecidedBy, &decidedAt, &in.CreatedAt, &in.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -348,4 +353,13 @@ func mapPgError(err error) error {
 		return fmt.Errorf("%w: unknown gateway", domain.ErrInvalidInstallation)
 	}
 	return fmt.Errorf("installation repository: %w", err)
+}
+
+// groupArray keeps a nil slice out of the driver: Postgres takes an empty array
+// for "no groups", and the column is NOT NULL.
+func groupArray(groups []string) []string {
+	if groups == nil {
+		return []string{}
+	}
+	return groups
 }

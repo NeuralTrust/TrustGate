@@ -37,14 +37,18 @@ type PrincipalHandler struct {
 	// their own account. Nil on planes without the OAuth connect service, and
 	// the endpoint then reports itself unavailable.
 	linker appstore.PrincipalConnectLinker
+	// configurer mints the hosted form where a user enters a server's per-user
+	// values. Nil on planes without the configure service.
+	configurer appstore.PrincipalConfigureLinker
 }
 
 func NewPrincipalHandler(
 	preview appstore.PrincipalPreview,
 	installer appstore.PrincipalInstaller,
 	linker appstore.PrincipalConnectLinker,
+	configurer appstore.PrincipalConfigureLinker,
 ) *PrincipalHandler {
-	return &PrincipalHandler{preview: preview, installer: installer, linker: linker}
+	return &PrincipalHandler{preview: preview, installer: installer, linker: linker, configurer: configurer}
 }
 
 func validateInstall(r storerequest.Install) error {
@@ -109,6 +113,7 @@ func (h *PrincipalHandler) Get(c *fiber.Ctx) error {
 		if !in.RegistryID.IsNil() {
 			row.RegistryID = in.RegistryID.String()
 		}
+		row.NeedsConfig = in.NeedsConfig
 		out.Installs = append(out.Installs, row)
 	}
 	for _, conn := range state.Connections {
@@ -270,5 +275,64 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		ConsumerPath: link.ConsumerPath,
 		ConnectPath:  link.ConsumerPath + "/connect",
 		ExpiresAt:    time.Now().UTC().Add(appoauth.ConnectTicketTTL),
+	})
+}
+
+// ConfigureLink godoc
+// @Summary      Get the form a user finishes a server's setup on
+// @Description  Mints the hosted form where one user enters a server's per-user values (an account URL, a database, a personal token), and returns where it is redeemed. Only for the caller themselves: the form writes that principal's own configuration.
+// @Tags         store
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                      true  "Gateway id"  format(uuid)
+// @Param        body        body      storerequest.ConfigureLink  true  "Which server, for whom"
+// @Success      200         {object}  storeresponse.PrincipalConfigureLink
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      403         {object}  httpio.ErrorBody  "principal_sub is not the caller"
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/store/principal/configure-link [post]
+func (h *PrincipalHandler) ConfigureLink(c *fiber.Ctx) error {
+	if h.configurer == nil {
+		return httpio.WriteError(c, fmt.Errorf("store configure link: %w", commonerrors.ErrNotFound))
+	}
+	gatewayID, err := httpio.ParseGatewayID(c)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	var req storerequest.ConfigureLink
+	if err := c.BodyParser(&req); err != nil {
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+	}
+	principalSub := strings.TrimSpace(req.PrincipalSub)
+	if principalSub == "" {
+		return httpio.WriteError(c, fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation))
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		return httpio.WriteError(c, fmt.Errorf("code is required: %w", commonerrors.ErrValidation))
+	}
+	// The ticket authorizes writing this principal's own configuration, and the
+	// browser that redeems it is unauthenticated — so, like the connect link, it
+	// is minted for the caller and nobody else.
+	if caller := callerSubject(c); caller == "" || caller != principalSub {
+		return httpio.WriteError(c,
+			fmt.Errorf("a configure link can only be minted for yourself: %w", commonerrors.ErrForbidden))
+	}
+	link, err := h.configurer.LinkFor(c.UserContext(), appstore.PrincipalConfigureRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: principalSub,
+		Code:         strings.TrimSpace(req.Code),
+		InstanceID:   strings.TrimSpace(req.InstanceID),
+		Groups:       req.Groups,
+	})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteOK(c, storeresponse.PrincipalConfigureLink{
+		Ticket:        link.Ticket,
+		ConsumerPath:  link.ConsumerPath,
+		ConfigurePath: link.ConsumerPath + "/configure",
+		ExpiresAt:     time.Now().UTC().Add(appoauth.ConnectTicketTTL),
 	})
 }

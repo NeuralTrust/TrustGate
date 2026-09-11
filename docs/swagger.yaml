@@ -1646,6 +1646,19 @@ definitions:
       status_code:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink:
+    properties:
+      code:
+        type: string
+      groups:
+        items:
+          type: string
+        type: array
+      instance_id:
+        type: string
+      principal_sub:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink:
     properties:
       code:
@@ -1827,6 +1840,13 @@ definitions:
           Reason is why the requester asked for the server, in their own words.
           Omitted when they gave none.
         type: string
+      requester_groups:
+        description: |-
+          RequesterGroups are the groups the requester carried when they filed, and
+          the only ones an approval may grant instead of the person.
+        items:
+          type: string
+        type: array
       requested_at:
         type: string
     type: object
@@ -1868,6 +1888,17 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalInstall'
         type: array
       principal_sub:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink:
+    properties:
+      configure_path:
+        type: string
+      consumer_path:
+        type: string
+      expires_at:
+        type: string
+      ticket:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink:
@@ -1912,6 +1943,15 @@ definitions:
         type: string
       name:
         type: string
+      needs_config:
+        description: |-
+          NeedsConfig names the per-user values this installation is still missing.
+          An approved request is recorded the moment the approver says yes, before
+          anyone has asked the requester for their own account URL — the row reads
+          as installed while its first tool call cannot resolve the server's URL.
+        items:
+          type: string
+        type: array
       registry:
         type: string
       registry_id:
@@ -5142,6 +5182,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Preview a principal's MCP Store state
+      tags:
+      - store
+  /v1/gateways/{gateway_id}/store/principal/configure-link:
+    post:
+      consumes:
+      - application/json
+      description: 'Mints the hosted form where one user enters a server''s per-user
+        values (an account URL, a database, a personal token), and returns where it
+        is redeemed. Only for the caller themselves: the form writes that principal''s
+        own configuration.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Which server, for whom
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "403":
+          description: principal_sub is not the caller
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get the form a user finishes a server's setup on
       tags:
       - store
   /v1/gateways/{gateway_id}/store/principal/connect-link:
