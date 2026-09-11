@@ -48,7 +48,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
 	authMap := cache.NewTTLMap(cache.AuthCacheTTL)
 	consumerPathMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
-	roleMap := cache.NewTTLMap(cache.RoleCacheTTL)
 	registryMap := cache.NewTTLMap(cache.RegistryCacheTTL)
 	policyMap := cache.NewTTLMap(cache.PolicyCacheTTL)
 	gatewayMap.Set("id:"+gatewayID, gw)
@@ -61,8 +60,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	loadBalancerMap.Set(otherID+":consumer-9", "keep")
 	authMap.Set("enabled:oauth2", "candidate-list")
 	consumerPathMap.Set("|/v1/mcp/linear", "path-match")
-	roleID := ids.New[ids.RoleKind]().String()
-	roleMap.Set(roleID, "role")
 	registryID := ids.New[ids.RegistryKind]().String()
 	registryMap.Set(registryID, "registry")
 	policyID := ids.New[ids.PolicyKind]().String()
@@ -75,7 +72,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	client.EXPECT().GetTTLMap(cache.LoadBalancerTTLName).Return(loadBalancerMap).Once()
 	client.EXPECT().GetTTLMap(cache.AuthTTLName).Return(authMap).Once()
 	client.EXPECT().GetTTLMap(cache.ConsumerPathTTLName).Return(consumerPathMap).Once()
-	client.EXPECT().GetTTLMap(cache.RoleTTLName).Return(roleMap).Once()
 	client.EXPECT().GetTTLMap(cache.RegistryTTLName).Return(registryMap).Once()
 	client.EXPECT().GetTTLMap(cache.PolicyTTLName).Return(policyMap).Once()
 
@@ -98,9 +94,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	}
 	if _, ok := loadBalancerMap.Get(gatewayID + ":consumer-1"); ok {
 		t.Fatal("gateway-scoped load balancer entry was not evicted")
-	}
-	if _, ok := roleMap.Get(roleID); ok {
-		t.Fatal("role entry was not evicted")
 	}
 	if _, ok := registryMap.Get(registryID); ok {
 		t.Fatal("registry entry was not evicted; gateway delete leaves stale registry reads")

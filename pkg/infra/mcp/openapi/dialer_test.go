@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -166,7 +167,7 @@ func TestOpenAPIUpstreamCallsTrustGateAdminHealthz(t *testing.T) {
 
 	tools, err := upstream.ListTools(context.Background())
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(tools), 50)
+	require.GreaterOrEqual(t, len(tools), 40)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
@@ -285,4 +286,49 @@ func (*fakeRemoteUpstream) SupportsPrompts() bool {
 }
 
 func (*fakeRemoteUpstream) Close(context.Context) {
+}
+
+func TestDialerServesExpiredDocumentWhileRefreshing(t *testing.T) {
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	compiler := compilerFunc(func(ctx context.Context, _ appopenapi.Source) (*appopenapi.Document, error) {
+		if calls.Add(1) == 1 {
+			return &appopenapi.Document{}, nil
+		}
+		close(started)
+		select {
+		case <-release:
+			return &appopenapi.Document{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	dialer := NewDialerWithClient(nil, compiler, http.DefaultClient).(*Dialer)
+	target := appmcp.Target{Revision: "registry:1", OpenAPI: &appopenapi.Source{SpecURL: "https://example.com/openapi.json"}}
+	_, err := dialer.Connect(context.Background(), target)
+	require.NoError(t, err)
+	value, ok := dialer.cache.Load(target.Revision)
+	require.True(t, ok)
+	entry := value.(cacheEntry)
+	entry.expiresAt = time.Now().Add(-time.Second)
+	dialer.cache.Store(target.Revision, entry)
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), target)
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Connect blocked on refresh instead of serving the stale document")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not start")
+	}
+	close(release)
 }

@@ -22,7 +22,6 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 )
@@ -37,7 +36,6 @@ type RegistryLookup func(ids.RegistryID) (*registrydomain.Registry, bool)
 type ResolveInput struct {
 	Intent     routingdomain.Intent
 	Consumer   *appconsumer.RoutableConsumer
-	Roles      []*roledomain.Role
 	Registries RegistryLookup
 }
 
@@ -57,9 +55,6 @@ func NewResolver() Resolver {
 func (r *resolver) Resolve(in ResolveInput) (*routingdomain.CandidateSet, error) {
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return routingdomain.NewCandidateSet(), nil
-	}
-	if in.Consumer.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased {
-		return r.resolveRoleBased(in)
 	}
 	return r.resolveInline(in)
 }
@@ -174,43 +169,4 @@ func concreteModel(model string) string {
 		return ""
 	}
 	return model
-}
-
-func (r *resolver) resolveRoleBased(in ResolveInput) (*routingdomain.CandidateSet, error) {
-	if in.Intent.IsPool() {
-		return nil, fmt.Errorf(
-			"%w: pool %q (pool aliases are not available for role-based consumers)",
-			routingdomain.ErrUnknownPoolAlias, in.Intent.PoolAlias,
-		)
-	}
-	base := routingdomain.NewCandidateSet()
-	for _, role := range in.Roles {
-		if role == nil {
-			continue
-		}
-		for _, registryID := range role.RegistryIDs {
-			reg, ok := lookupRegistry(in.Registries, registryID)
-			if !ok {
-				continue
-			}
-			policy := role.ModelPolicies[registryID]
-			base.Add(routingdomain.Candidate{
-				Registry: reg,
-				Allowed:  policy.Allowed,
-				Default:  concreteModel(policy.Default),
-				Sources:  []string{"role:" + role.Name},
-			})
-		}
-	}
-	if base.Len() == 0 {
-		return base, nil
-	}
-	return base.ResolveIntent(in.Intent)
-}
-
-func lookupRegistry(lookup RegistryLookup, id ids.RegistryID) (*registrydomain.Registry, bool) {
-	if lookup == nil {
-		return nil, false
-	}
-	return lookup(id)
 }

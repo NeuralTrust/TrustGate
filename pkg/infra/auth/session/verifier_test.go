@@ -54,7 +54,7 @@ func TestVerify_Success(t *testing.T) {
 	principal, err := verifier.Verify(context.Background(), raw)
 	require.NoError(t, err)
 	assert.Equal(t, "user-123", principal.Subject)
-	assert.Equal(t, identity.MethodJWT, principal.Method)
+	assert.Equal(t, identity.MethodOAuth, principal.Method)
 	assert.Equal(t, signer.Issuer(), principal.Issuer)
 	assert.Equal(t, []string{"read", "write", "admin"}, principal.Scopes)
 	assert.Equal(t, raw, principal.RawToken)

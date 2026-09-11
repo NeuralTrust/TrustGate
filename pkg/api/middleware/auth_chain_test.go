@@ -26,6 +26,7 @@ import (
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
@@ -38,9 +39,15 @@ import (
 type fakeAPIKeyFinder struct {
 	auth *authdomain.Auth
 	err  error
+	// expect, when set, is the exact key the lookup must receive — the store
+	// matches on a digest, so a stray space or newline is a different key.
+	expect string
 }
 
-func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, _ string) (*authdomain.Auth, error) {
+func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	if f.expect != "" && rawKey != f.expect {
+		return nil, authdomain.ErrNotFound
+	}
 	return f.auth, f.err
 }
 
@@ -243,13 +250,40 @@ func (f fakePathResolver) Match(context.Context, string, string) ([]appconsumer.
 	return f.matches, f.err
 }
 
+// pathMatchWith is a match on a consumer whose users sign in — the shape the
+// built-in identity provider is allowed to serve. Production always carries a
+// consumer on the match (pathResolver.load), so the fixtures do too.
 func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
-	m := appconsumer.PathMatch{}
+	m := appconsumer.PathMatch{Consumer: signInConsumer()}
 	if len(auths) > 0 {
 		m.GatewayID = auths[0].GatewayID
+		m.Consumer.GatewayID = auths[0].GatewayID
 	}
 	m.Auths = auths
 	return m
+}
+
+func signInConsumer() *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:       ids.New[ids.ConsumerKind](),
+		Name:     "sign-in",
+		Slug:     "sign-in",
+		Type:     consumerdomain.TypeMCP,
+		Active:   true,
+		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
+	}
+}
+
+// machineConsumer authenticates as the application itself: the built-in
+// provider must never stand in for its missing credential.
+func machineConsumer() *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:     ids.New[ids.ConsumerKind](),
+		Name:   "machine",
+		Slug:   "machine",
+		Type:   consumerdomain.TypeMCP,
+		Active: true,
+	}
 }
 
 func resolveChallengeEligibility(
@@ -537,7 +571,7 @@ func TestChain_SessionToken_ResolvesByAuthID(t *testing.T) {
 	require.Equal(t, a.ID, id.AuthID)
 	require.NotNil(t, id.Principal)
 	require.Equal(t, "user-123", id.Principal.Subject)
-	require.Equal(t, identity.MethodJWT, id.Principal.Method)
+	require.Equal(t, identity.MethodOAuth, id.Principal.Method)
 	require.Equal(t, sessionIssuer, id.Principal.Issuer)
 	require.Equal(t, 0, jwtVal.calls)
 }
@@ -654,4 +688,43 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 
 	_, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
+// Most MCP clients can only send a credential as Authorization: Bearer, and the
+// proxy plane has always accepted an api key that way. The MCP chain used to
+// hand it to the OAuth2 validators instead and answer 401.
+func TestChain_APIKeyPresentedAsBearerAuthenticates(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "prod", true)
+	require.NoError(t, err)
+	raw := apiKey.RawKey
+	require.NotEmpty(t, raw, "the generated key is returned once, in plain")
+
+	for _, tt := range []struct {
+		name   string
+		header map[string]string
+	}{
+		{name: "X-AG-API-Key", header: map[string]string{"X-AG-API-Key": raw}},
+		{name: "x-api-key", header: map[string]string{"x-api-key": raw}},
+		{name: "bearer", header: map[string]string{"Authorization": "Bearer " + raw}},
+		{name: "untrimmed", header: map[string]string{"X-AG-API-Key": raw + "\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{auth: apiKey, expect: raw},
+				fakeCredentialFinder{},
+				fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeMTLSValidator{},
+				nil, nil, nil, false,
+			)
+
+			id, err := resolveChain(t, resolver, tt.header)
+			require.NoError(t, err)
+			require.Equal(t, apiKey.ID, id.AuthID)
+			require.NotNil(t, id.Principal)
+			require.Equal(t, "prod", id.Principal.Subject)
+		})
+	}
 }

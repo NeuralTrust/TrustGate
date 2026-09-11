@@ -49,7 +49,6 @@ type ForwardInput struct {
 	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Data      *appconsumer.Data
-	RoleIDs   []ids.RoleID
 	Request   *infracontext.RequestContext
 }
 
@@ -265,7 +264,7 @@ func (f *forwarder) invokeWithFailover(
 			case OutcomeRetryable:
 				modelMissOnly = false
 				reason := failureReason(resp, err)
-				reportFailure(lb, bk, reason)
+				reportFailure(ctx, lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
 				f.logRetry(bk, reason, budget)
@@ -286,8 +285,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, f.noRegistryServesModelError(
-			ctx, rc, dto.request.RequestedModel, excludedRegistries(excluded))
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, route.chain, last)
 	}
 	return f.relayLast(ctx, dto, last)
 }
@@ -331,8 +329,8 @@ func (f *forwarder) nextCandidate(
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
-	if isRoleBased(rc) {
-		return nil, false
+	if len(chain) > 0 {
+		return nextChainRoute(chain, excluded), false
 	}
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
@@ -360,9 +358,9 @@ func reportSuccess(lb *loadbalancer.LoadBalancer, bk *domain.Registry) {
 	}
 }
 
-func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
+func reportFailure(ctx context.Context, lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
 	if lb != nil {
-		lb.ReportFailure(bk, reason)
+		lb.ReportFailure(ctx, bk, reason)
 	}
 }
 

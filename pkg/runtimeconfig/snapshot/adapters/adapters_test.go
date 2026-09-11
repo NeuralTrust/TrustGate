@@ -27,7 +27,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -44,7 +43,6 @@ type fixture struct {
 	reg     registrydomain.Registry
 	auth    authdomain.Auth
 	policy  policydomain.Policy
-	role    roledomain.Role
 }
 
 func newFixture() fixture {
@@ -79,7 +77,6 @@ func newFixture() fixture {
 		CreatedAt: baseTime,
 	}
 	pol := policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Priority: 1, CreatedAt: baseTime}
-	rl := roledomain.Role{ID: ids.New[ids.RoleKind](), GatewayID: gwID, Name: "role", CreatedAt: baseTime}
 	con := consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Slug: "consumer-one", Active: true,
 		AuthIDs: []ids.AuthID{auth.ID}, CreatedAt: baseTime,
@@ -91,12 +88,11 @@ func newFixture() fixture {
 		Registries: []registrydomain.Registry{reg},
 		Policies:   []policydomain.Policy{pol},
 		Auths:      []authdomain.Auth{auth},
-		Roles:      []roledomain.Role{rl},
 	})
 	store := configsync.NewMemoryStore[*readmodel.Snapshot]()
 	store.Swap(&configsync.Versioned[*readmodel.Snapshot]{Version: "v1", Snapshot: snap})
 
-	return fixture{store: store, gateway: gw, other: otherGW, reg: reg, auth: auth, policy: pol, role: rl}
+	return fixture{store: store, gateway: gw, other: otherGW, reg: reg, auth: auth, policy: pol}
 }
 
 func emptyStore() *configsync.MemoryStore[*readmodel.Snapshot] {
@@ -137,10 +133,29 @@ func TestGatewayAdapterNotReadyAndReadOnly(t *testing.T) {
 	assert.ErrorIs(t, repo.Save(ctx, &gatewaydomain.Gateway{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Update(ctx, &gatewaydomain.Gateway{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, ids.New[ids.GatewayKind]()), configsync.ErrReadOnly)
-	_, _, err = repo.List(ctx, gatewaydomain.ListFilter{})
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
-	_, err = repo.CountByTenantID(ctx, "acme")
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
+	items, total, err := repo.List(ctx, gatewaydomain.ListFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	assert.Zero(t, total)
+	count, err := repo.CountByTenantID(ctx, "acme")
+	require.NoError(t, err)
+	assert.Zero(t, count)
+}
+
+func TestGatewayAdapterListsAndCountsSnapshotData(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewGatewayRepository(f.store)
+
+	items, total, err := repo.List(context.Background(), gatewaydomain.ListFilter{TenantID: "team-1", SlugContains: "ONE"})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, f.gateway.ID, items[0].ID)
+
+	count, err := repo.CountByTenantID(context.Background(), "team-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 }
 
 func TestConsumerAdapter(t *testing.T) {
@@ -167,7 +182,7 @@ func TestConsumerAdapter(t *testing.T) {
 	assert.Len(t, byAuth, 1)
 
 	assert.ErrorIs(t, repo.Save(ctx, &consumerdomain.Consumer{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.Update(ctx, &consumerdomain.Consumer{}, nil), configsync.ErrReadOnly)
+	assert.ErrorIs(t, repo.Update(ctx, &consumerdomain.Consumer{}, nil, nil), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, ids.New[ids.ConsumerKind]()), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.AttachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.DetachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)
@@ -201,7 +216,80 @@ func TestRegistryAdapterScopingAndSecrets(t *testing.T) {
 	assert.Nil(t, empty)
 
 	assert.ErrorIs(t, repo.Save(ctx, &registrydomain.Registry{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.reg.ID), configsync.ErrReadOnly)
+	_, deleteErr := repo.Delete(ctx, f.gateway.ID, f.reg.ID)
+	assert.ErrorIs(t, deleteErr, configsync.ErrReadOnly)
+}
+
+func TestRegistryAdapterList(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewRegistryRepository(f.store)
+	ctx := context.Background()
+
+	items, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, Page: 1, Size: 100})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, items, 1)
+	assert.Equal(t, f.reg.ID, items[0].ID)
+	require.NotNil(t, items[0].LLMTarget)
+	require.NotNil(t, items[0].LLMTarget.Auth.APIKey)
+	assert.Equal(t, "sk-secret-value", items[0].LLMTarget.Auth.APIKey.APIKey, "List returns fully-hydrated registries")
+
+	other, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.other, Page: 1, Size: 100})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, other, "registries are scoped to their gateway")
+
+	byName, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, NameContains: "PEN"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "NameContains is case-insensitive")
+	assert.Len(t, byName, 1)
+
+	none, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, NameContains: "nomatch"})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, none)
+
+	// A second page past the end is empty, but the total still reflects the match.
+	page2, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, Page: 2, Size: 100})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Empty(t, page2)
+
+	// A not-yet-ready store lists nothing rather than erroring.
+	emptyRepo := adapters.NewRegistryRepository(emptyStore())
+	items, total, err = emptyRepo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, items)
+}
+
+func TestRegistryAdapterIndexedStoreReads(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewRegistryRepository(f.store)
+	indexed, ok := repo.(interface {
+		ListByGateway(context.Context, ids.GatewayID) ([]*registrydomain.Registry, error)
+		ListByGatewayAndCatalogCode(context.Context, ids.GatewayID, string) ([]*registrydomain.Registry, error)
+		ListByGatewayAndIDs(context.Context, ids.GatewayID, []ids.RegistryID) ([]*registrydomain.Registry, error)
+	})
+	require.True(t, ok)
+
+	items, err := indexed.ListByGateway(context.Background(), f.gateway.ID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	versioned, loaded := f.store.Load()
+	require.True(t, loaded)
+	assert.Same(t, versioned.Snapshot.RegistriesByGateway(f.gateway.ID)[0], items[0])
+
+	byCode, err := indexed.ListByGatewayAndCatalogCode(context.Background(), f.gateway.ID, "missing")
+	require.NoError(t, err)
+	assert.Empty(t, byCode)
+
+	byID, err := indexed.ListByGatewayAndIDs(context.Background(), f.gateway.ID, []ids.RegistryID{f.reg.ID})
+	require.NoError(t, err)
+	require.Len(t, byID, 1)
+	assert.Same(t, items[0], byID[0])
 }
 
 func TestPolicyAdapter(t *testing.T) {
@@ -251,30 +339,6 @@ func TestAuthAdapter(t *testing.T) {
 
 	assert.ErrorIs(t, repo.Save(ctx, &authdomain.Auth{}), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.auth.ID), configsync.ErrReadOnly)
-}
-
-func TestRoleAdapter(t *testing.T) {
-	t.Parallel()
-	f := newFixture()
-	repo := adapters.NewRoleRepository(f.store)
-	ctx := context.Background()
-
-	got, err := repo.FindByID(ctx, f.role.ID)
-	require.NoError(t, err)
-	assert.Equal(t, f.role.ID, got.ID)
-
-	byGateway, err := repo.ListByGateway(ctx, f.gateway.ID)
-	require.NoError(t, err)
-	assert.Len(t, byGateway, 1)
-
-	crossGateway, err := repo.FindByIDs(ctx, f.other, []ids.RoleID{f.role.ID})
-	require.NoError(t, err)
-	assert.Empty(t, crossGateway)
-
-	assert.ErrorIs(t, repo.Save(ctx, &roledomain.Role{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.AttachRegistry(ctx, f.role.ID, ids.New[ids.RegistryKind]()), configsync.ErrReadOnly)
-	_, err = repo.DetachRegistryIfUnreferenced(ctx, f.gateway.ID, f.role.ID, ids.New[ids.RegistryKind]())
-	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 }
 
 func TestCatalogAdapter(t *testing.T) {

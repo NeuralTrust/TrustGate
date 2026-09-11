@@ -27,7 +27,7 @@ import (
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
-	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -97,13 +97,8 @@ type adminRouterParams struct {
 	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
-
-	CreateRole      *rolehttp.CreateRoleHandler
-	GetRole         *rolehttp.GetRoleHandler
-	ListRole        *rolehttp.ListRoleHandler
-	UpdateRole      *rolehttp.UpdateRoleHandler
-	DeleteRole      *rolehttp.DeleteRoleHandler
-	RoleAssociation *rolehttp.AssociationHandler
+	// ConsumerUpstreamAccounts is absent on planes without the connect service.
+	ConsumerUpstreamAccounts *consumerhttp.UpstreamAccountsHandler `optional:"true"`
 
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
@@ -119,6 +114,13 @@ type adminRouterParams struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+
+	StoreRequests  *storehttp.RequestsHandler
+	StoreGrants    *storehttp.GrantsHandler
+	StorePolicies  *storehttp.PoliciesHandler
+	StorePrincipal *storehttp.PrincipalHandler
+	// StoreMaterialize is the catalog materialiser (registries/from-catalog).
+	StoreMaterialize *storehttp.MaterializeHandler
 }
 
 type adminServerParams struct {
@@ -173,12 +175,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdateConsumer:            p.UpdateConsumer,
 				DeleteConsumer:            p.DeleteConsumer,
 				ConsumerAssociation:       p.ConsumerAssociation,
-				CreateRole:                p.CreateRole,
-				GetRole:                   p.GetRole,
-				ListRole:                  p.ListRole,
-				UpdateRole:                p.UpdateRole,
-				DeleteRole:                p.DeleteRole,
-				RoleAssociation:           p.RoleAssociation,
+				ConsumerUpstreamAccounts:  p.ConsumerUpstreamAccounts,
 				CreateAuth:                p.CreateAuth,
 				GetAuth:                   p.GetAuth,
 				ListAuth:                  p.ListAuth,
@@ -193,6 +190,11 @@ func ServerAdmin(c *container.Container) error {
 				GetTrace: p.GetTrace,
 
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
+				StoreRequests:             p.StoreRequests,
+				StoreGrants:               p.StoreGrants,
+				StorePolicies:             p.StorePolicies,
+				StorePrincipal:            p.StorePrincipal,
+				StoreMaterialize:          p.StoreMaterialize,
 			})
 		},
 		dig.Name("admin"),

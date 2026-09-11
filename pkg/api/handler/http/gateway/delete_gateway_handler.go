@@ -33,7 +33,7 @@ func NewDeleteGatewayHandler(deleter appgateway.Deleter, finder appgateway.Finde
 
 // Handle godoc
 // @Summary      Delete a gateway
-// @Description  Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).
+// @Description  Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, policies, auths, registries and vault credentials).
 // @Tags         gateways
 // @Produce      json
 // @Security     BearerAuth

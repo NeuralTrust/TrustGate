@@ -123,7 +123,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	}
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
+		items[i] = exposedNameFor(b.exposed, b.registry)
 	}
 	for i, name := range resolveExposedNames(items) {
 		candidates[i].exposed = name

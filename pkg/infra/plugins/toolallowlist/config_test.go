@@ -110,7 +110,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 }
 
 func TestNewErrorBody(t *testing.T) {
-	body := newErrorBody([]string{"delete_db", "calculate"})
+	body := newErrorBody(errNoToolsAllowed, []string{"delete_db", "calculate"})
 	assert.Equal(t, "no_tools_allowed", body.Error.Type)
 	assert.Equal(t, []string{"delete_db", "calculate"}, body.Error.Requested)
 	assert.Equal(t, []string{}, body.Error.AllowedAfterFilter)

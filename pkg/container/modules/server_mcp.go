@@ -77,7 +77,9 @@ type mcpRouterParams struct {
 	CallbackHandler            *oauthhttp.CallbackHandler
 	TokenHandler               *oauthhttp.TokenHandler
 	APIKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
+	EndUserConnectionsHandler  *oauthhttp.EndUserConnectionsHandler
 	ConnectHandler             *oauthhttp.ConnectHandler
+	ConfigureHandler           *oauthhttp.ConfigureHandler
 	JWKSHandler                *oauthhttp.JWKSHandler
 }
 
@@ -110,7 +112,9 @@ func ServerMCP(c *container.Container) error {
 				p.CallbackHandler,
 				p.TokenHandler,
 				p.APIKeyConnectHandler,
+				p.EndUserConnectionsHandler,
 				p.ConnectHandler,
+				p.ConfigureHandler,
 				p.JWKSHandler,
 				ops,
 			)

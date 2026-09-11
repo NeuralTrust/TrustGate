@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
@@ -27,7 +28,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -35,8 +35,6 @@ import (
 type Associator interface {
 	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
-	AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
-	DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
 	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
@@ -48,7 +46,6 @@ var _ Associator = (*associator)(nil)
 type associator struct {
 	repo         domain.Repository
 	registryRepo registrydomain.Repository
-	roleRepo     roledomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
 	memoryCache  *cache.TTLMap
@@ -62,7 +59,6 @@ type associator struct {
 func NewAssociator(
 	repo domain.Repository,
 	registryRepo registrydomain.Repository,
-	roleRepo roledomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
 	manager *cache.TTLMapManager,
@@ -74,7 +70,6 @@ func NewAssociator(
 	return &associator{
 		repo:         repo,
 		registryRepo: registryRepo,
-		roleRepo:     roleRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
@@ -91,12 +86,6 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if err != nil {
 		return err
 	}
-	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		return fmt.Errorf(
-			"%w: consumer %s routes by role, registries can only be attached in inline routing;"+
-				" send routing_mode and registries together in PUT /v1/gateways/{gateway_id}/consumers/{id}",
-			commonerrors.ErrConflict, consumerID)
-	}
 	reg, err := a.registryInGateway(ctx, gatewayID, registryID)
 	if err != nil {
 		return err
@@ -104,6 +93,9 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if string(reg.Type) != string(cons.Type) {
 		return fmt.Errorf("%w: registry of type %s cannot be attached to a consumer of type %s",
 			registrydomain.ErrInvalidRegistryID, reg.Type, cons.Type)
+	}
+	if err := validatePerUserURLBinding(cons, reg); err != nil {
+		return err
 	}
 	if err := a.repo.AttachRegistry(ctx, consumerID, registryID, weight); err != nil {
 		return err
@@ -121,39 +113,6 @@ func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	return nil
 }
 
-func (a *associator) AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
-	if err != nil {
-		return err
-	}
-	if cons.RoutingMode == domain.RoutingModeInline {
-		return fmt.Errorf(
-			"%w: consumer %s routes inline, roles can only be attached in role_based routing;"+
-				" send routing_mode in PUT /v1/gateways/{gateway_id}/consumers/{id} first",
-			commonerrors.ErrConflict, consumerID)
-	}
-	if err := a.roleInGateway(ctx, gatewayID, roleID); err != nil {
-		return err
-	}
-	if err := a.repo.AttachRole(ctx, consumerID, roleID); err != nil {
-		return err
-	}
-	a.invalidate(ctx, cons)
-	return nil
-}
-
-func (a *associator) DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
-	if err != nil {
-		return err
-	}
-	if err := a.repo.DetachRole(ctx, consumerID, roleID); err != nil {
-		return err
-	}
-	a.invalidate(ctx, cons)
-	return nil
-}
-
 func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
 	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
@@ -163,30 +122,13 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err != nil {
 		return err
 	}
-	if err := domain.ValidateAuthType(cons.Type, cons.RoutingMode, au.Type); err != nil {
+	if err := domain.ValidateAuthConfig(cons, au); err != nil {
 		return err
-	}
-	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		if err := validateRoleBasedAuthCount(cons, au.ID); err != nil {
-			return err
-		}
 	}
 	if err := a.repo.AttachAuth(ctx, consumerID, authID); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
-	return nil
-}
-
-func validateRoleBasedAuthCount(cons *domain.Consumer, authID ids.AuthID) error {
-	for _, existing := range cons.AuthIDs {
-		if existing != authID {
-			return fmt.Errorf(
-				"%w: a role_based consumer can have at most one auth",
-				commonerrors.ErrConflict,
-			)
-		}
-	}
 	return nil
 }
 
@@ -283,17 +225,6 @@ func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.Gatewa
 	return reg, nil
 }
 
-func (a *associator) roleInGateway(ctx context.Context, gatewayID ids.GatewayID, roleID ids.RoleID) error {
-	role, err := a.roleRepo.FindByID(ctx, roleID)
-	if err != nil {
-		return err
-	}
-	if role.GatewayID != gatewayID {
-		return roledomain.ErrNotFound
-	}
-	return nil
-}
-
 func (a *associator) authInGateway(ctx context.Context, gatewayID ids.GatewayID, authID ids.AuthID) (*authdomain.Auth, error) {
 	au, err := a.authRepo.FindByID(ctx, authID)
 	if err != nil {
@@ -322,4 +253,30 @@ func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}
+}
+
+// ErrPerUserURLOnMachineConsumer is returned when a server whose URL is
+// completed per person is bound to a consumer that acts as itself.
+var ErrPerUserURLOnMachineConsumer = fmt.Errorf(
+	"%w: this server's address is completed per user (it declares url variables), so it can only be attached to a consumer that acts for users",
+	commonerrors.ErrConflict,
+)
+
+// validatePerUserURLBinding refuses a server whose address is assembled from
+// per-user values on a consumer that has no user.
+//
+// Those values live on the caller's own installation row and in their vault
+// entries; an application that acts as itself never installs from the Store, so
+// it has neither, and there is no admin-level place to supply them. The binding
+// used to be accepted and every call to the server then failed at dial time
+// with a missing-placeholder error nobody could act on. Refused here, where the
+// admin is making the decision and can read why.
+func validatePerUserURLBinding(cons *domain.Consumer, reg *registrydomain.Registry) error {
+	if cons == nil || reg == nil || cons.ActsForUsers() {
+		return nil
+	}
+	if reg.MCPTarget == nil || len(reg.MCPTarget.RequiredURLVariables()) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrPerUserURLOnMachineConsumer, strings.Join(reg.MCPTarget.RequiredURLVariables(), ", "))
 }

@@ -18,8 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"net/textproto"
 	"net/url"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -37,31 +39,31 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
 var newline = []byte("\n")
 
-var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
-
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
 const (
-	errCodePluginRejected       = "plugin_rejected"
-	errCodeUnauthenticated      = "unauthenticated"
-	errCodeForbidden            = "forbidden"
-	errCodeNotFound             = "not_found"
-	errCodeNoBackendAvailable   = "no_backend_available"
-	errCodeInvalidRequest       = "invalid_request"
-	errCodeInvalidModel         = "invalid_model"
-	errCodeModelNotAllowed      = "model_not_allowed"
-	errCodeModelNotSupported    = "model_not_supported"
-	errCodeProviderCredential   = "provider_credential_error"
-	errCodeBackendError         = "backend_error"
-	errCodeRateLimitUnavailable = "rate_limit_unavailable"
+	errCodePluginRejected        = "plugin_rejected"
+	errCodeUnauthenticated       = "unauthenticated"
+	errCodeForbidden             = "forbidden"
+	errCodeNotFound              = "not_found"
+	errCodeNoBackendAvailable    = "no_backend_available"
+	errCodeInvalidRequest        = "invalid_request"
+	errCodeContextLengthExceeded = "context_length_exceeded"
+	errCodeInvalidModel          = "invalid_model"
+	errCodeModelNotAllowed       = "model_not_allowed"
+	errCodeModelNotSupported     = "model_not_supported"
+	errCodeProviderCredential    = "provider_credential_error"
+	errCodeBackendError          = "backend_error"
+	errCodeRateLimitUnavailable  = "rate_limit_unavailable"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -120,6 +122,15 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	stampConsumerTrace(c, consumer)
+	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if endUser != "" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			rt.SetEndUser(endUser)
+		}
+	}
 
 	if route.Capability == apiresolver.CapabilityModels {
 		return h.handleModels(c, route, consumer, authCtx)
@@ -131,7 +142,6 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
-		RoleIDs:   authCtx.RoleIDs,
 		Request:   reqCtx,
 	})
 	if err != nil {
@@ -177,21 +187,21 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {
-				req.Body = append([]byte(nil), req.Body...)
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
 		for line, err := range result.Stream {
 			if err != nil {
-				// The response is already a 200 SSE stream, so a mid-stream
-				// failure cannot change the status code. Emit an explicit error
-				// event (instead of a silent truncation that looks like a clean
-				// finish) so clients can distinguish an aborted stream.
+				format := adapter.FormatOpenAI
+				if req != nil {
+					format = adapter.Format(req.SourceFormat)
+				}
+				event := adapter.StreamErrorEvent(format, "upstream stream terminated unexpectedly")
 				if finalizer != nil {
-					captured.Write(streamErrorEvent)
+					captured.Write(event)
 					captured.Write(newline)
 				}
-				_, _ = w.Write(streamErrorEvent)
+				_, _ = w.Write(event)
 				_, _ = w.Write(newline)
 				_, _ = w.Write(newline)
 				_ = w.Flush()
@@ -274,7 +284,6 @@ func (h *ForwardedHandler) handleModels(
 	in := appproxy.ListModelsInput{
 		Consumer: consumer,
 		Data:     data,
-		RoleIDs:  authCtx.RoleIDs,
 	}
 	id := apiresolver.ModelsIDFromRest(route.Rest)
 	if id == "" {
@@ -305,29 +314,40 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	}
 }
 
+// endUserAttribution returns the end-user id an LLM consumer that opted in
+// forwarded, validated; empty when the consumer did not opt in (the header is
+// ignored) or the application sent none. A malformed value on an opted-in
+// consumer is rejected rather than silently dropped from the audit trail.
+func endUserAttribution(rc *appconsumer.RoutableConsumer, header string) (string, error) {
+	if rc == nil || rc.Consumer == nil || !rc.Consumer.Identity.EndUserHeader {
+		return "", nil
+	}
+	endUser := strings.TrimSpace(header)
+	if endUser == "" {
+		return "", nil
+	}
+	if err := domainconsumer.ValidateEndUser(endUser); err != nil {
+		return "", fmt.Errorf("%w: %s", appproxy.ErrInvalidRequestPayload, err.Error())
+	}
+	return endUser, nil
+}
+
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
 	if rc == nil || rc.Consumer == nil || authCtx == nil {
 		return false
 	}
 	// Playground tokens are validated upstream (signature, purpose, and
 	// consumer-slug binding in the playground identity resolver), so they are
-	// authorized for the matched consumer regardless of routing mode.
+	// authorized for the matched consumer.
 	if authCtx.Method == appauth.MethodPlayground {
 		return true
 	}
-	switch rc.Consumer.RoutingMode {
-	case "", domainconsumer.RoutingModeInline:
-		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
-	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
-	default:
-		return false
-	}
+	return isCredentialAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 }
 
-func isInlineAuthMethod(method appauth.Method) bool {
+func isCredentialAuthMethod(method appauth.Method) bool {
 	switch method {
-	case appauth.MethodAPIKey, appauth.MethodOAuth2:
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOIDC, appauth.MethodMTLS:
 		return true
 	default:
 		return false
@@ -340,22 +360,6 @@ func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 	}
 	for _, id := range rc.Consumer.AuthIDs {
 		if id == authID {
-			return true
-		}
-	}
-	return false
-}
-
-func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) bool {
-	if rc == nil || rc.Consumer == nil {
-		return false
-	}
-	effective := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		effective[id] = struct{}{}
-	}
-	for _, id := range rc.Consumer.RoleIDs {
-		if _, ok := effective[id]; ok {
 			return true
 		}
 	}
@@ -377,12 +381,12 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	return &infracontext.RequestContext{
 		GatewayID:       gatewayID.String(),
 		Headers:         headers,
-		Method:          c.Method(),
-		Path:            c.Path(),
+		Method:          strings.Clone(c.Method()),
+		Path:            strings.Clone(c.Path()),
 		Query:           query,
-		Body:            c.Body(),
-		IP:              c.IP(),
-		SessionID:       sessionIDFromContext(c),
+		Body:            append([]byte(nil), c.Body()...),
+		IP:              strings.Clone(c.IP()),
+		SessionID:       strings.Clone(sessionIDFromContext(c)),
 		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
@@ -406,6 +410,17 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 	}
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetStatusReason(body.Error)
+	}
+	format := adapter.FormatOpenAI
+	if route, rerr := proxyRoute(c); rerr == nil && route.SourceFormat != "" {
+		format = route.SourceFormat
+	}
+	if adapter.NeedsAdaptedError(format) {
+		msg := body.Message
+		if msg == "" {
+			msg = err.Error()
+		}
+		return c.Status(status).Type("json").Send(adapter.EncodeErrorBody(format, status, msg))
 	}
 	return c.Status(status).JSON(body)
 }
@@ -432,6 +447,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrContextWindowExceeded):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeContextLengthExceeded, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}

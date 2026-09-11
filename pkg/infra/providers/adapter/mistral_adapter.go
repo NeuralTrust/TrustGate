@@ -23,10 +23,6 @@ type MistralAdapter struct {
 	openai OpenAIAdapter
 }
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 func (a *MistralAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	return a.openai.DecodeRequest(body)
 }
@@ -60,10 +56,6 @@ func (a *MistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	return a.openai.EncodeRequest(req)
 }
 
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
-
 func (a *MistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	return a.openai.DecodeResponse(body)
 }
@@ -72,10 +64,6 @@ func (a *MistralAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error)
 	return a.openai.EncodeResponse(resp)
 }
 
-// ---------------------------------------------------------------------------
-// Stream
-// ---------------------------------------------------------------------------
-
 func (a *MistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	return a.openai.DecodeStreamChunk(chunk)
 }
@@ -83,10 +71,6 @@ func (a *MistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 func (a *MistralAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	return a.openai.EncodeStreamChunk(chunk)
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 // isValidMistralID checks whether id is exactly 9 alphanumeric characters.
 func isValidMistralID(id string) bool {

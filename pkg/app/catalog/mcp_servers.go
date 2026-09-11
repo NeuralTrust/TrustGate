@@ -101,11 +101,21 @@ type rawServer struct {
 	ServerURL    string                  `json:"server_url"`
 	URLVariables []domain.MCPURLVariable `json:"url_variables"`
 	RequiresAuth bool                    `json:"requires_auth"`
-	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
-	OAuth        *domain.MCPOAuth        `json:"oauth"`
-	ConfigGuide  *domain.MCPConfigGuide  `json:"config_guide,omitempty"`
-	Tools        []domain.MCPTool        `json:"tools"`
-	Relevance    int                     `json:"relevance"`
+	// SelfService and MultiInstance are declared per entry rather than derived,
+	// so the catalog answers both questions by reading it. Required on every
+	// entry: a pointer distinguishes "false" from "whoever added this server
+	// forgot", and the loader refuses the latter.
+	SelfService   *bool                  `json:"self_service"`
+	MultiInstance *bool                  `json:"multi_instance"`
+	AuthHeaders   []domain.MCPAuthHeader `json:"auth_headers"`
+	OAuth         *domain.MCPOAuth       `json:"oauth"`
+	ConfigGuide   *domain.MCPConfigGuide `json:"config_guide,omitempty"`
+	// AuthMethods optionally overrides the derived list of installable auth
+	// methods ("static" and/or "oauth"). Set it to offer a choice (e.g. both)
+	// where the derivation alone would pick a single method.
+	AuthMethods []string         `json:"auth_methods"`
+	Tools       []domain.MCPTool `json:"tools"`
+	Relevance   int              `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
 	// ListMCPServers (Admin UI / product catalog).
 	Hidden       bool   `json:"hidden,omitempty"`
@@ -134,6 +144,12 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			return nil, fmt.Errorf("mcp catalog: duplicate server code %q", s.Name)
 		}
 		seen[s.Name] = struct{}{}
+		if s.SelfService == nil {
+			return nil, fmt.Errorf("mcp catalog: server %q does not declare self_service", s.Name)
+		}
+		if s.MultiInstance == nil {
+			return nil, fmt.Errorf("mcp catalog: server %q does not declare multi_instance", s.Name)
+		}
 		if s.Hidden {
 			continue
 		}
@@ -146,8 +162,11 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			URL:            s.ServerURL,
 			Transport:      s.Transport,
 			AuthHint:       authHint(s),
+			AuthMethods:    authMethods(s),
 			RequiresAuth:   s.RequiresAuth,
 			RequiresConfig: requiresConfig(s),
+			SelfService:    *s.SelfService,
+			MultiInstance:  *s.MultiInstance,
 			Relevance:      s.Relevance,
 			URLVariables:   s.URLVariables,
 			AuthHeaders:    s.AuthHeaders,
@@ -232,6 +251,60 @@ func authHint(s rawServer) string {
 	}
 }
 
+// authMethods lists every auth method an operator may pick when installing the
+// server, each guaranteed renderable — the catalog never advertises a method the
+// install UI has no field for. An explicit seed `auth_methods` wins (normalized/
+// deduped); otherwise it is derived additively: "static" when the server has a
+// slot for an operator-supplied credential (an auth header or a secret URL
+// variable), "oauth" when it advertises an OAuth spec. A server that carries
+// both therefore offers a choice. Empty derivation (public server) yields nil,
+// and the UI treats a server with no declared methods as none.
+func authMethods(s rawServer) []string {
+	if len(s.AuthMethods) > 0 {
+		return normalizeAuthMethods(s.AuthMethods)
+	}
+	var methods []string
+	if hasStaticCredentialSlot(s) {
+		methods = append(methods, authHintStatic)
+	}
+	if s.OAuth != nil {
+		methods = append(methods, authHintOAuth)
+	}
+	return methods
+}
+
+// hasStaticCredentialSlot reports whether the server has somewhere for the
+// operator to put a static credential: an auth header, or a secret URL variable
+// (e.g. a `?token=` query value). Without a slot there is no field to enter an
+// API key, so "static" is not offered even if the server otherwise requires auth.
+func hasStaticCredentialSlot(s rawServer) bool {
+	if len(s.AuthHeaders) > 0 {
+		return true
+	}
+	for _, v := range s.URLVariables {
+		if v.Secret {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeAuthMethods keeps only recognized method identifiers, in a stable
+// order (static before oauth), dropping duplicates and "none".
+func normalizeAuthMethods(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	for _, m := range raw {
+		seen[m] = struct{}{}
+	}
+	var out []string
+	for _, m := range []string{authHintStatic, authHintOAuth} {
+		if _, ok := seen[m]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // requiresConfig reports whether the operator must supply input before the
 // server can be connected, so the UI can connect zero-config servers by default
 // and only surface a setup step for the rest.
@@ -256,6 +329,18 @@ func requiresConfig(s rawServer) bool {
 	}
 }
 
+// applyPlatformOAuth marks the entries whose OAuth client NeuralTrust holds
+// (today the three Google Workspace servers, and only where the platform's
+// client id and secret are configured) and adjusts what that changes.
+//
+// It is the only thing that moves a flag the seed declared, and it moves just
+// one: self_service. The seed answers for a gateway standing on its own, where a
+// manual-registration server needs an operator to register a client first; a
+// platform-held client is a deployment fact the seed cannot know, and it removes
+// exactly that blocker. multi_instance is not touched — the install form still
+// offers an operator their own client id and secret for such a server, so two
+// instances can still differ (their own Google Cloud project, consent screen and
+// quota), which is what the flag means.
 func applyPlatformOAuth(servers []domain.MCPServer, shared mcpoauth.Provider) {
 	if shared == nil {
 		return
@@ -265,6 +350,7 @@ func applyPlatformOAuth(servers []domain.MCPServer, shared mcpoauth.Provider) {
 			continue
 		}
 		servers[i].PlatformClient = true
+		servers[i].SelfService = true
 		if !needsNonOAuthConfig(servers[i]) {
 			servers[i].RequiresConfig = false
 		}

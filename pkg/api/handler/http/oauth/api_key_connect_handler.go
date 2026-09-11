@@ -73,6 +73,9 @@ func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
 		if errors.Is(err, appoauth.ErrAPIKeyConnectUnauthorized) {
 			return writeAPIKeyConnectStatus(c, fiber.StatusNotFound)
 		}
+		if errors.Is(err, appoauth.ErrAPIKeyConnectEndUsers) {
+			return writeAPIKeyConnectStatus(c, fiber.StatusConflict)
+		}
 		return writeAPIKeyConnectStatus(c, fiber.StatusInternalServerError)
 	}
 
@@ -132,6 +135,9 @@ func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 		}
 		if errors.Is(err, appoauth.ErrAPIKeyConnectUnauthorized) {
 			return writeAPIKeyConnectStatus(c, fiber.StatusUnauthorized)
+		}
+		if errors.Is(err, appoauth.ErrAPIKeyConnectEndUsers) {
+			return writeAPIKeyConnectStatus(c, fiber.StatusConflict)
 		}
 		return writeAPIKeyConnectStatus(c, fiber.StatusInternalServerError)
 	}

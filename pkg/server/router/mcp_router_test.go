@@ -94,7 +94,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		Return(&appoauth.ConnectPage{ConsumerPath: "/tools/mcp"}, nil).
 		Once()
 	connect.EXPECT().
-		Start(mock.Anything, mock.Anything, "oauth-ticket", "provider").
+		Start(mock.Anything, mock.Anything, "oauth-ticket", "provider", mock.Anything).
 		Return("https://provider.example/authorize", nil).
 		Once()
 
@@ -105,7 +105,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		func(string, string) string { return "127.0.0.1" },
 	)
 	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
-	mcpHandler := mcphttp.NewHandler(nil, nil, nil)
+	mcpHandler := mcphttp.NewHandler(nil, nil)
 	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(
 		middleware.NewTransport(
@@ -127,7 +127,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.CallbackHandler),
 		new(oauthhttp.TokenHandler),
 		apiKeyHandler,
+		nil,
 		connectHandler,
+		oauthhttp.NewConfigureHandler(nil),
 		new(oauthhttp.JWKSHandler),
 		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
 	)

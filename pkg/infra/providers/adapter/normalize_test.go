@@ -23,10 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// NormalizeOpenAIRequest
-// ---------------------------------------------------------------------------
-
 func TestNormalizeOpenAIRequest_InjectsTypeFunctionWhenMissing(t *testing.T) {
 	// Simulates what the Mistral SDK sends: tool_calls without "type"
 	input := `{
@@ -356,10 +352,6 @@ func TestNormalizeRequestForProvider_Cerebras_InjectsToolParameters(t *testing.T
 	params := fn["parameters"].(map[string]interface{})
 	assert.Equal(t, "object", params["type"])
 }
-
-// ---------------------------------------------------------------------------
-// isEmptyOrNull
-// ---------------------------------------------------------------------------
 
 func TestIsEmptyOrNull(t *testing.T) {
 	tests := []struct {

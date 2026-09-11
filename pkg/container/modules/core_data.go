@@ -22,7 +22,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -57,11 +57,6 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) roledomain.Repository {
-		return adapters.NewRoleRepository(store)
-	}); err != nil {
-		return err
-	}
 	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) consumerdomain.Repository {
 		return adapters.NewConsumerRepository(store)
 	}); err != nil {
@@ -77,8 +72,20 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) catalogdomain.Repository {
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) catalogdomain.Repository {
 		return adapters.NewCatalogRepository(store)
+	}); err != nil {
+		return err
+	}
+	// MCP Store access grants and per-principal policies ride the snapshot; the
+	// data plane reads them here.
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.Reader {
+		return adapters.NewStoreGrantReader(store)
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storeaccessdomain.PolicyReader {
+		return adapters.NewStorePolicyReader(store)
 	})
 }
 
@@ -87,9 +94,6 @@ func provideSnapshotServices(c *container.Container) error {
 		return err
 	}
 	if err := provideRegistryServices(c); err != nil {
-		return err
-	}
-	if err := provideRoleServices(c); err != nil {
 		return err
 	}
 	if err := provideConsumerServices(c); err != nil {

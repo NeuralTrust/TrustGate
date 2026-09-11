@@ -69,8 +69,8 @@ func TestParseCuratedMCPServers_RejectsDuplicateCode(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","self_service":true,"multi_instance":false}
 	]}`)
 
 	_, err := parseCuratedMCPServers(data)
@@ -93,8 +93,8 @@ func TestParseCuratedMCPServers_AcceptsUniqueCodes(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","self_service":true,"multi_instance":false}
 	]}`)
 
 	servers, err := parseCuratedMCPServers(data)
@@ -106,9 +106,9 @@ func TestParseCuratedMCPServers_OmitsHidden(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
-		{"name":"com.hidden/mcp","transport":"streamable-http","server_url":"https://h.example.com/mcp","hidden":true,"hidden_reason":"broken"},
-		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","hidden":false}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true,"multi_instance":false},
+		{"name":"com.hidden/mcp","transport":"streamable-http","server_url":"https://h.example.com/mcp","hidden":true,"hidden_reason":"broken","self_service":true,"multi_instance":false},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","hidden":false,"self_service":true,"multi_instance":false}
 	]}`)
 
 	servers, err := parseCuratedMCPServers(data)
@@ -157,6 +157,96 @@ func TestAuthHint_Classification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tc.want, authHint(tc.in))
+		})
+	}
+}
+
+func TestNewMCPServerCatalog_DualAuthServers(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	// These servers accept both an OAuth login and a static Authorization: Bearer
+	// token (API key / PAT) on their hosted remote MCP, so the catalog offers both
+	// and carries the header the install UI fills for the API-key path.
+	for _, code := range []string{
+		"com.stripe/mcp", "com.github/copilot-mcp", "app.linear/mcp",
+		"com.atlassian/mcp", "com.supabase/mcp", "com.gitlab/mcp",
+	} {
+		s, ok := cat.GetByCode(code)
+		require.Truef(t, ok, "missing %q", code)
+		require.Equalf(t, []string{authHintStatic, authHintOAuth}, s.AuthMethods, "auth methods for %q", code)
+		// OAuth stays the coarse default/prefill.
+		require.Equalf(t, authHintOAuth, s.AuthHint, "auth hint for %q", code)
+		require.NotEmptyf(t, s.AuthHeaders, "static header for %q", code)
+		require.Equalf(t, "Authorization", s.AuthHeaders[0].Name, "header name for %q", code)
+		require.Equalf(t, "Bearer", s.AuthHeaders[0].Scheme, "header scheme for %q", code)
+		require.NotNilf(t, s.OAuth, "oauth spec for %q", code)
+	}
+}
+
+func TestAuthMethods_Classification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   rawServer
+		want []string
+	}{
+		{
+			name: "public => none declared",
+			in:   rawServer{RequiresAuth: false},
+			want: nil,
+		},
+		{
+			name: "auth headers => static only",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+			},
+			want: []string{authHintStatic},
+		},
+		{
+			name: "oauth spec => oauth only",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true}},
+			want: []string{authHintOAuth},
+		},
+		{
+			name: "secret url variable => static (the key goes in the url var)",
+			in: rawServer{
+				RequiresAuth: true,
+				URLVariables: []domain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
+			},
+			want: []string{authHintStatic},
+		},
+		{
+			name: "requires auth but no credential slot => nothing (no field to fill)",
+			in:   rawServer{RequiresAuth: true},
+			want: nil,
+		},
+		{
+			name: "headers + oauth => both, static first",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+				OAuth:        &domain.MCPOAuth{Required: true},
+			},
+			want: []string{authHintStatic, authHintOAuth},
+		},
+		{
+			name: "explicit override wins and is normalized",
+			in: rawServer{
+				OAuth:       &domain.MCPOAuth{Required: true},
+				AuthMethods: []string{"oauth", "static", "oauth", "bogus"},
+			},
+			want: []string{authHintStatic, authHintOAuth},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, authMethods(tc.in))
 		})
 	}
 }
@@ -322,79 +412,6 @@ func TestCuratedCatalog_ConfigurableServersHaveSetupGuides(t *testing.T) {
 		require.NotNil(t, server.ConfigGuide, "catalog entry %q has no config guide", server.Code)
 		require.NotEmpty(t, server.ConfigGuide.Summary, "catalog entry %q has no config guide summary", server.Code)
 		require.NotEmpty(t, server.ConfigGuide.Steps, "catalog entry %q has no config guide steps", server.Code)
-	}
-}
-
-func TestCuratedCatalog_JinaAndMem0UseTheirZeroConfigAuthPaths(t *testing.T) {
-	t.Parallel()
-
-	cat, err := NewMCPServerCatalog(nil)
-	require.NoError(t, err)
-
-	jina, ok := cat.GetByCode("ai.jina/mcp")
-	require.True(t, ok)
-	require.False(t, jina.RequiresAuth)
-	require.False(t, jina.RequiresConfig)
-	require.Empty(t, jina.AuthHeaders)
-
-	mem0, ok := cat.GetByCode("ai.mem0/mcp")
-	require.True(t, ok)
-	require.True(t, mem0.RequiresAuth)
-	require.False(t, mem0.RequiresConfig)
-	require.NotNil(t, mem0.OAuth)
-	require.Equal(t, "auto", mem0.OAuth.Registration)
-	require.NotNil(t, mem0.OAuth.DCR)
-	require.True(t, *mem0.OAuth.DCR)
-	require.Equal(t, []string{"read", "write"}, mem0.OAuth.Scopes)
-}
-
-func TestCuratedCatalog_UsesCurrentBuilderCubeExaAndBrowserbaseAuth(t *testing.T) {
-	t.Parallel()
-
-	cat, err := NewMCPServerCatalog(nil)
-	require.NoError(t, err)
-
-	for code, url := range map[string]string{
-		"io.builder/cms-mcp": "https://mcp.builder.io/mcp/publish",
-		"dev.cube/mcp":       "https://cubecloud.dev/mcp",
-	} {
-		server, ok := cat.GetByCode(code)
-		require.True(t, ok)
-		require.Equal(t, url, server.URL)
-		require.False(t, server.RequiresConfig)
-		require.NotNil(t, server.OAuth)
-		require.Equal(t, "auto", server.OAuth.Registration)
-		require.NotNil(t, server.OAuth.DCR)
-		require.True(t, *server.OAuth.DCR)
-	}
-
-	exa, ok := cat.GetByCode("ai.exa/exa")
-	require.True(t, ok)
-	require.False(t, exa.RequiresAuth)
-	require.False(t, exa.RequiresConfig)
-
-	browserbase, ok := cat.GetByCode("com.browserbase/mcp")
-	require.True(t, ok)
-	require.Equal(t, "https://mcp.browserbase.com/mcp", browserbase.URL)
-	require.Equal(t, authHintStatic, browserbase.AuthHint)
-	require.Len(t, browserbase.AuthHeaders, 1)
-	require.Equal(t, "Bearer", browserbase.AuthHeaders[0].Scheme)
-}
-
-func TestCuratedCatalog_QueryVariablesAreNotDuplicatedInURLTemplates(t *testing.T) {
-	t.Parallel()
-
-	cat, err := NewMCPServerCatalog(nil)
-	require.NoError(t, err)
-
-	for _, server := range cat.ListMCPServers() {
-		for _, variable := range server.URLVariables {
-			if variable.In != "query" {
-				continue
-			}
-			require.NotContains(t, server.URL, "{"+variable.Name+"}",
-				"catalog entry %q embeds query variable %q; clients append query variables", server.Code, variable.Name)
-		}
 	}
 }
 

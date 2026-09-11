@@ -17,10 +17,12 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/valuecopy"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -28,10 +30,8 @@ import (
 )
 
 const (
-	taskChanCapacity = 1000
-	// shutdownWaitTimeout bounds how long Shutdown waits for in-flight tasks
-	// before closing the exporter, so a stuck task can never hang shutdown.
-	shutdownWaitTimeout = 10 * time.Second
+	taskChanCapacity      = 1000
+	workerShutdownTimeout = 5 * time.Second
 )
 
 //go:generate mockery --name=Worker --dir=. --output=./mocks --filename=worker_mock.go --case=underscore --with-expecter
@@ -54,20 +54,18 @@ type worker struct {
 	logger   *slog.Logger
 	pipeline *Pipeline
 	taskChan chan func()
-	ctx      context.Context
-	cancel   context.CancelFunc
 	closed   atomic.Bool
+	enqueue  sync.RWMutex
 	wg       sync.WaitGroup
+	stop     chan struct{}
 }
 
 func NewWorker(logger *slog.Logger, pipeline *Pipeline) Worker {
-	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored in the struct and called in Shutdown()
 	return &worker{
 		logger:   logger,
 		pipeline: pipeline,
 		taskChan: make(chan func(), taskChanCapacity),
-		ctx:      ctx,
-		cancel:   cancel,
+		stop:     make(chan struct{}),
 	}
 }
 
@@ -76,63 +74,56 @@ func (w *worker) StartWorkers(n int) {
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			for {
-				select {
-				case task := <-w.taskChan:
-					task()
-				case <-w.ctx.Done():
-					return
-				}
+			for task := range w.taskChan {
+				w.runTask(task)
 			}
 		}()
 	}
 }
 
-// Shutdown stops accepting new tasks, waits for in-flight tasks to finish, and
-// closes the exporter. Waiting on the worker goroutines guarantees no task is
-// still using the exporter when it is closed.
 func (w *worker) Shutdown() {
-	w.closed.Store(true)
+	w.enqueue.Lock()
+	if w.closed.Swap(true) {
+		w.enqueue.Unlock()
+		return
+	}
+	close(w.taskChan)
+	close(w.stop)
+	w.enqueue.Unlock()
 	w.logger.Info(bootlog.MetricsWorkersShuttingDown)
 
-	w.cancel()
-	if !w.waitForWorkers(shutdownWaitTimeout) {
-		w.logger.Warn("metrics workers did not stop in time, closing exporter anyway",
-			slog.Duration("timeout", shutdownWaitTimeout))
+	stopped := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(stopped)
+	}()
+	timer := time.NewTimer(workerShutdownTimeout)
+	defer timer.Stop()
+	select {
+	case <-stopped:
+	case <-timer.C:
+		w.logger.Warn("metrics workers did not stop before shutdown timeout")
 	}
-	w.drainPendingTasks()
-	w.pipeline.close()
+	if w.pipeline != nil {
+		w.pipeline.close()
+	}
 
 	w.logger.Info(bootlog.MetricsWorkersStopped)
 }
 
-// waitForWorkers waits for the worker goroutines to exit, returning false if the
-// timeout elapses first.
-func (w *worker) waitForWorkers(timeout time.Duration) bool {
-	done := make(chan struct{})
-	go func() {
-		w.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return true
-	case <-time.After(timeout):
-		return false
-	}
-}
-
-// drainPendingTasks runs any tasks still buffered in the channel so events
-// enqueued by in-flight requests are not silently dropped on shutdown.
-func (w *worker) drainPendingTasks() {
-	for {
-		select {
-		case task := <-w.taskChan:
-			task()
-		default:
+func (w *worker) runTask(task func()) {
+	defer func() {
+		r := recover()
+		if r == nil {
 			return
 		}
-	}
+		w.logger.Error("metrics task panicked, dropping event",
+			slog.String("component", "metrics"),
+			slog.Any("panic", r),
+			slog.String("stack", string(debug.Stack())),
+		)
+	}()
+	task()
 }
 
 func (w *worker) Process(
@@ -146,12 +137,37 @@ func (w *worker) Process(
 	if req == nil || resp == nil {
 		return
 	}
+	ownedExporters := make([]telemetrydomain.ExporterConfig, len(exporters))
+	for i, exporter := range exporters {
+		ownedExporters[i] = exporter
+		if exporter.Settings != nil {
+			ownedExporters[i].Settings = valuecopy.Deep(exporter.Settings).(map[string]interface{})
+		}
+	}
 	w.enqueueTask(func() {
-		w.pipeline.publish(requestTrace, req, resp, startTime, endTime, exporters)
+		w.pipeline.publishContext(workerContext{done: w.stop}, requestTrace, req, resp, startTime, endTime, ownedExporters)
 	}, req.GatewayID)
 }
 
+type workerContext struct {
+	done <-chan struct{}
+}
+
+func (c workerContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c workerContext) Done() <-chan struct{}       { return c.done }
+func (c workerContext) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+func (c workerContext) Value(any) any { return nil }
+
 func (w *worker) enqueueTask(task func(), gatewayID string) {
+	w.enqueue.RLock()
+	defer w.enqueue.RUnlock()
 	if w.closed.Load() {
 		return
 	}

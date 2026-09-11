@@ -28,6 +28,8 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/logref"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -38,13 +40,57 @@ import (
 
 var ErrNoPrincipal = errors.New("mcp: downstream auth mode requires an authenticated user identity")
 
+// ErrUpstreamNeedsCallerToken: the upstream is configured to reuse the caller's
+// own bearer token (passthrough, or an on-behalf-of / token-exchange), and this
+// caller has none — it authenticated as the application itself, with an API key
+// or a client certificate. Configuration, not something a retry fixes: give the
+// upstream a credential of its own (static or client_credentials), link an
+// account for the application (forwarded), or call this consumer with a token
+// from an identity provider.
+var ErrUpstreamNeedsCallerToken = errors.New(
+	"mcp: this upstream reuses the caller's own token, but the caller authenticated as the application (api key or client certificate) and carries none; " +
+		"give the upstream its own credential (static or client_credentials), link an account for the application (forwarded), or call this consumer with an identity-provider token")
+
 var ErrAudienceMismatch = errors.New("mcp: inbound token audience does not match the upstream's expected audience")
 
 type ConsentRequiredError struct {
 	Provider string
 	Ticket   string
 	Path     string
+	// Cause names the condition that produced the prompt, as one of the
+	// ConsentCause codes. It travels with the refusal because "connect this
+	// again" is not a diagnosis: a credential that was never linked, one the
+	// vault key can no longer read, a refresh token the provider rejected and a
+	// registered client that went missing all reach the user as the same
+	// sentence, and telling them apart afterwards took the gateway's own logs.
+	//
+	// A code, not the log's prose: the prose names internals (an env var, a
+	// flushed store) that a tenant's client has no use for.
+	Cause string
 }
+
+// The conditions that make the gateway ask a user to connect. Stable strings:
+// they are what a client reports and what an operator greps for.
+const (
+	// ConsentCauseNoCredential: this user never linked an account here.
+	ConsentCauseNoCredential = "no_credential" // #nosec G101 -- OAuth cause code, not a secret
+	// ConsentCauseUndecryptable: the credential is stored but cannot be read
+	// with the current vault key.
+	ConsentCauseUndecryptable = "credential_undecryptable"
+	// ConsentCauseNoRefreshToken: the access token expired and the grant carries
+	// nothing to refresh it with.
+	ConsentCauseNoRefreshToken = "no_refresh_token"
+	// ConsentCauseRefreshRejected: the provider refused the stored refresh token.
+	ConsentCauseRefreshRejected = "refresh_rejected"
+	// ConsentCauseRefreshAlreadyRejected: the same refresh token was refused
+	// before and is not retried until the user reconnects.
+	ConsentCauseRefreshAlreadyRejected = "refresh_already_rejected"
+	// ConsentCauseCredentialVanished: the credential disappeared mid-refresh.
+	ConsentCauseCredentialVanished = "credential_vanished" // #nosec G101 -- OAuth cause code, not a secret
+	// ConsentCauseRegisteredClientLost: the dynamically registered OAuth client
+	// the grant was issued to is gone, so the token cannot be redeemed.
+	ConsentCauseRegisteredClientLost = "registered_client_lost"
+)
 
 func (e *ConsentRequiredError) Error() string {
 	return fmt.Sprintf("user consent required to connect provider %q", e.Provider)
@@ -55,12 +101,18 @@ type CredentialResolver interface {
 	Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error
 }
 
+type CredentialConnectGateway interface {
+	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
+	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
+}
+
 var _ CredentialResolver = (*credentialResolver)(nil)
 
 type credentialResolver struct {
 	exchanger sts.Exchanger
 	vault     vaultdomain.Repository
-	connect   appoauth.ConnectService
+	connect   CredentialConnectGateway
 	provider  appoauth.ProviderClient
 	logger    *slog.Logger
 	refresh   singleflight.Group
@@ -86,7 +138,7 @@ type ccCacheEntry struct {
 func NewCredentialResolver(
 	exchanger sts.Exchanger,
 	vault vaultdomain.Repository,
-	connect appoauth.ConnectService,
+	connect CredentialConnectGateway,
 	provider appoauth.ProviderClient,
 	logger *slog.Logger,
 ) CredentialResolver {
@@ -108,14 +160,6 @@ const rejectedCredentialRefreshCooldown = 30 * time.Second
 
 // Backstop for a provider that answered invalid_grant spuriously.
 const deadGrantRetryInterval = 15 * time.Minute
-
-const credentialPersistTimeout = 5 * time.Second
-
-const refreshLockReleaseTimeout = 2 * time.Second
-
-type credentialRefreshLocker interface {
-	AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
-}
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
@@ -140,8 +184,12 @@ func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.Routable
 
 func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomain.MCPAuth, target *Target) error {
 	principal := identity.PrincipalFromContext(ctx)
-	if principal == nil || principal.RawToken == "" {
+	if principal == nil {
 		return ErrNoPrincipal
+	}
+	if principal.RawToken == "" {
+		// Authenticated, just not with a token this mode can forward.
+		return ErrUpstreamNeedsCallerToken
 	}
 	if !principal.HasAudience(cfg.ExpectedAudience) {
 		return ErrAudienceMismatch
@@ -154,6 +202,12 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
 		return ErrNoPrincipal
+	}
+	// Impersonation and delegation are minted from the subject, so a machine
+	// caller is fine; on-behalf-of and token-exchange present the caller's own
+	// token to the IdP and cannot be served without one.
+	if cfg.NeedsCallerToken() && principal.RawToken == "" {
+		return ErrUpstreamNeedsCallerToken
 	}
 	cacheKey := fmt.Sprintf("%s|%s|%s", principal.Subject, reg.ID, rc.Consumer.GatewayID)
 	token, err := r.exchanger.Exchange(ctx, principal, rc.Consumer.GatewayID, cfg, cacheKey)
@@ -171,10 +225,10 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return ErrNoPrincipal
 	}
 	gatewayID := rc.Consumer.GatewayID
-	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
+	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, registrydomain.ForwardedVaultProvider(reg))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
-			"no stored credential for this user and provider")
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
+			ConsentCauseNoCredential, "no stored credential for this user and provider")
 	}
 	if errors.Is(err, vaultdomain.ErrUndecryptable) {
 		// The credential exists but the vault key can no longer read it — the
@@ -182,7 +236,8 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		// them round a reconnect loop that only papers over one provider at a
 		// time. Name the real cause; reconnecting rewrites it under the current
 		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
+			ConsentCauseUndecryptable,
 			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
 	}
 	if err != nil {
@@ -239,14 +294,14 @@ func (r *credentialResolver) refreshCredential(
 	gatewayID ids.GatewayID,
 	subject, provider, rejectedAccessToken string,
 ) (*vaultdomain.Credential, error) {
-	key := gatewayID.String() + "|" + subject + "|" + provider
+	// The credential is keyed by the instance's upstream resource, not by the
+	// provider name: two instances of one catalog code pointing at different
+	// deployments hold different credentials, and the guards around a refresh
+	// (singleflight, cooldown, dead grant) have to divide the same way.
+	vaultProvider := registrydomain.ForwardedVaultProvider(reg)
+	key := gatewayID.String() + "|" + subject + "|" + vaultProvider
 	v, err, _ := r.refresh.Do(key, func() (any, error) {
-		unlock, err := r.acquireRefreshLock(ctx, gatewayID, subject, provider)
-		if err != nil {
-			return nil, err
-		}
-		defer r.releaseRefreshLock(ctx, unlock, gatewayID, subject, provider)
-		cred, err := r.vault.Find(ctx, gatewayID, subject, provider)
+		cred, err := r.vault.Find(ctx, gatewayID, subject, vaultProvider)
 		if err != nil {
 			return nil, err
 		}
@@ -286,13 +341,14 @@ func (r *credentialResolver) refreshCredential(
 			// giving up: if the stored credential is usable again the peer's
 			// refresh succeeded and there is nothing for the user to consent to.
 			if errors.Is(err, appoauth.ErrInvalidGrant) {
-				latest, findErr := r.vault.Find(ctx, gatewayID, subject, provider)
+				latest, findErr := r.vault.Find(ctx, gatewayID, subject, vaultProvider)
 				peerRefreshed := findErr == nil && ((rejectedAccessToken != "" &&
 					latest.AccessToken != rejectedAccessToken) ||
 					(rejectedAccessToken == "" && !latest.Expired(vaultRefreshSkew)))
 				if peerRefreshed {
 					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
-						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
+						"provider", provider, "credential_scope", vaultProvider,
+						"principal_ref", logref.Opaque(subject), "gateway_id", gatewayID.String())
 					return latest, nil
 				}
 				r.markGrantDead(key, cred.RefreshToken)
@@ -305,10 +361,7 @@ func (r *credentialResolver) refreshCredential(
 			cred.RefreshToken = fresh.RefreshToken
 		}
 		cred.ExpiresAt = fresh.ExpiresAt
-		persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), credentialPersistTimeout)
-		err = r.vault.Upsert(persistCtx, cred)
-		cancelPersist()
-		if err != nil {
+		if err := r.vault.Upsert(ctx, cred); err != nil {
 			r.logger.Error("mcp credentials: failed to persist refreshed credential",
 				"provider", provider, "subject", subject, "gateway_id", gatewayID.String(),
 				"from", grantFingerprint(previousRefreshToken), "to", grantFingerprint(cred.RefreshToken),
@@ -323,6 +376,7 @@ func (r *credentialResolver) refreshCredential(
 		// Divergent outputs for the same input help identify concurrent refreshes.
 		r.logger.Info("mcp credentials: refresh token rotated",
 			"provider", provider,
+			"credential_scope", vaultProvider,
 			"subject", subject,
 			"gateway_id", gatewayID.String(),
 			"from", grantFingerprint(previousRefreshToken),
@@ -336,7 +390,8 @@ func (r *credentialResolver) refreshCredential(
 	if err != nil {
 		switch {
 		case errors.Is(err, errGrantExhausted):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseNoRefreshToken,
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
 			var diagnostic *appoauth.InvalidGrantError
@@ -344,20 +399,24 @@ func (r *credentialResolver) refreshCredential(
 			if errors.As(err, &diagnostic) {
 				attrs = append(attrs, "oauth_error", diagnostic.Code, "oauth_error_description", diagnostic.Description)
 			}
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRefreshRejected,
 				"provider rejected the stored refresh token", attrs...)
 		case errors.Is(err, errGrantRejected):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRefreshAlreadyRejected,
 				"stored refresh token was already rejected; not retried until the user reconnects")
 		case errors.Is(err, vaultdomain.ErrNotFound):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseCredentialVanished,
 				"stored credential vanished while refreshing")
 		case errors.Is(err, appoauth.ErrNoRegisteredClient):
 			// The DCR client the refresh token was issued to is gone from the
 			// store. The token cannot be redeemed without it, so this is a
 			// consent case — reconnecting re-registers the client — not an
 			// unreachable upstream to be skipped in silence.
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				ConsentCauseRegisteredClientLost,
 				"dynamically registered client was lost (store flushed?); reconnect re-registers it")
 		}
 		return nil, err
@@ -367,32 +426,6 @@ func (r *credentialResolver) refreshCredential(
 		return nil, errors.New("mcp credentials: unexpected singleflight result type")
 	}
 	return cred, nil
-}
-
-func (r *credentialResolver) acquireRefreshLock(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	subject, provider string,
-) (func(context.Context) error, error) {
-	locker, ok := r.vault.(credentialRefreshLocker)
-	if !ok {
-		return func(context.Context) error { return nil }, nil
-	}
-	return locker.AcquireRefreshLock(ctx, gatewayID, subject, provider)
-}
-
-func (r *credentialResolver) releaseRefreshLock(
-	ctx context.Context,
-	unlock func(context.Context) error,
-	gatewayID ids.GatewayID,
-	subject, provider string,
-) {
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshLockReleaseTimeout)
-	defer cancel()
-	if err := unlock(releaseCtx); err != nil {
-		r.logger.Error("mcp credentials: failed to release refresh lock",
-			"provider", provider, "subject", subject, "gateway_id", gatewayID.String(), "error", err)
-	}
 }
 
 func (r *credentialResolver) grantIsDead(key, refreshToken string) bool {
@@ -441,16 +474,46 @@ var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected creden
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
 // guessed at from the client-side error alone.
-func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub, reason string, diagnostics ...any) error {
-	attrs := []any{"provider", provider, "subject", principalSub,
-		"gateway_id", rc.Consumer.GatewayID.String(), "reason", reason}
+func (r *credentialResolver) consentRequired(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	provider, principalSub, cause, reason string,
+	diagnostics ...any,
+) error {
+	attrs := []any{
+		"provider", provider,
+		"principal_ref", logref.Opaque(principalSub),
+		"gateway_id", rc.Consumer.GatewayID.String(),
+		"cause", cause,
+		"reason", reason,
+	}
 	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
+	// A consumer that acts as itself has no person behind the call: nobody can
+	// complete a consent page, so it is told what is missing and who fixes it
+	// rather than handed a ticket it cannot redeem.
+	if !rc.Consumer.ActsForUsers() {
+		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg)}
+	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	var ticket string
+	var err error
+	if code := storeServerCode(rc, reg); code != "" {
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, "")
+	} else {
+		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	}
 	if err != nil {
 		return err
 	}
-	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
+	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath, Cause: cause}
+}
+
+func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) string {
+	if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) || reg == nil || reg.MCPTarget == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.MCPTarget.Code)
 }
 
 func (r *credentialResolver) clientCredentials(
@@ -543,4 +606,13 @@ func bearerToken(authorization string) string {
 		return ""
 	}
 	return strings.TrimSpace(token)
+}
+
+// registryLabelFor names the server in a refusal the way an administrator sees
+// it in Routing, falling back to nothing when the registry is unnamed.
+func registryLabelFor(reg *registrydomain.Registry) string {
+	if reg == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.Name)
 }

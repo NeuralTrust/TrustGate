@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers env up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit mcp-catalog-probe \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -14,6 +14,12 @@ LDFLAGS       := -X $(MODULE)/pkg/version.Version=$(VERSION) \
 
 DOCKER_IMAGE  ?= ghcr.io/neuraltrust/trustgate
 DOCKER_TAG    ?= $(VERSION)
+
+# Keep in sync with the golangci-lint version pinned in .github/workflows/ci.yml.
+# Must be a release whose bundled staticcheck understands this module's go
+# directive, and it must be `go install`ed (not a release binary) so it is
+# compiled with the same Go toolchain the module targets.
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 M := $(shell printf "\033[34;1m▶\033[0m")
 
@@ -60,13 +66,18 @@ local-dns: ## Point *.gw.neuraltrust.sandbox to 127.0.0.1 via dnsmasq (macOS, re
 
 run-servers: up ## Alias for 'up': start the full stack + admin & proxy in docker
 
-up: ## One command to bring up everything (infra + admin & proxy) in Docker
+env: ## Seed .env and generate SERVER_SECRET_KEY if unset
+	@./scripts/seed-env.sh
+
+up: env ## Bring up Postgres, Redis and all TrustGate planes in Docker
 	@$(info $(M) Bringing up the full TrustGate stack ...)
-	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml build admin
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d
 	@echo ""
 	@echo "  TrustGate is up:"
 	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
 	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
+	@echo "    MCP    -> http://localhost:8082  (healthz: /healthz)"
 	@echo "  Tail logs with 'make logs', tear down with 'make down'."
 
 down: ## Tear down the full stack and remove volumes
@@ -101,6 +112,14 @@ test-repositories: ## Run repository integration tests (requires PG_TEST_URL poi
 
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)
+	@PATH="$$HOME/go/bin:$$PATH" command -v golangci-lint >/dev/null 2>&1 || { \
+	  echo "golangci-lint not found in PATH; run 'make tools' first" >&2; exit 1; \
+	}
+	@PATH="$$HOME/go/bin:$$PATH" golangci-lint --version 2>/dev/null \
+	  | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))" || { \
+	  echo "golangci-lint is not $(GOLANGCI_LINT_VERSION); run 'make tools' to install the pinned version" >&2; \
+	  echo "  a build compiled with an older Go toolchain cannot load this module's config" >&2; exit 1; \
+	}
 	@PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
 	@cd pkg/metrics && PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
 
@@ -126,6 +145,7 @@ tools: ## Install Go dev tools pinned in tools/tools.go
 	go install github.com/vektra/mockery/v2
 	go install github.com/swaggo/swag/cmd/swag
 	go install github.com/google/addlicense
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 swagger: ## Generate the Swagger 2.0 spec (docs/swagger.{json,yaml} + docs.go) from handler annotations
 	@$(info $(M) Generating Swagger 2.0 spec ...)

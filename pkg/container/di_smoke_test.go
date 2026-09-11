@@ -38,6 +38,7 @@ import (
 )
 
 func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	cases := []struct {
 		plane  string
 		dbless bool
@@ -58,6 +59,7 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 
 func TestDISmoke_MCPAPIKeyConnectModuleSets(t *testing.T) {
 	t.Run("full registers API and MCP providers", func(t *testing.T) {
+		t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 		c, err := container.New(modules.All("mcp", false)...)
 		if err != nil {
 			t.Fatalf("New(modules.All(mcp, false)...): %v", err)
@@ -102,6 +104,7 @@ func TestDISmoke_MCPAPIKeyConnectModuleSets(t *testing.T) {
 }
 
 func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	t.Setenv("POSTGRES_LOGIN", "aws")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
@@ -172,8 +175,10 @@ func setDBLessSmokeEnv(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_TLS_INSECURE", "true")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("SERVER_SECRET_KEY", strings.Repeat("smoke-server-secret-", 3))
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 }
+
+func smokeSecretKey() string { return strings.Repeat("smoke-server-secret-", 3) }
 
 func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 	setDBLessSmokeEnv(t)
@@ -242,6 +247,7 @@ type dblessMCPServerParam struct {
 }
 
 func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	for _, plane := range []string{"admin", "run"} {
 		t.Run(plane, func(t *testing.T) {
 			c, err := container.New(modules.All(plane, false)...)

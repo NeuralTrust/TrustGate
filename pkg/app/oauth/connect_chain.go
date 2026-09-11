@@ -21,6 +21,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
@@ -77,7 +78,8 @@ func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayI
 		}
 		// Not connected, or connected but unreadable under the current key: both
 		// need the user to (re)link, so both count as unlinked here.
-		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); errors.Is(err, vaultdomain.ErrNotFound) ||
+		key := registrydomain.ForwardedVaultProvider(reg)
+		if _, err := s.vault.Find(ctx, gatewayID, principalSub, key); errors.Is(err, vaultdomain.ErrNotFound) ||
 			errors.Is(err, vaultdomain.ErrUndecryptable) {
 			return true
 		}

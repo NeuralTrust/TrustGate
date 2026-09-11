@@ -56,6 +56,8 @@ var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
+var ErrContextWindowExceeded = errors.New("context window exceeded")
+
 type ProviderResponse struct {
 	StatusCode int
 	Headers    map[string][]string
@@ -103,18 +105,38 @@ type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry providerCodec
 	logger   *slog.Logger
+	catalog  CatalogReader
+	limits   *outputLimits
+}
+
+type InvokerOption func(*providerInvoker)
+
+// WithCatalog attaches the catalog used for output-token clamps and
+// context-window preflight. Tests omit it to keep those paths off.
+func WithCatalog(reader CatalogReader) InvokerOption {
+	return func(p *providerInvoker) {
+		p.catalog = reader
+		if reader != nil {
+			p.limits = newOutputLimits(reader, p.logger)
+		}
+	}
 }
 
 func NewProviderInvoker(
 	locator factory.ProviderLocator,
 	registry providerCodec,
 	logger *slog.Logger,
+	opts ...InvokerOption,
 ) ProviderInvoker {
-	return &providerInvoker{
+	inv := &providerInvoker{
 		locator:  locator,
 		registry: registry,
 		logger:   logger,
 	}
+	for _, opt := range opts {
+		opt(inv)
+	}
+	return inv
 }
 
 // preparedInvocation is the shared result of resolving the provider client and
@@ -130,6 +152,8 @@ type preparedInvocation struct {
 	targetFormat adapter.Format
 	crossFormat  bool
 	capability   string
+	clampedTo    int
+	clampSource  string
 	files        providers.FilesRequest
 	images       providers.ImagesRequest
 	audio        providers.AudioRequest
@@ -140,7 +164,7 @@ func (p *providerInvoker) Invoke(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
-	prep, err := p.prepare(bk, req)
+	prep, err := p.prepare(ctx, bk, req)
 	if err != nil {
 		return nil, err
 	}
@@ -155,21 +179,20 @@ func (p *providerInvoker) Invoke(
 		return p.invokeAudio(ctx, bk, prep)
 	}
 
+	if err := p.checkContextBudget(ctx, prep); err != nil {
+		return nil, err
+	}
+
 	respBody, err := p.invokeUpstream(ctx, prep)
-	if retryBody, ok := reasoningEffortRetryBody(prep, prep.body, err); ok {
-		p.logger.Info("retrying OpenAI request with reasoning effort disabled",
-			slog.String("model", prep.sentModel))
+	if retryBody, ok := p.retryBodyFor(ctx, prep, prep.body, err); ok {
 		retryPrep := *prep
 		retryPrep.body = retryBody
 		respBody, err = p.invokeUpstream(ctx, &retryPrep)
+		prep = &retryPrep
 	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, err
 	}
@@ -188,11 +211,11 @@ func (p *providerInvoker) Invoke(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers: withSelectionHeaders(
+		Headers: withOutputLimitHeader(withSelectionHeaders(
 			map[string][]string{headerContentType: {contentTypeJSON}},
 			bk,
 			prep.sentModel,
-		),
+		), prep),
 		Body:         respBody,
 		Usage:        usage,
 		Model:        model,
@@ -215,7 +238,7 @@ func (p *providerInvoker) InvokeStream(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
-	prep, err := p.prepare(bk, req)
+	prep, err := p.prepare(ctx, bk, req)
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +247,10 @@ func (p *providerInvoker) InvokeStream(
 	}
 	if isAudioCapability(prep.capability) {
 		return p.invokeAudio(ctx, bk, prep)
+	}
+
+	if err := p.checkContextBudget(ctx, prep); err != nil {
+		return nil, err
 	}
 
 	body := prep.body
@@ -238,18 +265,12 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
-	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
-		p.logger.Info("retrying OpenAI stream with reasoning effort disabled",
-			slog.String("model", prep.sentModel))
+	if retryBody, ok := p.retryBodyFor(ctx, prep, body, err); ok {
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
 	}
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
@@ -258,7 +279,7 @@ func (p *providerInvoker) InvokeStream(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers:    withSelectionHeaders(streamHeaders(), bk, prep.sentModel),
+		Headers:    withOutputLimitHeader(withSelectionHeaders(streamHeaders(), bk, prep.sentModel), prep),
 		Stream:     stream,
 		SentModel:  prep.sentModel,
 	}, nil
@@ -267,6 +288,7 @@ func (p *providerInvoker) InvokeStream(
 // prepare resolves the provider client and transforms the request payload across
 // provider formats when needed, mutating req with the resolved format metadata.
 func (p *providerInvoker) prepare(
+	ctx context.Context,
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*preparedInvocation, error) {
@@ -334,7 +356,7 @@ func (p *providerInvoker) prepare(
 
 	sentModel := resolveSentModel(body, req)
 
-	return &preparedInvocation{
+	prep := &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
@@ -350,7 +372,75 @@ func (p *providerInvoker) prepare(
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
 		capability:   capability,
-	}, nil
+	}
+	p.applyOutputLimit(ctx, prep)
+	prep.cfg.Model = prep.sentModel
+	return prep, nil
+}
+
+func (p *providerInvoker) retryBodyFor(ctx context.Context, prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
+	if retryBody, ok := p.maxTokensRetryBody(ctx, prep, body, err); ok {
+		return retryBody, true
+	}
+	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
+		p.logger.Info("retrying OpenAI request with reasoning effort disabled",
+			slog.String("model", prep.sentModel))
+		return retryBody, true
+	}
+	return nil, false
+}
+
+func (p *providerInvoker) maxTokensRetryBody(ctx context.Context, prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
+	if prep.clampedTo > 0 {
+		return nil, false
+	}
+	backendErr, ok := registry.IsBackendError(err)
+	if !ok || backendErr.StatusCode != http.StatusBadRequest {
+		return nil, false
+	}
+	limit, hit := adapter.BodyExceedsMaxTokens(backendErr.Body)
+	if !hit {
+		return nil, false
+	}
+	out, requested, clamped := adapter.ClampMaxOutputTokens(body, limit)
+	if !clamped || requested <= limit {
+		return nil, false
+	}
+	if p.limits != nil {
+		p.limits.Learn(prep.providerName, prep.sentModel, limit)
+	}
+	prep.clampedTo = limit
+	prep.clampSource = clampSourceUpstream
+	p.logger.Info("clamped max output tokens",
+		slog.String("provider", prep.providerName),
+		slog.String("model", prep.sentModel),
+		slog.Int("requested", requested),
+		slog.Int("limit", limit),
+		slog.String("source", clampSourceUpstream))
+	p.limits.record(ctx, prep.providerName, clampSourceUpstream)
+	return out, true
+}
+
+func (p *providerInvoker) backendErrorResponse(
+	be *registry.BackendError,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) *ProviderResponse {
+	body := be.Body
+	if prep != nil && prep.crossFormat {
+		body = adapter.AdaptErrorBody(body, be.StatusCode, prep.sourceFormat)
+	}
+	headers := be.PassthroughHeaders()
+	if prep != nil {
+		headers = withOutputLimitHeader(withSelectionHeaders(headers, bk, prep.sentModel), prep)
+	} else {
+		headers = withSelectionHeaders(headers, bk, "")
+	}
+	return &ProviderResponse{
+		StatusCode: be.StatusCode,
+		Headers:    headers,
+		Body:       body,
+	}
 }
 
 func reasoningEffortRetryBody(prep *preparedInvocation, body []byte, err error) ([]byte, bool) {
@@ -553,11 +643,7 @@ func (p *providerInvoker) invokeAudio(
 	result, err := invokeAudioClient(ctx, prep)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider audio: %w", err)
 	}
@@ -700,11 +786,7 @@ func (p *providerInvoker) invokeFiles(
 	result, err := filesClient.Files(ctx, prep.cfg, prep.files)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider files: %w", err)
 	}
@@ -738,11 +820,7 @@ func (p *providerInvoker) invokeImages(
 	result, err := imagesClient.Images(ctx, prep.cfg, prep.images)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
-			return &ProviderResponse{
-				StatusCode: be.StatusCode,
-				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
-				Body:       be.Body,
-			}, nil
+			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, fmt.Errorf("provider images: %w", err)
 	}

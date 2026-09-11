@@ -24,10 +24,8 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
@@ -59,13 +57,12 @@ func (f *forwarder) resolveRouting(
 	}
 	in.Request.RequestedModel = ref
 	needed := capabilityRequiresProviderSupport(in.Request)
-	if intent.IsZero() && !isRoleBased(in.Consumer) && needed == "" {
+	if intent.IsZero() && needed == "" {
 		return intent, nil, nil
 	}
 	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
 		Intent:     intent,
 		Consumer:   in.Consumer,
-		Roles:      effectiveRoles(in.Data, in.RoleIDs),
 		Registries: registryLookup(in.Data),
 	})
 	if err != nil {
@@ -198,10 +195,6 @@ func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref stri
 	)
 }
 
-func isRoleBased(rc *appconsumer.RoutableConsumer) bool {
-	return rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased
-}
-
 func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string, error) {
 	if req == nil {
 		return routingdomain.Intent{}, "", nil
@@ -264,26 +257,6 @@ func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.In
 	}
 }
 
-func effectiveRoles(data *appconsumer.Data, roleIDs []ids.RoleID) []*roledomain.Role {
-	if data == nil || len(roleIDs) == 0 {
-		return nil
-	}
-	want := make(map[ids.RoleID]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		want[id] = struct{}{}
-	}
-	out := make([]*roledomain.Role, 0, len(roleIDs))
-	for _, r := range data.Roles {
-		if r == nil {
-			continue
-		}
-		if _, ok := want[r.ID]; ok {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
 	if data == nil {
 		return nil
@@ -298,12 +271,6 @@ func (f *forwarder) routeBackend(
 	intent routingdomain.Intent,
 	candidates *routingdomain.CandidateSet,
 ) (routedBackend, error) {
-	if isRoleBased(rc) {
-		return routedBackend{
-			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
-			excluded: make(map[routingdomain.RouteKey]struct{}),
-		}, nil
-	}
 	if intent.IsQualified() {
 		return routedBackend{
 			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
@@ -362,6 +329,36 @@ func nextChainRoute(
 		return &chain[i]
 	}
 	return nil
+}
+
+func noRegistryServesModelError(model string, chain []routingdomain.Route, last failoverState) error {
+	err := fmt.Errorf("%w: %q (tried %s)",
+		routingdomain.ErrNoRegistryServesModel, model, strings.Join(chainProviders(chain), ", "))
+	if last.resp == nil {
+		return err
+	}
+	detail := adapter.ProviderErrorMessage(last.resp.Body)
+	if detail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: last provider response: %s", err, detail)
+}
+
+func chainProviders(chain []routingdomain.Route) []string {
+	out := make([]string, 0, len(chain))
+	seen := make(map[string]struct{}, len(chain))
+	for _, route := range chain {
+		if route.Registry == nil {
+			continue
+		}
+		provider := route.Registry.Provider()
+		if _, dup := seen[provider]; dup {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	return out
 }
 
 func smartRoutingBaseline(

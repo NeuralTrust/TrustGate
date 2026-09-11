@@ -70,6 +70,76 @@ func TestSmartRoutingConfig_TierForScoreBelowEveryThreshold(t *testing.T) {
 	}
 }
 
+func TestSmartRoutingConfig_LowestTier(t *testing.T) {
+	t.Parallel()
+	shared := ids.New[ids.RegistryKind]()
+	tests := []struct {
+		name      string
+		cfg       *SmartRoutingConfig
+		wantOK    bool
+		wantModel string
+	}{
+		{
+			name: "ascending thresholds",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0, RegistryID: shared, Model: "gpt-4o-mini"},
+				{MinScore: 0.3, RegistryID: shared, Model: "gpt-4.1-mini"},
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "unsorted slice",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+				{MinScore: 0.3, RegistryID: shared, Model: "gpt-4.1-mini"},
+				{MinScore: 0, RegistryID: shared, Model: "gpt-4o-mini"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "single tier",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.4, RegistryID: shared, Model: "gpt-4o-mini"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name: "gap config never reaching zero",
+			cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{
+				{MinScore: 0.49, RegistryID: shared, Model: "gpt-4o-mini"},
+				{MinScore: 0.8, RegistryID: shared, Model: "gpt-5"},
+			}},
+			wantOK:    true,
+			wantModel: "gpt-4o-mini",
+		},
+		{name: "nil receiver", cfg: nil},
+		{name: "empty tiers", cfg: &SmartRoutingConfig{Tiers: []SmartRoutingTier{}}},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tier, ok := tc.cfg.LowestTier()
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if got := tier.RouteModel(); got != tc.wantModel {
+				t.Fatalf("model = %q, want %q", got, tc.wantModel)
+			}
+			if tier.RegistryID != shared {
+				t.Fatalf("registry = %s, want %s", tier.RegistryID, shared)
+			}
+		})
+	}
+}
+
 func TestSmartRoutingTier_RouteModelTrimsBlanks(t *testing.T) {
 	t.Parallel()
 	if got := (SmartRoutingTier{Model: "  gpt-5  "}).RouteModel(); got != "gpt-5" {

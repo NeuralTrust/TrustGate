@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27.0-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 
 WORKDIR /build
 
 # CGO is required: confluent-kafka-go is a cgo binding to librdkafka. The
-# bundled glibc librdkafka (statically linked into the binary) ships for both
-# amd64 and arm64, so we build against glibc and run on distroless base.
+# bundled glibc librdkafka (statically linked into the binary) is amd64-only in
+# v1.9.2, so this image only links on linux/amd64. We build against glibc and
+# run on distroless base.
 ENV GOPRIVATE=github.com/NeuralTrust/* \
     GONOPROXY=github.com/NeuralTrust/* \
     GONOSUMDB=github.com/NeuralTrust/* \
@@ -35,7 +36,7 @@ RUN go mod verify
 ARG VERSION=0.0.0-dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
-ARG MODULE=github.com/NeuralTrust/AgentGateway
+ARG MODULE=github.com/NeuralTrust/TrustGate
 
 RUN go build \
     -trimpath \

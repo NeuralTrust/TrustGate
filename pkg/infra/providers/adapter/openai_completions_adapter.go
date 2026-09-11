@@ -16,13 +16,8 @@ package adapter
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 )
-
-// ---------------------------------------------------------------------------
-// Chat Completions API typed structs
-// ---------------------------------------------------------------------------
 
 type openaiRequest struct {
 	Model               string            `json:"model,omitempty"`
@@ -230,10 +225,6 @@ func (f *openaiStreamToolCallFn) name() string {
 	return f.Name
 }
 
-// ---------------------------------------------------------------------------
-// Request: Decode (Chat Completions → Canonical)
-// ---------------------------------------------------------------------------
-
 func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	var req openaiRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -308,10 +299,6 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Chat Completions)
-// ---------------------------------------------------------------------------
-
 func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	out := openaiRequest{
 		Model:       req.Model,
@@ -353,24 +340,9 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 		out.Messages = append(out.Messages, msg)
 	}
 
-	out.Tools = encodeCompletionsTools(req.Tools)
-
-	dropped := len(req.Tools) > len(out.Tools)
-	if req.ToolChoice != nil && (!dropped || !toolChoiceDangles(req.ToolChoice, out.Tools)) {
-		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
-	}
-
-	return json.Marshal(out)
-}
-
-func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
-	var out []openaiTool
-	for _, t := range tools {
-		if strings.TrimSpace(t.Name) == "" {
-			continue
-		}
+	for _, t := range req.Tools {
 		if t.Kind == ToolKindCustom {
-			out = append(out, openaiTool{
+			out.Tools = append(out.Tools, openaiTool{
 				Type: "custom",
 				Custom: &openaiCustomTool{
 					Name:        t.Name,
@@ -380,7 +352,7 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 			})
 			continue
 		}
-		out = append(out, openaiTool{
+		out.Tools = append(out.Tools, openaiTool{
 			Type: "function",
 			Function: &openaiFunction{
 				Name:        t.Name,
@@ -389,25 +361,13 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 			},
 		})
 	}
-	return out
-}
 
-func toolChoiceDangles(tc *CanonicalToolChoice, kept []openaiTool) bool {
-	if len(kept) == 0 {
-		return true
+	if req.ToolChoice != nil {
+		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
 	}
-	if tc.Type != "tool" {
-		return false
-	}
-	return !slices.ContainsFunc(kept, func(t openaiTool) bool {
-		return (t.Function != nil && t.Function.Name == tc.Name) ||
-			(t.Custom != nil && t.Custom.Name == tc.Name)
-	})
-}
 
-// ---------------------------------------------------------------------------
-// Response: Decode (Chat Completions response → Canonical)
-// ---------------------------------------------------------------------------
+	return json.Marshal(out)
+}
 
 func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	var resp openaiResponse
@@ -459,10 +419,6 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response: Encode (Canonical → Chat Completions response)
-// ---------------------------------------------------------------------------
-
 func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 	msg := openaiMessage{
 		Role:    "assistant",
@@ -509,10 +465,6 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 
 	return json.Marshal(out)
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Decode (Chat Completions chunk → Canonical)
-// ---------------------------------------------------------------------------
 
 func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var raw openaiStreamChunk
@@ -570,10 +522,6 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 
 	return sc, nil
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Chat Completions chunk)
-// ---------------------------------------------------------------------------
 
 func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	delta := openaiStreamDelta{

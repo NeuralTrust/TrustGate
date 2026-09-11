@@ -22,10 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: Gemini → Canonical → Gemini
-// ---------------------------------------------------------------------------
-
 func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	input := `{
 		"contents": [
@@ -59,10 +55,6 @@ func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	second := contents[1].(map[string]interface{})
 	assert.Equal(t, "model", second["role"]) // assistant → model
 }
-
-// ---------------------------------------------------------------------------
-// Gemini functionCall response: real-world payload
-// ---------------------------------------------------------------------------
 
 func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	body := `{
@@ -161,10 +153,6 @@ func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	require.Len(t, cr2.ToolCalls, 1)
 	assert.Equal(t, "database_agent", cr2.ToolCalls[0].Name)
 }
-
-// ---------------------------------------------------------------------------
-// Gemini → OpenAI: tool schema type conversion (STRING → string)
-// ---------------------------------------------------------------------------
 
 func TestGemini_ToolSchemaTypes_ConvertedToOpenAI(t *testing.T) {
 	// Gemini-format request with UPPER_CASE types
@@ -445,4 +433,141 @@ func TestGeminiUsage_EncodeRebuildsDisjointWireCounts(t *testing.T) {
 	assert.Equal(t,
 		u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount+u.ToolUsePromptTokenCount,
 		u.TotalTokenCount, "the re-encoded payload must satisfy Gemini's own arithmetic")
+}
+
+func TestGeminiEncodeRequestRejectsMalformedToolArguments(t *testing.T) {
+	adapter := &GeminiAdapter{}
+	_, err := adapter.EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+		Role:      "assistant",
+		ToolCalls: []CanonicalToolCall{{Name: "lookup", Arguments: "{"}},
+	}}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "lookup")
+}
+
+func geminiToolParameters(t *testing.T, body []byte) map[string]interface{} {
+	t.Helper()
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &result))
+	tools := result["tools"].([]interface{})
+	decls := tools[0].(map[string]interface{})["functionDeclarations"].([]interface{})
+	return decls[0].(map[string]interface{})["parameters"].(map[string]interface{})
+}
+
+func TestAnthropic_ToolSchema_StripsUnsupportedKeysForGemini(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","description":"d","input_schema":{
+			"$schema":"https://json-schema.org/draft/2020-12/schema",
+			"type":"object",
+			"additionalProperties":false,
+			"$defs":{"Addr":{"type":"object"}},
+			"examples":[{"x":1}],
+			"const":"unused",
+			"exclusiveMinimum":1,
+			"patternProperties":{"x":{"type":"string"}},
+			"properties":{
+				"default":{"type":"string"},
+				"type":{"type":"string"},
+				"nested":{"type":"object","default":{"type":"keep-me"}}
+			}
+		}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	assert.NotContains(t, params, "$schema")
+	assert.NotContains(t, params, "additionalProperties")
+	assert.NotContains(t, params, "$defs")
+	assert.NotContains(t, params, "examples")
+	assert.NotContains(t, params, "patternProperties")
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["default"].(map[string]interface{})["type"])
+	assert.Equal(t, "STRING", props["type"].(map[string]interface{})["type"])
+	assert.Equal(t, map[string]interface{}{"type": "keep-me"}, props["nested"].(map[string]interface{})["default"])
+}
+
+func TestAnthropic_ToolSchema_NestedPropertiesItemsAnyOf(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{
+			"list":{"type":"array","items":{"type":"string"}},
+			"tuple":{"type":"array","items":[{"type":"number"},{"type":"string"}]},
+			"choice":{"oneOf":[{"type":"string"},{"type":"number"}]},
+			"mode":{"enum":["a","b"]}
+		},"required":["list"]}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["list"].(map[string]interface{})["items"].(map[string]interface{})["type"])
+	assert.Equal(t, "NUMBER", props["tuple"].(map[string]interface{})["items"].(map[string]interface{})["type"])
+	assert.Contains(t, props["choice"].(map[string]interface{}), "anyOf")
+	assert.Equal(t, []interface{}{"list"}, params["required"])
+}
+
+func TestAnthropic_ToolSchema_ResolvesLocalRefsAndGuardsCycles(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{
+			"type":"object",
+			"$defs":{
+				"Address":{"type":"object","properties":{"city":{"type":"string"}}},
+				"Node":{"type":"object","properties":{"child":{"$ref":"#/$defs/Node"}}}
+			},
+			"properties":{
+				"home":{"$ref":"#/$defs/Address"},
+				"work":{"$ref":"#/$defs/Address"},
+				"tree":{"$ref":"#/$defs/Node"}
+			}
+		}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	raw := string(out)
+	assert.NotContains(t, raw, `"$ref"`)
+	assert.NotContains(t, raw, `"$defs"`)
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["home"].(map[string]interface{})["properties"].(map[string]interface{})["city"].(map[string]interface{})["type"])
+	assert.Equal(t, "OBJECT", props["tree"].(map[string]interface{})["properties"].(map[string]interface{})["child"].(map[string]interface{})["type"])
+}
+
+func TestAnthropic_ToolSchema_TypeArrayBecomesNullable(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{
+			"name":{"type":["string","null"]},
+			"weird":{"type":"not-a-type"}
+		}}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	props := geminiToolParameters(t, out)["properties"].(map[string]interface{})
+	name := props["name"].(map[string]interface{})
+	assert.Equal(t, "STRING", name["type"])
+	assert.Equal(t, true, name["nullable"])
+	_, hasType := props["weird"].(map[string]interface{})["type"]
+	assert.False(t, hasType)
+
+	native := `{
+		"contents":[{"role":"user","parts":[{"text":"hi"}]}],
+		"tools":[{"functionDeclarations":[{"name":"lookup","parameters":{"type":"OBJECT","properties":{"q":{"type":"STRING"}},"required":["q"]}}]}]
+	}`
+	decoded, err := (&GeminiAdapter{}).DecodeRequest([]byte(native))
+	require.NoError(t, err)
+	round, err := (&GeminiAdapter{}).EncodeRequest(decoded)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, round)
+	assert.Equal(t, "OBJECT", params["type"])
+	assert.Equal(t, "STRING", params["properties"].(map[string]interface{})["q"].(map[string]interface{})["type"])
 }

@@ -21,6 +21,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -28,10 +29,28 @@ import (
 
 var ErrAPIKeyConnectUnauthorized = errors.New("oauth api-key connect: unauthorized")
 
+// ErrAPIKeyConnectEndUsers: the consumer's application identifies its own end
+// users, so upstream accounts are linked per end user through the connections
+// API, never to the shared API-key principal this page would use.
+var ErrAPIKeyConnectEndUsers = fmt.Errorf("oauth api-key connect: this application identifies its own users; link accounts per user through the connections API: %w", commonerrors.ErrConflict)
+
 //go:generate mockery --name=APIKeyConnectService --dir=. --output=./mocks --filename=oauth_api_key_connect_service_mock.go --case=underscore --with-expecter
 type APIKeyConnectService interface {
 	ValidateTarget(ctx context.Context, gatewayID ids.GatewayID, slug string) error
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey string) (string, error)
+}
+
+type AppTicketIssuer interface {
+	CreateAppTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub,
+		consumerPath string,
+		consumerID ids.ConsumerID,
+		authID ids.AuthID,
+		providers []string,
+		code string,
+	) (string, error)
 }
 
 var _ APIKeyConnectService = (*apiKeyConnectService)(nil)
@@ -39,14 +58,14 @@ var _ APIKeyConnectService = (*apiKeyConnectService)(nil)
 type apiKeyConnectService struct {
 	apiKeyFinder   appauth.APIKeyFinder
 	dataFinder     appconsumer.DataFinder
-	connectService ConnectService
+	connectService AppTicketIssuer
 	limiter        ConnectAttemptLimiter
 }
 
 func NewAPIKeyConnectService(
 	apiKeyFinder appauth.APIKeyFinder,
 	dataFinder appconsumer.DataFinder,
-	connectService ConnectService,
+	connectService AppTicketIssuer,
 	limiter ConnectAttemptLimiter,
 ) APIKeyConnectService {
 	return &apiKeyConnectService{
@@ -100,14 +119,17 @@ func (s *apiKeyConnectService) CreateTicket(
 		return "", ErrAPIKeyConnectUnauthorized
 	}
 
-	ticket, err := s.connectService.CreateAPIKeyTicket(
+	ticket, err := s.connectService.CreateAppTicket(
 		ctx,
 		gatewayID,
-		auth.Name,
+		consumerdomain.AppSubject(target.Consumer.ID),
 		appconsumer.MCPPath(slug),
 		target.Consumer.ID,
 		auth.ID,
 		forwardedProviderIDs(data.EffectiveRegistries(target)),
+		// The self-service page is the application's whole list, so no server to
+		// focus on: this is where the picker belongs.
+		"",
 	)
 	if err != nil {
 		return "", fmt.Errorf("oauth api-key connect: create ticket: %w", err)
@@ -127,6 +149,9 @@ func (s *apiKeyConnectService) findTarget(
 	target, ok := data.MatchSlug(slug)
 	if !ok || !validMCPConsumer(target, gatewayID) {
 		return nil, nil, ErrAPIKeyConnectUnauthorized
+	}
+	if target.Consumer.Identity.AppUsers() {
+		return nil, nil, ErrAPIKeyConnectEndUsers
 	}
 	return data, target, nil
 }

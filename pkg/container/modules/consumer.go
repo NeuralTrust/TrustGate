@@ -25,7 +25,6 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
@@ -40,9 +39,12 @@ func Consumer(c *container.Container) error {
 }
 
 func provideConsumerRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *consumerrepo.Repository {
 		return consumerrepo.NewRepository(conn, appender)
-	})
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r })
 }
 
 // provideConsumerRepositoryViews exposes the consumer repository under its
@@ -62,8 +64,8 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, roleRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
@@ -86,8 +88,8 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
-		return appconsumer.NewAssociator(repo, registryRepo, roleRepo, authRepo, policyRepo, manager, publisher, logger, sig.Signaler, resolver)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
+		return appconsumer.NewAssociator(repo, registryRepo, authRepo, policyRepo, manager, publisher, logger, sig.Signaler, resolver)
 	}); err != nil {
 		return err
 	}
@@ -108,6 +110,11 @@ func provideConsumerServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(consumerhttp.NewAssociationHandler); err != nil {
+		return err
+	}
+	// The upstream-accounts handler needs the connect service, which only the
+	// planes that serve MCP provide; the admin router takes it as optional.
+	if err := c.Provide(consumerhttp.NewUpstreamAccountsHandler); err != nil {
 		return err
 	}
 	return nil

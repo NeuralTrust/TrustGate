@@ -27,12 +27,22 @@ message Snapshot {
   repeated Registry registries = 4;
   repeated Policy policies = 5;
   repeated Auth auths = 6;
-  repeated Role roles = 7;
+  // Field 7 carried role_based routing roles; the concept was removed.
+  reserved 7;
+  reserved "roles";
   repeated Provider providers = 8;
   repeated CatalogModel catalog_models = 9;
   // Public keys data planes use to verify RS256 playground tokens minted by
   // the control plane. Verification material only — nothing here can sign.
   repeated VerificationKey playground_token_keys = 10;
+  // Fields 10 and 11 carried store_grants and store_policies on develop while
+  // main was using 10 for playground_token_keys. Production data planes are
+  // already decoding 10 as the playground keys, so the Store fields moved to
+  // 12/13 instead: they had only ever shipped to dev. 11 stays reserved so a
+  // snapshot predating the move cannot be decoded as the wrong field.
+  reserved 11;
+  repeated StoreGrant store_grants = 12;
+  repeated StorePolicy store_policies = 13;
 }
 
 message VerificationKey {
@@ -52,6 +62,18 @@ message Registry {
   bytes json = 1;
 }
 
+// StoreGrant is one MCP Store access grant (storegrant.Grant as JSON): who may
+// use a catalog code, or one configured instance of it, on a gateway.
+message StoreGrant {
+  bytes json = 1;
+}
+
+// StorePolicy is one per-principal MCP Store access level on a gateway
+// (storeaccess.Policy as JSON): open | curated | none for a user or a group.
+message StorePolicy {
+  bytes json = 1;
+}
+
 message Policy {
   bytes json = 1;
 }
@@ -59,10 +81,6 @@ message Policy {
 message Auth {
   bytes json = 1;
   string key_hash = 2;
-}
-
-message Role {
-  bytes json = 1;
 }
 
 message Provider {

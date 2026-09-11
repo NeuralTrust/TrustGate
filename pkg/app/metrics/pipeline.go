@@ -71,6 +71,17 @@ func (p *Pipeline) publish(
 	startTime, endTime time.Time,
 	explicit []telemetrydomain.ExporterConfig,
 ) {
+	p.publishContext(context.Background(), requestTrace, req, resp, startTime, endTime, explicit)
+}
+
+func (p *Pipeline) publishContext(
+	ctx context.Context,
+	requestTrace *trace.RequestTrace,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	startTime, endTime time.Time,
+	explicit []telemetrydomain.ExporterConfig,
+) {
 	if p == nil || p.builder == nil || req == nil || resp == nil {
 		return
 	}
@@ -78,7 +89,6 @@ func (p *Pipeline) publish(
 	if len(targets) == 0 && p.playgroundStore == nil {
 		return
 	}
-	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
 	for _, exporter := range targets {
 		if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {

@@ -30,6 +30,7 @@ type Event struct {
 	PrincipalSubject string `json:"principal_subject,omitempty"`
 	PrincipalMethod  string `json:"principal_method,omitempty"`
 	PrincipalEmail   string `json:"principal_email,omitempty"`
+	EndUser          string `json:"end_user,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`

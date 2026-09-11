@@ -22,10 +22,69 @@ import (
 type Method string
 
 const (
-	MethodAPIKey        Method = "api_key"
+	MethodAPIKey Method = "api_key"
+	// MethodJWT is the undifferentiated value every bearer JWT carried before
+	// RUN-1501, when a customer identity provider's token and a token the
+	// gateway itself issued were indistinguishable in telemetry. Nothing emits
+	// it any more, but it stays accepted everywhere a bearer token is
+	// authorized: a principal that still carries it must keep facing the checks
+	// it faced before, never fall through to a permissive default.
 	MethodJWT           Method = "jwt"
+	MethodExternalJWT   Method = "external_jwt"
+	MethodOAuth         Method = "oauth"
 	MethodIntrospection Method = "introspection"
 	MethodMTLS          Method = "mtls"
+)
+
+// IsBearerToken reports whether the method identifies a principal established
+// from a bearer token: a JWT verified against a customer identity provider, a
+// token the gateway itself issued at its own interactive login, an opaque token
+// resolved by introspection, or the legacy undifferentiated JWT value.
+func (m Method) IsBearerToken() bool {
+	switch m {
+	case MethodJWT, MethodExternalJWT, MethodOAuth, MethodIntrospection:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsExternalIdPAssertion reports whether the method identifies a principal
+// whose raw token was minted by a customer identity provider, and so can be
+// presented back to that provider as an assertion. A token the gateway issued
+// itself is excluded: the gateway mints session claims fresh and never carries
+// the upstream token into them, so there is no assertion any provider would
+// accept.
+func (m Method) IsExternalIdPAssertion() bool {
+	return m == MethodExternalJWT || m == MethodJWT
+}
+
+const (
+	// ClaimOrg is the claim carrying the platform tenant (team) the principal
+	// belongs to. For built-in default-IdP sessions it is authoritative for the
+	// tenant-binding check that stops a user of one org reaching another org's
+	// gateway.
+	ClaimOrg = "org"
+	// ClaimGroups is the claim carrying the principal's IdP group memberships,
+	// which role oidc_mapping rules are authored against.
+	ClaimGroups = "groups"
+	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
+	// Store access level: "open" (the whole Store), "curated" (only servers the
+	// admin granted them), or "none" (closed). Minted by the control plane from
+	// the admin's per-user/per-group Access decision. Absent means the gateway's
+	// own Store default mode applies.
+	ClaimStoreAccess = "store_access"
+	// ClaimCredentialSubject is the claim carrying the subject of the credential
+	// a caller actually presented, on a request that runs as something else: a
+	// consumer acting as the application runs as app:<consumer_id>, and this is
+	// how "which api key or certificate called" survives that.
+	ClaimCredentialSubject = "credential_subject" // #nosec G101 -- JWT claim name, not a credential
+	// ClaimGateway is the claim naming the gateway a platform token was minted
+	// for. The control plane resolves store_access per gateway (Access policies
+	// are gateway-scoped), so the token must not be redeemed at another gateway
+	// of the same tenant: the callback refuses a token whose gateway claim names
+	// a different gateway.
+	ClaimGateway = "gateway"
 )
 
 type Principal struct {
@@ -104,6 +163,81 @@ func (p *Principal) Email() string {
 		return ""
 	}
 	return EmailFromClaims(p.Claims)
+}
+
+// Org returns the platform tenant (team) claim, or "" when absent.
+func (p *Principal) Org() string {
+	if p == nil {
+		return ""
+	}
+	return StringClaim(p.Claims, ClaimOrg)
+}
+
+// StoreAccess returns the per-principal MCP Store access level claim
+// ("open" | "curated" | "none"), or "" when absent — in which case the
+// gateway's own Store default mode applies.
+func (p *Principal) StoreAccess() string {
+	if p == nil {
+		return ""
+	}
+	return StringClaim(p.Claims, ClaimStoreAccess)
+}
+
+// Groups returns the principal's normalized group memberships.
+func (p *Principal) Groups() []string {
+	if p == nil {
+		return nil
+	}
+	return GroupsFromClaims(p.Claims)
+}
+
+// StringClaim returns a trimmed string claim.
+func StringClaim(claims map[string]any, key string) string {
+	v, _ := claims[key].(string)
+	return strings.TrimSpace(v)
+}
+
+// GroupsFromClaims returns normalized group memberships from identity claims.
+func GroupsFromClaims(claims map[string]any) []string {
+	return GroupsFromClaim(claims[ClaimGroups])
+}
+
+// GroupsFromClaim normalizes string, string-slice, and JSON-array group claims.
+func GroupsFromClaim(value any) []string {
+	var values []string
+	switch v := value.(type) {
+	case string:
+		values = strings.Fields(v)
+	case []string:
+		values = v
+	case []any:
+		values = make([]string, 0, len(v))
+		for _, item := range v {
+			if group, ok := item.(string); ok {
+				values = append(values, group)
+			}
+		}
+	default:
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	groups := make([]string, 0, len(values))
+	for _, group := range values {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
 }
 
 func EmailFromClaims(claims map[string]any) string {

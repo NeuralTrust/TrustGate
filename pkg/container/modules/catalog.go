@@ -24,9 +24,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/controlplane"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"go.uber.org/dig"
@@ -88,6 +91,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
+	if err := c.Provide(newLiveModelSource); err != nil {
+		return err
+	}
 	if err := c.Provide(appcatalog.NewLiveAvailabilityFilter); err != nil {
 		return err
 	}
@@ -98,6 +104,43 @@ func provideCatalogServices(c *container.Container) error {
 		return err
 	}
 	return c.Provide(cataloghttp.NewListModelsHandler)
+}
+
+type liveModelSource struct {
+	locator factory.ProviderLocator
+}
+
+func newLiveModelSource(locator factory.ProviderLocator) appcatalog.LiveModelSource {
+	return &liveModelSource{locator: locator}
+}
+
+func (s *liveModelSource) Supports(providerCode string) bool {
+	_, err := s.locator.GetModelLister(providerCode)
+	return err == nil
+}
+
+func (s *liveModelSource) List(
+	ctx context.Context,
+	providerCode string,
+	auth *registrydomain.TargetAuth,
+	options map[string]any,
+) ([]appcatalog.LiveModel, error) {
+	lister, err := s.locator.GetModelLister(providerCode)
+	if err != nil {
+		return nil, err
+	}
+	models, err := lister.ListLiveModels(ctx, &providers.Config{
+		Options:     options,
+		Credentials: providers.CredentialsFromTargetAuth(auth),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]appcatalog.LiveModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, appcatalog.LiveModel{ID: model.ID, DisplayName: model.DisplayName})
+	}
+	return out, nil
 }
 
 type CatalogSyncParams struct {

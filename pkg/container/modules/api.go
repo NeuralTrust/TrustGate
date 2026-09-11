@@ -162,7 +162,7 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.OIDCVerifier,
+		verifier appauth.JWTVerifier,
 		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
@@ -238,7 +238,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
+	if err := c.Provide(func(cfg *config.Config) *resolver.MTLSIdentityResolver {
+		return resolver.NewMTLSIdentityResolver(mtls.NewValidator(), mtls.NewXFCCExtractor(), cfg.Server.TrustXFCCFrom)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
@@ -272,8 +274,17 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
+		verifier appauth.JWTVerifier,
+		cfg *config.Config,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
+		// The platform token minted by the built-in default IdP is verified
+		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
+		// claims are trusted, and the sessions it brokers are bounded by
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
+			appoauth.WithIdPTokenVerifier(verifier),
+			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+		)
 	}); err != nil {
 		return err
 	}
@@ -313,6 +324,14 @@ func API(c *container.Container) error {
 	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
+		return oauthhttp.NewConfigureHandler(configure)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}
@@ -334,4 +353,21 @@ func provideAPIKeyConnectHandler(
 		)
 	}
 	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
+}
+
+func provideEndUserConnectionsHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connections appoauth.EndUserConnectionsService,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.EndUserConnectionsHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(
+			peer,
+			forwardedFor,
+			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
+		)
+	}
+	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
 }

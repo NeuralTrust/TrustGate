@@ -40,6 +40,17 @@ const (
 	MCPSourceOpenAPI MCPSource = "openapi"
 )
 
+// MCPOrigin records who put a catalog registry on the shelf. Empty means an
+// admin created it by hand (the connect-from-catalog panel or a raw URL).
+type MCPOrigin string
+
+// MCPOriginStore marks a registry the gateway materialised itself from the
+// catalog — on a user's first self-service install, an approval, or an admin
+// binding the catalog server to a consumer. Such a registry carries only the
+// catalog's shared shape (no admin secrets), so the UI can present it as the
+// server's default instance rather than something an operator configured.
+const MCPOriginStore MCPOrigin = "store"
+
 type OpenAPITarget struct {
 	SpecURL string `json:"spec_url"`
 }
@@ -108,13 +119,79 @@ type MCPTarget struct {
 	// join key the UI uses to tell whether a catalog server is already
 	// connected, mirroring how an LLM registry stores its provider code. Empty
 	// for custom servers added by raw URL.
-	Code      string            `json:"code,omitempty"`
+	Code string `json:"code,omitempty"`
+	// Origin is set by the gateway when it materialises the registry from the
+	// catalog (MCPOriginStore); never accepted from a client and preserved
+	// across admin edits (see appregistry.applyMCPTargetUpdate).
+	Origin    MCPOrigin         `json:"origin,omitempty"`
 	Source    MCPSource         `json:"source,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	Transport MCPTransport      `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
 	Auth      *MCPAuth          `json:"auth,omitempty"`
 	OpenAPI   *OpenAPITarget    `json:"openapi,omitempty"`
+	// URLVariables declares the per-user placeholders in URL (e.g. {account_url},
+	// {instance}) that each principal fills at install time. It is copied verbatim
+	// from the catalog entry when a registry is materialised, so the dial path is
+	// self-contained: it knows which placeholders to substitute, which are
+	// required, and which are secret (vault) vs plain (installation config) —
+	// without re-reading the catalog. Empty for servers whose URL is fully
+	// determined (the common case). See ResolveURL.
+	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+	// InstanceConfig carries one instance's resolved plain URL-variable values when
+	// the Store scoper exposes several instances of the same catalog code for a
+	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
+	// a per-instance registry clone, never persisted (json:"-") and never part of
+	// the config snapshot; the dial-time resolver prefers it over the by-code
+	// installation lookup, which cannot tell one instance from another. Nil in the
+	// common single-instance case, where the by-code lookup is unambiguous.
+	InstanceConfig map[string]string `json:"-"`
+}
+
+// MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.
+// It is the registry-side mirror of the catalog's url_variable: the shared
+// registry carries the declaration, each principal's installation carries the
+// value (a plain value in installation.Config, or a secret in the vault).
+type MCPURLVariable struct {
+	// Name is the placeholder token: {Name} in the URL template.
+	Name string `json:"name"`
+	// Description is human help shown when collecting the value.
+	Description string `json:"description,omitempty"`
+	// Required fails the install if the principal does not supply the value.
+	Required bool `json:"required,omitempty"`
+	// Secret routes the value to the vault instead of installation config, and
+	// keeps it out of the model context (collected via the connect link, never as
+	// a chat argument).
+	Secret bool `json:"secret,omitempty"`
+	// In is where the placeholder sits: "" (a host or path segment, validated to a
+	// structure-safe charset) or "query" (a query-string value, percent-escaped).
+	In string `json:"in,omitempty"`
+}
+
+// URLVariableIn values.
+const (
+	URLVariableInQuery = "query"
+)
+
+// HasURLVariables reports whether this target's URL carries per-user
+// placeholders that must be resolved from a principal's install before dialing.
+func (t *MCPTarget) HasURLVariables() bool {
+	return t != nil && len(t.URLVariables) > 0
+}
+
+// RequiredURLVariables returns the names of the placeholders a principal must
+// supply. SecretURLVariables returns those that route to the vault.
+func (t *MCPTarget) RequiredURLVariables() []string {
+	if t == nil {
+		return nil
+	}
+	var out []string
+	for _, v := range t.URLVariables {
+		if v.Required {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }
 
 func (t *MCPTarget) Normalize() {
@@ -132,6 +209,20 @@ func (t *MCPTarget) Normalize() {
 	}
 }
 
+// targetURLValid reports whether the target URL is a valid http(s) URL, treating
+// declared URL-variable placeholders as already filled. A template such as
+// https://{instance}.service-now.com/mcp is legitimate even though "{" is not a
+// legal host character until a principal's value replaces it at dial time, so the
+// placeholders are substituted with a benign sentinel before the check. Servers
+// with no URL variables are validated verbatim, unchanged from before.
+func (t *MCPTarget) targetURLValid() bool {
+	u := t.URL
+	if len(t.URLVariables) > 0 {
+		u = urlTemplateToken.ReplaceAllString(u, "x")
+	}
+	return isHTTPURL(u)
+}
+
 func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
@@ -145,7 +236,7 @@ func (t *MCPTarget) Validate() error {
 		if strings.TrimSpace(t.URL) == "" {
 			return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
 		}
-		if !isHTTPURL(t.URL) {
+		if !t.targetURLValid() {
 			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
 		if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
@@ -158,7 +249,7 @@ func (t *MCPTarget) Validate() error {
 		if t.OpenAPI == nil || !isHTTPURL(t.OpenAPI.SpecURL) {
 			return fmt.Errorf("%w: openapi.spec_url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
-		if t.URL != "" && !isHTTPURL(t.URL) {
+		if t.URL != "" && !t.targetURLValid() {
 			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
 		if t.Transport != "" {
@@ -180,6 +271,34 @@ func (t *MCPTarget) Validate() error {
 		}
 	}
 	return nil
+}
+
+// NeedsCallerToken reports whether the mode can only authenticate an upstream
+// call by reusing the caller's own bearer token: passthrough forwards it, and
+// the on-behalf-of and token-exchange patterns present it to the IdP as the
+// subject token. A consumer called with an API key or a client certificate
+// never carries one, so these modes are only reachable for a consumer entered
+// with a token from an identity provider.
+func (a *MCPAuth) NeedsCallerToken() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Mode {
+	case MCPAuthModePassthrough:
+		return true
+	case MCPAuthModeExchange:
+		return a.Pattern == ExchangeOBO || a.Pattern == ExchangeTokenExchange
+	default:
+		return false
+	}
+}
+
+// NeedsLinkedAccount reports whether the mode reads a credential linked per
+// principal from the vault, so the first call fails with a connect link until
+// somebody links an account for that principal (a person for a consumer whose
+// users sign in, one shared service account for a machine consumer).
+func (a *MCPAuth) NeedsLinkedAccount() bool {
+	return a != nil && a.Mode == MCPAuthModeForwarded
 }
 
 func (a *MCPAuth) Validate() error {

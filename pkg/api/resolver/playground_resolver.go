@@ -63,14 +63,11 @@ func (r *PlaygroundIdentityResolver) Resolve(
 	if claims.ConsumerSlug == "" || claims.ConsumerSlug != rc.Consumer.Slug {
 		return nil, ErrForbidden
 	}
-	// Grant the consumer's own roles so role-based consumers resolve their
-	// registries without an IDP token; inline consumers ignore RoleIDs.
 	return &appauth.AuthContext{
 		Method:      appauth.MethodPlayground,
 		GatewayID:   gw.ID,
 		GatewaySlug: gw.Slug,
 		ConsumerID:  rc.Consumer.ID,
 		Subject:     claims.UserID,
-		RoleIDs:     rc.Consumer.RoleIDs,
 	}, nil
 }

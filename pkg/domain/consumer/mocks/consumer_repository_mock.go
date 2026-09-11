@@ -168,54 +168,6 @@ func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context,
 	return _c
 }
 
-// AttachRole provides a mock function with given fields: ctx, consumerID, roleID
-func (_m *Repository) AttachRole(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
-	ret := _m.Called(ctx, consumerID, roleID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for AttachRole")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
-		r0 = rf(ctx, consumerID, roleID)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Repository_AttachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachRole'
-type Repository_AttachRole_Call struct {
-	*mock.Call
-}
-
-// AttachRole is a helper method to define mock.On call
-//   - ctx context.Context
-//   - consumerID ids.ID[ids.ConsumerKind]
-//   - roleID ids.ID[ids.RoleKind]
-func (_e *Repository_Expecter) AttachRole(ctx interface{}, consumerID interface{}, roleID interface{}) *Repository_AttachRole_Call {
-	return &Repository_AttachRole_Call{Call: _e.mock.On("AttachRole", ctx, consumerID, roleID)}
-}
-
-func (_c *Repository_AttachRole_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Repository_AttachRole_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RoleKind]))
-	})
-	return _c
-}
-
-func (_c *Repository_AttachRole_Call) Return(_a0 error) *Repository_AttachRole_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Repository_AttachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Repository_AttachRole_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // Delete provides a mock function with given fields: ctx, gatewayID, id
 func (_m *Repository) Delete(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.ConsumerKind]) error {
 	ret := _m.Called(ctx, gatewayID, id)
@@ -465,54 +417,6 @@ func (_c *Repository_DetachRegistryIfUnreferenced_Call) Return(_a0 *consumer.Con
 }
 
 func (_c *Repository_DetachRegistryIfUnreferenced_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) (*consumer.Consumer, error)) *Repository_DetachRegistryIfUnreferenced_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// DetachRole provides a mock function with given fields: ctx, consumerID, roleID
-func (_m *Repository) DetachRole(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
-	ret := _m.Called(ctx, consumerID, roleID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for DetachRole")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
-		r0 = rf(ctx, consumerID, roleID)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Repository_DetachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachRole'
-type Repository_DetachRole_Call struct {
-	*mock.Call
-}
-
-// DetachRole is a helper method to define mock.On call
-//   - ctx context.Context
-//   - consumerID ids.ID[ids.ConsumerKind]
-//   - roleID ids.ID[ids.RoleKind]
-func (_e *Repository_Expecter) DetachRole(ctx interface{}, consumerID interface{}, roleID interface{}) *Repository_DetachRole_Call {
-	return &Repository_DetachRole_Call{Call: _e.mock.On("DetachRole", ctx, consumerID, roleID)}
-}
-
-func (_c *Repository_DetachRole_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Repository_DetachRole_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RoleKind]))
-	})
-	return _c
-}
-
-func (_c *Repository_DetachRole_Call) Return(_a0 error) *Repository_DetachRole_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Repository_DetachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Repository_DetachRole_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -866,17 +770,17 @@ func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *consumer
 	return _c
 }
 
-// Update provides a mock function with given fields: ctx, c, registries
-func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings) error {
-	ret := _m.Called(ctx, c, registries)
+// Update provides a mock function with given fields: ctx, c, registries, auths
+func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings, auths *[]ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, c, registries, auths)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error); ok {
-		r0 = rf(ctx, c, registries)
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer, *consumer.RegistryBindings, *[]ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, c, registries, auths)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -893,13 +797,14 @@ type Repository_Update_Call struct {
 //   - ctx context.Context
 //   - c *consumer.Consumer
 //   - registries *consumer.RegistryBindings
-func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}, registries interface{}) *Repository_Update_Call {
-	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c, registries)}
+//   - auths *[]ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}, registries interface{}, auths interface{}) *Repository_Update_Call {
+	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c, registries, auths)}
 }
 
-func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings)) *Repository_Update_Call {
+func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings, auths *[]ids.ID[ids.AuthKind])) *Repository_Update_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*consumer.Consumer), args[2].(*consumer.RegistryBindings))
+		run(args[0].(context.Context), args[1].(*consumer.Consumer), args[2].(*consumer.RegistryBindings), args[3].(*[]ids.ID[ids.AuthKind]))
 	})
 	return _c
 }
@@ -909,7 +814,7 @@ func (_c *Repository_Update_Call) Return(_a0 error) *Repository_Update_Call {
 	return _c
 }
 
-func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error) *Repository_Update_Call {
+func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer, *consumer.RegistryBindings, *[]ids.ID[ids.AuthKind]) error) *Repository_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }

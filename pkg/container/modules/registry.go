@@ -23,11 +23,14 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"go.uber.org/dig"
 )
 
 func Registry(c *container.Container) error {
@@ -37,10 +40,39 @@ func Registry(c *container.Container) error {
 	return provideRegistryServices(c)
 }
 
+// registryRepositoryDeps carries the consumer repository so a registry delete
+// can prune the routing JSONB that references it in the delete's own
+// transaction, which no foreign key can cascade.
+//
+// RUN-1501: Consumers is deliberately not `optional`. Only Registry and
+// Consumer together (modules.All) provide this repository, so an unsatisfied
+// field is never legitimate - it would just trade a boot failure for a
+// DELETE /registries/{id} that answers 204 while leaving the dangling
+// references this ticket removes, with no error and no log.
+type registryRepositoryDeps struct {
+	dig.In
+	Conn      *database.Connection
+	Encrypter vaultdomain.Encrypter
+	Appender  outboxrepo.Appender
+	Consumers *consumerrepo.Repository
+}
+
 func provideRegistryRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter, appender outboxrepo.Appender) domain.Repository {
-		return registryrepo.NewRepository(conn, enc, appender)
+	return c.Provide(func(deps registryRepositoryDeps) domain.Repository {
+		return registryrepo.NewRepository(
+			deps.Conn,
+			deps.Encrypter,
+			deps.Appender,
+			registryrepo.WithDeleteHook(deps.Consumers.PruneRegistryReferencesTx),
+		)
 	})
+}
+
+// registryDeleterGrants carries the optional Store grant repository (full plane
+// only) so a registry delete can clean its instance-level grants.
+type registryDeleterGrants struct {
+	dig.In
+	Grants storeaccessdomain.Repository `optional:"true"`
 }
 
 func provideRegistryServices(c *container.Container) error {
@@ -54,8 +86,13 @@ func provideRegistryServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Deleter {
-		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, grants registryDeleterGrants) appregistry.Deleter {
+		var opts []appregistry.DeleterOption
+		if grants.Grants != nil {
+			// Deleting a configured instance removes the Store grants scoped to it.
+			opts = append(opts, appregistry.WithDependentCleaner(grants.Grants))
+		}
+		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler, opts...)
 	}); err != nil {
 		return err
 	}
