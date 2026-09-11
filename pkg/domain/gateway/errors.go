@@ -24,8 +24,8 @@ import (
 // sentinels in pkg/common/errors so callers can match either the
 // generic or the entity-specific error via errors.Is.
 var (
-	ErrNotFound      = fmt.Errorf("gateway: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists = fmt.Errorf("gateway: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents = fmt.Errorf("gateway: %w", commonerrors.ErrHasDependents)
+	ErrNotFound      = fmt.Errorf("gateway not found; verify the gateway id path parameter: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists = fmt.Errorf("gateway already exists; choose a unique slug or update the existing gateway: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents = fmt.Errorf("gateway has dependents; delete or reassign consumers, registries, and policies first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidDomain = fmt.Errorf("gateway: invalid domain: %w", commonerrors.ErrValidation)
 )

@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	ErrNotFound         = fmt.Errorf("consumer: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists    = fmt.Errorf("consumer: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents    = fmt.Errorf("consumer: %w", commonerrors.ErrHasDependents)
+	ErrNotFound         = fmt.Errorf("consumer not found; verify the consumer id and gateway_id: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists    = fmt.Errorf("consumer already exists; use a unique name/slug or update the existing consumer: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents    = fmt.Errorf("consumer has dependents; remove associations and policies that reference it first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidGatewayID = fmt.Errorf("consumer: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidAuthID    = fmt.Errorf("consumer: invalid auth_id: %w", commonerrors.ErrValidation)
 	ErrInvalidName      = fmt.Errorf("consumer: invalid name: %w", commonerrors.ErrValidation)

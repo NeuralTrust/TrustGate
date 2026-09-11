@@ -328,3 +328,30 @@ func TestParseCSVQuery(t *testing.T) {
 		})
 	}
 }
+
+func TestParseUUIDParam_ErrorMessageNamesParam(t *testing.T) {
+	t.Parallel()
+	_, err := runInCtx(t, "/test/not-a-uuid", "/test/:gateway_id", func(c *fiber.Ctx) (ids.GatewayID, error) {
+		return ParseUUIDParam[ids.GatewayKind](c, "gateway_id")
+	})
+	if !errors.Is(err, ErrInvalidUUIDParam) {
+		t.Fatalf("got err %v, want ErrInvalidUUIDParam", err)
+	}
+	if !strings.Contains(err.Error(), "gateway_id") {
+		t.Fatalf("error %q should name the path parameter", err)
+	}
+}
+
+func TestParseSort_ErrorMessageListsAllowed(t *testing.T) {
+	t.Parallel()
+	_, err := runInCtx(t, "/test?sort=priority", "/test", func(c *fiber.Ctx) (listing.Sort, error) {
+		return ParseSort(c, []string{"name", "created_at"})
+	})
+	if !errors.Is(err, ErrInvalidSort) {
+		t.Fatalf("got err %v, want ErrInvalidSort", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "priority") || !strings.Contains(msg, "name") {
+		t.Fatalf("error %q should mention the bad field and allowed fields", msg)
+	}
+}

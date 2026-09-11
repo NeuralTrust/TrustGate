@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	ErrNotFound           = fmt.Errorf("role: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists      = fmt.Errorf("role: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents      = fmt.Errorf("role: %w", commonerrors.ErrHasDependents)
+	ErrNotFound           = fmt.Errorf("role not found; verify the role id and gateway_id: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists      = fmt.Errorf("role already exists; use a unique name or update the existing role: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents      = fmt.Errorf("role has dependents; detach consumers that reference it first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidGatewayID   = fmt.Errorf("role: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidName        = fmt.Errorf("role: invalid name: %w", commonerrors.ErrValidation)
 	ErrInvalidRoleID      = fmt.Errorf("role: invalid role_id: %w", commonerrors.ErrValidation)

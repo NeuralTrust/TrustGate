@@ -16,6 +16,7 @@ package middleware
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -118,13 +119,38 @@ func (m *AdminAuthzMiddleware) forbidden(c *fiber.Ctx, identity AdminIdentity, r
 	m.logDenial(c, identity, reason)
 	return c.Status(fiber.StatusForbidden).JSON(httpio.ErrorBody{
 		Error:   "forbidden",
-		Message: "Not allowed for this gateway",
+		Message: forbiddenMessage(reason),
 	})
+}
+
+// forbiddenMessage turns an internal denial reason into a client-safe, actionable
+// Admin API message. Reasons must never include secrets or cross-tenant details.
+func forbiddenMessage(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "missing scope "):
+		scope := strings.TrimPrefix(reason, "missing scope ")
+		return "Missing required scope " + scope + "; request a service credential that includes this scope"
+	case reason == "credential is bound to another gateway":
+		return "Service credential is bound to a different gateway; use a credential issued for this gateway"
+	case reason == "credential cannot manage the gateway collection":
+		return "Service credential cannot list or create gateways; call a gateway-scoped route with the bound gateway id"
+	case reason == "credential cannot delete a gateway":
+		return "Service credential cannot delete gateways; use a console admin token"
+	case reason == "credential is limited to its gateway":
+		return "Service credential is limited to its bound gateway; use a console admin token for this route"
+	default:
+		return "Not allowed for this gateway; check credential scopes and gateway binding"
+	}
 }
 
 func (m *AdminAuthzMiddleware) notFound(c *fiber.Ctx, identity AdminIdentity) error {
 	m.logDenial(c, identity, "gateway belongs to another tenant")
-	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
+	// Keep the wire response indistinguishable from a missing gateway so
+	// foreign ids cannot be probed across tenants.
+	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{
+		Error:   "not_found",
+		Message: "Gateway not found; verify the gateway_id path parameter",
+	})
 }
 
 func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, reason string) {

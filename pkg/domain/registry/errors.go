@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	ErrNotFound               = fmt.Errorf("registry: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists          = fmt.Errorf("registry: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents          = fmt.Errorf("registry: %w", commonerrors.ErrHasDependents)
+	ErrNotFound               = fmt.Errorf("registry not found; verify the registry id and gateway_id: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists          = fmt.Errorf("registry already exists; use a unique name or update the existing registry: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents          = fmt.Errorf("registry has dependents; detach consumers and policies that reference it first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidGatewayID       = fmt.Errorf("registry: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidRegistryID      = fmt.Errorf("registry: invalid registry_id: %w", commonerrors.ErrValidation)
 	ErrInvalidEmbeddingConfig = fmt.Errorf("registry: invalid embedding config: %w", commonerrors.ErrValidation)

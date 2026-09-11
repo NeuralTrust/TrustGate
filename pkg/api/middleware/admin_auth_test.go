@@ -70,7 +70,7 @@ func TestAdminAuth_MissingHeader(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
-		Message: "Authorization required",
+		Message: "Authorization header required; send Authorization: Bearer <admin_token>",
 	}, decodeErrorBody(t, resp))
 }
 
@@ -83,7 +83,7 @@ func TestAdminAuth_InvalidFormat(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
-		Message: "Invalid authorization format",
+		Message: "Invalid authorization format; use Authorization: Bearer <admin_token>",
 	}, decodeErrorBody(t, resp))
 }
 
@@ -96,7 +96,7 @@ func TestAdminAuth_InvalidToken(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
-		Message: "Invalid token",
+		Message: "Invalid or expired token; obtain a new Admin API token and retry",
 	}, decodeErrorBody(t, resp))
 }
 
@@ -132,7 +132,7 @@ func TestAdminAuth_PlaygroundPurposeTokenRejected(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
-		Message: "Token not valid for admin API",
+		Message: "Token not valid for Admin API; use a console or service admin token without a purpose claim",
 	}, decodeErrorBody(t, resp))
 }
 
@@ -168,7 +168,7 @@ func TestAdminAuth_SharedSecretTokenClaimingServiceUseRejected(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
-		Message: "Token not valid for admin API",
+		Message: "Token not valid for Admin API; use a console or service admin token without a purpose claim",
 	}, decodeErrorBody(t, resp))
 }
 
@@ -242,6 +242,6 @@ func TestAdminAuth_AuthFailureLoggedAtDebug(t *testing.T) {
 	logOutput := logs.String()
 	require.True(t, strings.Contains(logOutput, "level=DEBUG"), logOutput)
 	require.True(t, strings.Contains(logOutput, "msg=\"admin auth failed\""), logOutput)
-	require.True(t, strings.Contains(logOutput, "reason=\"Invalid token\""), logOutput)
+	require.True(t, strings.Contains(logOutput, "reason=\"Invalid or expired token; obtain a new Admin API token and retry\""), logOutput)
 	require.True(t, strings.Contains(logOutput, "request_id=req-123"), logOutput)
 }

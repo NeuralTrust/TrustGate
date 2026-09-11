@@ -32,12 +32,19 @@ type ErrorBody struct {
 	Message string `json:"message,omitempty"`
 }
 
+const (
+	msgInternalError = "An unexpected error occurred. Retry the request; if it persists, check server logs or contact support."
+	msgNotFound      = "Resource not found. Verify the id path parameter and that the resource exists."
+)
+
 // MapDomainError translates an application/domain error into the matching
 // HTTP status code and a stable error code string. Entity-specific
 // sentinels add their cases here as their `<entity>-a` slices land.
 //
-// Unknown errors collapse to 500 + "internal_error" — callers should
-// have already logged the underlying error with the request context.
+// Unknown errors collapse to 500 + "internal_error" with a safe guidance
+// message — callers should have already logged the underlying error with
+// the request context. Never put secret material or upstream provider
+// payloads into ErrorBody.Message.
 func MapDomainError(err error) (int, ErrorBody) {
 	switch {
 	case err == nil:
@@ -53,7 +60,7 @@ func MapDomainError(err error) (int, ErrorBody) {
 	case errors.Is(err, ErrInvalidFilter):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, ErrorBody{Error: "not_found"}
+		return fiber.StatusNotFound, ErrorBody{Error: "not_found", Message: publicMessage(err, msgNotFound)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrHasDependents):
@@ -67,8 +74,24 @@ func MapDomainError(err error) (int, ErrorBody) {
 	case errors.Is(err, commonerrors.ErrResultTooLarge):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: err.Error()}
 	default:
-		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error"}
+		// Do not expose err.Error() — unknown failures may contain internal
+		// details, secrets, or upstream provider payloads.
+		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error", Message: msgInternalError}
 	}
+}
+
+// publicMessage returns err.Error() when it carries caller-safe guidance,
+// otherwise the fallback. Domain sentinels and wrapped validation errors are
+// expected to be safe for clients; never pass raw upstream/provider errors here.
+func publicMessage(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return fallback
+	}
+	return msg
 }
 
 // WriteError is a convenience wrapper around MapDomainError + JSON write.

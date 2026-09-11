@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	ErrNotFound         = fmt.Errorf("auth: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists    = fmt.Errorf("auth: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents    = fmt.Errorf("auth: %w", commonerrors.ErrHasDependents)
+	ErrNotFound         = fmt.Errorf("auth config not found; verify the auth id and gateway_id: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists    = fmt.Errorf("auth config already exists; use a unique name or update the existing config: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents    = fmt.Errorf("auth config has dependents; detach consumers that reference it first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidName      = fmt.Errorf("auth: invalid name: %w", commonerrors.ErrValidation)
 	ErrInvalidGatewayID = fmt.Errorf("auth: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidType      = fmt.Errorf("auth: invalid type: %w", commonerrors.ErrValidation)

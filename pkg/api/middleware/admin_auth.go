@@ -55,15 +55,15 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get(authorizationHeader)
 		if authHeader == "" {
-			return m.unauthorized(c, "Authorization required", nil)
+			return m.unauthorized(c, "Authorization header required; send Authorization: Bearer <admin_token>", nil)
 		}
 		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			return m.unauthorized(c, "Invalid authorization format", nil)
+			return m.unauthorized(c, "Invalid authorization format; use Authorization: Bearer <admin_token>", nil)
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, bearerPrefix)
 		if tokenString == "" {
-			return m.unauthorized(c, "Empty token provided", nil)
+			return m.unauthorized(c, "Empty bearer token; include a non-empty Admin API JWT after Bearer", nil)
 		}
 
 		identity, err := m.resolveIdentity(tokenString)
@@ -97,11 +97,11 @@ func (m *AdminAuthMiddleware) resolveIdentity(tokenString string) (AdminIdentity
 
 func (m *AdminAuthMiddleware) resolveServiceIdentity(tokenString string) (AdminIdentity, *authFailure) {
 	if m.serviceVerifier == nil || !m.serviceVerifier.Enabled() {
-		return AdminIdentity{}, &authFailure{message: "Token not valid for admin API", cause: jwt.ErrServiceTokensDisabled}
+		return AdminIdentity{}, &authFailure{message: "Token not valid for Admin API; service tokens are disabled on this server", cause: jwt.ErrServiceTokensDisabled}
 	}
 	claims, err := m.serviceVerifier.Verify(tokenString)
 	if err != nil {
-		return AdminIdentity{}, &authFailure{message: "Invalid token", cause: err}
+		return AdminIdentity{}, &authFailure{message: "Invalid or expired token; obtain a new Admin API token and retry", cause: err}
 	}
 	return AdminIdentity{
 		Kind:      AdminIdentityService,
@@ -114,24 +114,24 @@ func (m *AdminAuthMiddleware) resolveServiceIdentity(tokenString string) (AdminI
 
 func (m *AdminAuthMiddleware) resolveConsoleIdentity(tokenString string) (AdminIdentity, *authFailure) {
 	if err := m.jwtManager.ValidateToken(tokenString); err != nil {
-		return AdminIdentity{}, &authFailure{message: "Invalid token", cause: err}
+		return AdminIdentity{}, &authFailure{message: "Invalid or expired token; obtain a new Admin API token and retry", cause: err}
 	}
 
 	claims, err := m.jwtManager.DecodeToken(tokenString)
 	if err != nil {
-		return AdminIdentity{}, &authFailure{message: "Invalid token", cause: err}
+		return AdminIdentity{}, &authFailure{message: "Invalid or expired token; obtain a new Admin API token and retry", cause: err}
 	}
 
 	// Purpose-tagged tokens (e.g. playground) are scoped to other planes
 	// and must never grant admin access.
 	if claims.Purpose != "" {
-		return AdminIdentity{}, &authFailure{message: "Token not valid for admin API"}
+		return AdminIdentity{}, &authFailure{message: "Token not valid for Admin API; use a console or service admin token without a purpose claim"}
 	}
 
 	// A service credential must be asymmetric and key-pinned; one minted with
 	// the shared secret would bypass that guarantee.
 	if claims.TokenUse != "" {
-		return AdminIdentity{}, &authFailure{message: "Token not valid for admin API"}
+		return AdminIdentity{}, &authFailure{message: "Token not valid for Admin API; use a console or service admin token without a purpose claim"}
 	}
 
 	identity := AdminIdentity{
@@ -145,7 +145,7 @@ func (m *AdminAuthMiddleware) resolveConsoleIdentity(tokenString string) (AdminI
 	}
 
 	if m.platformClaimRequired && !claims.PlatformAdmin {
-		return AdminIdentity{}, &authFailure{message: "Token not valid for admin API"}
+		return AdminIdentity{}, &authFailure{message: "Token not valid for Admin API; platform tokens require an explicit platform_admin claim"}
 	}
 	identity.Kind = AdminIdentityPlatform
 	return identity, nil

@@ -17,13 +17,13 @@ package errors
 import "errors"
 
 var (
-	ErrNotFound       = errors.New("resource not found")
-	ErrAlreadyExists  = errors.New("resource already exists")
-	ErrConflict       = errors.New("resource conflict")
-	ErrHasDependents  = errors.New("resource has dependents")
-	ErrValidation     = errors.New("validation failed")
-	ErrInvalidConfig  = errors.New("invalid configuration")
+	ErrNotFound       = errors.New("resource not found; verify the id and that it exists")
+	ErrAlreadyExists  = errors.New("resource already exists; use a unique name/slug or update the existing resource")
+	ErrConflict       = errors.New("resource conflict; refresh and retry with the latest state")
+	ErrHasDependents  = errors.New("resource has dependents; remove or reassign dependent resources first")
+	ErrValidation     = errors.New("validation failed; check the request body and try again")
+	ErrInvalidConfig  = errors.New("invalid configuration; fix the config fields and retry")
 	ErrBoot           = errors.New("boot failure")
 	ErrCorruptData    = errors.New("corrupt persisted data")
-	ErrResultTooLarge = errors.New("result set too large")
+	ErrResultTooLarge = errors.New("result set too large; narrow filters or reduce page size")
 )

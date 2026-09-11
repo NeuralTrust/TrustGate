@@ -16,6 +16,7 @@ package httpio
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -30,21 +31,21 @@ const (
 	MaxSize     = 200
 )
 
-var ErrInvalidUUIDParam = errors.New("invalid uuid path parameter")
-var ErrInvalidPage = errors.New("invalid page parameter")
-var ErrInvalidSize = errors.New("invalid size parameter")
-var ErrInvalidSort = errors.New("invalid sort parameter")
-var ErrInvalidFilter = errors.New("invalid filter parameter")
-var ErrInvalidQuery = errors.New("invalid query parameters")
+var ErrInvalidUUIDParam = errors.New("invalid UUID path parameter; provide a valid UUID")
+var ErrInvalidPage = errors.New("invalid page query parameter; page must be an integer ≥ 1")
+var ErrInvalidSize = errors.New("invalid size query parameter; size must be an integer ≥ 1")
+var ErrInvalidSort = errors.New("invalid sort query parameter; use an allowed field with order=asc or order=desc")
+var ErrInvalidFilter = errors.New("invalid filter query parameter; boolean filters must be true or false")
+var ErrInvalidQuery = errors.New("invalid query parameters; check parameter names and values")
 
 func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
 	raw := c.Params(name)
 	if raw == "" {
-		return ids.ID[K]{}, ErrInvalidUUIDParam
+		return ids.ID[K]{}, fmt.Errorf("missing %q path parameter: %w", name, ErrInvalidUUIDParam)
 	}
 	id, err := ids.Parse[K](raw)
 	if err != nil {
-		return ids.ID[K]{}, ErrInvalidUUIDParam
+		return ids.ID[K]{}, fmt.Errorf("path parameter %q is not a valid UUID: %w", name, ErrInvalidUUIDParam)
 	}
 	return id, nil
 }
@@ -88,7 +89,7 @@ func ParsePage(c *fiber.Ctx) (int, error) {
 	}
 	v, err := strconv.Atoi(raw)
 	if err != nil || v < 1 {
-		return 0, ErrInvalidPage
+		return 0, fmt.Errorf("%w (got %q)", ErrInvalidPage, raw)
 	}
 	return v, nil
 }
@@ -100,7 +101,7 @@ func ParseSize(c *fiber.Ctx) (int, error) {
 	}
 	v, err := strconv.Atoi(raw)
 	if err != nil || v < 1 {
-		return 0, ErrInvalidSize
+		return 0, fmt.Errorf("%w (got %q)", ErrInvalidSize, raw)
 	}
 	if v > MaxSize {
 		return MaxSize, nil
@@ -138,12 +139,12 @@ func ParseSort(c *fiber.Ctx, allowed []string) (listing.Sort, error) {
 	order := strings.ToLower(strings.TrimSpace(c.Query("order")))
 	if field == "" {
 		if order != "" {
-			return listing.Sort{}, ErrInvalidSort
+			return listing.Sort{}, fmt.Errorf("order was set without sort: %w", ErrInvalidSort)
 		}
 		return listing.Sort{}, nil
 	}
 	if !containsString(allowed, field) {
-		return listing.Sort{}, ErrInvalidSort
+		return listing.Sort{}, fmt.Errorf("sort field %q is not allowed (allowed: %s): %w", field, strings.Join(allowed, ", "), ErrInvalidSort)
 	}
 	dir := listing.Asc
 	switch order {
@@ -152,7 +153,7 @@ func ParseSort(c *fiber.Ctx, allowed []string) (listing.Sort, error) {
 	case "desc":
 		dir = listing.Desc
 	default:
-		return listing.Sort{}, ErrInvalidSort
+		return listing.Sort{}, fmt.Errorf("order %q is invalid; use asc or desc: %w", order, ErrInvalidSort)
 	}
 	return listing.Sort{Field: field, Direction: dir}, nil
 }
@@ -165,7 +166,7 @@ func ParseOptionalBool(c *fiber.Ctx, name string) (*bool, error) {
 	}
 	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return nil, ErrInvalidFilter
+		return nil, fmt.Errorf("query parameter %q must be true or false (got %q): %w", name, raw, ErrInvalidFilter)
 	}
 	return &v, nil
 }

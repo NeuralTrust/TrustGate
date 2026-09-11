@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	ErrNotFound          = fmt.Errorf("policy: %w", commonerrors.ErrNotFound)
-	ErrAlreadyExists     = fmt.Errorf("policy: %w", commonerrors.ErrAlreadyExists)
-	ErrHasDependents     = fmt.Errorf("policy: %w", commonerrors.ErrHasDependents)
+	ErrNotFound          = fmt.Errorf("policy not found; verify the policy id and gateway_id: %w", commonerrors.ErrNotFound)
+	ErrAlreadyExists     = fmt.Errorf("policy already exists; use a unique name/slug or update the existing policy: %w", commonerrors.ErrAlreadyExists)
+	ErrHasDependents     = fmt.Errorf("policy has dependents; detach consumers that reference it first: %w", commonerrors.ErrHasDependents)
 	ErrInvalidName       = fmt.Errorf("policy: invalid name: %w", commonerrors.ErrValidation)
 	ErrInvalidGatewayID  = fmt.Errorf("policy: invalid gateway_id: %w", commonerrors.ErrValidation)
 	ErrInvalidConsumerID = fmt.Errorf("policy: invalid consumer_id: %w", commonerrors.ErrValidation)
