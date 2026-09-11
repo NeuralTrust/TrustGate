@@ -3934,6 +3934,95 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/principal/configure-link": {
+            "post": {
+                "description": "Mints the hosted form where one user enters a server's per-user values (an account URL, a database, a personal token), and returns where it is redeemed. Only for the caller themselves: the form writes that principal's own configuration.",
+                "tags": [
+                    "store"
+                ],
+                "summary": "Get the form a user finishes a server's setup on",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink"
+                            }
+                        }
+                    },
+                    "description": "Which server, for whom",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "principal_sub is not the caller",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/principal/connect-link": {
             "post": {
                 "description": "Mints the connect ticket the user opens to sign in to one Store server with their own account, and returns where it is redeemed. Only for the caller themselves: the ticket completes OAuth as that principal, so asking for another user's is refused.",
@@ -7620,6 +7709,26 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "instance_id": {
+                        "type": "string"
+                    },
+                    "principal_sub": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink": {
                 "type": "object",
                 "properties": {
@@ -7880,6 +7989,13 @@
                     },
                     "requested_at": {
                         "type": "string"
+                    },
+                    "requester_groups": {
+                        "description": "RequesterGroups are the groups the requester carried when they filed, and\nthe only ones an approval may grant instead of the person.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 }
             },
@@ -7941,6 +8057,23 @@
                         }
                     },
                     "principal_sub": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink": {
+                "type": "object",
+                "properties": {
+                    "configure_path": {
+                        "type": "string"
+                    },
+                    "consumer_path": {
+                        "type": "string"
+                    },
+                    "expires_at": {
+                        "type": "string"
+                    },
+                    "ticket": {
                         "type": "string"
                     }
                 }
@@ -8008,6 +8141,13 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "needs_config": {
+                        "description": "NeedsConfig names the per-user values this installation is still missing.\nAn approved request is recorded the moment the approver says yes, before\nanyone has asked the requester for their own account URL — the row reads\nas installed while its first tool call cannot resolve the server's URL.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     },
                     "registry": {
                         "type": "string"

@@ -139,6 +139,9 @@ type storePrincipalParams struct {
 	Policies storeaccessdomain.PolicyReader
 	Ensurer  appstore.RegistryEnsurer
 	Gateways gatewaydomain.Repository `optional:"true"`
+	// Configure mints the hosted form a user finishes a server's per-user setup
+	// on. Absent on planes without it, and the Portal then offers no form.
+	Configure appoauth.ConfigureService `optional:"true"`
 	// Connect answers whether a linked credential can still be refreshed, so the
 	// Portal does not call an account connected that every tool call refuses,
 	// and mints the connect link the Portal's own sign-in button opens. Absent
@@ -178,7 +181,16 @@ func provideStorePrincipalHandler(p storePrincipalParams) (*storehttp.PrincipalH
 			return nil, err
 		}
 	}
-	return storehttp.NewPrincipalHandler(preview, onBehalf, linker), nil
+	var configurer appstore.PrincipalConfigureLinker
+	if p.Configure != nil {
+		configurer, err = appstore.NewPrincipalConfigureLinker(
+			appoauth.StoreConfigureTickets{Service: p.Configure},
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return storehttp.NewPrincipalHandler(preview, onBehalf, linker, configurer), nil
 }
 
 type storeApprovalParams struct {

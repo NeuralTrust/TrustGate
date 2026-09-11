@@ -29,15 +29,19 @@ type IdentitySource string
 const (
 	// IdentitySourcePlatform: the people using the application sign in
 	// themselves (the NeuralTrust IdP or the customer's IdP). Their subject and
-	// groups come from the token, so Access rules govern which of the
-	// consumer's servers each of them may reach, and each connects their own
-	// upstream accounts.
+	// groups come from the token, so each of them connects their own upstream
+	// accounts and is audited by name.
+	//
+	// It does not narrow the consumer's surface. Access governs users on the
+	// Store — which catalog servers a person may install for themselves — while
+	// a consumer's servers are the registries an admin bound to it under
+	// Routing, the same set for every caller it admits. The binding is the
+	// decision; see store.Scoper.
 	IdentitySourcePlatform IdentitySource = "platform"
 	// IdentitySourceApp: the application authenticates itself (API key) and
 	// names its end user on every request through the end-user header. The
-	// gateway keeps per-user upstream connections under a namespaced subject;
-	// Access rules do not apply because the application owns its user
-	// directory.
+	// gateway keeps per-user upstream connections under a namespaced subject.
+	// Its servers, like every consumer's, are the ones bound under Routing.
 	IdentitySourceApp IdentitySource = "app"
 )
 
@@ -56,9 +60,10 @@ const EndUserHeader = "X-NeuralTrust-End-User"
 // gateway learns who that person is. It never selects a registry or a model:
 // routing is the consumer's own configuration.
 type Identity struct {
-	// ActsForUsers turns on per-user behaviour on an MCP consumer: per-user
-	// upstream connections and, with the platform source, Access rules over the
-	// consumer's servers. Off, the consumer acts as the application itself.
+	// ActsForUsers turns on per-user behaviour on an MCP consumer: the upstream
+	// accounts are held per person rather than once for the application. Off,
+	// the consumer acts as the application itself. Either way its servers are
+	// the ones bound to it under Routing — this never narrows them.
 	ActsForUsers bool `json:"acts_for_users"`
 	// Source is how the end user is known (platform or app). Only meaningful
 	// when ActsForUsers is on; defaults to platform.
@@ -104,7 +109,7 @@ func (i Identity) Validate(t Type) error {
 }
 
 // PlatformUsers reports whether the consumer acts for people who sign in
-// themselves, which is when Access rules scope its servers per principal.
+// themselves, which is when each caller holds their own upstream accounts.
 func (i Identity) PlatformUsers() bool {
 	return i.ActsForUsers && i.Source == IdentitySourcePlatform
 }

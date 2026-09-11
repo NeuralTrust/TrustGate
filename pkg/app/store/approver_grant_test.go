@@ -338,3 +338,62 @@ func TestApprover_Approve_GrantToGroupKeepsExistingMembers(t *testing.T) {
 		t.Fatal("granting a group must not drop who was already granted")
 	}
 }
+
+// An approval can grant one of the requester's groups instead of the person.
+// It used to take any group string: the grant landed on a group the requester
+// was not in, the queue showed the request resolved, and they still could not
+// install the server.
+func TestApprover_Approve_RefusesAGroupTheRequesterIsNotIn(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	pending := pendingInstall(t, gw, "ana", "github")
+	pending.RequesterGroups = []string{"eng", "platform"}
+	installs := &fakeInstalls{findValue: pending}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf()
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: "finance", ApprovedBy: "admin@corp",
+	})
+	if !errors.Is(err, ErrGroupNotRequesters) {
+		t.Fatalf("want ErrGroupNotRequesters, got %v", err)
+	}
+	if len(grants.upserts) != 0 || len(installs.upserts) != 0 {
+		t.Fatalf("nothing may be written: grants=%+v installs=%+v", grants.upserts, installs.upserts)
+	}
+
+	// A different casing is a different key to every grant lookup, so it is
+	// refused too rather than written as a grant that would never match.
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: "Platform", ApprovedBy: "admin@corp",
+	}); !errors.Is(err, ErrGroupNotRequesters) {
+		t.Fatalf("want ErrGroupNotRequesters for a recased group, got %v", err)
+	}
+
+	// One the requester does carry goes through.
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: " platform ", ApprovedBy: "admin@corp",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 1 || grants.upserts[0].Groups[0] != "platform" {
+		t.Fatalf("want the requester's own group granted, got %+v", grants.upserts)
+	}
+}
+
+// A request filed before the groups were recorded carries none: the admin is
+// reading the requester's groups on screen, so it is let through rather than
+// making every historical request undecidable.
+func TestApprover_Approve_GrantToGroupOnAnOldRequestIsAllowed(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf()
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{
+		GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: "sales", ApprovedBy: "admin@corp",
+	}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+}

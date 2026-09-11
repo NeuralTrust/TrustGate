@@ -146,9 +146,13 @@ func principalCtx(p *identity.Principal) context.Context {
 }
 
 func mcpConsumer(gw ids.GatewayID) *appconsumer.RoutableConsumer {
+	// Acts for users: these are per-person credentials, so the consumer is one
+	// with a person behind the request. A consumer that acts as itself is
+	// refused outright (ApplicationNotConnectedError), never asked to consent.
 	return &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
 		Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
 	}}
 }
 
@@ -999,5 +1003,39 @@ func TestComposeSurfacesTheCauseWhenNothingWasReachable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "notion") {
 		t.Fatalf("error = %q, want the registry named", err)
+	}
+}
+
+// An application that acts as itself has no person behind the request: a
+// consent page it cannot open, carrying a ticket only an administrator could
+// redeem, used to be written into its error channel and its logs.
+func TestCredentialResolver_MachineConsumerIsRefusedWithoutATicket(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	rc := mcpConsumer(gw)
+	rc.Consumer.Identity = consumerdomain.Identity{}
+	reg := regWithAuth(gw, &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeForwarded, Provider: "linear", ClientID: "id",
+		AuthorizeURL: "https://l/a", TokenURL: "https://l/t",
+	})
+	reg.Name = "Linear"
+
+	connect := &stubConnect{ticket: "ticket"}
+	resolver := NewCredentialResolver(nil, &memVault{}, connect, nil, discardLogger())
+	ctx := principalCtx(&identity.Principal{Subject: "app:" + rc.Consumer.ID.String()})
+	err := resolver.Apply(ctx, rc, reg, &Target{})
+
+	var appErr *ApplicationNotConnectedError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error = %v, want ApplicationNotConnectedError", err)
+	}
+	if appErr.Registry != "Linear" {
+		t.Fatalf("the refusal must name the server as Routing does, got %q", appErr.Registry)
+	}
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatal("a machine caller must not be handed a connect ticket")
+	}
+	if len(connect.serverTicketCodes) != 0 {
+		t.Fatalf("no ticket may be minted, got %v", connect.serverTicketCodes)
 	}
 }

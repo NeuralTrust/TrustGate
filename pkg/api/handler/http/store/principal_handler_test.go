@@ -61,6 +61,20 @@ func newPrincipalAppWith(p appstore.PrincipalPreview, installer appstore.Princip
 	return newPrincipalAppFor(p, installer, nil, "")
 }
 
+type fakeConfigureLinker struct {
+	got *appstore.PrincipalConfigureRequest
+	res *appstore.PrincipalConfigureLink
+	err error
+}
+
+func (f *fakeConfigureLinker) LinkFor(
+	_ context.Context,
+	in appstore.PrincipalConfigureRequest,
+) (*appstore.PrincipalConfigureLink, error) {
+	f.got = &in
+	return f.res, f.err
+}
+
 // newPrincipalAppFor stands the handler up with a connect linker and stamps
 // caller as the authenticated subject, the way the admin auth middleware does.
 func newPrincipalAppFor(
@@ -68,7 +82,12 @@ func newPrincipalAppFor(
 	installer appstore.PrincipalInstaller,
 	linker appstore.PrincipalConnectLinker,
 	caller string,
+	configurers ...appstore.PrincipalConfigureLinker,
 ) *fiber.App {
+	var configurer appstore.PrincipalConfigureLinker
+	if len(configurers) > 0 {
+		configurer = configurers[0]
+	}
 	app := fiber.New()
 	if caller != "" {
 		app.Use(func(c *fiber.Ctx) error {
@@ -76,10 +95,11 @@ func newPrincipalAppFor(
 			return c.Next()
 		})
 	}
-	h := storehttp.NewPrincipalHandler(p, installer, linker)
+	h := storehttp.NewPrincipalHandler(p, installer, linker, configurer)
 	app.Get("/v1/gateways/:gateway_id/store/principal", h.Get)
 	app.Post("/v1/gateways/:gateway_id/store/principal/installs", h.Install)
 	app.Post("/v1/gateways/:gateway_id/store/principal/connect-link", h.ConnectLink)
+	app.Post("/v1/gateways/:gateway_id/store/principal/configure-link", h.ConfigureLink)
 	return app
 }
 
@@ -404,5 +424,58 @@ func TestPrincipalHandler_Install_AsksForAReasonInsteadOfFailing(t *testing.T) {
 	}
 	if body["requires_reason"] != true || body["code"] != "com.airbyte/mcp" || body["pending"] != false {
 		t.Fatalf("body: %v", body)
+	}
+}
+
+// The hosted form used to be reachable only from an MCP tool call, so a Portal
+// user with a half-configured server was told to go and run the install again
+// from their client.
+func TestPrincipalHandler_ConfigureLink_MintsForTheCaller(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	inst := ids.New[ids.InstallationKind]()
+	configurer := &fakeConfigureLinker{res: &appstore.PrincipalConfigureLink{Ticket: "cfg-1", ConsumerPath: "/store/mcp"}}
+	app := newPrincipalAppFor(&fakePreview{}, nil, nil, "ana", configurer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/configure-link",
+		`{"principal_sub":"ana","code":"com.snowflake/mcp","instance_id":"`+inst.String()+`","groups":["eng"]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if configurer.got == nil || configurer.got.PrincipalSub != "ana" ||
+		configurer.got.Code != "com.snowflake/mcp" || configurer.got.InstanceID != inst.String() ||
+		len(configurer.got.Groups) != 1 {
+		t.Fatalf("request not forwarded: %+v", configurer.got)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["ticket"] != "cfg-1" || body["configure_path"] != "/store/mcp/configure" {
+		t.Fatalf("body: %v", body)
+	}
+}
+
+// The form writes this principal's own values, so nobody may ask for someone
+// else's — an admin previewing their Portal included.
+func TestPrincipalHandler_ConfigureLink_RefusesAnotherPrincipal(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	configurer := &fakeConfigureLinker{res: &appstore.PrincipalConfigureLink{Ticket: "cfg-1", ConsumerPath: "/store/mcp"}}
+	app := newPrincipalAppFor(&fakePreview{}, nil, nil, "admin", configurer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/configure-link",
+		`{"principal_sub":"ana","code":"com.snowflake/mcp"}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("want 403, got %d", resp.StatusCode)
+	}
+	if configurer.got != nil {
+		t.Fatalf("linker was called: %+v", configurer.got)
+	}
+}
+
+func TestPrincipalHandler_ConfigureLink_UnavailableWithoutALinker(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	app := newPrincipalAppFor(&fakePreview{}, nil, nil, "ana")
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/configure-link",
+		`{"principal_sub":"ana","code":"com.snowflake/mcp"}`)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
 }

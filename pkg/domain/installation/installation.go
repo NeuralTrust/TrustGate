@@ -96,6 +96,14 @@ type Installation struct {
 	// install, which asks nobody. It is the requester's text and nothing else
 	// reads it as anything but text.
 	Reason string
+	// RequesterGroups are the group keys the requester carried when the request
+	// was filed. They are kept because an approval can grant one of them instead
+	// of the person, and the gateway holds no group directory of its own: without
+	// them the approver's choice could not be checked against what the requester
+	// actually had, and an approval could close a request while granting a group
+	// the requester is not in. Empty for a self-service install, which grants
+	// nobody.
+	RequesterGroups []string
 	// Decision, DecidedBy and DecidedAt record the admin verdict on a request
 	// (empty for a self-service install that never needed one).
 	Decision  Decision

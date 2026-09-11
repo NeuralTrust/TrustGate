@@ -64,13 +64,18 @@ type Install struct {
 }
 
 type PrincipalInstall struct {
-	InstanceID  string    `json:"instance_id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	RegistryID  string    `json:"registry_id,omitempty"`
-	Registry    string    `json:"registry,omitempty"`
-	Status      string    `json:"status"`
-	InstalledBy string    `json:"installed_by,omitempty"`
+	InstanceID  string `json:"instance_id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	RegistryID  string `json:"registry_id,omitempty"`
+	Registry    string `json:"registry,omitempty"`
+	Status      string `json:"status"`
+	InstalledBy string `json:"installed_by,omitempty"`
+	// NeedsConfig names the per-user values this installation is still missing.
+	// An approved request is recorded the moment the approver says yes, before
+	// anyone has asked the requester for their own account URL — the row reads
+	// as installed while its first tool call cannot resolve the server's URL.
+	NeedsConfig []string  `json:"needs_config,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -103,6 +108,16 @@ type PrincipalConnectLink struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+// PrincipalConfigureLink is the hosted form for one user's own settings on one
+// server. The URL is composed by the caller from the gateway's public MCP host
+// and consumer_path, as for the connect link.
+type PrincipalConfigureLink struct {
+	Ticket        string    `json:"ticket"`
+	ConsumerPath  string    `json:"consumer_path"`
+	ConfigurePath string    `json:"configure_path"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
 type PendingRequest struct {
 	InstanceID   string `json:"instance_id"`
 	PrincipalSub string `json:"principal_sub"`
@@ -111,8 +126,11 @@ type PendingRequest struct {
 	InstalledBy  string `json:"installed_by,omitempty"`
 	// Reason is why the requester asked for the server, in their own words.
 	// Omitted when they gave none.
-	Reason      string    `json:"reason,omitempty"`
-	RequestedAt time.Time `json:"requested_at"`
+	Reason string `json:"reason,omitempty"`
+	// RequesterGroups are the groups the requester carried when they filed, and
+	// the only ones an approval may grant instead of the person.
+	RequesterGroups []string  `json:"requester_groups,omitempty"`
+	RequestedAt     time.Time `json:"requested_at"`
 }
 
 type PendingRequests struct {
