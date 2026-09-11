@@ -385,3 +385,24 @@ func TestPrincipalHandler_ConnectLink_ValidatesTheBody(t *testing.T) {
 		t.Fatalf("linker was called: %+v", linker.got)
 	}
 }
+
+// A Portal whose view of the access level was stale asks for an install of a
+// server that is really a request. That is not an error it can only report: it
+// comes back as the one thing missing, so the Portal can ask the user why.
+func TestPrincipalHandler_Install_AsksForAReasonInsteadOfFailing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installer := &fakePrincipalInstaller{err: appstore.ErrReasonRequired}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs",
+		`{"principal_sub":"ana","code":"com.airbyte/mcp"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["requires_reason"] != true || body["code"] != "com.airbyte/mcp" || body["pending"] != false {
+		t.Fatalf("body: %v", body)
+	}
+}

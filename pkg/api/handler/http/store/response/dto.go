@@ -45,15 +45,20 @@ type InstanceChoice struct {
 }
 
 type Install struct {
-	Code                   string           `json:"code"`
-	Name                   string           `json:"name"`
-	Status                 string           `json:"status,omitempty"`
-	InstanceID             string           `json:"instance_id,omitempty"`
-	Pending                bool             `json:"pending"`
-	AlreadyInstalled       bool             `json:"already_installed"`
-	RequiresAuth           bool             `json:"requires_auth"`
-	RequiresConfig         bool             `json:"requires_config"`
-	RequiresAdminSetup     bool             `json:"requires_admin_setup"`
+	Code               string `json:"code"`
+	Name               string `json:"name"`
+	Status             string `json:"status,omitempty"`
+	InstanceID         string `json:"instance_id,omitempty"`
+	Pending            bool   `json:"pending"`
+	AlreadyInstalled   bool   `json:"already_installed"`
+	RequiresAuth       bool   `json:"requires_auth"`
+	RequiresConfig     bool   `json:"requires_config"`
+	RequiresAdminSetup bool   `json:"requires_admin_setup"`
+	// RequiresReason is an install the caller must ask about first: it is outside
+	// the user's access, so it files a request an approver decides on, and the
+	// requester's words are what they read. A caller whose view of the access
+	// level was stale asked for an install and gets this instead of a refusal.
+	RequiresReason         bool             `json:"requires_reason"`
 	RequiresInstanceChoice bool             `json:"requires_instance_choice"`
 	InstanceChoices        []InstanceChoice `json:"instance_choices,omitempty"`
 }

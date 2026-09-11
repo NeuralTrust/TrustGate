@@ -5568,6 +5568,10 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "store_mode": {
+                    "description": "StoreMode is the gateway's MCP Store curation mode, the same value\nUpdateGatewayRequest writes. It is derived (never blank) rather than left\nfor readers to dig out of metadata: a reader that missed it there read a\ngateway as open — the domain default — and showed a curated Store as\nwide open.",
+                    "type": "string"
+                },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 },
@@ -6796,6 +6800,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "requires_instance_choice": {
+                    "type": "boolean"
+                },
+                "requires_reason": {
+                    "description": "RequiresReason is an install the caller must ask about first: it is outside\nthe user's access, so it files a request an approver decides on, and the\nrequester's words are what they read. A caller whose view of the access\nlevel was stale asked for an install and gets this instead of a refusal.",
                     "type": "boolean"
                 },
                 "status": {
