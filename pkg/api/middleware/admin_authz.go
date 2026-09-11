@@ -118,13 +118,18 @@ func (m *AdminAuthzMiddleware) forbidden(c *fiber.Ctx, identity AdminIdentity, r
 	m.logDenial(c, identity, reason)
 	return c.Status(fiber.StatusForbidden).JSON(httpio.ErrorBody{
 		Error:   "forbidden",
-		Message: "Not allowed for this gateway",
+		Message: "Not allowed for this gateway. Use a credential scoped to this gateway with the required permission.",
 	})
 }
 
 func (m *AdminAuthzMiddleware) notFound(c *fiber.Ctx, identity AdminIdentity) error {
 	m.logDenial(c, identity, "gateway belongs to another tenant")
-	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
+	// Same public shape as MapDomainError(not_found): do not reveal that the
+	// gateway exists under another tenant.
+	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{
+		Error:   "not_found",
+		Message: "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant.",
+	})
 }
 
 func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, reason string) {
