@@ -76,13 +76,14 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 	}
 	for _, p := range pending {
 		out.Items = append(out.Items, storeresponse.PendingRequest{
-			InstanceID:   p.InstanceID,
-			PrincipalSub: p.PrincipalSub,
-			Code:         p.Code,
-			Name:         p.Name,
-			InstalledBy:  p.InstalledBy,
-			Reason:       p.Reason,
-			RequestedAt:  p.RequestedAt,
+			InstanceID:      p.InstanceID,
+			PrincipalSub:    p.PrincipalSub,
+			Code:            p.Code,
+			Name:            p.Name,
+			InstalledBy:     p.InstalledBy,
+			Reason:          p.Reason,
+			RequesterGroups: p.RequesterGroups,
+			RequestedAt:     p.RequestedAt,
 		})
 	}
 	return httpio.WriteOK(c, out)

@@ -489,6 +489,12 @@ func (r *credentialResolver) consentRequired(
 		"reason", reason,
 	}
 	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
+	// A consumer that acts as itself has no person behind the call: nobody can
+	// complete a consent page, so it is told what is missing and who fixes it
+	// rather than handed a ticket it cannot redeem.
+	if !rc.Consumer.ActsForUsers() {
+		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg)}
+	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	var ticket string
 	var err error
@@ -600,4 +606,13 @@ func bearerToken(authorization string) string {
 		return ""
 	}
 	return strings.TrimSpace(token)
+}
+
+// registryLabelFor names the server in a refusal the way an administrator sees
+// it in Routing, falling back to nothing when the registry is unnamed.
+func registryLabelFor(reg *registrydomain.Registry) string {
+	if reg == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.Name)
 }

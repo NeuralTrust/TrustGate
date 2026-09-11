@@ -16,7 +16,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -54,57 +53,14 @@ func TestInstallResultCarriesInstanceID(t *testing.T) {
 	}
 }
 
-// TestInstallCapsInstancesPerCode: the 11th distinct instance of one code is
-// refused with the typed error and nothing is recorded or materialised.
-func TestInstallCapsInstancesPerCode(t *testing.T) {
+// TestInstallSameConfigRefreshesTheInstance: re-installing an existing instance
+// (same config) is idempotent — it refreshes that row instead of adding one.
+func TestInstallSameConfigRefreshesTheInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
 		shelfRegistry("snowflake"),
 	}}
-	installs := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusInstalled)}
-	in := openReq(gw, "snowflake")
-	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
-	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
-	if !errors.Is(err, ErrTooManyInstances) {
-		t.Fatalf("expected ErrTooManyInstances, got %v", err)
-	}
-	if len(installs.upserts) != 0 {
-		t.Fatalf("a refused install must record nothing, got %+v", installs.upserts)
-	}
-}
-
-// TestInstallCapCountsPendingButNotRevoked: pending requests occupy a slot
-// (request spam is the abuse); revoked rows do not.
-func TestInstallCapCountsPendingButNotRevoked(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
-	grants := grantsOf(codeGrant(gw, "snowflake", nil, []string{"ana"}))
-	in := req(gw, "snowflake")
-	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
-
-	pending := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusPendingApproval)}
-	if _, err := newInstallerWithGrants(t, regs, pending, grants).Install(context.Background(), in); !errors.Is(err, ErrTooManyInstances) {
-		t.Fatalf("pending rows must count toward the cap, got %v", err)
-	}
-
-	revoked := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusRevoked)}
-	res, err := newInstallerWithGrants(t, regs, revoked, grants).Install(context.Background(), in)
-	if err != nil {
-		t.Fatalf("revoked rows must not count toward the cap: %v", err)
-	}
-	if res.Status != installationdomain.StatusInstalled {
-		t.Fatalf("expected an install, got %+v", res)
-	}
-}
-
-// TestInstallSameConfigNotCapped: re-installing an existing instance (same
-// config) is idempotent and never hits the cap.
-func TestInstallSameConfigNotCapped(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake"),
-	}}
-	rows := liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusInstalled)
+	rows := liveRows("snowflake", 10, installationdomain.StatusInstalled)
 	installs := &fakeInstalls{byCode: rows}
 	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "db3"}
@@ -114,43 +70,6 @@ func TestInstallSameConfigNotCapped(t *testing.T) {
 	}
 	if !res.AlreadyInstalled || res.InstanceID != rows[3].ID.String() {
 		t.Fatalf("same-config install must refresh the existing instance, got %+v", res)
-	}
-}
-
-// TestInstallCapsInstancesPerPrincipal: the gateway-wide cap across codes.
-func TestInstallCapsInstancesPerPrincipal(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github"),
-	}}
-	all := make([]*installationdomain.Installation, 0, MaxInstancesPerPrincipal)
-	for i := 0; i < MaxInstancesPerPrincipal; i++ {
-		all = append(all, &installationdomain.Installation{
-			ID: ids.New[ids.InstallationKind](), CatalogCode: fmt.Sprintf("server-%d", i), Status: installationdomain.StatusInstalled,
-		})
-	}
-	installs := &fakeInstalls{byPrincipal: all}
-	_, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github"))
-	if !errors.Is(err, ErrTooManyInstances) {
-		t.Fatalf("expected ErrTooManyInstances across codes, got %v", err)
-	}
-}
-
-// TestInstallCapCheckedBeforeMaterialisation: a capped install in open mode must
-// not materialise a registry as a side effect.
-func TestInstallCapCheckedBeforeMaterialisation(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{}
-	ensurer := &fakeEnsurer{addTo: regs}
-	installs := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusInstalled)}
-	in := openReq(gw, "snowflake")
-	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
-	_, err := newInstallerWithEnsurer(t, regs, installs, ensurer).Install(context.Background(), in)
-	if !errors.Is(err, ErrTooManyInstances) {
-		t.Fatalf("expected ErrTooManyInstances, got %v", err)
-	}
-	if len(ensurer.ensured) != 0 {
-		t.Fatalf("a capped install must not materialise, got %+v", ensurer.ensured)
 	}
 }
 
@@ -282,5 +201,23 @@ func TestInstallSelectedCodeGrantStaticOnlyRequiresAdminSetup(t *testing.T) {
 	}
 	if !res.RequiresAdminSetup || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
 		t.Fatalf("expected requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
+	}
+}
+
+// A principal may hold as many instances of a server as their work needs — a
+// schema per team, an account per region. There is no ceiling: the grants say
+// what they may install, and that is the whole governance.
+func TestInstallDoesNotCapTheNumberOfInstances(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
+	installs := &fakeInstalls{byCode: liveRows("snowflake", 50, installationdomain.StatusInstalled)}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled || res.AlreadyInstalled {
+		t.Fatalf("the 51st instance must install like any other, got %+v", res)
 	}
 }

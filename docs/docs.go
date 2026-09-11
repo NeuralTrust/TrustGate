@@ -3159,6 +3159,77 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/store/principal/configure-link": {
+            "post": {
+                "description": "Mints the hosted form where one user enters a server's per-user values (an account URL, a database, a personal token), and returns where it is redeemed. Only for the caller themselves: the form writes that principal's own configuration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "store"
+                ],
+                "summary": "Get the form a user finishes a server's setup on",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which server, for whom",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "principal_sub is not the caller",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/store/principal/connect-link": {
             "post": {
                 "description": "Mints the connect ticket the user opens to sign in to one Store server with their own account, and returns where it is redeemed. Only for the caller themselves: the ticket completes OAuth as that principal, so asking for another user's is refused.",
@@ -6586,6 +6657,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConfigureLink": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "principal_sub": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.ConnectLink": {
             "type": "object",
             "properties": {
@@ -6844,6 +6935,24 @@ const docTemplate = `{
                     "description": "Reason is why the requester asked for the server, in their own words.\nOmitted when they gave none.",
                     "type": "string"
                 },
+                "requester_groups": {
+                    "description": "RequesterGroups are the groups the requester carried when they filed, and\nthe only ones an approval may grant instead of the person.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequests": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest"
+                    }
+                },
                 "requested_at": {
                     "type": "string"
                 }
@@ -6911,6 +7020,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConfigureLink": {
+            "type": "object",
+            "properties": {
+                "configure_path": {
+                    "type": "string"
+                },
+                "consumer_path": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PrincipalConnectLink": {
             "type": "object",
             "properties": {
@@ -6974,6 +7100,13 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "needs_config": {
+                    "description": "NeedsConfig names the per-user values this installation is still missing.\nAn approved request is recorded the moment the approver says yes, before\nanyone has asked the requester for their own account URL — the row reads\nas installed while its first tool call cannot resolve the server's URL.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "registry": {
                     "type": "string"

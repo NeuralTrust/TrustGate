@@ -31,19 +31,6 @@ import (
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
-// Instance caps. A principal may legitimately hold a handful of instances of one
-// code (several Snowflake schemas) and a few dozen servers overall; anything
-// beyond is abuse (request spam, surface bloat) and is refused. Revoked rows do
-// not count — they are audit leftovers, not live or queued instances.
-const (
-	// MaxInstancesPerCode caps live+pending instances of one catalog code per
-	// principal on a gateway.
-	MaxInstancesPerCode = 10
-	// MaxInstancesPerPrincipal caps live+pending instances across all codes per
-	// principal on a gateway.
-	MaxInstancesPerPrincipal = 100
-)
-
 var (
 	ErrUnavailable          = errors.New("store: installer unavailable")
 	ErrCatalogEntryNotFound = errors.New("store: catalog entry not found")
@@ -58,10 +45,6 @@ var (
 	// principal holds several instances of without naming which one; the caller
 	// should list the instances (Instances) and re-issue with an instance id.
 	ErrAmbiguousInstance = errors.New("store: multiple instances installed; specify which instance")
-	// ErrTooManyInstances is returned when an install would create a new instance
-	// beyond MaxInstancesPerCode or MaxInstancesPerPrincipal. It wraps
-	// ErrValidation so the HTTP layer maps it to a client error.
-	ErrTooManyInstances = fmt.Errorf("store: too many instances installed: %w", commonerrors.ErrValidation)
 	// ErrReasonRequired is returned when an install would become a request and
 	// carries no reason. A request is decided by a person, and the reason is the
 	// only thing the requester tells them; a queue of reasonless requests is a
@@ -288,11 +271,6 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 			break
 		}
 	}
-	if sameInstance == nil {
-		if err := i.checkInstanceCaps(ctx, in.GatewayID, in.PrincipalSub, existing); err != nil {
-			return nil, err
-		}
-	}
 	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
 
 	// Materialise the registry only once the install is certain to be recorded.
@@ -309,6 +287,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	record.RegistryID = decision.registryID
 	if decision.status == installationdomain.StatusPendingApproval {
 		record.Reason = strings.TrimSpace(in.Reason)
+		// Kept with the request so the approval can be checked against the groups
+		// the requester actually carried (see Installation.RequesterGroups).
+		record.RequesterGroups = append([]string(nil), in.Groups...)
 	}
 	// Reuse the existing instance's id so a repeat install updates it in place
 	// rather than inserting a duplicate; a new-config install keeps its fresh id.
@@ -336,41 +317,6 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		result.ConfigVariables = secretRequired
 	}
 	return result, nil
-}
-
-// checkInstanceCaps refuses a would-be new instance when the principal already
-// holds MaxInstancesPerCode live-or-pending instances of this code, or
-// MaxInstancesPerPrincipal across the gateway. existing is the principal's rows
-// for the code (already loaded by the caller).
-func (i *installer) checkInstanceCaps(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	principalSub string,
-	existing []*installationdomain.Installation,
-) error {
-	if countLive(existing) >= MaxInstancesPerCode {
-		return fmt.Errorf("%w: at most %d instances of one server", ErrTooManyInstances, MaxInstancesPerCode)
-	}
-	all, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
-	if err != nil {
-		return err
-	}
-	if countLive(all) >= MaxInstancesPerPrincipal {
-		return fmt.Errorf("%w: at most %d installed servers", ErrTooManyInstances, MaxInstancesPerPrincipal)
-	}
-	return nil
-}
-
-// countLive counts rows that occupy a slot: installed or pending. Revoked rows
-// are audit leftovers and do not count.
-func countLive(rows []*installationdomain.Installation) int {
-	n := 0
-	for _, r := range rows {
-		if r != nil && r.Status != installationdomain.StatusRevoked {
-			n++
-		}
-	}
-	return n
 }
 
 // planInstallConfig validates the caller's supplied URL-variable values against

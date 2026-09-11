@@ -56,6 +56,13 @@ type PrincipalInstall struct {
 	Registry    string
 	Status      installationdomain.Status
 	InstalledBy string
+	// NeedsConfig names the per-user URL variables this installation still has
+	// no value for. An install that stops for them is never recorded, but an
+	// approved request is: it is written the moment an approver says yes, and
+	// nobody has asked the requester for their own account URL or database
+	// name yet. Without this the row read as installed and its first tool call
+	// failed on a missing placeholder with nothing to act on.
+	NeedsConfig []string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -170,6 +177,7 @@ func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID,
 		if reg := byID[in.RegistryID]; reg != nil {
 			row.Registry = reg.Name
 		}
+		row.NeedsConfig = p.missingConfig(ctx, gatewayID, principalSub, in)
 		state.Installs = append(state.Installs, row)
 	}
 
@@ -250,4 +258,43 @@ func forwardedAuthOf(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 		return nil
 	}
 	return reg.MCPTarget.Auth
+}
+
+// missingConfig names the required per-user URL variables this installation
+// still has no value for: a plain one absent from the row's config, a secret
+// one absent from the vault. A revoked row is nobody's problem, and a catalog
+// entry that declares none answers nil.
+func (p *principalPreview) missingConfig(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	in *installationdomain.Installation,
+) []string {
+	if in == nil || in.Status == installationdomain.StatusRevoked {
+		return nil
+	}
+	entry, ok := p.catalog.GetByCode(in.CatalogCode)
+	if !ok {
+		return nil
+	}
+	var missing []string
+	for _, v := range catalogURLVariables(entry.URLVariables) {
+		if !v.Required {
+			continue
+		}
+		if v.Secret {
+			if p.vault == nil {
+				continue
+			}
+			key := registrydomain.URLVariableVaultProvider(in.CatalogCode, v.Name)
+			if _, err := p.vault.Find(ctx, gatewayID, principalSub, key); err != nil {
+				missing = append(missing, v.Name)
+			}
+			continue
+		}
+		if strings.TrimSpace(in.Config[v.Name]) == "" {
+			missing = append(missing, v.Name)
+		}
+	}
+	return missing
 }
