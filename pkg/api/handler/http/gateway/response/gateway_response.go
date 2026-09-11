@@ -25,13 +25,19 @@ import (
 )
 
 type GatewayResponse struct {
-	ID              ids.GatewayID          `json:"id"`
-	Slug            string                 `json:"slug"`
-	Status          string                 `json:"status"`
-	Version         string                 `json:"version"`
-	Domain          string                 `json:"domain,omitempty"`
-	Hosts           GatewayHosts           `json:"hosts"`
-	Metadata        map[string]string      `json:"metadata,omitempty"`
+	ID       ids.GatewayID     `json:"id"`
+	Slug     string            `json:"slug"`
+	Status   string            `json:"status"`
+	Version  string            `json:"version"`
+	Domain   string            `json:"domain,omitempty"`
+	Hosts    GatewayHosts      `json:"hosts"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	// StoreMode is the gateway's MCP Store curation mode, the same value
+	// UpdateGatewayRequest writes. It is derived (never blank) rather than left
+	// for readers to dig out of metadata: a reader that missed it there read a
+	// gateway as open — the domain default — and showed a curated Store as
+	// wide open.
+	StoreMode       string                 `json:"store_mode"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
@@ -62,6 +68,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
 		},
 		Metadata:        g.Metadata,
+		StoreMode:       g.StoreMode(),
 		Telemetry:       g.Telemetry,
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,

@@ -15,6 +15,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	storerequest "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store/request"
@@ -167,15 +168,23 @@ func (h *PrincipalHandler) Install(c *fiber.Ctx) error {
 		}
 		registryID = parsed
 	}
+	code := strings.TrimSpace(req.Code)
 	res, err := h.installer.InstallFor(c.UserContext(), appstore.OnBehalfInstallRequest{
 		GatewayID:    gatewayID,
 		PrincipalSub: req.PrincipalSub,
-		Code:         req.Code,
+		Code:         code,
 		Groups:       req.Groups,
 		RegistryID:   registryID,
 		Reason:       strings.TrimSpace(req.Reason),
 		Actor:        callerActor(c),
 	})
+	// Outside the user's access the install is a request, and a request carries
+	// the requester's words. The caller asked for an install because its view of
+	// their access level was stale, so answer with what is actually needed
+	// rather than an error it can only report.
+	if errors.Is(err, appstore.ErrReasonRequired) {
+		return httpio.WriteOK(c, storeresponse.Install{Code: code, Name: code, RequiresReason: true})
+	}
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
