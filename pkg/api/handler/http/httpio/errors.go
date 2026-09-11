@@ -32,6 +32,17 @@ type ErrorBody struct {
 	Message string `json:"message,omitempty"`
 }
 
+const (
+	msgNotFound = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
+	msgInternal = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
+	msgValidationHint = "Check the request body fields against the Admin API schema and retry."
+	msgConflictHint = "Fetch the current resource, resolve the conflict, and retry."
+	msgAlreadyExistsHint = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
+	msgHasDependentsHint = "Remove or reassign dependent resources first, then retry the delete."
+	msgInvalidConfigHint = "Check the configuration fields and types against the Admin API docs and retry."
+	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
+)
+
 // MapDomainError translates an application/domain error into the matching
 // HTTP status code and a stable error code string. Entity-specific
 // sentinels add their cases here as their `<entity>-a` slices land.
@@ -43,32 +54,80 @@ func MapDomainError(err error) (int, ErrorBody) {
 	case err == nil:
 		return fiber.StatusOK, ErrorBody{}
 	case errors.Is(err, ErrInvalidUUIDParam):
-		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_uuid", Message: err.Error()}
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_uuid", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidQuery):
-		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_query", Message: err.Error()}
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_query", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidPage), errors.Is(err, ErrInvalidSize):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_pagination", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_pagination", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidSort):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_sort", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_sort", Message: publicMessage(err, "")}
 	case errors.Is(err, ErrInvalidFilter):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, ErrorBody{Error: "not_found"}
+		return fiber.StatusNotFound, ErrorBody{Error: "not_found", Message: notFoundMessage(err)}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
-		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: err.Error()}
+		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
-		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: err.Error()}
+		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: publicMessage(err, msgHasDependentsHint)}
 	case errors.Is(err, commonerrors.ErrConflict):
-		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: err.Error()}
+		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: publicMessage(err, msgConflictHint)}
 	case errors.Is(err, commonerrors.ErrValidation):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: publicMessage(err, msgValidationHint)}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_config", Message: publicMessage(err, msgInvalidConfigHint)}
 	case errors.Is(err, commonerrors.ErrResultTooLarge):
-		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: err.Error()}
+		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "result_too_large", Message: publicMessage(err, msgResultTooLargeHint)}
 	default:
-		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error"}
+		return fiber.StatusInternalServerError, ErrorBody{Error: "internal_error", Message: msgInternal}
 	}
+}
+
+// publicMessage builds a client-facing message from err, optionally appending
+// a how-to-fix hint. Bare sentinel text is replaced by the hint alone so the
+// wire response stays actionable. Secrets and upstream payloads must never be
+// placed in err strings that reach this helper.
+func publicMessage(err error, hint string) string {
+	msg := strings.TrimSpace(err.Error())
+	if isBareSentinel(msg) {
+		if hint != "" {
+			return hint
+		}
+		return msg
+	}
+	if hint == "" || strings.Contains(msg, hint) {
+		return msg
+	}
+	return msg + ". " + hint
+}
+
+func isBareSentinel(msg string) bool {
+	switch msg {
+	case commonerrors.ErrNotFound.Error(),
+		commonerrors.ErrAlreadyExists.Error(),
+		commonerrors.ErrConflict.Error(),
+		commonerrors.ErrHasDependents.Error(),
+		commonerrors.ErrValidation.Error(),
+		commonerrors.ErrInvalidConfig.Error(),
+		commonerrors.ErrResultTooLarge.Error():
+		return true
+	default:
+		return false
+	}
+}
+
+func notFoundMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" || msg == commonerrors.ErrNotFound.Error() {
+		return msgNotFound
+	}
+	const suffix = ": " + "resource not found"
+	if entity, ok := strings.CutSuffix(msg, suffix); ok && entity != "" && !strings.Contains(entity, " ") {
+		return fmt.Sprintf("No %s matched this request. Check the id in the URL and that it exists for this gateway or tenant.", entity)
+	}
+	if strings.Contains(msg, commonerrors.ErrNotFound.Error()) && msg != commonerrors.ErrNotFound.Error() {
+		return msg + ". Check the id in the URL and that it exists for this gateway or tenant."
+	}
+	return msgNotFound
 }
 
 // WriteError is a convenience wrapper around MapDomainError + JSON write.
