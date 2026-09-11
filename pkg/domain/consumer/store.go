@@ -55,8 +55,8 @@ func IsStoreSlug(slug string) bool {
 // auths: the Store's surface is the gateway-implemented meta-tools plus whatever
 // the caller installed, and having no auth of its own means it is reachable only
 // through the built-in default identity provider (platform login). It acts for
-// platform users, so Access rules scope it per principal like any other
-// acts-for-users consumer.
+// platform users, and it is the one surface Access governs: what each person
+// installed, narrowed by the grants that name them.
 func BuildStoreConsumer(gatewayID ids.GatewayID) *Consumer {
 	return &Consumer{
 		ID:        StoreConsumerID(),

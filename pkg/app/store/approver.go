@@ -37,6 +37,14 @@ var ErrNotShelved = fmt.Errorf("store: server is not on the shelf; connect it fi
 // pass the instance id (from the pending queue). It maps to 409.
 var ErrAmbiguousRequest = fmt.Errorf("store: several instances match; pass instance_id: %w", commonerrors.ErrConflict)
 
+// ErrGroupNotRequesters is returned when an approval would grant a group the
+// requester did not carry when they filed. Granting it closes the request
+// without giving the requester anything — the queue reads as resolved and the
+// person still cannot install the server — so it is refused instead.
+var ErrGroupNotRequesters = fmt.Errorf(
+	"store: that group is not one the requester belongs to: %w", commonerrors.ErrValidation,
+)
+
 // GrantStore is the grant access the approver needs: read a gateway's grants
 // and write the one an approval extends.
 type GrantStore interface {
@@ -57,8 +65,13 @@ type PendingRequest struct {
 	InstalledBy  string
 	// Reason is why the requester wants it, in their own words. Empty for a
 	// request filed by a client that sent none.
-	Reason      string
-	RequestedAt time.Time
+	Reason string
+	// RequesterGroups are the groups the requester carried when they filed. The
+	// approver may grant one of these instead of the person, and nothing else
+	// can be granted (see ErrGroupNotRequesters), so the queue shows the same
+	// list the decision is checked against.
+	RequesterGroups []string
+	RequestedAt     time.Time
 }
 
 // ApproveRequest / DenyRequest identify the install request to decide, plus the
@@ -189,14 +202,15 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 			name = displayName(entry, in.CatalogCode)
 		}
 		out = append(out, PendingRequest{
-			GatewayID:    in.GatewayID,
-			InstanceID:   in.ID.String(),
-			PrincipalSub: in.PrincipalSub,
-			Code:         in.CatalogCode,
-			Name:         name,
-			InstalledBy:  in.InstalledBy,
-			Reason:       in.Reason,
-			RequestedAt:  in.CreatedAt,
+			GatewayID:       in.GatewayID,
+			InstanceID:      in.ID.String(),
+			PrincipalSub:    in.PrincipalSub,
+			Code:            in.CatalogCode,
+			Name:            name,
+			InstalledBy:     in.InstalledBy,
+			Reason:          in.Reason,
+			RequesterGroups: append([]string(nil), in.RequesterGroups...),
+			RequestedAt:     in.CreatedAt,
 		})
 	}
 	return out, nil
@@ -287,6 +301,9 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 	grantRegistryID := existing.RegistryID
 	if len(instances) <= 1 {
 		grantRegistryID = ids.RegistryID{}
+	}
+	if err := requesterHasGroup(existing, in.GrantToGroup); err != nil {
+		return err
 	}
 	if err := a.grantRequester(ctx, in.GatewayID, code, grantRegistryID, existing.PrincipalSub, in.GrantToGroup); err != nil {
 		return err
@@ -408,4 +425,29 @@ func (a *approver) target(
 	default:
 		return nil, fmt.Errorf("%w: %d live instances of %q", ErrAmbiguousRequest, len(live), code)
 	}
+}
+
+// requesterHasGroup checks an approval that grants a group rather than the
+// person: it has to be one the requester carried when they filed, which the
+// request records (Installation.RequesterGroups) precisely because the gateway
+// keeps no group directory to ask.
+//
+// A request filed before that was recorded carries none, and is let through:
+// refusing every historical request would be worse than trusting the admin who
+// is reading the requester's groups on the screen in front of them.
+func requesterHasGroup(request *installationdomain.Installation, group string) error {
+	group = strings.TrimSpace(group)
+	if group == "" || request == nil || len(request.RequesterGroups) == 0 {
+		return nil
+	}
+	// Exact, not case-insensitive: grants match group keys exactly
+	// (storeaccess.Grant.Allows), so accepting a different casing here would
+	// write a grant that never matches the requester — the same silent failure
+	// this check exists to stop.
+	for _, held := range request.RequesterGroups {
+		if strings.TrimSpace(held) == group {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrGroupNotRequesters, group)
 }

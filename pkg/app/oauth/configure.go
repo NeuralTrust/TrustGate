@@ -540,3 +540,30 @@ func serverName(entry catalogdomain.MCPServer) string {
 	}
 	return entry.Code
 }
+
+// StoreConfigureTickets adapts the configure service to the port the Store's
+// principal-configure linker needs (appstore.ConfigureTicketMinter). It lives
+// here because app/oauth already imports app/store; the reverse would be a
+// cycle, so the store side names only the method it calls.
+type StoreConfigureTickets struct {
+	Service ConfigureService
+}
+
+func (t StoreConfigureTickets) CreateConfigureTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, code, instanceID string,
+	groups []string,
+) (string, error) {
+	if t.Service == nil {
+		return "", ErrConfigureInvalid
+	}
+	return t.Service.CreateTicket(ctx, ConfigureTicketRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Code:         code,
+		InstanceID:   instanceID,
+		Groups:       groups,
+	})
+}

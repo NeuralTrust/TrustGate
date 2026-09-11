@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -91,6 +93,9 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if string(reg.Type) != string(cons.Type) {
 		return fmt.Errorf("%w: registry of type %s cannot be attached to a consumer of type %s",
 			registrydomain.ErrInvalidRegistryID, reg.Type, cons.Type)
+	}
+	if err := validatePerUserURLBinding(cons, reg); err != nil {
+		return err
 	}
 	if err := a.repo.AttachRegistry(ctx, consumerID, registryID, weight); err != nil {
 		return err
@@ -248,4 +253,30 @@ func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}
+}
+
+// ErrPerUserURLOnMachineConsumer is returned when a server whose URL is
+// completed per person is bound to a consumer that acts as itself.
+var ErrPerUserURLOnMachineConsumer = fmt.Errorf(
+	"%w: this server's address is completed per user (it declares url variables), so it can only be attached to a consumer that acts for users",
+	commonerrors.ErrConflict,
+)
+
+// validatePerUserURLBinding refuses a server whose address is assembled from
+// per-user values on a consumer that has no user.
+//
+// Those values live on the caller's own installation row and in their vault
+// entries; an application that acts as itself never installs from the Store, so
+// it has neither, and there is no admin-level place to supply them. The binding
+// used to be accepted and every call to the server then failed at dial time
+// with a missing-placeholder error nobody could act on. Refused here, where the
+// admin is making the decision and can read why.
+func validatePerUserURLBinding(cons *domain.Consumer, reg *registrydomain.Registry) error {
+	if cons == nil || reg == nil || cons.ActsForUsers() {
+		return nil
+	}
+	if reg.MCPTarget == nil || len(reg.MCPTarget.RequiredURLVariables()) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrPerUserURLOnMachineConsumer, strings.Join(reg.MCPTarget.RequiredURLVariables(), ", "))
 }
