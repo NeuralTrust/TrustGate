@@ -190,10 +190,14 @@ type Client struct{}
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs     *sdk.ClientSession
-	url    string
-	mu     sync.RWMutex
-	closed bool
+	cs            *sdk.ClientSession
+	connection    sdk.Connection
+	url           string
+	mu            sync.RWMutex
+	closed        bool
+	nextOperation uint64
+	operations    map[uint64]context.CancelCauseFunc
+	closeDone     chan struct{}
 }
 
 var errSessionClosed = errors.New("mcp client session is closed")
@@ -203,7 +207,7 @@ var _ appmcp.Upstream = (*Session)(nil)
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
 	cs, attempt, err := c.connect(ctx, target, false, "")
 	if err == nil {
-		return &Session{cs: cs, url: redactURL(target.URL)}, nil
+		return cs, nil
 	}
 	if ctx.Err() != nil ||
 		!attempt.discoverLegacyCandidate.Load() ||
@@ -215,7 +219,7 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 	for _, protocolVersion := range legacyProtocolVersions {
 		cs, attempt, err = c.connect(ctx, target, true, protocolVersion)
 		if err == nil {
-			return &Session{cs: cs, url: redactURL(target.URL)}, nil
+			return cs, nil
 		}
 		legacyErr = fmt.Errorf("legacy handshake fallback (protocolVersion %s): %w", protocolVersion, err)
 		if ctx.Err() != nil || !attempt.initializeBadRequest.Load() {
@@ -230,7 +234,10 @@ func (c *Client) connect(
 	target appmcp.Target,
 	legacyFallback bool,
 	protocolVersion string,
-) (*sdk.ClientSession, *handshakeRoundTripper, error) {
+) (*Session, *handshakeRoundTripper, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	ctx = context.WithValue(ctx, responseCancelKey{}, cancel)
 	attempt := &handshakeRoundTripper{
 		headers:         target.Headers,
 		transport:       transportFor(target),
@@ -249,14 +256,41 @@ func (c *Client) connect(
 		&sdk.Implementation{Name: clientName, Version: clientVersion},
 		&sdk.ClientOptions{},
 	)
-	cs, err := cli.Connect(ctx, transport, nil)
+	captured := &capturedTransport{Transport: transport}
+	defer func() {
+		if captured.stopClose != nil {
+			captured.stopClose()
+		}
+	}()
+	cs, err := cli.Connect(ctx, captured, nil)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), ErrResponseTooLarge) {
+			err = ErrResponseTooLarge
+		}
 		if attempt.unauthorizedResponses.Load() > 0 {
 			err = fmt.Errorf("%w: %w", appmcp.ErrUpstreamUnauthorized, err)
 		}
 		return nil, attempt, err
 	}
-	return cs, attempt, nil
+	return &Session{cs: cs, connection: captured.connection, url: redactURL(target.URL)}, attempt, nil
+}
+
+type capturedTransport struct {
+	sdk.Transport
+	connection sdk.Connection
+	stopClose  func() bool
+}
+
+func (t *capturedTransport) Connect(ctx context.Context) (sdk.Connection, error) {
+	conn, err := t.Transport.Connect(ctx)
+	if err == nil {
+		t.connection = conn
+		t.stopClose = context.AfterFunc(ctx, func() {
+			// A failed handshake must not get stuck in the SDK's graceful close.
+			_ = conn.Close()
+		})
+	}
+	return conn, err
 }
 
 func (s *Session) capabilities() *sdk.ServerCapabilities {
@@ -283,26 +317,31 @@ func (s *Session) SupportsPrompts() bool {
 }
 
 func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	ctx, unauthorized := trackUnauthorized(ctx)
-	var items []*sdk.Tool
-	for t, err := range s.cs.Tools(ctx, nil) {
+	items, err := collectPages(ctx, func(cursor string) ([]*sdk.Tool, string, error) {
+		page, err := s.cs.ListTools(ctx, &sdk.ListToolsParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: tools/list: %w", mapSessionError(err, unauthorized))
+			return nil, "", mapSessionError(ctx, err, unauthorized)
 		}
-		items = append(items, t)
+		return page.Tools, page.NextCursor, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp client: tools/list: %w", err)
 	}
 	return mapItems[appmcp.Tool]("tools/list", items)
 }
 
 func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	ctx, unauthorized := trackUnauthorized(ctx)
 	params := &sdk.CallToolParams{Name: name}
 	if len(arguments) > 0 {
@@ -310,107 +349,122 @@ func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawM
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {
-		return nil, mapSessionError(err, unauthorized)
+		return nil, mapSessionError(ctx, err, unauthorized)
 	}
 	return marshalResult("tools/call", res)
 }
 
 func (s *Session) ListResources(ctx context.Context) ([]appmcp.Resource, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	if s.capabilities().Resources == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
-	var items []*sdk.Resource
-	for r, err := range s.cs.Resources(ctx, nil) {
+	items, err := collectPages(ctx, func(cursor string) ([]*sdk.Resource, string, error) {
+		page, err := s.cs.ListResources(ctx, &sdk.ListResourcesParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/list: %w", mapSessionError(err, unauthorized))
+			return nil, "", mapSessionError(ctx, err, unauthorized)
 		}
-		items = append(items, r)
+		return page.Resources, page.NextCursor, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp client: resources/list: %w", err)
 	}
 	return mapItems[appmcp.Resource]("resources/list", items)
 }
 
 func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceTemplate, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	if s.capabilities().Resources == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
-	var items []*sdk.ResourceTemplate
-	for t, err := range s.cs.ResourceTemplates(ctx, nil) {
+	items, err := collectPages(ctx, func(cursor string) ([]*sdk.ResourceTemplate, string, error) {
+		page, err := s.cs.ListResourceTemplates(ctx, &sdk.ListResourceTemplatesParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/templates/list: %w", mapSessionError(err, unauthorized))
+			return nil, "", mapSessionError(ctx, err, unauthorized)
 		}
-		items = append(items, t)
+		return page.ResourceTemplates, page.NextCursor, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp client: resources/templates/list: %w", err)
 	}
 	return mapItems[appmcp.ResourceTemplate]("resources/templates/list", items)
 }
 
 func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	if s.capabilities().Resources == nil {
 		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
 	if err != nil {
-		return nil, mapSessionError(err, unauthorized)
+		return nil, mapSessionError(ctx, err, unauthorized)
 	}
 	return marshalResult("resources/read", res)
 }
 
 func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	if s.capabilities().Prompts == nil {
 		return nil, nil
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
-	var items []*sdk.Prompt
-	for p, err := range s.cs.Prompts(ctx, nil) {
+	items, err := collectPages(ctx, func(cursor string) ([]*sdk.Prompt, string, error) {
+		page, err := s.cs.ListPrompts(ctx, &sdk.ListPromptsParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: prompts/list: %w", mapSessionError(err, unauthorized))
+			return nil, "", mapSessionError(ctx, err, unauthorized)
 		}
-		items = append(items, p)
+		return page.Prompts, page.NextCursor, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp client: prompts/list: %w", err)
 	}
 	return mapItems[appmcp.Prompt]("prompts/list", items)
 }
 
 func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	if s.capabilities().Prompts == nil {
 		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
 	}
 	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {
-		return nil, mapSessionError(err, unauthorized)
+		return nil, mapSessionError(ctx, err, unauthorized)
 	}
 	return marshalResult("prompts/get", res)
 }
 
 func (s *Session) Ping(ctx context.Context) error {
-	if err := s.lock(); err != nil {
+	ctx, done, err := s.begin(ctx)
+	if err != nil {
 		return err
 	}
-	defer s.mu.RUnlock()
+	defer done()
 	ctx, unauthorized := trackUnauthorized(ctx)
-	return mapSessionError(s.cs.Ping(ctx, nil), unauthorized)
+	return mapSessionError(ctx, s.cs.Ping(ctx, nil), unauthorized)
 }
 
 type unauthorizedTrackerKey struct{}
@@ -420,7 +474,10 @@ func trackUnauthorized(ctx context.Context) (context.Context, *atomic.Bool) {
 	return context.WithValue(ctx, unauthorizedTrackerKey{}, tracker), tracker
 }
 
-func mapSessionError(err error, unauthorized *atomic.Bool) error {
+func mapSessionError(ctx context.Context, err error, unauthorized *atomic.Bool) error {
+	if err != nil && errors.Is(context.Cause(ctx), ErrResponseTooLarge) {
+		return ErrResponseTooLarge
+	}
 	if err != nil && unauthorized.Load() {
 		return fmt.Errorf("%w: %w", appmcp.ErrUpstreamUnauthorized, err)
 	}
@@ -436,14 +493,53 @@ func (s *Session) lock() error {
 	return nil
 }
 
-func (s *Session) Close(context.Context) {
+func (s *Session) begin(ctx context.Context) (context.Context, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return
+		return nil, nil, errSessionClosed
 	}
-	s.closed = true
-	_ = s.cs.Close()
+	ctx, cancel := context.WithCancelCause(ctx)
+	ctx = context.WithValue(ctx, responseCancelKey{}, cancel)
+	if s.operations == nil {
+		s.operations = make(map[uint64]context.CancelCauseFunc)
+	}
+	s.nextOperation++
+	id := s.nextOperation
+	s.operations[id] = cancel
+	return ctx, func() {
+		cancel(nil)
+		s.mu.Lock()
+		delete(s.operations, id)
+		s.mu.Unlock()
+	}, nil
+}
+
+func (s *Session) Close(ctx context.Context) {
+	s.mu.Lock()
+	if !s.closed {
+		s.closed = true
+		s.closeDone = make(chan struct{})
+		for _, cancel := range s.operations {
+			cancel(errSessionClosed)
+		}
+		go func() {
+			// Close the transport first: the SDK graceful close otherwise waits for peers that ignore cancellation.
+			_ = s.connection.Close()
+			// The public Upstream close port cannot return the SDK teardown error.
+			_ = s.cs.Close()
+			close(s.closeDone)
+		}()
+	}
+	done := s.closeDone
+	s.mu.Unlock()
+	timer := time.NewTimer(sessionCloseTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 func marshalResult(method string, res any) (json.RawMessage, error) {

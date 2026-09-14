@@ -296,6 +296,8 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		// consent prompt for an unrelated upstream — hides the real reason.
 		for _, name := range surface.denied {
 			denied[name] = struct{}{}
+			names := resolveExposedNames([]exposedName{exposedNameFor(name, reg)}, len(registries) > 1)
+			denied[names[0]] = struct{}{}
 		}
 	}
 	if reachable == 0 {
@@ -309,7 +311,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	bindings := resolveNames(candidates)
+	bindings := resolveNames(candidates, registries)
 	// A name that another registry ends up exposing was never really denied.
 	for _, b := range bindings {
 		delete(denied, b.exposed)
