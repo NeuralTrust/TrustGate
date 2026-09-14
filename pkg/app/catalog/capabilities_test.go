@@ -56,14 +56,18 @@ func TestCatalogCapabilities_DerivesFromTools(t *testing.T) {
 func TestEnterpriseSeed_EveryServerDeclaresCapabilities(t *testing.T) {
 	t.Parallel()
 
-	var raw rawCatalog
-	require.NoError(t, json.Unmarshal(mcpcatalog.EnterpriseServersJSON, &raw))
-	require.Len(t, raw.Servers, 200)
-	for _, server := range raw.Servers {
-		require.Lenf(t, server.Capabilities, 3, server.Name)
+	var caps map[string][]string
+	require.NoError(t, json.Unmarshal(mcpcatalog.PortalCapabilitiesJSON, &caps))
+	require.Len(t, caps, 200)
+
+	servers, err := loadCuratedMCPServers()
+	require.NoError(t, err)
+	for _, server := range servers {
+		require.Contains(t, caps, server.Code)
+		require.Equalf(t, caps[server.Code], server.Capabilities, server.Code)
 		for _, line := range server.Capabilities {
-			require.NotEmpty(t, strings.TrimSpace(line), server.Name)
-			require.LessOrEqualf(t, len(line), capabilityMaxLen, "%s: %q", server.Name, line)
+			require.NotEmpty(t, strings.TrimSpace(line), server.Code)
+			require.LessOrEqualf(t, len(line), capabilityMaxLen, "%s: %q", server.Code, line)
 		}
 	}
 }
