@@ -21,7 +21,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 )
 
-// How many “What you can do” lines GET /v1/mcp-servers-catalog returns
+// How many "What you can do" lines GET /v1/mcp-servers-catalog returns
 // (Employee Portal side panel).
 const capabilityCount = 3
 
@@ -34,8 +34,8 @@ var genericCapabilities = []string{
 }
 
 var (
-	skipTool = regexp.MustCompile(`(?i)^(ping|health|echo|noop|whoami)\\b`)
-	skipDesc = regexp.MustCompile(`(?i)\\bping the mcp\\b`)
+	skipTool = regexp.MustCompile(`(?i)^(ping|health|echo|noop|whoami)\b`)
+	skipDesc = regexp.MustCompile(`(?i)\bping the mcp\b`)
 )
 
 // catalogCapabilities prefers seeded Portal copy, then tool descriptions, then
@@ -105,10 +105,13 @@ func humanizeToolName(name string) string {
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.ReplaceAll(name, "-", " ")
 	name = strings.TrimSpace(name)
+	lower := strings.ToLower(name)
 	for _, prefix := range []string{"notion ", "github ", "figma ", "slack ", "jira ", "google ", "microsoft ", "aws "} {
-		name = strings.TrimPrefix(strings.ToLower(name), prefix)
+		if strings.HasPrefix(lower, prefix) {
+			name = strings.TrimSpace(name[len(prefix):])
+			break
+		}
 	}
-	name = strings.TrimSpace(name)
 	if name == "" {
 		return ""
 	}
