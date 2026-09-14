@@ -150,7 +150,12 @@ type configureService struct {
 	// openMode reports whether the gateway's Store is open (self-service) for a
 	// form-driven first install. Nil means "not open": the install is governed as
 	// a request unless the shelf says otherwise.
-	openMode func(ctx context.Context, gatewayID ids.GatewayID) bool
+	//
+	// The requester is passed explicitly because this runs on their BROWSER's
+	// request, which carries a ticket and no principal: a resolver that reads the
+	// caller from the context sees nobody here and answers with the gateway
+	// default, so the form could decide a mode the install tool never would.
+	openMode func(ctx context.Context, gatewayID ids.GatewayID, principalSub string, groups []string) bool
 }
 
 // ConfigureOption tunes the configure service.
@@ -167,7 +172,9 @@ func WithConfigureInstaller(installer ConfigureInstaller) ConfigureOption {
 // WithConfigureOpenMode supplies how the service decides whether the gateway's
 // Store is open (self-service) when it must record a first install from the
 // form. Without it, form-driven installs are always treated as curated.
-func WithConfigureOpenMode(fn func(ctx context.Context, gatewayID ids.GatewayID) bool) ConfigureOption {
+func WithConfigureOpenMode(
+	fn func(ctx context.Context, gatewayID ids.GatewayID, principalSub string, groups []string) bool,
+) ConfigureOption {
 	return func(s *configureService) { s.openMode = fn }
 }
 
@@ -501,7 +508,9 @@ func (s *configureService) installConfigured(
 	}
 	open := false
 	if s.openMode != nil {
-		open = s.openMode(ctx, gatewayID)
+		// The ticket is the requester's proof, so it is what the mode is decided
+		// for — not whoever (nobody) the browser request looks like.
+		open = s.openMode(ctx, gatewayID, ticket.PrincipalSub, ticket.Groups)
 	}
 	res, err := s.installer.Install(ctx, appstore.InstallRequest{
 		GatewayID:    gatewayID,
@@ -528,6 +537,15 @@ func (s *configureService) installConfigured(
 	}
 	if res.RequiresAdminSetup {
 		return false, fmt.Errorf("%w: an admin must connect this server first", ErrConfigureInvalid)
+	}
+	// Several usable instances and none named: the installer records nothing and
+	// hands back the choices, which this form cannot present. Left unhandled it
+	// read as a successful submit — another way for a request to end in "Saved"
+	// with nothing written.
+	if res.RequiresInstanceChoice {
+		return false, fmt.Errorf(
+			"%w: this server has several instances; re-run the install and name the one you want",
+			ErrConfigureInvalid)
 	}
 	// Pin the ticket to the instance just recorded so later submits on the same
 	// form target it even if another instance of the code appears meanwhile.
