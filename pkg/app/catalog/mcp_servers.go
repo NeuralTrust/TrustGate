@@ -129,21 +129,9 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 	return parseCuratedMCPServers(mcpcatalog.EnterpriseServersJSON)
 }
 
-func portalCapabilitySeed() (map[string][]string, error) {
-	var out map[string][]string
-	if err := json.Unmarshal(mcpcatalog.PortalCapabilitiesJSON, &out); err != nil {
-		return nil, fmt.Errorf("portal capabilities seed: %w", err)
-	}
-	return out, nil
-}
-
 func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 	var raw rawCatalog
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-	seeded, err := portalCapabilitySeed()
-	if err != nil {
 		return nil, err
 	}
 	servers := make([]domain.MCPServer, 0, len(raw.Servers))
@@ -188,7 +176,7 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			OAuth:          s.OAuth,
 			ConfigGuide:    configGuide(s),
 			Tools:          s.Tools,
-			Capabilities:   catalogCapabilities(firstCapabilities(s.Capabilities, seeded[s.Name]), s.Tools),
+			Capabilities:   catalogCapabilities(s.Capabilities, s.Tools),
 			Source:         curatedSource,
 		})
 	}
