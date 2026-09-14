@@ -34,6 +34,13 @@ import (
 // unknown variable, or a value that fails its structure/charset rules).
 var ErrConfigureInvalid = errors.New("oauth configure: invalid configuration")
 
+// ErrConfigureNothingToCollect is returned when a form has neither variables to
+// fill nor a reason to ask for. Submitting it writes nothing, and reporting
+// "Saved" for it told the requester their request was on its way when no row had
+// been written and no approver would ever see it.
+var ErrConfigureNothingToCollect = fmt.Errorf(
+	"%w: this server has nothing to configure here", ErrConfigureInvalid)
+
 // ErrConfigureIncomplete is returned when a first-time configuration (no
 // installation exists yet) omits a required plain value: the install cannot be
 // recorded half-configured, so nothing is saved and the form is re-shown.
@@ -239,6 +246,11 @@ func (s *configureService) Submit(
 		}
 		ticket.Reason = reason
 	}
+	// Nothing to fill and nothing to ask: the submit cannot store or file
+	// anything, so it must say so rather than confirm a write that never happened.
+	if len(entry.URLVariables) == 0 && !ticket.AskReason {
+		return nil, ErrConfigureNothingToCollect
+	}
 	byName := make(map[string]catalogdomain.MCPURLVariable, len(entry.URLVariables))
 	for _, v := range entry.URLVariables {
 		byName[strings.TrimSpace(v.Name)] = v
@@ -341,9 +353,12 @@ func (s *configureService) page(
 		Variables:    vars,
 		Saved:        saved,
 		Pending:      pending,
-		// Answered once, the field is done: the page that follows a submit
-		// reports what happened instead of asking again.
-		AskReason: ticket.AskReason && !saved,
+		// What the form IS, not whether it has been answered: the template hides
+		// the whole form once saved, so clearing this here only mislabelled the
+		// confirmation — someone who had just asked for access was shown
+		// "Configure <server> — enter your setup values", which is not what they
+		// did and not what happened.
+		AskReason: ticket.AskReason,
 	}, nil
 }
 
