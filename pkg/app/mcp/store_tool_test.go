@@ -792,7 +792,21 @@ func TestStoreInstallWithoutAReasonHandsBackTheRequestForm(t *testing.T) {
 	if !strings.Contains(url, "/configure?ticket=") {
 		t.Fatalf("expected the hosted request form, got %q", url)
 	}
-	if !strings.Contains(decodeText(t, raw), url) {
+	text := decodeText(t, raw)
+	if !strings.Contains(text, url) {
 		t.Fatalf("the link must be in the text the user is shown: %s", raw)
+	}
+	// A ticket URL is ~130 characters. Handed over bare it wraps across several
+	// lines in the client and buries the one thing the user has to do, so the
+	// result carries the label to title it with — and names the server the way a
+	// person knows it, not by its catalog code.
+	if sc["name"] != "GitHub" || sc["request_link_label"] != "Request access to GitHub" {
+		t.Fatalf("the result must carry the server's name and the link label, got %+v", sc)
+	}
+	if !strings.Contains(text, "Request access to GitHub") {
+		t.Fatalf("the text must title the link: %s", text)
+	}
+	if strings.Contains(text, "github is outside") {
+		t.Fatalf("the text must name the server, not its code: %s", text)
 	}
 }
