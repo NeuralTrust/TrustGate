@@ -570,8 +570,11 @@ func TestConfigure_TheRequestFormCollectsTheRequestersOwnWords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if !page.Pending || page.AskReason {
-		t.Fatalf("a filed request must report itself pending and stop asking, got %+v", page)
+	// Still a request page after submitting: the template drops the form once
+	// saved, and the flag is what titles the confirmation. Clearing it here
+	// relabelled a sent request as "Configure <server> — enter your setup values".
+	if !page.Pending || !page.AskReason {
+		t.Fatalf("a filed request must report itself pending and stay a request, got %+v", page)
 	}
 	rows := f.rows(t, "com.ahrefs/mcp")
 	if len(rows) != 1 || rows[0].Status != installationdomain.StatusPendingApproval {
@@ -625,12 +628,33 @@ func TestConfigure_TheReasonFieldIsNotACatalogVariable(t *testing.T) {
 // to ask ignores it rather than failing on an unknown name. Anything else
 // unexpected is still a mistake worth reporting.
 func TestConfigure_TheReasonFieldOnAFormThatDoesNotAskIsIgnored(t *testing.T) {
-	f := configureFixture(t, true, shelf("com.ahrefs/mcp"))
-	id := f.ticket(t, "com.ahrefs/mcp", "")
-	if _, err := f.svc.Submit(context.Background(), id, map[string]string{oauth.ReasonFormField: "x"}); err != nil {
+	f := configureFixture(t, true, shelf("snowflake"))
+	id := f.ticket(t, "snowflake", "")
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		oauth.ReasonFormField: "x",
+		"account_url":         "acme.snowflakecomputing.com",
+		"database":            "analytics",
+	}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"nonsense": "x"}); !errors.Is(err, oauth.ErrConfigureInvalid) {
 		t.Fatalf("an unknown variable must still be refused, got %v", err)
+	}
+}
+
+// A configure form for a server with no variables can neither store nor file
+// anything. It used to answer "Saved" — so a requester was told their ask was on
+// its way while no row had been written and no approver would ever see it.
+func TestConfigure_AFormWithNothingToCollectSaysSoInsteadOfSaving(t *testing.T) {
+	f := configureFixture(t, true, shelf("com.ahrefs/mcp"))
+	id := f.ticket(t, "com.ahrefs/mcp", "")
+
+	_, err := f.svc.Submit(context.Background(), id, map[string]string{})
+
+	if !errors.Is(err, oauth.ErrConfigureNothingToCollect) {
+		t.Fatalf("want ErrConfigureNothingToCollect, got %v", err)
+	}
+	if rows := f.rows(t, "com.ahrefs/mcp"); len(rows) != 0 {
+		t.Fatalf("nothing may be recorded by a form that collects nothing, got %+v", rows)
 	}
 }
