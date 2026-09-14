@@ -62,6 +62,17 @@ message Installation {
   // registry_id binds the install to one configured instance (registry) of its
   // code; empty = the code's canonical instance.
   string registry_id = 10;
+  // reason is why the requester asked for the server, in their own words. It is
+  // the whole substance of a pending request — an approver has nothing else to
+  // decide on — so it has to survive the trip to the canonical store.
+  string reason = 11;
+  // requester_groups are the groups the requester carried when they filed, and
+  // the only ones an approval may grant instead of the person.
+  repeated string requester_groups = 12;
+  // The admin's answer, kept so History survives the trip as well.
+  string decision = 13;
+  string decided_by = 14;
+  int64 decided_at_unix = 15;
 }
 
 message UpsertInstallationRequest {
