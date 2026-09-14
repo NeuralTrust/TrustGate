@@ -371,12 +371,25 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 		// install tool: the principal's policy, else the gateway default.
 		gateways := p.Gateways
 		modes := appstore.NewModeResolver(p.Policies)
-		opts = append(opts, appoauth.WithConfigureOpenMode(func(ctx context.Context, gatewayID ids.GatewayID) bool {
+		opts = append(opts, appoauth.WithConfigureOpenMode(func(
+			ctx context.Context,
+			gatewayID ids.GatewayID,
+			principalSub string,
+			groups []string,
+		) bool {
 			gw, err := gateways.FindByID(ctx, gatewayID)
 			if err != nil || gw == nil {
 				return false // unknown gateway: fail closed to curated
 			}
-			return modes.Mode(appgateway.WithGateway(ctx, gw), gatewayID) == gatewaydomain.StoreModeOpen
+			// Resolved for the requester the ticket names. Reading the caller from
+			// the context instead would find nobody on a browser request and answer
+			// with the gateway default, ignoring the principal's own Store policy.
+			return appstore.ResolveMode(appgateway.WithGateway(ctx, gw), modes, appstore.ModeQuery{
+				GatewayID: gatewayID,
+				Subject:   principalSub,
+				Groups:    groups,
+				Fallback:  appstore.EffectiveStoreMode(appgateway.WithGateway(ctx, gw)),
+			}) == gatewaydomain.StoreModeOpen
 		}))
 	}
 	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault, opts...), nil
