@@ -268,7 +268,7 @@ func (u *upstream) CallTool(ctx context.Context, name string, arguments json.Raw
 	} else if err := json.Unmarshal(arguments, &args); err != nil {
 		return nil, &appmcp.RPCError{Code: -32602, Message: "invalid tool arguments"}
 	}
-	validationOptions := []openapi3.SchemaValidationOption{}
+	var validationOptions []openapi3.SchemaValidationOption
 	if strings.HasPrefix(u.compiled.document.Version, "3.1") ||
 		strings.HasPrefix(u.compiled.document.Version, "3.2") {
 		validationOptions = append(validationOptions, openapi3.EnableJSONSchema2020())

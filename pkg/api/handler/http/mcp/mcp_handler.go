@@ -45,14 +45,6 @@ const (
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
-// advertisedProtocolVersions is the ordered list returned by server/discover,
-// newest first, and the single source of truth for what initialize negotiates.
-// The two must not be allowed to drift: server/discover once advertised
-// 2026-07-28 while initialize refused to negotiate it, so a client probing with
-// that revision was silently downgraded, kept applying the newer revision's
-// rules, and rejected every tools/call result as malformed. A revision belongs
-// here only once the whole response path implements it — tools/call relays the
-// upstream's bytes verbatim, so that is not a one-line change.
 var advertisedProtocolVersions = []string{
 	latestProtocolVersion,
 	"2025-03-26",
@@ -197,8 +189,6 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	return writeRPCResult(c, req.ID, result)
 }
 
-// skipMetrics tells the MCP metrics middleware not to publish an event for the
-// current request (ping, notifications, or pre-dispatch failures).
 func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
 }
@@ -212,18 +202,10 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 		return
 	}
 	email := p.Email()
-	// "Who called" is the credential presented, which on a consumer acting as
-	// the application is not the subject the request runs as: that one names the
-	// application, and the trace records it as the consumer already.
 	subject := p.Subject
 	if credential, ok := p.Claims[identity.ClaimCredentialSubject].(string); ok && credential != "" {
 		subject = credential
 	}
-	// A caller authenticated as the application carries no email of its own, so
-	// the trace falls back to the account its linked upstream credential belongs
-	// to. That is deliberate (TestHandler_StampsVaultEmailOnAPIKeyTrace): it
-	// answers "whose account did the upstream see", which for a shared service
-	// account is the only identity in play. It is not a claim about who called.
 	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
 		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
 	}
@@ -254,10 +236,6 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{
 		"protocolVersion": version,
-		// tools.listChanged has to be advertised for clients to act on the
-		// notification at all — Claude drops notifications/tools/list_changed
-		// from a server that did not declare the capability. The gateway backs
-		// it with the SSE stream served on GET.
 		"capabilities": fiber.Map{
 			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
@@ -267,11 +245,6 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, h.connectedProviders(c, rc)),
 		},
-		// instructions steer the connected agent: TrustGate is the governed path
-		// for MCP tools, so the agent should obtain capabilities through this
-		// gateway (installing from the Store when needed) rather than telling the
-		// user to wire an upstream MCP server directly into their client, which
-		// bypasses the gateway's governance, auditing and credential control.
 		"instructions": serverInstructions(rc),
 	})
 }
@@ -280,9 +253,6 @@ const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway
 
 const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
 
-// serverInstructions returns the initialize-time guidance for the calling
-// consumer: the governance baseline for every TrustGate consumer, plus the
-// self-service install guidance for a Store consumer.
 func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
 		return baseServerInstructions + storeServerInstructions
@@ -290,14 +260,6 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	return baseServerInstructions
 }
 
-// connectedProviders describes, for the calling principal, which of this
-// consumer's forwarded-auth providers currently hold a credential and when it
-// last changed. Federation skips upstreams pending consent, so connecting an
-// account on the connect page changes the tool surface without touching any
-// registry or toolkit — the configuration-only fingerprint stayed identical and
-// a version-keyed client kept serving its stale tool list. Providers this
-// consumer does not federate are left out so an unrelated connection elsewhere
-// on the gateway does not invalidate this surface.
 func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
 	ctx := c.UserContext()
 	if h.surface == nil {
@@ -336,17 +298,8 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
-			// Why the gateway is asking. Without it every cause reads as "the
-			// session expired", and which one it was could only be recovered
-			// from the gateway's logs.
 			"cause": consentErr.Cause,
 		})
-		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
-		// clients treat any non-2xx on this endpoint as a transport failure: they
-		// drop the connection and restart authentication instead of reading the
-		// body, so the connect URL never reaches the user. The refusal is
-		// reported to the agent through the JSON-RPC error, and the semantic
-		// status (403) is recorded on the span for metrics and traces.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -357,17 +310,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			},
 		})
 	case errors.As(err, &appNotLinked):
-		// The application is missing an account an administrator has to connect.
-		// It rides on HTTP 200 for the same transport reason as the consent case
-		// above, and carries no connect ticket: nobody on this call can redeem
-		// one, and minting it would drop a bearer capability into the
-		// application's error channel and its logs.
-		//
-		// RUN-1556: the code is still consent-required rather than
-		// policy-blocked. An application connects out of band — an administrator
-		// walks /connect with its api key — so the call succeeds once that
-		// happens, and codePolicyBlocked is the one code a client is told never
-		// to retry.
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
@@ -375,10 +317,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			Error:   &rpcError{Code: codeConsentRequired, Message: appNotLinked.Error()},
 		})
 	case errors.As(err, &notPermitted):
-		// A denial the agent should read and act on, so it rides on HTTP 200 for
-		// the same transport reason as the consent case above; the span records
-		// it as forbidden. Written inline rather than through writeRPCError,
-		// which would reclassify the outcome as a generic client error.
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
@@ -409,16 +347,10 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
 	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
-		// A dial failure names the upstream address, and for a server with
-		// per-user URL variables that address can carry the user's API token
-		// (?token=...). The client gets a fixed message; the detail — already
-		// redacted at source — goes to the server log only.
 		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
 			"method", c.Method(), "path", c.Path(), "error", err)
 		return writeRPCError(c, id, codeInternalError, "upstream MCP server unreachable")
 	case errors.Is(err, registrydomain.ErrURLTemplate):
-		// The caller's own per-user URL configuration is unusable (missing value,
-		// unsafe host, ...). These messages name the variable, never its value.
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
@@ -462,15 +394,6 @@ func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
 	return c.Status(status).JSON(body)
 }
 
-// httpStatusForRPCError maps gateway denials onto the wire HTTP status so
-// agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
-// httpStatusForRPCError is always 200: on the MCP wire a JSON-RPC error is a
-// successful exchange carrying a failed call. Clients treat a 4xx/5xx here as a
-// transport failure — they drop the connection and restart authentication
-// without reading the body — so a policy denial answered with 403 killed the
-// session instead of telling the agent it was blocked. The status the refusal
-// means (403, 429, 503) is recorded on the span, and rate-limit headers still
-// ride along on the response.
 func httpStatusForRPCError(_ *appmcp.RPCError) int {
 	return fiber.StatusOK
 }
@@ -502,10 +425,6 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
 	}
-	// The MCP Store is synthetic: it is not in the gateway's persisted consumer
-	// data. The auth chain has already restricted its path to the built-in
-	// default identity provider, so any authenticated caller that reaches here is
-	// admitted. Stamp it with the addressed gateway from the request context.
 	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
 		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 		if !ok {
@@ -522,10 +441,6 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, fiber.NewError(fiber.StatusNotFound, "consumer is not an MCP consumer")
 	}
-	// The built-in NeuralTrust default identity provider is not attached to the
-	// consumer's AuthIDs (the consumer has no identity provider of its own). The
-	// auth chain only resolves a default-IdP session on a path that has no
-	// oauth2 provider, so accepting it here is consistent with that scoping.
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
@@ -554,19 +469,10 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	return rc, nil
 }
 
-// machineCredential reports whether the caller authenticated as the application
-// itself (API key or client certificate). A consumer whose application names
-// its own end users must be called that way: a platform login reaching it
-// through the built-in identity provider would be discarded by the end-user
-// swap, so it is refused instead.
 func machineCredential(p *identity.Principal) bool {
 	return p != nil && (p.Method == identity.MethodAPIKey || p.Method == identity.MethodMTLS)
 }
 
-// endUserPrincipal is the principal a request runs as when the application
-// names its end user: the consumer-namespaced subject that keys the user's
-// upstream connections, with the application's own credential kept in the
-// claims for audit. Access rules never see it; the application is the boundary.
 func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, endUser string) *identity.Principal {
 	endUser = strings.TrimSpace(endUser)
 	p := &identity.Principal{
