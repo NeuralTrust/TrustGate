@@ -455,6 +455,16 @@ func (s *configureService) storePlain(
 	ticket *ConnectTicket,
 	plain map[string]string,
 ) (bool, error) {
+	// A form that asked for a reason IS the request: filing it is the whole point
+	// of the submit, so it goes through the governed installer even when the
+	// principal already holds a row for this code. A built-in server has one from
+	// the first Portal install or consumer binding, and merging into that row
+	// instead stored the values, filed nothing, and let the page report "Saved" —
+	// the requester was told their ask was on its way while no approver ever saw
+	// it. The installer reuses the row, so this files one request, not a second.
+	if ticket.AskReason {
+		return s.installConfigured(ctx, gatewayID, ticket, plain)
+	}
 	inst, err := s.instance(ctx, gatewayID, ticket)
 	if err != nil {
 		return false, err

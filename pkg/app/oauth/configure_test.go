@@ -658,3 +658,46 @@ func TestConfigure_AFormWithNothingToCollectSaysSoInsteadOfSaving(t *testing.T) 
 		t.Fatalf("nothing may be recorded by a form that collects nothing, got %+v", rows)
 	}
 }
+
+// The reported flow: the principal already holds a row for a built-in server
+// (one is created the first time it is installed from the Portal or bound to a
+// consumer), then the install tool refuses for access and hands them the request
+// form. Submitting it has to file the request — merging the values into that
+// existing row instead stored nothing anyone could act on, and the page still
+// said "Saved" while no approver ever saw a request.
+func TestConfigure_ARequestFormFilesTheRequestEvenWhenARowAlreadyExists(t *testing.T) {
+	reg := shelf("com.ahrefs/mcp")
+	f := configureFixture(t, false, reg)
+	// The row a built-in server leaves behind, bound to the instance the gateway
+	// materialised for it.
+	existing := f.seed(t, "com.ahrefs/mcp", installationdomain.StatusInstalled, nil)
+	existing.RegistryID = reg.ID
+	if err := f.installs.Upsert(context.Background(), existing); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	id := f.reasonTicket(t, "com.ahrefs/mcp")
+
+	page, err := f.svc.Submit(context.Background(), id, map[string]string{
+		oauth.ReasonFormField: "I need it for the launch checklist",
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !page.Pending {
+		t.Fatalf("the submit must report the request as pending, got %+v", page)
+	}
+
+	rows := f.rows(t, "com.ahrefs/mcp")
+	if len(rows) != 1 {
+		t.Fatalf("the request must reuse the principal's row, got %d", len(rows))
+	}
+	if rows[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("status = %q, want a filed request", rows[0].Status)
+	}
+	if rows[0].Reason != "I need it for the launch checklist" {
+		t.Fatalf("reason = %q, want the requester's words", rows[0].Reason)
+	}
+	if rows[0].ID != existing.ID {
+		t.Fatalf("the request must reuse the row, not add a second one")
+	}
+}
