@@ -15,9 +15,12 @@
 package catalog
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,6 +51,21 @@ func TestCatalogCapabilities_DerivesFromTools(t *testing.T) {
 		"Create page",
 		"Search and read content",
 	}, got)
+}
+
+func TestEnterpriseSeed_EveryServerDeclaresCapabilities(t *testing.T) {
+	t.Parallel()
+
+	var raw rawCatalog
+	require.NoError(t, json.Unmarshal(mcpcatalog.EnterpriseServersJSON, &raw))
+	require.Len(t, raw.Servers, 200)
+	for _, server := range raw.Servers {
+		require.Lenf(t, server.Capabilities, 3, server.Name)
+		for _, line := range server.Capabilities {
+			require.NotEmpty(t, strings.TrimSpace(line), server.Name)
+			require.LessOrEqualf(t, len(line), capabilityMaxLen, "%s: %q", server.Name, line)
+		}
+	}
 }
 
 func TestParseCuratedMCPServers_ExposesCapabilities(t *testing.T) {
