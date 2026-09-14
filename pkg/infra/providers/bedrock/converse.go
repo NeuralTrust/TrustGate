@@ -267,7 +267,11 @@ func sdkInferenceConfig(ic *adapter.ConverseInferenceConfig) *bedrockTypes.Infer
 	}
 	out := &bedrockTypes.InferenceConfiguration{StopSequences: ic.StopSequences}
 	if ic.MaxTokens > 0 {
-		out.MaxTokens = aws.Int32(int32(min(ic.MaxTokens, math.MaxInt32)))
+		maxTokens := ic.MaxTokens
+		if maxTokens > math.MaxInt32 {
+			maxTokens = math.MaxInt32
+		}
+		out.MaxTokens = aws.Int32(int32(maxTokens))
 	}
 	if ic.Temperature != nil {
 		out.Temperature = aws.Float32(float32(*ic.Temperature))
@@ -430,10 +434,7 @@ func converseStreamLines(ctx context.Context, stream converseEventStream) iter.S
 			if len(data) == 0 {
 				continue
 			}
-			line := make([]byte, 0, len(data)+6)
-			line = append(line, []byte("data: ")...)
-			line = append(line, data...)
-			if !yield(line, nil) {
+			if !yield(append([]byte("data: "), data...), nil) {
 				return
 			}
 			if !yield([]byte{}, nil) {
