@@ -501,6 +501,52 @@ func TestAdaptRequest_AnthropicToGemini(t *testing.T) {
 	assert.NotContains(t, params, "additionalProperties")
 }
 
+func TestAdaptRequest_AnthropicServerToolWithoutNameIsDropped(t *testing.T) {
+	input := `{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"messages": [{"role": "user", "content": "Hello"}],
+		"tools": [
+			{
+				"name": "edit_file",
+				"description": "Replace a string in a file.",
+				"input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}
+			},
+			{"type": "web_search_20250305"}
+		]
+	}`
+
+	t.Run("openai egress sends only the named tool", func(t *testing.T) {
+		out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatOpenAI)
+		require.NoError(t, err)
+		assert.NotContains(t, string(out), `"name":""`)
+
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal(out, &result))
+		tools, ok := result["tools"].([]interface{})
+		require.True(t, ok)
+		require.Len(t, tools, 1)
+
+		fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+		assert.Equal(t, "edit_file", fn["name"])
+		params := fn["parameters"].(map[string]interface{})
+		assert.Contains(t, params["properties"], "path")
+	})
+
+	t.Run("gemini egress declares only the named tool", func(t *testing.T) {
+		out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatGemini)
+		require.NoError(t, err)
+
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal(out, &result))
+		tools := result["tools"].([]interface{})
+		require.Len(t, tools, 1)
+		decls := tools[0].(map[string]interface{})["functionDeclarations"].([]interface{})
+		require.Len(t, decls, 1)
+		assert.Equal(t, "edit_file", decls[0].(map[string]interface{})["name"])
+	})
+}
+
 func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	input := `{
 		"model": "anthropic.claude-3-sonnet",
