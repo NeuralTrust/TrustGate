@@ -94,7 +94,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(newLiveModelSource); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewLiveAvailabilityFilter); err != nil {
+	// One instance serves both roles, so the live listing shares the filter's
+	// cache, its singleflight and its timeout budget.
+	if err := c.Provide(appcatalog.NewLiveCatalog); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewRegistryAvailability); err != nil {

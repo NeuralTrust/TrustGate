@@ -358,14 +358,21 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &appNotLinked):
 		// The application is missing an account an administrator has to connect.
-		// Like the consent case it rides on HTTP 200 so the client reads the
-		// message instead of treating it as a transport failure, and like it the
-		// span records a policy denial.
+		// It rides on HTTP 200 for the same transport reason as the consent case
+		// above, and carries no connect ticket: nobody on this call can redeem
+		// one, and minting it would drop a bearer capability into the
+		// application's error channel and its logs.
+		//
+		// RUN-1556: the code is still consent-required rather than
+		// policy-blocked. An application connects out of band — an administrator
+		// walks /connect with its api key — so the call succeeds once that
+		// happens, and codePolicyBlocked is the one code a client is told never
+		// to retry.
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
-			Error:   &rpcError{Code: codePolicyBlocked, Message: appNotLinked.Error()},
+			Error:   &rpcError{Code: codeConsentRequired, Message: appNotLinked.Error()},
 		})
 	case errors.As(err, &notPermitted):
 		// A denial the agent should read and act on, so it rides on HTTP 200 for
