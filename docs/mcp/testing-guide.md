@@ -319,10 +319,21 @@ Checklist:
    tool's `title` (and `description`, when present) is prefixed with the
    bound registry name so hosts that flatten every upstream under one
    connector — Claude Desktop Connectors, for example — still show which
-   MCP server the tool came from. RPC `name` stays the upstream name
-   unless there is a collision or an `expose_as` alias.
+   MCP server the tool came from. A single-registry consumer keeps the upstream RPC name (or `expose_as`
+   alias). Federated consumers and per-instance installations publish tools and
+   prompts as `mcp_<registry-hash>_<name>_<name-hash>`, where the hash is the first eight
+   SHA-256 bytes of the registry ID, encoded as 16 lowercase hex characters.
+   The name hash uses the same encoding over the original name. The readable
+   name component is capped at 26 characters, keeping the full name within 64. The namespace stays fixed when another upstream becomes unavailable. Clients
+   must refresh their tool and prompt lists after upgrading; old federated names
+   are not accepted as aliases because they can identify a different upstream.
 3. `tools/call` returns upstream content; blocked tools get an RPC error
    (e.g. `-32602` for toolkit miss).
+
+Remote MCP responses are limited to 8 MiB per JSON body or SSE event. Each
+catalog listing is limited to 16 MiB, 10,000 entries and 100 pages; repeated
+pagination cursors are rejected. Check that oversized upstream responses fail
+with an RPC error and that a subsequent healthy request still succeeds.
 
 For OAuth-backed consumers, use the MCP plane’s well-known /
 `/oauth/*` flow (see §5 OAuth shared host) instead of a static API key.

@@ -41,6 +41,10 @@ func invokeUpstream[T any](
 		var zero T
 		return zero, err
 	}
+	return invokeResolvedUpstream(c, ctx, rc, reg, target, invoke)
+}
+
+func invokeResolvedUpstream[T any](c *composer, ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target Target, invoke func(Upstream) (T, error)) (T, error) {
 	out, err := invokeTarget(c, ctx, target, invoke)
 	if !errors.Is(err, ErrUpstreamUnauthorized) || c.creds == nil {
 		return out, err

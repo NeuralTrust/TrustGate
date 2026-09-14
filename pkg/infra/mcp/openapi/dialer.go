@@ -17,6 +17,7 @@ package openapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,11 +43,12 @@ const (
 )
 
 type Dialer struct {
-	remote   appmcp.Dialer
-	compiler appopenapi.Compiler
-	cache    sync.Map
-	flight   singleflight.Group
-	client   *http.Client
+	remote       appmcp.Dialer
+	compiler     appopenapi.Compiler
+	cache        sync.Map
+	flight       singleflight.Group
+	client       *http.Client
+	publicClient *http.Client
 }
 
 type compiledDocument struct {
@@ -71,9 +73,10 @@ func NewDialerWithClient(
 	client *http.Client,
 ) appmcp.Dialer {
 	return &Dialer{
-		remote:   remote,
-		compiler: compiler,
-		client:   client,
+		remote:       remote,
+		compiler:     compiler,
+		client:       client,
+		publicClient: infraopenapi.NewPublicHTTPClient(30 * time.Second),
 	}
 }
 
@@ -81,22 +84,29 @@ func (d *Dialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upst
 	if target.OpenAPI == nil {
 		return d.remote.Connect(ctx, target)
 	}
-	key := target.Revision
-	if key == "" {
-		key = target.OpenAPI.SpecURL + "|" + target.OpenAPI.BaseURL
-	}
+	key := compilationCacheKey(target)
 	compiled, err := d.load(ctx, key, *target.OpenAPI)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", appmcp.ErrUnreachable, err)
 	}
+	client := d.client
+	if target.RestrictPrivateNetwork {
+		client = d.publicClient
+	}
 	return &upstream{
 		compiled: compiled,
 		headers:  target.Headers,
-		client:   d.client,
+		client:   client,
 	}, nil
 }
 
+func compilationCacheKey(target appmcp.Target) string {
+	source := []byte(target.OpenAPI.SpecURL + "\x00" + target.OpenAPI.BaseURL)
+	return fmt.Sprintf("%s\x00%x", target.Revision, sha256.Sum256(source))
+}
+
 func (d *Dialer) evictStaleRevisions(current string) {
+	current, _, _ = strings.Cut(current, "\x00")
 	separator := strings.IndexByte(current, ':')
 	if separator < 0 {
 		return
@@ -104,7 +114,8 @@ func (d *Dialer) evictStaleRevisions(current string) {
 	prefix := current[:separator+1]
 	d.cache.Range(func(key, _ any) bool {
 		cachedKey, ok := key.(string)
-		if ok && cachedKey != current && strings.HasPrefix(cachedKey, prefix) {
+		cachedRevision, _, _ := strings.Cut(cachedKey, "\x00")
+		if ok && cachedRevision != current && strings.HasPrefix(cachedRevision, prefix) {
 			d.cache.Delete(cachedKey)
 		}
 		return true
