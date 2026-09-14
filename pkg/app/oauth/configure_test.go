@@ -178,8 +178,12 @@ func configureFixture(t *testing.T, open bool, shelfItems ...*registrydomain.Reg
 }
 
 // configureFixtureGranted is configureFixture with Store access grants.
+// seenOpenModeSubject records who the last open-mode decision was made for.
+var seenOpenModeSubject string
+
 func configureFixtureGranted(t *testing.T, open bool, grants []*storeaccessdomain.Grant, shelfItems ...*registrydomain.Registry) configureFixtureT {
 	t.Helper()
+	seenOpenModeSubject = ""
 	gw := ids.New[ids.GatewayKind]()
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
@@ -198,7 +202,12 @@ func configureFixtureGranted(t *testing.T, open bool, grants []*storeaccessdomai
 	}
 	svc := oauth.NewConfigureService(store, &stubDataFinder{data: data}, catalog, installs, vault,
 		oauth.WithConfigureInstaller(installer),
-		oauth.WithConfigureOpenMode(func(context.Context, ids.GatewayID) bool { return open }),
+		oauth.WithConfigureOpenMode(func(_ context.Context, _ ids.GatewayID, principalSub string, _ []string) bool {
+			// Pinned to the requester the ticket names: a fixture that ignored the
+			// subject would not notice the form deciding for nobody.
+			seenOpenModeSubject = principalSub
+			return open
+		}),
 	)
 	return configureFixtureT{svc: svc, store: store, vault: vault, installs: installs, shelf: sh, gw: gw}
 }
@@ -699,5 +708,27 @@ func TestConfigure_ARequestFormFilesTheRequestEvenWhenARowAlreadyExists(t *testi
 	}
 	if rows[0].ID != existing.ID {
 		t.Fatalf("the request must reuse the row, not add a second one")
+	}
+}
+
+// The Store mode is a per-principal decision: a user can hold a policy of their
+// own that differs from the gateway default. The form runs on the requester's
+// BROWSER, which carries a ticket and no principal, so a resolver that reads the
+// caller from the context sees nobody and answers with the gateway default —
+// the form could then install outright what the install tool had just refused,
+// filing no request and reporting "Saved". The ticket is the requester's proof,
+// so it is what the decision is made for.
+func TestConfigure_TheOpenModeDecisionIsMadeForTheRequester(t *testing.T) {
+	f := configureFixture(t, false, shelf("com.ahrefs/mcp"))
+	id := f.reasonTicket(t, "com.ahrefs/mcp", "platform")
+
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		oauth.ReasonFormField: "I need it for the launch checklist",
+	}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	if seenOpenModeSubject != "ana" {
+		t.Fatalf("the mode was decided for %q, want the ticket's principal", seenOpenModeSubject)
 	}
 }
