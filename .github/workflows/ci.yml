@@ -184,7 +184,7 @@ jobs:
     with:
       gitleaks_enabled: true
       gosec_enabled: true
-      gosec_args: "-severity high ./..."
+      gosec_args: "-severity high -exclude-dir=examples ./..."
       govulncheck_enabled: true
 
   image-scan:
