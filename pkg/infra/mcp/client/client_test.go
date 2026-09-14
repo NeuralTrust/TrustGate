@@ -569,7 +569,7 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestSessionCloseWaitsForActiveCall(t *testing.T) {
+func TestSessionCloseCancelsActiveCall(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -584,6 +584,7 @@ func TestSessionCloseWaitsForActiveCall(t *testing.T) {
 	)
 	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
 	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
 	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -597,23 +598,25 @@ func TestSessionCloseWaitsForActiveCall(t *testing.T) {
 	<-started
 	closeDone := make(chan struct{})
 	go func() {
-		sess.Close(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		sess.Close(ctx)
 		close(closeDone)
 	}()
 	select {
 	case <-closeDone:
-		t.Fatal("session closed while a call was active")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	if err := <-callDone; err != nil {
-		t.Fatalf("call: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("session close waited for an unresponsive active call")
 	}
 	select {
-	case <-closeDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("session close did not finish")
+	case err := <-callDone:
+		if err == nil {
+			t.Fatal("active call succeeded after closing its session")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active call was not cancelled")
 	}
+
 	if err := sess.Ping(context.Background()); err == nil {
 		t.Fatal("closed session accepted a new operation")
 	}

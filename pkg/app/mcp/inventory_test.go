@@ -76,8 +76,8 @@ func TestComposer_ToolInventory_ReportsThePendingServerListToolsOmits(t *testing
 	if linked == nil || linked.State != InventoryStateReady {
 		t.Fatalf("linear = %+v, want state %q", linked, InventoryStateReady)
 	}
-	if names := inventoryToolNames(linked); len(names) != 2 || names[0] != "search" || names[1] != "create_issue" {
-		t.Fatalf("linear tools = %v, want [search create_issue]", names)
+	if names := inventoryToolNames(linked); len(names) != 2 || names[0] != namedFor(regLinked, "search") || names[1] != namedFor(regLinked, "create_issue") {
+		t.Fatalf("linear tools = %v, want [%s %s]", names, namedFor(regLinked, "search"), namedFor(regLinked, "create_issue"))
 	}
 	pending := inventoryByName(inv, "notion")
 	if pending == nil || pending.State != InventoryStateNeedsConnect {
