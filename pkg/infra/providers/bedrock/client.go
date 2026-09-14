@@ -87,7 +87,7 @@ func (c *client) Completions(
 		return nil, err
 	}
 
-	reqBody = stripBedrockFields(reqBody)
+	reqBody = prepareInvokeBody(reqBody, model)
 
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
 	if err != nil {
@@ -303,7 +303,7 @@ func (c *client) CompletionsStream(
 		return nil, err
 	}
 
-	reqBody = stripBedrockFields(reqBody)
+	reqBody = prepareInvokeBody(reqBody, model)
 
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
 	if err != nil {
@@ -499,6 +499,13 @@ func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, regi
 		))
 	}
 	return config.LoadDefaultConfig(ctx, opts...)
+}
+
+// prepareInvokeBody puts the body in the shape InvokeModel accepts for model:
+// the schema of the model's own family, minus the keys Bedrock carries outside
+// the body.
+func prepareInvokeBody(body []byte, model string) []byte {
+	return stripBedrockFields(adapter.NormalizeBedrockRequestForModel(body, model))
 }
 
 // stripBedrockFields removes keys from the JSON body that the Bedrock

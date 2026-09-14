@@ -609,3 +609,38 @@ func TestProviderInvoke_LeavesMaxTokensWithinLimit(t *testing.T) {
 	assert.Empty(t, resp.Headers["X-Max-Tokens-Clamped"])
 	assert.NotContains(t, string(sent), `"max_completion_tokens"`)
 }
+
+func TestProviderInvoke_BedrockNovaBindingDefaultUsesNovaSchema(t *testing.T) {
+	const novaModel = "eu.amazon.nova-pro-v1:0"
+	const novaResponseBody = `{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, _ *providers.Config, body []byte) {
+			sent = body
+		}).
+		Return([]byte(novaResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("bedrock").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":256}`),
+		AllowedModels: []string{novaModel},
+		DefaultModel:  novaModel,
+	}
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("bedrock"), req)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &body))
+	assert.NotContains(t, body, "max_tokens",
+		"Nova rejects the Claude-on-Bedrock max_tokens outright (ENG-1526)")
+	assert.NotContains(t, body, "anthropic_version")
+	assert.Contains(t, body, "inferenceConfig")
+}
