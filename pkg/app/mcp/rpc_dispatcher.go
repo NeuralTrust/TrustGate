@@ -79,8 +79,6 @@ func NewRPCDispatcher(
 	return d
 }
 
-// WithInventoryTool wires the meta-tool that lists the caller's whole surface
-// server by server. Optional: a plane without it simply does not offer the tool.
 func (d *RPCDispatcher) WithInventoryTool(inventory InventoryTool) *RPCDispatcher {
 	d.inventory = inventory
 	return d
@@ -91,9 +89,6 @@ func (d *RPCDispatcher) WithStoreScoper(scoper appstore.Scoper) *RPCDispatcher {
 	return d
 }
 
-// StoreScoper returns the Store scoper this dispatcher applies before every
-// method (nil when the Store is not wired), so the stream's surface watcher can
-// fingerprint the same view the caller's tools/list gets.
 func (d *RPCDispatcher) StoreScoper() appstore.Scoper {
 	if d == nil {
 		return nil
@@ -120,19 +115,8 @@ func (d *RPCDispatcher) Dispatch(
 	return handler(ctx, dispatchRequest{consumer: consumer, baseURL: baseURL, params: params})
 }
 
-// emptySurfaceInsteadOfError reports whether a list method should answer with an
-// empty surface rather than fail: an upstream still awaiting the user's consent
-// is skipped (the connect page handles it, and the Store meta-tools must stay
-// reachable so the user can fix it), and a consumer that acts for users — the
-// Store, whose registries are whatever the caller installed and Access allows —
-// has nothing to list when none is exposed to this principal or none is
-// reachable. Every list method
-// (tools, prompts, resources, resource templates) degrades the same way so a
-// client that lists all four during initialization never sees one of them fail
-// on a pending consent.
 func emptySurfaceInsteadOfError(consumer *appconsumer.RoutableConsumer, err error) bool {
-	var consentErr *ConsentRequiredError
-	if errors.As(err, &consentErr) {
+	if _, ok := errors.AsType[*ConsentRequiredError](err); ok {
 		return true
 	}
 	perUser := consumer != nil && consumer.Consumer != nil &&

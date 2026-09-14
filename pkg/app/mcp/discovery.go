@@ -76,7 +76,6 @@ func discoverAll[T any](
 			return nil
 		})
 	}
-	// Every goroutine reports its own outcome, so the group never carries one.
 	_ = group.Wait()
 	return out
 }

@@ -119,19 +119,9 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 			return up.CallTool(ctx, b.tool.Name, arguments)
 		})
 	}
-	// The upstream offers this tool but the consumer's toolkit excludes it: a
-	// policy denial, and the answer must say so. Connecting an account would not
-	// change it, so this is checked before any pending consent — otherwise a
-	// forbidden tool sends the user off to an authorization flow that cannot
-	// grant it.
 	if _, forbidden := comp.denied[name]; forbidden {
 		return nil, &ToolNotPermittedError{Tool: name}
 	}
-	// No reachable upstream exposes this tool. If another upstream is still
-	// awaiting consent it may be the one that owns the tool, so the consent
-	// requirement is the useful answer; otherwise the tool genuinely does not
-	// exist. A tool served by a reachable upstream never reaches this point, so
-	// an unconnected provider can no longer break calls routed elsewhere.
 	if comp.consent != nil {
 		return nil, comp.consent
 	}
@@ -194,10 +184,6 @@ type serverSurface struct {
 	err error
 }
 
-// serverSurfaces discovers every bound upstream once and reports each one's
-// outcome, without deciding what to do about a failure — that is the caller's
-// call, since federation degrades differently from an inventory. Only a
-// cancelled context aborts.
 func (c *composer) serverSurfaces(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -212,8 +198,7 @@ func (c *composer) serverSurfaces(
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			var consentErr *ConsentRequiredError
-			if errors.As(err, &consentErr) {
+			if consentErr, ok := errors.AsType[*ConsentRequiredError](err); ok {
 				surface.consent = consentErr
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
@@ -240,13 +225,6 @@ func (c *composer) serverSurfaces(
 	return out, nil
 }
 
-// compose discovers every upstream bound to the consumer and returns the tool
-// bindings of the reachable ones. An upstream awaiting user consent never
-// aborts the composition — it is skipped so the linked upstreams still federate
-// — and its consent requirement is reported separately so each caller can
-// decide whether it is relevant: listing ignores it, calling a tool no reachable
-// upstream serves reports it. Only when nothing at all could be composed does it
-// become the returned error.
 func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) (*composition, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
@@ -260,19 +238,13 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 
 	var candidates []binding
 	var pendingConsent *ConsentRequiredError
-	// firstSkipped is the reason the first fail-open skip gave. It matters only
-	// when nothing at all was reachable: there is no healthy surface left to
-	// protect, so the caller is better served by the real cause — a
-	// misconfiguration like an upstream that reuses the caller's token — than by
-	// a bare "unreachable".
+
 	var firstSkipped error
 	denied := make(map[string]struct{})
 	reachable := 0
 	for _, surface := range surfaces {
 		reg := surface.registry
 		if surface.consent != nil {
-			// Partial consent is allowed on the connect page — skip unlinked
-			// upstreams during federation and serve tools from linked ones.
 			if pendingConsent == nil {
 				pendingConsent = surface.consent
 			}
@@ -291,9 +263,6 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 		reachable++
 		candidates = append(candidates, surface.bindings...)
-		// Remember what the toolkit turned away. A call for one of these is a
-		// policy denial, and answering it with "not found" — or worse, with a
-		// consent prompt for an unrelated upstream — hides the real reason.
 		for _, name := range surface.denied {
 			denied[name] = struct{}{}
 			names := resolveExposedNames([]exposedName{exposedNameFor(name, reg)}, len(registries) > 1)
@@ -301,8 +270,6 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		}
 	}
 	if reachable == 0 {
-		// Nothing could be composed. A pending consent requirement is the more
-		// actionable explanation, so it wins over a bare "unreachable".
 		if pendingConsent != nil {
 			return nil, pendingConsent
 		}
@@ -319,18 +286,12 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	return &composition{bindings: bindings, denied: denied, consent: pendingConsent}, nil
 }
 
-// composition is the consumer's effective MCP surface for one request: the tool
-// bindings it may use, the tools its toolkit turned away, and any upstream that
-// is still awaiting user consent.
 type composition struct {
 	bindings []binding
 	denied   map[string]struct{}
 	consent  *ConsentRequiredError
 }
 
-// toolPolicy is what a consumer's toolkit permits on one server: everything the
-// server offers, or an explicit set (possibly empty). The zero value permits
-// everything, which is what a consumer with no toolkit gets.
 type toolPolicy struct {
 	restricted bool
 	names      []string
