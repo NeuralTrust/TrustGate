@@ -147,6 +147,16 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 }
 
 func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, error) {
+	return r.AdaptRequestForModel(body, source, target, "")
+}
+
+// AdaptRequestForModel converts a request the way AdaptRequest does, seeding the
+// canonical model with fallbackModel when the body carries none. Bedrock hosts
+// one wire schema per model family and picks the encoder from the model alone,
+// so without the fallback a body that leaves the model to the binding default
+// encodes as Claude and Nova answers "extraneous key [max_tokens] is not
+// permitted" (ENG-1526): the default is only applied further down the pipeline.
+func (r *Registry) AdaptRequestForModel(body []byte, source, target Format, fallbackModel string) ([]byte, error) {
 	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
@@ -168,6 +178,9 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
+	if canonical.Model == "" {
+		canonical.Model = fallbackModel
+	}
 
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {
