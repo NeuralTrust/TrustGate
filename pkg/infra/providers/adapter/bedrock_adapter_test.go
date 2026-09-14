@@ -714,3 +714,197 @@ func TestBedrock_DetectFamilyByModel(t *testing.T) {
 		})
 	}
 }
+
+func TestAdaptRequestForModel_BindingDefaultPicksNovaEncoder(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"Hello, Nova!"}],"max_tokens":256}`
+
+	out, err := NewRegistry().AdaptRequestForModel(
+		[]byte(input), FormatOpenAI, FormatBedrock, "eu.amazon.nova-pro-v1:0",
+	)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.NotContains(t, body, "max_tokens")
+	assert.NotContains(t, body, "anthropic_version")
+
+	var result novaRequest
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.NotNil(t, result.InferenceConfig)
+	assert.Equal(t, 256, result.InferenceConfig.MaxTokens)
+	require.Len(t, result.Messages, 1)
+	require.Len(t, result.Messages[0].Content, 1)
+	assert.Equal(t, "Hello, Nova!", result.Messages[0].Content[0].Text)
+}
+
+func TestAdaptRequestForModel_AnthropicIngressBindingDefault(t *testing.T) {
+	input := `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":64}`
+
+	out, err := NewRegistry().AdaptRequestForModel(
+		[]byte(input), FormatAnthropic, FormatBedrock, "amazon.nova-pro-v1:0",
+	)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.NotContains(t, body, "max_tokens")
+
+	var result novaRequest
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.NotNil(t, result.InferenceConfig)
+	assert.Equal(t, 64, result.InferenceConfig.MaxTokens)
+}
+
+func TestAdaptRequestForModel_BindingDefaultPicksFamilyEncoder(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":128}`
+
+	tests := []struct {
+		name     string
+		model    string
+		tokenKey func(t *testing.T, out []byte) int
+	}{
+		{
+			name:  "titan",
+			model: "amazon.titan-text-express-v1",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result titanRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				require.NotNil(t, result.TextGenerationConfig)
+				return result.TextGenerationConfig.MaxTokenCount
+			},
+		},
+		{
+			name:  "llama",
+			model: "meta.llama3-70b-instruct-v1:0",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result llamaRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				return result.MaxGenLen
+			},
+		},
+		{
+			name:  "nova behind an inference profile",
+			model: "us.amazon.nova-lite-v1:0",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result novaRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				require.NotNil(t, result.InferenceConfig)
+				return result.InferenceConfig.MaxTokens
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewRegistry().AdaptRequestForModel([]byte(input), FormatOpenAI, FormatBedrock, tt.model)
+			require.NoError(t, err)
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &body))
+			assert.NotContains(t, body, "max_tokens")
+			assert.NotContains(t, body, "anthropic_version")
+			assert.Equal(t, 128, tt.tokenKey(t, out))
+		})
+	}
+}
+
+func TestAdaptRequestForModel_FallbackOnlySeedsBedrock(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
+
+	out, err := NewRegistry().AdaptRequestForModel(
+		[]byte(input), FormatOpenAI, FormatAnthropic, "claude-sonnet-4-5",
+	)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.NotContains(t, body, "model",
+		"a non-Bedrock target must leave the model to EnforceModel, which injects the default unchecked")
+}
+
+func TestAdaptRequestForModel_BodyModelWinsOverFallback(t *testing.T) {
+	input := `{"model":"anthropic.claude-3-5-sonnet-20241022-v2:0","messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
+
+	out, err := NewRegistry().AdaptRequestForModel(
+		[]byte(input), FormatOpenAI, FormatBedrock, "amazon.nova-pro-v1:0",
+	)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.Contains(t, body, "max_tokens")
+	assert.Contains(t, body, "anthropic_version")
+}
+
+func TestAdaptRequestForModel_NoFallbackKeepsPreviousBehaviour(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
+
+	out, err := NewRegistry().AdaptRequestForModel([]byte(input), FormatOpenAI, FormatBedrock, "")
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.Contains(t, body, "anthropic_version")
+}
+
+func TestNormalizeBedrockRequestForModel(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		body  string
+		nova  bool
+	}{
+		{
+			name:  "claude shaped body on nova",
+			model: "amazon.nova-pro-v1:0",
+			body:  `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
+			nova:  true,
+		},
+		{
+			name:  "openai shaped body on nova behind an inference profile",
+			model: "eu.amazon.nova-pro-v1:0",
+			body:  `{"messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
+			nova:  true,
+		},
+		{
+			name:  "native nova body untouched",
+			model: "amazon.nova-pro-v1:0",
+			body:  `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"inferenceConfig":{"maxTokens":128}}`,
+			nova:  true,
+		},
+		{
+			name:  "claude model keeps its own schema",
+			model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+			body:  `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
+			nova:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := NormalizeBedrockRequestForModel([]byte(tt.body), tt.model)
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &body))
+			if !tt.nova {
+				assert.JSONEq(t, tt.body, string(out))
+				return
+			}
+			assert.NotContains(t, body, "max_tokens")
+			assert.NotContains(t, body, "anthropic_version")
+
+			var result novaRequest
+			require.NoError(t, json.Unmarshal(out, &result))
+			require.NotNil(t, result.InferenceConfig)
+			assert.Equal(t, 128, result.InferenceConfig.MaxTokens)
+			require.Len(t, result.Messages, 1)
+			require.Len(t, result.Messages[0].Content, 1)
+			assert.Equal(t, "hi", result.Messages[0].Content[0].Text)
+		})
+	}
+}
+
+func TestNormalizeBedrockRequestForModel_UnparsableBodyUntouched(t *testing.T) {
+	body := []byte(`not json`)
+	assert.Equal(t, body, NormalizeBedrockRequestForModel(body, "amazon.nova-pro-v1:0"))
+}
