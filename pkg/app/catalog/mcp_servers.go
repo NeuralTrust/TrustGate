@@ -298,7 +298,7 @@ func hasStaticCredentialSlot(s rawServer) bool {
 func normalizeAuthMethods(raw []string) []string {
 	seen := make(map[string]struct{}, len(raw))
 	for _, m := range raw {
-		seen[m] = struct{}
+		seen[m] = struct{}{}
 	}
 	var out []string
 	for _, m := range []string{authHintStatic, authHintOAuth} {
