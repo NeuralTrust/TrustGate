@@ -4,7 +4,9 @@ package functional_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -256,9 +258,9 @@ func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Contains(t, names, "echo")
+	require.Contains(t, names, federatedRPCName(liveID, "echo"))
 	require.Contains(t, names, appmcp.ConnectToolName("linear"))
-	require.NotContains(t, names, "list_issues")
+	require.NotContains(t, names, federatedRPCName(pendingID, "list_issues"))
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": appmcp.ConnectToolName("linear"), "arguments": map[string]any{}})
@@ -358,7 +360,13 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"echo", appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{federatedRPCName(liveRegistry, "echo"), appmcp.InventoryToolName}, names)
+	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": federatedRPCName(liveRegistry, "echo"), "arguments": map[string]any{"message": "hola"}})
+	result := rpcResult(t, status, body)
+	raw, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "echo:hola")
 }
 
 func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
@@ -384,4 +392,14 @@ func TestMCPServer_UnknownMethodAndMalformedBody(t *testing.T) {
 	status, body = mcpPost(t, gatewayID, consumerID, apiKeyHeaders(key),
 		map[string]any{"jsonrpc": "1.0", "id": 1, "method": "tools/list"})
 	require.Equal(t, float64(-32600), rpcErrorCode(t, status, body))
+}
+
+func federatedRPCName(registryID, name string) string {
+	registryHash := sha256.Sum256([]byte(registryID))
+	nameHash := sha256.Sum256([]byte(name))
+	readable := name
+	if len(readable) > 26 {
+		readable = readable[:26]
+	}
+	return fmt.Sprintf("mcp_%x_%s_%x", registryHash[:8], readable, nameHash[:8])
 }

@@ -306,7 +306,7 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 		return false
 	}
 	u.dialer.drop(ctx, u.key, u.sess())
-	if errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+	if errors.Is(err, appmcp.ErrUpstreamUnauthorized) || errors.Is(err, ErrResponseTooLarge) {
 		return false
 	}
 	sess, connErr := u.dialer.connectAndStore(ctx, u.key, u.target)
@@ -320,7 +320,8 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 }
 
 func shouldDrop(ctx context.Context, err error) bool {
-	if appmcp.IsRPCError(err) || errors.Is(err, appmcp.ErrNotSupported) {
+	if appmcp.IsRPCError(err) || errors.Is(err, appmcp.ErrNotSupported) ||
+		errors.Is(err, ErrCatalogTooLarge) || errors.Is(err, errRepeatedCursor) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {

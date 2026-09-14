@@ -161,8 +161,26 @@ func discoverCached[T any](
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
 	key, cacheable := discoveryKey(ctx, reg, kind)
+	ask := func(ctx context.Context) ([]T, error) { return askUpstream(c, ctx, rc, reg, list) }
+	if reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables() {
+		target := targetFor(ctx, rc, reg)
+		if err := c.resolveURLVariables(ctx, rc, reg, &target); err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256([]byte(target.URL))
+		key += ":url:" + hex.EncodeToString(sum[:])
+		ask = func(ctx context.Context) ([]T, error) {
+			if c.creds != nil {
+				if err := c.creds.Apply(ctx, rc, reg, &target); err != nil {
+					return nil, err
+				}
+			}
+			return invokeResolvedUpstream(c, ctx, rc, reg, target, func(up Upstream) ([]T, error) { return list(ctx, up) })
+		}
+	}
+
 	if !cacheable {
-		return askUpstream(c, ctx, rc, reg, list)
+		return ask(ctx)
 	}
 	if items, err, ok := cachedDiscovery[T](c, key); ok {
 		return items, err
@@ -176,9 +194,11 @@ func discoverCached[T any](
 		}
 		flightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discoveryTimeout)
 		defer cancel()
-		items, err := askUpstream(c, flightCtx, rc, reg, list)
+		items, err := ask(flightCtx)
 		if err != nil {
-			if !isContextError(err) {
+			if errors.Is(err, context.DeadlineExceeded) && flightCtx.Err() != nil {
+				c.rememberFailure(key, fmt.Errorf("%w: discovery timed out", ErrUnreachable))
+			} else if !isContextError(err) {
 				c.rememberFailure(key, err)
 			}
 			return nil, err

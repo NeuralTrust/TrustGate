@@ -85,10 +85,10 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	var candidates []promptBinding
 	var pendingConsent *ConsentRequiredError
 	reachable := 0
-	for _, reg := range registries {
-		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
-			return up.ListPrompts(ctx)
-		})
+	for _, found := range discoverAll(c, ctx, rc, registries, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
+		return up.ListPrompts(ctx)
+	}) {
+		reg, prompts, err := found.registry, found.items, found.err
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
@@ -125,7 +125,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	for i, b := range candidates {
 		items[i] = exposedNameFor(b.exposed, b.registry)
 	}
-	for i, name := range resolveExposedNames(items) {
+	for i, name := range resolveExposedNames(items, len(registries) > 1) {
 		candidates[i].exposed = name
 	}
 	return candidates, pendingConsent, nil
