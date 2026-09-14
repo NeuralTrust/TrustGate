@@ -346,6 +346,12 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		if t.Custom != nil {
 			name, desc, schema = t.Custom.Name, t.Custom.Description, t.Custom.InputSchema
 		}
+		// RUN-1553: Anthropic server tools are declared by type alone. Every
+		// other format requires a name, and a synthesised one would name a tool
+		// the model can call and the gateway cannot route.
+		if name == "" {
+			continue
+		}
 		cr.Tools = append(cr.Tools, CanonicalTool{
 			Name:        name,
 			Description: desc,
