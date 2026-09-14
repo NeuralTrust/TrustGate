@@ -115,7 +115,10 @@ type rawServer struct {
 	// where the derivation alone would pick a single method.
 	AuthMethods []string         `json:"auth_methods"`
 	Tools       []domain.MCPTool `json:"tools"`
-	Relevance   int              `json:"relevance"`
+	// Capabilities is optional Portal copy. When omitted, the loader derives it
+	// from Tools (and the generic Figma fallback).
+	Capabilities []string `json:"capabilities,omitempty"`
+	Relevance    int      `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
 	// ListMCPServers (Admin UI / product catalog).
 	Hidden       bool   `json:"hidden,omitempty"`
@@ -126,9 +129,21 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 	return parseCuratedMCPServers(mcpcatalog.EnterpriseServersJSON)
 }
 
+func portalCapabilitySeed() (map[string][]string, error) {
+	var out map[string][]string
+	if err := json.Unmarshal(mcpcatalog.PortalCapabilitiesJSON, &out); err != nil {
+		return nil, fmt.Errorf("portal capabilities seed: %w", err)
+	}
+	return out, nil
+}
+
 func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 	var raw rawCatalog
 	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	seeded, err := portalCapabilitySeed()
+	if err != nil {
 		return nil, err
 	}
 	servers := make([]domain.MCPServer, 0, len(raw.Servers))
@@ -173,6 +188,7 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			OAuth:          s.OAuth,
 			ConfigGuide:    configGuide(s),
 			Tools:          s.Tools,
+			Capabilities:   catalogCapabilities(firstCapabilities(s.Capabilities, seeded[s.Name]), s.Tools),
 			Source:         curatedSource,
 		})
 	}
