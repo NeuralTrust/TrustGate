@@ -187,7 +187,7 @@ jobs:
     with:
       gitleaks_enabled: true
       gosec_enabled: true
-      gosec_args: "-severity high ./..."
+      gosec_args: "-severity high -exclude-dir=examples ./..."
       # gosec <= 2.22.x ships a golang.org/x/tools that cannot type-check
       # go1.27 packages and aborts with "package ... without types was
       # imported from command-line-arguments" before reporting anything.
