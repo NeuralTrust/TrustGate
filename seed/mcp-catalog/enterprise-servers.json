@@ -5,6 +5,11 @@
       "vendor": "Aha!",
       "category": "Product Management",
       "description": "Roadmaps, ideas, features, and records across the Aha! suite (per-domain).",
+      "capabilities": [
+        "View product roadmaps",
+        "Capture ideas and features",
+        "Manage Aha! records"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{domain}.aha.io/api/v1/mcp",
       "url_variables": [
@@ -35,6 +40,11 @@
       "vendor": "Ahrefs",
       "category": "Marketing",
       "description": "SEO data, backlinks, keyword and competitor research (paid plans).",
+      "capabilities": [
+        "Analyze SEO performance",
+        "Research backlinks",
+        "Compare keywords and competitors"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.ahrefs.com/mcp/mcp",
       "requires_auth": true,
@@ -60,6 +70,11 @@
       "vendor": "Airbyte",
       "category": "Data & Analytics",
       "description": "Query data and act across business apps via Airbyte.",
+      "capabilities": [
+        "Query connected data",
+        "Act across business apps",
+        "Work with synced sources"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.airbyte.ai/mcp",
       "requires_auth": true,
@@ -81,6 +96,11 @@
       "vendor": "Airtable",
       "category": "Productivity & Docs",
       "description": "Search, analyze, create, and update Airtable records, schema, interfaces, forms, and automations.",
+      "capabilities": [
+        "Search records",
+        "Analyze and create records",
+        "Work with schema and interfaces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.airtable.com/mcp",
       "requires_auth": true,
@@ -298,6 +318,11 @@
       "vendor": "Algolia",
       "category": "Search",
       "description": "Per-application Algolia search/Recommend MCP (public, no auth; up to 5 indices).",
+      "capabilities": [
+        "Search application indices",
+        "Get recommendations",
+        "Browse indexed content"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp",
       "url_variables": [
@@ -330,6 +355,11 @@
       "vendor": "Amplitude",
       "category": "Analytics",
       "description": "Dashboards, charts, experiments, and event analytics.",
+      "capabilities": [
+        "Analyze dashboards",
+        "Analyze charts",
+        "Analyze experiments"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.amplitude.com/mcp",
       "requires_auth": true,
@@ -391,6 +421,11 @@
       "vendor": "Apify",
       "category": "Web Scraping & Data",
       "description": "Run scrapers, crawlers, and automations on Apify.",
+      "capabilities": [
+        "Run scrapers",
+        "Run crawlers",
+        "Automate data collection"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.apify.com/",
       "requires_auth": true,
@@ -498,6 +533,11 @@
       "vendor": "Apollo",
       "category": "Sales Intelligence",
       "description": "Sales intelligence: prospecting, contacts, and enrichment via Apollo.",
+      "capabilities": [
+        "Prospect accounts and contacts",
+        "Enrich sales records",
+        "Search buyer intelligence"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.apollo.io/mcp",
       "requires_auth": true,
@@ -530,6 +570,11 @@
       "vendor": "Arcade",
       "category": "Automation",
       "description": "Arcade MCP Gateway: tool calls across integrations (Bearer key + Arcade-User-ID).",
+      "capabilities": [
+        "Call tools across integrations",
+        "Run automation actions",
+        "Connect business apps"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.arcade.dev/mcp/{gateway_slug}",
       "url_variables": [
@@ -565,6 +610,11 @@
       "vendor": "Asana",
       "category": "Project Management",
       "description": "Tasks, projects, and reporting via the Asana Work Graph.",
+      "capabilities": [
+        "Manage tasks",
+        "Manage projects",
+        "Manage reporting"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.asana.com/v2/mcp",
       "requires_auth": true,
@@ -700,6 +750,11 @@
       "vendor": "AssemblyAI",
       "category": "AI & Audio",
       "description": "AssemblyAI documentation and API reference lookup (public docs server, no auth).",
+      "capabilities": [
+        "Look up documentation",
+        "Look up API reference lookup",
+        "Search and read AssemblyAI ai"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.assemblyai.com/docs",
       "requires_auth": false,
@@ -730,6 +785,11 @@
       "vendor": "Atlan",
       "category": "Data Governance",
       "description": "Atlan metadata, lineage, and catalog (OAuth or API key; per-tenant roles).",
+      "capabilities": [
+        "Explore metadata",
+        "Explore lineage",
+        "Explore catalog"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.atlan.com/mcp",
       "requires_auth": true,
@@ -874,6 +934,11 @@
       "vendor": "Atlassian",
       "category": "Project Management",
       "description": "Jira issues, Confluence pages, Compass, and JSM.",
+      "capabilities": [
+        "Manage Jira issues",
+        "Manage Confluence pages",
+        "Manage Compass"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.atlassian.com/v1/mcp/authv2",
       "requires_auth": true,
@@ -1033,6 +1098,11 @@
       "vendor": "Attio",
       "category": "CRM",
       "description": "Search, create, and update records in Attio CRM.",
+      "capabilities": [
+        "Search records",
+        "Create and update records",
+        "Full-text search for records (people, companies, deals)"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.attio.com/mcp",
       "requires_auth": true,
@@ -1209,6 +1279,11 @@
       "vendor": "Axiom",
       "category": "Observability",
       "description": "Query events and logs; observability prompts (US-hosted; OAuth or PAT+org-id).",
+      "capabilities": [
+        "Query events and logs",
+        "Observability prompts",
+        "List available Axiom datasets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.axiom.co/mcp",
       "requires_auth": true,
@@ -1304,6 +1379,11 @@
       "vendor": "Better Stack",
       "category": "Observability",
       "description": "Uptime monitoring, incidents, on-call, logs, and status pages.",
+      "capabilities": [
+        "Monitor uptime",
+        "Investigate incidents and logs",
+        "Manage on-call and status pages"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.betterstack.com",
       "requires_auth": true,
@@ -1330,6 +1410,11 @@
       "vendor": "Box",
       "category": "File Management",
       "description": "File and folder operations, search, and Box AI.",
+      "capabilities": [
+        "Search and manage file",
+        "Search and manage folder operations",
+        "Search and manage AI"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.box.com/",
       "requires_auth": true,
@@ -1570,6 +1655,11 @@
       "vendor": "Braintrust",
       "category": "AI & ML",
       "description": "LLM evals, experiments, and logs (US; EU api-eu.braintrust.dev/mcp).",
+      "capabilities": [
+        "Work with LLM evals",
+        "Work with experiments",
+        "Work with logs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.braintrust.dev/mcp",
       "requires_auth": true,
@@ -1620,6 +1710,11 @@
       "vendor": "Brex",
       "category": "Finance",
       "description": "Corporate cards, expenses, budgets, and spend limits (OAuth DCR; API key fallback).",
+      "capabilities": [
+        "Manage corporate cards",
+        "Manage expenses",
+        "Manage budgets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.brex.com/mcp",
       "requires_auth": true,
@@ -1726,6 +1821,11 @@
       "vendor": "Bright Data",
       "category": "Web Scraping & Data",
       "description": "Web search, scraping, and Web Unlocker; token passed as query parameter.",
+      "capabilities": [
+        "Web search, scraping, and Web Unlocker",
+        "Scrape search results from Google, Bing, or Yandex",
+        "Run up to 10 search queries in parallel"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.brightdata.com/mcp?token={token}",
       "url_variables": [
@@ -1781,6 +1881,11 @@
       "vendor": "Browserbase",
       "category": "Browser Automation",
       "description": "Hosted cloud browser runtime for agents; API key is passed as a query parameter.",
+      "capabilities": [
+        "Automate hosted cloud browser runtime",
+        "Navigate to a URL",
+        "Find actionable elements on the page"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.browserbase.com/mcp?browserbaseApiKey={browserbaseApiKey}",
       "url_variables": [
@@ -1860,6 +1965,11 @@
       "vendor": "Builder.io",
       "category": "Web & CMS",
       "description": "Builder Publish/Hybrid Space content (Private API key).",
+      "capabilities": [
+        "Publish site content",
+        "Edit CMS entries",
+        "Manage Builder spaces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://cdn.builder.io/api/v1/mcp/builder-content",
       "requires_auth": true,
@@ -1880,6 +1990,11 @@
       "vendor": "Buildkite",
       "category": "Development",
       "description": "CI/CD pipelines, builds, jobs, logs, and Test Engine data.",
+      "capabilities": [
+        "Manage CI/CD pipelines",
+        "Manage builds",
+        "Manage jobs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.buildkite.com/mcp",
       "requires_auth": true,
@@ -2027,6 +2142,11 @@
       "vendor": "Cal.com",
       "category": "Scheduling",
       "description": "Scheduling: bookings, availability, and event types via Cal.com.",
+      "capabilities": [
+        "Manage bookings",
+        "Manage availability",
+        "Manage event types"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.cal.com/mcp",
       "requires_auth": true,
@@ -2183,6 +2303,11 @@
       "vendor": "Calendly",
       "category": "Productivity & Docs",
       "description": "Scheduling: event types, availability, book, cancel, reschedule.",
+      "capabilities": [
+        "Work with event types",
+        "Work with availability",
+        "Work with reschedule"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.calendly.com",
       "requires_auth": true,
@@ -2347,6 +2472,11 @@
       "vendor": "Canva",
       "category": "Design",
       "description": "Design generation, editing, asset and brand management.",
+      "capabilities": [
+        "Generate designs",
+        "Edit assets",
+        "Manage brand kits"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.canva.com/mcp",
       "requires_auth": true,
@@ -2509,6 +2639,11 @@
       "vendor": "Chargebee",
       "category": "Billing & Payments",
       "description": "Per-site Chargebee agents (knowledge_base_agent, data_lookup_agent, onboarding_agent); regional hosts.",
+      "capabilities": [
+        "Search Chargebee docs for detailed information and usage guides",
+        "Generate code outlines/samples for integrating Chargebee APIs",
+        "Search and read Chargebee billing"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{subdomain}.mcp.chargebee.com/{agent}",
       "url_variables": [
@@ -2547,6 +2682,11 @@
       "vendor": "Checkr",
       "category": "HR & Recruiting",
       "description": "Background checks: manage and retrieve screening reports (OAuth Dynamic Client Registration).",
+      "capabilities": [
+        "Manage retrieve screening reports",
+        "Get a candidate by ID",
+        "List candidates with filtering, formatted for table display"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.checkr.com",
       "requires_auth": true,
@@ -2585,6 +2725,11 @@
       "vendor": "ClickHouse",
       "category": "Data & Analytics",
       "description": "ClickHouse Cloud: list databases/tables, schemas, read-only queries, service mgmt (enable per service).",
+      "capabilities": [
+        "List databases/tables",
+        "Query schemas",
+        "Query read-only queries"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.clickhouse.cloud/mcp",
       "requires_auth": true,
@@ -2668,6 +2813,11 @@
       "vendor": "ClickUp",
       "category": "Project Management",
       "description": "Tasks, docs, lists, and project management via ClickUp.",
+      "capabilities": [
+        "Manage tasks and lists",
+        "Work with docs",
+        "Track projects"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.clickup.com/mcp",
       "requires_auth": true,
@@ -2694,6 +2844,11 @@
       "vendor": "Close",
       "category": "Sales",
       "description": "Close CRM sales pipeline management.",
+      "capabilities": [
+        "Manage CRM sales pipeline management",
+        "Add an address to a lead",
+        "Create call task"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.close.com/mcp",
       "requires_auth": true,
@@ -2963,6 +3118,11 @@
       "vendor": "Cloudflare AI Gateway",
       "category": "AI & ML",
       "description": "Search logs and configure Cloudflare AI Gateway.",
+      "capabilities": [
+        "Search AI Gateway logs",
+        "Configure gateways",
+        "Inspect request traces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://ai-gateway.mcp.cloudflare.com/mcp",
       "requires_auth": true,
@@ -3007,6 +3167,11 @@
       "vendor": "Cloudflare API",
       "category": "Cloud Platform",
       "description": "Token-efficient MCP for the full Cloudflare API (2500+ endpoints; OAuth or API token).",
+      "capabilities": [
+        "Search the Cloudflare API",
+        "Call Cloudflare endpoints",
+        "Manage account resources"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.cloudflare.com/mcp",
       "requires_auth": true,
@@ -3039,6 +3204,11 @@
       "vendor": "Cloudflare Workers Bindings",
       "category": "Cloud Platform",
       "description": "Manage Cloudflare Workers bindings: KV, R2, D1, Durable Objects.",
+      "capabilities": [
+        "Manage KV",
+        "Manage R2",
+        "Manage D1"
+      ],
       "transport": "streamable-http",
       "server_url": "https://bindings.mcp.cloudflare.com/mcp",
       "requires_auth": true,
@@ -3151,6 +3321,11 @@
       "vendor": "Cloudflare Docs",
       "category": "Cloud Platform",
       "description": "Search Cloudflare developer documentation.",
+      "capabilities": [
+        "Search Cloudflare developer documentation",
+        "Search the Cloudflare documentation",
+        "Migrate pages to workers guide"
+      ],
       "transport": "streamable-http",
       "server_url": "https://docs.mcp.cloudflare.com/mcp",
       "requires_auth": false,
@@ -3173,6 +3348,11 @@
       "vendor": "Cloudflare Observability",
       "category": "Observability",
       "description": "Query Cloudflare Workers logs and analytics.",
+      "capabilities": [
+        "Query Cloudflare Workers logs",
+        "Monitor analytics",
+        "Query Workers Observability to analyze logs and metrics"
+      ],
       "transport": "streamable-http",
       "server_url": "https://observability.mcp.cloudflare.com/mcp",
       "requires_auth": true,
@@ -3209,6 +3389,11 @@
       "vendor": "Cloudflare Radar",
       "category": "Observability",
       "description": "Internet traffic insights and URL scanning via Cloudflare Radar.",
+      "capabilities": [
+        "Monitor internet traffic insights",
+        "Monitor URL scanning",
+        "Search URL scans"
+      ],
       "transport": "streamable-http",
       "server_url": "https://radar.mcp.cloudflare.com/mcp",
       "requires_auth": true,
@@ -3473,6 +3658,11 @@
       "vendor": "Cloudinary",
       "category": "Media",
       "description": "Media asset management and transformations in Cloudinary.",
+      "capabilities": [
+        "Work with media asset management",
+        "Work with transformations",
+        "Search folders"
+      ],
       "transport": "streamable-http",
       "server_url": "https://asset-management.mcp.cloudinary.com/mcp",
       "requires_auth": true,
@@ -3587,6 +3777,11 @@
       "vendor": "Coda",
       "category": "Productivity & Docs",
       "description": "Read and write Coda docs, tables, and pages (OAuth or API key).",
+      "capabilities": [
+        "Read docs and tables",
+        "Write pages and rows",
+        "Search workspace content"
+      ],
       "transport": "streamable-http",
       "server_url": "https://coda.io/apis/mcp",
       "requires_auth": true,
@@ -3612,6 +3807,11 @@
       "vendor": "Coinbase",
       "category": "Payments",
       "description": "Coinbase CDP Bazaar: discover and call paid x402 endpoints for agent payments.",
+      "capabilities": [
+        "Discover paid endpoints",
+        "Call x402 payment APIs",
+        "Run agent payments"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.cdp.coinbase.com/platform/v2/x402/discovery/mcp",
       "requires_auth": false,
@@ -3634,6 +3834,11 @@
       "vendor": "Contentful",
       "category": "CMS",
       "description": "Manage Contentful spaces, content types, and entries (Beta).",
+      "capabilities": [
+        "Manage spaces",
+        "Work with content types",
+        "Work with entries"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.contentful.com/mcp",
       "requires_auth": true,
@@ -3830,6 +4035,11 @@
       "vendor": "Cube",
       "category": "Data & Analytics",
       "description": "Semantic layer queries via Cube Cloud (OAuth + PKCE; per-tenant host).",
+      "capabilities": [
+        "Query the semantic layer",
+        "Explore Cube metrics",
+        "Analyze workspace data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{cube_host}/api/mcp",
       "url_variables": [
@@ -3852,6 +4062,11 @@
       "vendor": "Customer.io",
       "category": "Marketing",
       "description": "Customer engagement: campaigns, segments, people, and workspace data (US; EU mcp-eu.customer.io).",
+      "capabilities": [
+        "Analyze campaigns",
+        "Analyze segments",
+        "Analyze people"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.customer.io/mcp",
       "requires_auth": true,
@@ -3905,6 +4120,11 @@
       "vendor": "Daloopa",
       "category": "Finance",
       "description": "Fundamental financial data and models from Daloopa.",
+      "capabilities": [
+        "Manage fundamental financial data",
+        "Manage models",
+        "Search documents"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.daloopa.com/server/mcp",
       "requires_auth": true,
@@ -3955,6 +4175,11 @@
       "vendor": "Databricks",
       "category": "Data & Analytics",
       "description": "Databricks managed MCP: genie/{space}, vector-search/{catalog}/{schema}/{index}, sql, or functions/{catalog}/{schema}/{fn}.",
+      "capabilities": [
+        "Ask Genie spaces",
+        "Search vector indexes",
+        "Run SQL"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{workspace_host}/api/2.0/mcp/{path}",
       "url_variables": [
@@ -3993,6 +4218,11 @@
       "vendor": "Datadog",
       "category": "Observability",
       "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP (US1). Endpoint https://mcp.datadoghq.com/v1/mcp; other sites use https://mcp.<site>/v1/mcp. OAuth (recommended), or DD_API_KEY + DD_APPLICATION_KEY headers. Optional ?toolsets=… to filter tools.",
+      "capabilities": [
+        "Monitor metrics",
+        "Monitor logs",
+        "Monitor traces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.datadoghq.com/v1/mcp",
       "requires_auth": true,
@@ -4257,6 +4487,11 @@
       "vendor": "dbt Labs",
       "category": "Data & Analytics",
       "description": "dbt Cloud remote MCP: semantic layer, model metadata, and discovery (Enterprise beta).",
+      "capabilities": [
+        "Query semantic layer",
+        "Query model metadata",
+        "Query discovery"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{dbt_host}/api/ai/v1/mcp/",
       "url_variables": [
@@ -4326,6 +4561,11 @@
       "vendor": "DeepWiki",
       "category": "Dev & APIs",
       "description": "Read and ask questions about GitHub repository documentation.",
+      "capabilities": [
+        "Read repository docs",
+        "Ask questions about GitHub wikis",
+        "Browse documentation topics"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.deepwiki.com/mcp",
       "requires_auth": false,
@@ -4351,6 +4591,11 @@
       "vendor": "DevExpress",
       "category": "Dev & APIs",
       "description": "DevExpress documentation search and retrieval.",
+      "capabilities": [
+        "Call documentation search",
+        "Call retrieval",
+        "Search and read DevExpress dev"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.devexpress.com/mcp/docs",
       "requires_auth": false,
@@ -4372,6 +4617,11 @@
       "vendor": "DigitalOcean Accounts",
       "category": "Cloud Platform",
       "description": "DigitalOcean account, billing, and team info.",
+      "capabilities": [
+        "Manage billing",
+        "Manage team info",
+        "Get a specific invoice"
+      ],
       "transport": "streamable-http",
       "server_url": "https://accounts.mcp.digitalocean.com/mcp",
       "requires_auth": true,
@@ -4443,6 +4693,11 @@
       "vendor": "DigitalOcean App Platform",
       "category": "Cloud Platform",
       "description": "DigitalOcean App Platform apps and deployments.",
+      "capabilities": [
+        "Manage apps",
+        "Manage deployments",
+        "Apps create app from spec"
+      ],
       "transport": "streamable-http",
       "server_url": "https://apps.mcp.digitalocean.com/mcp",
       "requires_auth": true,
@@ -4498,6 +4753,11 @@
       "vendor": "DigitalOcean Databases",
       "category": "Cloud Platform",
       "description": "DigitalOcean managed databases.",
+      "capabilities": [
+        "Create a new database cluster",
+        "Create a topic for a Kafka cluster",
+        "Create a new database user for a cluster"
+      ],
       "transport": "streamable-http",
       "server_url": "https://databases.mcp.digitalocean.com/mcp",
       "requires_auth": true,
@@ -4677,6 +4937,11 @@
       "vendor": "DigitalOcean Droplets",
       "category": "Cloud Platform",
       "description": "DigitalOcean Droplets (compute) management.",
+      "capabilities": [
+        "Create and manage Droplets",
+        "Resize and rebuild compute",
+        "Control backups and kernels"
+      ],
       "transport": "streamable-http",
       "server_url": "https://droplets.mcp.digitalocean.com/mcp",
       "requires_auth": true,
@@ -4872,6 +5137,11 @@
       "vendor": "DigitalOcean Kubernetes",
       "category": "Cloud Platform",
       "description": "DigitalOcean Kubernetes (DOKS) clusters.",
+      "capabilities": [
+        "Manage Kubernetes clusters",
+        "Scale node pools",
+        "Inspect cluster options"
+      ],
       "transport": "streamable-http",
       "server_url": "https://doks.mcp.digitalocean.com/mcp",
       "requires_auth": true,
@@ -4967,6 +5237,11 @@
       "vendor": "Dropbox",
       "category": "Productivity & Docs",
       "description": "Search, read, and manage files in Dropbox.",
+      "capabilities": [
+        "Search files",
+        "Read and manage files",
+        "Search files/folders by name or content"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.dropbox.com/mcp",
       "requires_auth": true,
@@ -5045,6 +5320,11 @@
       "vendor": "Dynatrace",
       "category": "Observability",
       "description": "Observability: DQL queries, problems, vulnerabilities, and Davis insights (Platform Token, not OAuth).",
+      "capabilities": [
+        "Monitor DQL queries",
+        "Monitor problems",
+        "Monitor vulnerabilities"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{environment_name}.apps.dynatrace.com/platform-reserved/mcp-gateway/v0.1/servers/dynatrace-mcp/mcp",
       "url_variables": [
@@ -5098,6 +5378,11 @@
       "vendor": "Egnyte",
       "category": "File Management",
       "description": "Secure AI access, search, upload, and file management in Egnyte.",
+      "capabilities": [
+        "Search files",
+        "Upload and manage documents",
+        "Work with secure folders"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp-server.egnyte.com/mcp",
       "requires_auth": true,
@@ -5119,6 +5404,11 @@
       "vendor": "Elastic",
       "category": "Search & Observability",
       "description": "Elastic Agent Builder tools per Kibana deployment (custom space: /s/{space}/api/agent_builder/mcp).",
+      "capabilities": [
+        "Search Elastic data",
+        "Query observability signals",
+        "Use Agent Builder tools"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{kibana_url}/api/agent_builder/mcp",
       "url_variables": [
@@ -5147,6 +5437,11 @@
       "vendor": "Endor Labs",
       "category": "Security",
       "description": "Endor Labs documentation search (public docs server, no auth).",
+      "capabilities": [
+        "Review documentation search",
+        "Search across the Endor Labs Documentation knowledge base to find…",
+        "Run a read-only shell-like query against a virtualized, in-memory…"
+      ],
       "transport": "streamable-http",
       "server_url": "https://docs.endorlabs.com/mcp",
       "requires_auth": false,
@@ -5168,6 +5463,11 @@
       "vendor": "Exa",
       "category": "Search",
       "description": "Fast web search and crawling for agents.",
+      "capabilities": [
+        "Search fast web search",
+        "Search crawling",
+        "Search the web for any topic and get clean, ready-to-use content"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.exa.ai/mcp",
       "requires_auth": true,
@@ -5199,6 +5499,11 @@
       "vendor": "Excalidraw",
       "category": "Design",
       "description": "Create and edit Excalidraw diagrams.",
+      "capabilities": [
+        "Create and edit edit diagrams",
+        "Create view",
+        "Read checkpoint state for restore"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.excalidraw.com",
       "requires_auth": false,
@@ -5232,6 +5537,11 @@
       "vendor": "Fathom",
       "category": "Productivity & Docs",
       "description": "Meeting recordings, transcripts, AI summaries, teams, and webhooks via browser OAuth (DCR).",
+      "capabilities": [
+        "Work with meeting recordings",
+        "Work with transcripts",
+        "Work with AI summaries"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.fathom.ai/mcp",
       "requires_auth": true,
@@ -5287,6 +5597,11 @@
       "vendor": "Fibery",
       "category": "Project Management",
       "description": "Fibery work-management workspace: entities, databases, and relations (OAuth).",
+      "capabilities": [
+        "Manage entities",
+        "Manage databases",
+        "Manage relations"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.fibery.io/mcp",
       "requires_auth": true,
@@ -5342,6 +5657,11 @@
       "vendor": "Firecrawl",
       "category": "Web Scraping & Data",
       "description": "Web scraping, crawling, and extraction (OAuth keyless; or API key in path).",
+      "capabilities": [
+        "Scrape web pages",
+        "Crawl sites",
+        "Extract structured data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.firecrawl.dev/v2/mcp",
       "requires_auth": true,
@@ -5389,6 +5709,11 @@
       "vendor": "Fireflies",
       "category": "Productivity & Docs",
       "description": "Meeting transcripts, summaries, and action items.",
+      "capabilities": [
+        "Work with meeting transcripts",
+        "Work with summaries",
+        "Work with action items"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.fireflies.ai/mcp",
       "requires_auth": true,
@@ -5428,6 +5753,11 @@
       "vendor": "Freshworks",
       "category": "Customer Support",
       "description": "Freshservice/Freshdesk tickets, assets, and knowledge base via the Freshworks MCP gateway.",
+      "capabilities": [
+        "Manage tickets",
+        "Look up assets",
+        "Search the knowledge base"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{domain}/mcp",
       "url_variables": [
@@ -5451,6 +5781,11 @@
       "vendor": "Front",
       "category": "Customer Support",
       "description": "Act on Front conversations (OAuth 2.1 + PKCE; per-user scopes read/write/send).",
+      "capabilities": [
+        "Manage act",
+        "Search conversations",
+        "Create a draft reply (no send)"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.frontapp.com/mcp",
       "requires_auth": true,
@@ -5514,6 +5849,11 @@
       "vendor": "GitHub",
       "category": "Dev & Source Control",
       "description": "Repos, issues, pull requests, and workflows on GitHub.",
+      "capabilities": [
+        "Work with repos",
+        "Work with issues",
+        "Work with pull requests"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.githubcopilot.com/mcp/",
       "requires_auth": true,
@@ -5569,6 +5909,11 @@
       "vendor": "GitLab",
       "category": "Dev & Source Control",
       "description": "Projects, merge requests, issues, and pipelines in GitLab.",
+      "capabilities": [
+        "Work with projects",
+        "Work with merge requests",
+        "Work with issues"
+      ],
       "transport": "streamable-http",
       "server_url": "https://gitlab.com/api/v4/mcp",
       "requires_auth": true,
@@ -5621,6 +5966,11 @@
       "vendor": "Glean",
       "category": "Enterprise Search",
       "description": "Per-tenant Glean work AI: search and knowledge across connected apps.",
+      "capabilities": [
+        "Work with knowledge",
+        "Retrieve documents by ID or URL",
+        "Search Glean's content index"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{tenant}-be.glean.com/mcp/{server}",
       "url_variables": [
@@ -5667,6 +6017,11 @@
       "vendor": "Globalping",
       "category": "Observability",
       "description": "Run network measurements from a global probe network.",
+      "capabilities": [
+        "Run network measurements",
+        "List available probe locations",
+        "Retrieve a prior measurement by ID"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.globalping.dev/mcp",
       "requires_auth": false,
@@ -5720,6 +6075,11 @@
       "vendor": "GoodData",
       "category": "Data & Analytics",
       "description": "GoodData Cloud analytics per workspace (Bearer API token).",
+      "capabilities": [
+        "Query cloud analytics per workspace",
+        "Create governed metric",
+        "Create memory item"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{gooddata_host}/api/v1/actions/workspaces/{workspace_id}/ai/mcp",
       "url_variables": [
@@ -5790,6 +6150,11 @@
       "vendor": "Slack",
       "category": "Communication",
       "description": "Slack remote MCP: search messages, files, channels and users; read channels and threads; send messages; and read/create/update canvases. Confidential OAuth with a pre-registered Slack app (directory or internal); Streamable HTTP only.",
+      "capabilities": [
+        "Search messages, files, and people",
+        "Read channels and threads",
+        "Send messages and update canvases"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.slack.com/mcp",
       "requires_auth": true,
@@ -5826,6 +6191,11 @@
       "vendor": "Gmail",
       "category": "Productivity & Docs",
       "description": "Gmail remote MCP: search threads, retrieve messages, list labels, and create drafts (Google Workspace, OAuth).",
+      "capabilities": [
+        "Search threads",
+        "Read messages",
+        "Create drafts"
+      ],
       "transport": "streamable-http",
       "server_url": "https://gmailmcp.googleapis.com/mcp/v1",
       "requires_auth": true,
@@ -5897,6 +6267,11 @@
       "vendor": "Google Calendar",
       "category": "Productivity & Docs",
       "description": "Google Calendar remote MCP: list calendars, search and manage events, suggest free time, and RSVP (Google Workspace, OAuth).",
+      "capabilities": [
+        "List calendars",
+        "Manage events",
+        "Work with suggest free time"
+      ],
       "transport": "streamable-http",
       "server_url": "https://calendarmcp.googleapis.com/mcp/v1",
       "requires_auth": true,
@@ -5964,6 +6339,11 @@
       "vendor": "Google Drive",
       "category": "Productivity & Docs",
       "description": "Google Drive remote MCP: search files and read content (Google Workspace, OAuth).",
+      "capabilities": [
+        "Search files",
+        "Read content",
+        "Search Drive files matching a query"
+      ],
       "transport": "streamable-http",
       "server_url": "https://drivemcp.googleapis.com/mcp/v1",
       "requires_auth": true,
@@ -6002,6 +6382,11 @@
       "vendor": "Google Cloud Android Management",
       "category": "Cloud Platform",
       "description": "Google Cloud Android Management via managed remote MCP.",
+      "capabilities": [
+        "List enterprises",
+        "List devices",
+        "List policies"
+      ],
       "transport": "streamable-http",
       "server_url": "https://androidmanagement.googleapis.com/mcp",
       "requires_auth": true,
@@ -6065,6 +6450,11 @@
       "vendor": "Google Cloud Bigtable",
       "category": "Cloud Platform",
       "description": "Google Cloud Bigtable Admin via managed remote MCP.",
+      "capabilities": [
+        "Manage admin",
+        "Create instance",
+        "Create table"
+      ],
       "transport": "streamable-http",
       "server_url": "https://bigtableadmin.googleapis.com/mcp",
       "requires_auth": true,
@@ -6144,6 +6534,11 @@
       "vendor": "Google Cloud Composer",
       "category": "Cloud Platform",
       "description": "Google Cloud Cloud Composer via managed remote MCP (regional endpoint only).",
+      "capabilities": [
+        "Manage google Cloud Cloud Composer",
+        "Create a Managed Airflow environment (default settings)",
+        "Manage pypi packages"
+      ],
       "transport": "streamable-http",
       "server_url": "https://composer.{region}.rep.googleapis.com/mcp",
       "url_variables": [
@@ -6218,6 +6613,11 @@
       "vendor": "Google Cloud Compute Engine",
       "category": "Cloud Platform",
       "description": "Google Cloud Compute Engine via managed remote MCP.",
+      "capabilities": [
+        "Create a new Google Compute Engine virtual machine (VM) instance",
+        "List instance attached disks",
+        "List instances"
+      ],
       "transport": "streamable-http",
       "server_url": "https://compute.googleapis.com/mcp",
       "requires_auth": true,
@@ -6361,6 +6761,11 @@
       "vendor": "Google Cloud GKE",
       "category": "Cloud Platform",
       "description": "Google Cloud GKE via managed remote MCP.",
+      "capabilities": [
+        "Create cluster",
+        "Create node pool",
+        "Update cluster"
+      ],
       "transport": "streamable-http",
       "server_url": "https://container.googleapis.com/mcp",
       "requires_auth": true,
@@ -6480,6 +6885,11 @@
       "vendor": "Google Cloud Datastream",
       "category": "Cloud Platform",
       "description": "Google Cloud Datastream via managed remote MCP.",
+      "capabilities": [
+        "Run stream",
+        "List connection profiles",
+        "List streams"
+      ],
       "transport": "streamable-http",
       "server_url": "https://datastream.googleapis.com/mcp",
       "requires_auth": true,
@@ -6547,6 +6957,11 @@
       "vendor": "Google Cloud Stitch Design",
       "category": "Cloud Platform",
       "description": "Google Cloud Stitch Design via managed remote MCP.",
+      "capabilities": [
+        "Search icons",
+        "Search fonts",
+        "Generate color scheme"
+      ],
       "transport": "streamable-http",
       "server_url": "https://design.googleapis.com/mcp",
       "requires_auth": true,
@@ -6595,6 +7010,11 @@
       "vendor": "Google Cloud Developer Knowledge",
       "category": "Cloud Platform",
       "description": "Google Cloud Developer Knowledge via managed remote MCP.",
+      "capabilities": [
+        "Search documents",
+        "Get documents",
+        "Answer query"
+      ],
       "transport": "streamable-http",
       "server_url": "https://developerknowledge.googleapis.com/mcp",
       "requires_auth": true,
@@ -6634,6 +7054,11 @@
       "vendor": "Google Cloud Firestore",
       "category": "Cloud Platform",
       "description": "Google Cloud Firestore via managed remote MCP.",
+      "capabilities": [
+        "Create a Firestore database",
+        "Create a composite index",
+        "Update a document from a Firestore database"
+      ],
       "transport": "streamable-http",
       "server_url": "https://firestore.googleapis.com/mcp",
       "requires_auth": true,
@@ -6721,6 +7146,11 @@
       "vendor": "Google Cloud Maps Tools",
       "category": "Cloud Platform",
       "description": "Google Cloud Maps Tools via managed remote MCP.",
+      "capabilities": [
+        "Search places",
+        "Lookup weather",
+        "Compute routes"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mapstools.googleapis.com/mcp",
       "requires_auth": true,
@@ -6768,6 +7198,11 @@
       "vendor": "Google Cloud Memorystore",
       "category": "Cloud Platform",
       "description": "Google Cloud Memorystore via managed remote MCP.",
+      "capabilities": [
+        "Create a Memorystore for Valkey instance",
+        "Update a Memorystore for Valkey instance",
+        "List all Memorystore for Valkey instances"
+      ],
       "transport": "streamable-http",
       "server_url": "https://memorystore.googleapis.com/mcp",
       "requires_auth": true,
@@ -6851,6 +7286,11 @@
       "vendor": "Google Cloud Monitoring",
       "category": "Cloud Platform",
       "description": "Google Cloud Cloud Monitoring via managed remote MCP.",
+      "capabilities": [
+        "Manage google Cloud Cloud Monitoring",
+        "Query range",
+        "List timeseries"
+      ],
       "transport": "streamable-http",
       "server_url": "https://monitoring.googleapis.com/mcp",
       "requires_auth": true,
@@ -6914,6 +7354,11 @@
       "vendor": "Google Cloud Run",
       "category": "Cloud Platform",
       "description": "Google Cloud Cloud Run via managed remote MCP.",
+      "capabilities": [
+        "Manage google Cloud Cloud Run",
+        "List services",
+        "Get info about a Cloud Run service, such as its URI and whether the…"
+      ],
       "transport": "streamable-http",
       "server_url": "https://run.googleapis.com/mcp",
       "requires_auth": true,
@@ -6961,6 +7406,11 @@
       "vendor": "Google Cloud SQL",
       "category": "Cloud Platform",
       "description": "Google Cloud Cloud SQL Admin via managed remote MCP.",
+      "capabilities": [
+        "Manage google Cloud Cloud SQL Admin",
+        "Create instance",
+        "Create a database user for a Cloud SQL instance"
+      ],
       "transport": "streamable-http",
       "server_url": "https://sqladmin.googleapis.com/mcp",
       "requires_auth": true,
@@ -7048,6 +7498,11 @@
       "vendor": "Google Cloud Stitch",
       "category": "Cloud Platform",
       "description": "Google Cloud Stitch via managed remote MCP.",
+      "capabilities": [
+        "Create project",
+        "Create design system",
+        "Create design system from design md"
+      ],
       "transport": "streamable-http",
       "server_url": "https://stitch.googleapis.com/mcp",
       "requires_auth": true,
@@ -7132,6 +7587,11 @@
       "vendor": "Gorgias",
       "category": "Customer Support",
       "description": "Helpdesk tickets and customers; subdomain passed as query parameter.",
+      "capabilities": [
+        "Manage helpdesk tickets",
+        "Look up customers",
+        "Work with support conversations"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.gorgias.com/mcp?gorgias_subdomain={subdomain}",
       "url_variables": [
@@ -7172,6 +7632,11 @@
       "vendor": "Grafana",
       "category": "Observability",
       "description": "Dashboards, datasources, and alerts in Grafana Cloud.",
+      "capabilities": [
+        "Browse dashboards",
+        "Query datasources",
+        "Manage alerts"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.grafana.com/mcp",
       "requires_auth": true,
@@ -7198,6 +7663,11 @@
       "vendor": "Granola",
       "category": "Productivity & Docs",
       "description": "Meeting notes, transcripts, folders, and action items via browser OAuth (DCR).",
+      "capabilities": [
+        "Work with meeting notes",
+        "Work with transcripts",
+        "Work with folders"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.granola.ai/mcp",
       "requires_auth": true,
@@ -7249,6 +7719,11 @@
       "vendor": "Guru",
       "category": "Productivity & Docs",
       "description": "Connect AI tools to your Guru knowledge base.",
+      "capabilities": [
+        "Work with connect AI tools to your knowledge base",
+        "Search the Guru knowledge base / connected sources",
+        "Create a new Card draft"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.api.getguru.com/mcp",
       "requires_auth": true,
@@ -7299,6 +7774,11 @@
       "vendor": "Hex",
       "category": "Data & Analytics",
       "description": "Hex notebooks, data apps, and projects (custom tenant: <org>.hex.tech).",
+      "capabilities": [
+        "Query notebooks",
+        "Query data apps",
+        "Query projects"
+      ],
       "transport": "streamable-http",
       "server_url": "https://app.hex.tech/mcp",
       "requires_auth": true,
@@ -7344,6 +7824,11 @@
       "vendor": "Holded",
       "category": "Finance",
       "description": "Create and manage invoices, contacts, products, payments, balances, and stock in Holded.",
+      "capabilities": [
+        "Create and manage invoices",
+        "Update contacts and products",
+        "Track payments and stock"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.holded.com/mcp",
       "requires_auth": true,
@@ -7366,6 +7851,11 @@
       "vendor": "Honeycomb",
       "category": "Observability",
       "description": "Query Honeycomb traces, events, metrics, SLOs, and boards.",
+      "capabilities": [
+        "Query traces",
+        "Monitor events",
+        "Monitor metrics"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.honeycomb.io/mcp",
       "requires_auth": true,
@@ -7530,6 +8020,11 @@
       "vendor": "HubSpot",
       "category": "CRM",
       "description": "CRM contacts, deals, tickets, and marketing in HubSpot.",
+      "capabilities": [
+        "Manage CRM contacts",
+        "Manage deals",
+        "Manage tickets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.hubspot.com",
       "requires_auth": true,
@@ -7602,6 +8097,11 @@
       "vendor": "Halo",
       "category": "ITSM",
       "description": "Per-instance Halo ITSM/PSA MCP endpoint (enable in Configuration > AI). Tickets, knowledge base, assets, and runbooks.",
+      "capabilities": [
+        "Manage tickets",
+        "Search the knowledge base",
+        "Work with assets and runbooks"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{instance}/api/mcp",
       "url_variables": [
@@ -7630,6 +8130,11 @@
       "vendor": "Hugging Face",
       "category": "AI & ML",
       "description": "Search models, datasets, and Spaces on Hugging Face.",
+      "capabilities": [
+        "Search models",
+        "Browse datasets",
+        "Discover Spaces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://huggingface.co/mcp?login",
       "requires_auth": true,
@@ -7661,6 +8166,11 @@
       "vendor": "incident.io",
       "category": "Incident Management",
       "description": "Incidents, on-call, and follow-ups (OAuth user permissions or API key).",
+      "capabilities": [
+        "Work with incidents",
+        "Work with on-call",
+        "Work with follow-ups"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.incident.io/mcp",
       "requires_auth": true,
@@ -7813,6 +8323,11 @@
       "vendor": "Infobip",
       "category": "Communication",
       "description": "Omnichannel messaging: SMS, RCS, WhatsApp, Viber.",
+      "capabilities": [
+        "Send SMS and RCS",
+        "Message WhatsApp and Viber",
+        "Run omnichannel campaigns"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.infobip.com/sms",
       "requires_auth": true,
@@ -7834,6 +8349,11 @@
       "vendor": "Intercom",
       "category": "Support",
       "description": "Conversations, contacts, and help center in Intercom.",
+      "capabilities": [
+        "Work with conversations",
+        "Work with contacts",
+        "Work with help center"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.intercom.com/mcp",
       "requires_auth": true,
@@ -7910,6 +8430,11 @@
       "vendor": "Jam",
       "category": "Development",
       "description": "Bug reports with logs, network, and repro data via Jam.",
+      "capabilities": [
+        "Manage bug reports with logs",
+        "Manage network",
+        "Manage repro data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.jam.dev/mcp",
       "requires_auth": true,
@@ -7991,6 +8516,11 @@
       "vendor": "JFrog",
       "category": "Dev & Artifacts",
       "description": "Artifact, package, and security data from the JFrog Platform.",
+      "capabilities": [
+        "Work with artifact",
+        "Work with package",
+        "Work with security data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{instance}.jfrog.io/mcp",
       "url_variables": [
@@ -8192,6 +8722,11 @@
       "vendor": "Jina AI",
       "category": "Search",
       "description": "Web reading, search, and grounding via Jina AI.",
+      "capabilities": [
+        "Search web reading",
+        "Search grounding",
+        "Search the entire web for current information, news, articles, and…"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.jina.ai/v1",
       "requires_auth": true,
@@ -8299,6 +8834,11 @@
       "vendor": "Jotform",
       "category": "Productivity & Docs",
       "description": "Create and edit forms, list forms, and create or retrieve form submissions.",
+      "capabilities": [
+        "Work with edit forms",
+        "List forms",
+        "Create or retrieve form submissions"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.jotform.com",
       "requires_auth": true,
@@ -8346,6 +8886,11 @@
       "vendor": "JumpCloud",
       "category": "Security & Identity",
       "description": "Manage JumpCloud identity and device resources.",
+      "capabilities": [
+        "Manage identity",
+        "Manage device resources",
+        "List administrators"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.jumpcloud.com/v1",
       "requires_auth": true,
@@ -8472,6 +9017,11 @@
       "vendor": "Klaviyo",
       "category": "Marketing",
       "description": "Email/SMS marketing: profiles, lists, campaigns, and metrics via Klaviyo.",
+      "capabilities": [
+        "Analyze profiles",
+        "Analyze lists",
+        "Analyze campaigns"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.klaviyo.com/mcp",
       "requires_auth": true,
@@ -8660,6 +9210,11 @@
       "vendor": "Langfuse",
       "category": "LLM Observability",
       "description": "Langfuse data platform: traces, prompts, datasets (EU; US us.cloud.langfuse.com).",
+      "capabilities": [
+        "Work with traces",
+        "Work with prompts",
+        "Work with datasets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://cloud.langfuse.com/api/public/mcp",
       "requires_auth": true,
@@ -8890,6 +9445,11 @@
       "vendor": "LaunchDarkly",
       "category": "Feature Flags",
       "description": "Feature flag management, AgentControl configs, and observability via LaunchDarkly.",
+      "capabilities": [
+        "Work with feature flag management",
+        "Work with observability",
+        "Create a feature flag"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
       "requires_auth": true,
@@ -8927,6 +9487,11 @@
       "vendor": "Linear",
       "category": "Project Management",
       "description": "Issues, projects, cycles, and teams in Linear.",
+      "capabilities": [
+        "Manage issues",
+        "Manage projects",
+        "Manage cycles"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.linear.app/mcp",
       "requires_auth": true,
@@ -9132,6 +9697,11 @@
       "vendor": "Lithic",
       "category": "Finance",
       "description": "Card issuing API and docs: explore endpoints and run live requests.",
+      "capabilities": [
+        "Manage explore endpoints",
+        "Run live requests",
+        "Search endpoints"
+      ],
       "transport": "streamable-http",
       "server_url": "https://docs.lithic.com/mcp",
       "requires_auth": false,
@@ -9169,6 +9739,11 @@
       "vendor": "Mailchimp",
       "category": "Marketing",
       "description": "Mailchimp Transactional (Mandrill) email sending and reporting.",
+      "capabilities": [
+        "Analyze transactional email sending",
+        "Analyze reporting",
+        "List available API endpoints"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mandrillapp.com/mcp",
       "requires_auth": true,
@@ -9228,6 +9803,11 @@
       "vendor": "Make",
       "category": "Automation",
       "description": "Build, manage, and run automation workflows.",
+      "capabilities": [
+        "Build automation workflows",
+        "Run scenarios",
+        "Manage workflow connections"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.make.com",
       "requires_auth": true,
@@ -9250,6 +9830,11 @@
       "vendor": "Mem0",
       "category": "AI & Memory",
       "description": "Persistent memory store for agents via Mem0.",
+      "capabilities": [
+        "Work with persistent memory store",
+        "Semantic search across memories",
+        "Update memory"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.mem0.ai/mcp",
       "requires_auth": true,
@@ -9316,6 +9901,11 @@
       "vendor": "Mercury",
       "category": "Finance",
       "description": "Banking data: accounts, transactions (read-only; OAuth 2.0 DCR).",
+      "capabilities": [
+        "Manage accounts",
+        "Manage transactions",
+        "Get account by ID"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.mercury.com/mcp",
       "requires_auth": true,
@@ -9396,6 +9986,11 @@
       "vendor": "Azure DevOps",
       "category": "Developer Tools",
       "description": "Azure DevOps remote MCP: projects, repos, PRs, work items, pipelines, wiki, and test plans (Entra OAuth; org must be Entra-backed).",
+      "capabilities": [
+        "Work with projects",
+        "Work with repos",
+        "Work with PRs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.dev.azure.com/{organization}",
       "url_variables": [
@@ -9486,6 +10081,11 @@
       "vendor": "Microsoft",
       "category": "Productivity & Docs",
       "description": "Search Microsoft Learn documentation.",
+      "capabilities": [
+        "Search Learn documentation",
+        "Search official Microsoft/Azure documentation to find the most…",
+        "Search for code snippets and examples in official Microsoft Learn…"
+      ],
       "transport": "streamable-http",
       "server_url": "https://learn.microsoft.com/api/mcp",
       "requires_auth": false,
@@ -9512,6 +10112,11 @@
       "vendor": "Microsoft Sentinel",
       "category": "Security",
       "description": "Microsoft Sentinel security data exploration.",
+      "capabilities": [
+        "Review security data exploration",
+        "Semantic search of data-lake table catalog/schema",
+        "Query lake"
+      ],
       "transport": "streamable-http",
       "server_url": "https://sentinel.microsoft.com/mcp/data-exploration",
       "requires_auth": true,
@@ -9563,6 +10168,11 @@
       "vendor": "Miro",
       "category": "Project Management",
       "description": "Boards, items, and collaboration in Miro.",
+      "capabilities": [
+        "Manage boards",
+        "Manage items",
+        "Manage collaboration"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.miro.com/",
       "requires_auth": true,
@@ -9671,6 +10281,11 @@
       "vendor": "Mixpanel",
       "category": "Analytics",
       "description": "Event analytics, funnels, and reports (US region; EU/IN regional variants available).",
+      "capabilities": [
+        "Analyze event analytics",
+        "Analyze funnels",
+        "Analyze reports"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.mixpanel.com/mcp",
       "requires_auth": true,
@@ -9813,6 +10428,11 @@
       "vendor": "Modern Treasury",
       "category": "Finance",
       "description": "Platform API access and documentation (auth optional via headers/query).",
+      "capabilities": [
+        "Manage platform API access",
+        "Manage documentation",
+        "Search endpoints"
+      ],
       "transport": "streamable-http",
       "server_url": "https://docs.moderntreasury.com/mcp",
       "requires_auth": false,
@@ -9842,6 +10462,11 @@
       "vendor": "Mollie",
       "category": "Payments",
       "description": "Payments and balances via Mollie (proxy to public API).",
+      "capabilities": [
+        "Process payments",
+        "Process balances",
+        "Fetch and parse documentation from a given URL or local file"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.mollie.com/mcp",
       "requires_auth": true,
@@ -10113,6 +10738,11 @@
       "vendor": "monday.com",
       "category": "Project Management",
       "description": "Boards, items, and workflows in monday.com.",
+      "capabilities": [
+        "Manage boards",
+        "Manage items",
+        "Manage workflows"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.monday.com/mcp",
       "requires_auth": true,
@@ -10273,6 +10903,11 @@
       "vendor": "Monte Carlo",
       "category": "Data Observability",
       "description": "Data observability: incidents, monitors, and assets (OAuth 2.1 or API key).",
+      "capabilities": [
+        "Work with incidents",
+        "Work with monitors",
+        "Work with assets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.getmontecarlo.com/mcp",
       "requires_auth": true,
@@ -10382,6 +11017,11 @@
       "vendor": "MotherDuck",
       "category": "Data & Analytics",
       "description": "Query and modify MotherDuck cloud data, create Dives (OAuth or Bearer token).",
+      "capabilities": [
+        "Query modify cloud data",
+        "Create Dives",
+        "Search catalog"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.motherduck.com/mcp",
       "requires_auth": true,
@@ -10500,6 +11140,11 @@
       "vendor": "Mux",
       "category": "Media",
       "description": "Video infrastructure: assets, live streams, and data.",
+      "capabilities": [
+        "Work with assets",
+        "Work with live streams",
+        "Work with data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.mux.com",
       "requires_auth": true,
@@ -10618,6 +11263,11 @@
       "vendor": "Neon",
       "category": "Database",
       "description": "Manage Neon Postgres projects, branches, and queries.",
+      "capabilities": [
+        "Manage Postgres projects",
+        "Query branches",
+        "Query queries"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.neon.tech/mcp",
       "requires_auth": true,
@@ -10762,6 +11412,11 @@
       "vendor": "NetSuite",
       "category": "ERP",
       "description": "Oracle NetSuite AI Connector: records, transactions, reports, saved searches, SuiteQL.",
+      "capabilities": [
+        "Query records and transactions",
+        "Run saved searches and reports",
+        "Execute SuiteQL"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{account_id}.suitetalk.api.netsuite.com/services/mcp/v1/all",
       "url_variables": [
@@ -10785,6 +11440,11 @@
       "vendor": "New Relic",
       "category": "Observability",
       "description": "Query New Relic telemetry, dashboards, and alerts.",
+      "capabilities": [
+        "Query telemetry",
+        "Monitor dashboards",
+        "Monitor alerts"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.newrelic.com/mcp/",
       "requires_auth": true,
@@ -10922,6 +11582,11 @@
       "vendor": "Norman Finance",
       "category": "Payments & Finance",
       "description": "AI-powered bookkeeping and tax filing.",
+      "capabilities": [
+        "Work with AI-powered bookkeeping",
+        "Work with tax filing",
+        "Create a new invoice"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.norman.finance/mcp",
       "requires_auth": true,
@@ -11056,6 +11721,11 @@
       "vendor": "Notion",
       "category": "Productivity & Docs",
       "description": "Notion pages, databases, and workspaces.",
+      "capabilities": [
+        "Work with pages",
+        "Work with databases",
+        "Work with workspaces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.notion.com/mcp",
       "requires_auth": true,
@@ -11152,6 +11822,11 @@
       "vendor": "n8n",
       "category": "Automation",
       "description": "Instance-level n8n MCP: search, run, and build workflows exposed to MCP clients (Settings > Instance-level MCP).",
+      "capabilities": [
+        "Search workflows",
+        "Run automations",
+        "Build workflows for agents"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{domain}/mcp-server/http",
       "url_variables": [
@@ -11178,6 +11853,11 @@
       "vendor": "Paddle",
       "category": "Billing & Payments",
       "description": "Subscriptions, transactions, and products (live; sandbox sandbox-mcp.paddle.com).",
+      "capabilities": [
+        "Manage subscriptions",
+        "Manage transactions",
+        "Manage products"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.paddle.com/mcp",
       "requires_auth": true,
@@ -11213,6 +11893,11 @@
       "vendor": "PagerDuty",
       "category": "Incident Management",
       "description": "Incidents, services, schedules, and on-call data via PagerDuty.",
+      "capabilities": [
+        "Work with incidents",
+        "Work with services",
+        "Work with schedules"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.pagerduty.com/mcp",
       "requires_auth": true,
@@ -11350,6 +12035,11 @@
       "vendor": "PandaDoc",
       "category": "E-signature & Legal",
       "description": "Documents, templates, contacts, and webhooks via PandaDoc.",
+      "capabilities": [
+        "Manage documents",
+        "Work with templates",
+        "Update contacts and webhooks"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.pandadoc.com/v1/mcp",
       "requires_auth": true,
@@ -11375,6 +12065,11 @@
       "vendor": "PayPal",
       "category": "Payments",
       "description": "Invoices, payments, orders, and disputes via PayPal remote MCP. Production streamable HTTP: https://mcp.paypal.com/mcp (sandbox: https://mcp.sandbox.paypal.com/mcp). OAuth login; docs also document SSE at /sse.",
+      "capabilities": [
+        "Create a new invoice",
+        "Create an order",
+        "Create a shipment tracking record"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.paypal.com/mcp",
       "requires_auth": true,
@@ -11503,6 +12198,11 @@
       "vendor": "Pendo",
       "category": "Product Analytics",
       "description": "Product analytics, guides, and usage data (US; regional hosts us1/eu/jpn/au).",
+      "capabilities": [
+        "Work with product analytics",
+        "Work with guides",
+        "Work with usage data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://app.pendo.io/mcp/v0/shttp",
       "requires_auth": true,
@@ -11630,6 +12330,11 @@
       "vendor": "Pinecone",
       "category": "AI & Memory",
       "description": "Per-assistant Pinecone MCP: retrieve context from an assistant's uploaded files.",
+      "capabilities": [
+        "Retrieve assistant context",
+        "Search uploaded files",
+        "Read relevant snippets"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{assistant_host}/mcp/assistants/{assistant_name}",
       "url_variables": [
@@ -11669,6 +12374,11 @@
       "vendor": "Pipedream",
       "category": "Automation",
       "description": "Official Pipedream hosted MCP: tool calls across 3,000+ apps (Connect API auth).",
+      "capabilities": [
+        "Call tools across connected apps",
+        "Run hosted automations",
+        "Connect 3,000+ services"
+      ],
       "transport": "streamable-http",
       "server_url": "https://remote.mcp.pipedream.net/v3",
       "requires_auth": true,
@@ -11718,6 +12428,11 @@
       "vendor": "Plaid",
       "category": "Payments & Finance",
       "description": "Plaid dashboard, items, and financial data access.",
+      "capabilities": [
+        "Work with dashboard",
+        "Work with items",
+        "Work with financial data access"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.dashboard.plaid.com/mcp",
       "requires_auth": true,
@@ -11757,6 +12472,11 @@
       "vendor": "PlanetScale",
       "category": "Database",
       "description": "Manage PlanetScale MySQL databases and branches.",
+      "capabilities": [
+        "Query branches",
+        "List organizations you can access",
+        "Get details about an organization"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.pscale.dev/mcp/planetscale",
       "requires_auth": true,
@@ -11855,6 +12575,11 @@
       "vendor": "Port",
       "category": "Development",
       "description": "Internal developer portal: catalog, scorecards, and actions.",
+      "capabilities": [
+        "Manage catalog",
+        "Manage scorecards",
+        "Manage actions"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.port.io/v1",
       "requires_auth": true,
@@ -11956,6 +12681,11 @@
       "vendor": "PostHog",
       "category": "Analytics",
       "description": "Product analytics, feature flags, and session replays.",
+      "capabilities": [
+        "Analyze product analytics",
+        "Analyze feature flags",
+        "Analyze session replays"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.posthog.com/mcp",
       "requires_auth": true,
@@ -12002,6 +12732,11 @@
       "vendor": "Postman",
       "category": "Dev & APIs",
       "description": "Collections, APIs, and workspaces in Postman.",
+      "capabilities": [
+        "Call collections",
+        "Call APIs",
+        "Call workspaces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.postman.com/mcp",
       "requires_auth": true,
@@ -12094,6 +12829,11 @@
       "vendor": "Prisma",
       "category": "Database",
       "description": "Manage Prisma Postgres databases.",
+      "capabilities": [
+        "Manage Postgres databases",
+        "Create a managed Prisma Postgres backup",
+        "Create a connection string for a database"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.prisma.io/mcp",
       "requires_auth": true,
@@ -12162,6 +12902,11 @@
       "vendor": "Prismic",
       "category": "Web & CMS",
       "description": "Manage Prismic content types and documents.",
+      "capabilities": [
+        "Manage content types",
+        "Manage documents",
+        "Search documents by keyword with filters"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.prismic.io/mcp",
       "requires_auth": true,
@@ -12245,6 +12990,11 @@
       "vendor": "Railway",
       "category": "Cloud Platform",
       "description": "Develop, manage, and debug Railway projects and deployments.",
+      "capabilities": [
+        "Manage develop",
+        "Manage debug projects",
+        "Manage deployments"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.railway.com/",
       "requires_auth": true,
@@ -12304,6 +13054,11 @@
       "vendor": "Ramp",
       "category": "Finance",
       "description": "Spend management: cards, transactions, bills, and reimbursements via Ramp.",
+      "capabilities": [
+        "Manage cards",
+        "Manage transactions",
+        "Manage bills"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.ramp.com/mcp",
       "requires_auth": true,
@@ -12406,6 +13161,11 @@
       "vendor": "Razorpay",
       "category": "Payments",
       "description": "Payments, orders, refunds, and settlements via Razorpay.",
+      "capabilities": [
+        "Process payments",
+        "Process orders",
+        "Process refunds"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.razorpay.com/mcp",
       "requires_auth": true,
@@ -12477,6 +13237,11 @@
       "vendor": "Render",
       "category": "Cloud Platform",
       "description": "Manage Render services, deploys, databases, and logs.",
+      "capabilities": [
+        "Manage services",
+        "Manage deploys",
+        "Manage databases"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.render.com/mcp",
       "requires_auth": true,
@@ -12596,6 +13361,11 @@
       "vendor": "Replicate",
       "category": "AI & ML",
       "description": "Official hosted Replicate MCP (SSE): discover, compare, and run models. Endpoint https://mcp.replicate.com/sse. OAuth (DCR) or Replicate API token via client login.",
+      "capabilities": [
+        "Work with discover",
+        "Work with compare",
+        "Search public models by query"
+      ],
       "transport": "sse",
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
@@ -12656,6 +13426,11 @@
       "vendor": "Rootly",
       "category": "Incident Management",
       "description": "Incident management, on-call scheduling, and analysis.",
+      "capabilities": [
+        "Work with incident management",
+        "Work with on-call scheduling",
+        "Work with analysis"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.rootly.com/mcp",
       "requires_auth": true,
@@ -12762,6 +13537,11 @@
       "vendor": "Salesforce",
       "category": "Sales & CRM",
       "description": "Hosted Salesforce MCP servers (append a server name, e.g. platform/sobject-all). Sandbox uses /v1/sandbox/.",
+      "capabilities": [
+        "Query Salesforce records",
+        "Update CRM objects",
+        "Search accounts and opportunities"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.salesforce.com/platform/mcp/v1/{server}",
       "url_variables": [
@@ -12785,6 +13565,11 @@
       "vendor": "Sanity",
       "category": "Web & CMS",
       "description": "Query and manage Sanity content and datasets.",
+      "capabilities": [
+        "Manage content",
+        "Manage datasets",
+        "Search Sanity docs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.sanity.io",
       "requires_auth": true,
@@ -12912,6 +13697,11 @@
       "vendor": "ScrapingAnt",
       "category": "Web Scraping & Data",
       "description": "Cloud web scraping with real browsers and JS rendering.",
+      "capabilities": [
+        "Scrape cloud web scraping with real browsers",
+        "Scrape JS rendering",
+        "Search and read ScrapingAnt web scraping"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.scrapingant.com/mcp",
       "requires_auth": true,
@@ -12946,6 +13736,11 @@
       "vendor": "Semgrep",
       "category": "Security",
       "description": "Static analysis security scanning: findings, rules, and code scanning.",
+      "capabilities": [
+        "Review findings",
+        "Review rules",
+        "Review code scanning"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.semgrep.ai/mcp",
       "requires_auth": true,
@@ -13004,6 +13799,11 @@
       "vendor": "Semrush",
       "category": "Marketing",
       "description": "SEO, keyword, and competitive research via Semrush.",
+      "capabilities": [
+        "Analyze SEO",
+        "Analyze keyword",
+        "Analyze competitive research"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.semrush.com/v1/mcp",
       "requires_auth": true,
@@ -13057,6 +13857,11 @@
       "vendor": "Sectigo",
       "category": "Security & Identity",
       "description": "Sectigo Certificate Manager (SCM) hosted MCP: issue, renew, revoke, search and report on certificates.",
+      "capabilities": [
+        "Issue and renew certificates",
+        "Revoke certificates",
+        "Search and report on certificates"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.{instance}.sectigo.com/mcp",
       "url_variables": [
@@ -13083,6 +13888,11 @@
       "vendor": "Sentry",
       "category": "Observability",
       "description": "Error tracking, performance, issues, and releases.",
+      "capabilities": [
+        "Monitor error tracking",
+        "Monitor performance",
+        "Monitor issues"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.sentry.dev/mcp",
       "requires_auth": true,
@@ -13193,6 +14003,11 @@
       "vendor": "SerpApi",
       "category": "Search",
       "description": "Google, Bing, and other search engine results via SerpApi.",
+      "capabilities": [
+        "Search google",
+        "Search bing",
+        "Search other search engine results"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.serpapi.com/mcp",
       "requires_auth": true,
@@ -13219,6 +14034,11 @@
       "vendor": "ServiceNow",
       "category": "ITSM",
       "description": "Per-instance ServiceNow MCP server (Zurich+); append your registered server name.",
+      "capabilities": [
+        "Manage incidents and requests",
+        "Search the knowledge base",
+        "Work with ServiceNow records"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{instance}.service-now.com/sncapps/mcp-server/mcp/{server}",
       "url_variables": [
@@ -13247,6 +14067,11 @@
       "vendor": "Shopify",
       "category": "E-commerce",
       "description": "Per-store Storefront MCP: product search, cart, and policy tools (public storefront, no auth).",
+      "capabilities": [
+        "Work with product search",
+        "Work with cart",
+        "Work with policy tools"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{shop}.myshopify.com/api/mcp",
       "url_variables": [
@@ -13280,6 +14105,11 @@
       "vendor": "Shortcut",
       "category": "Project Management",
       "description": "Stories, epics, and iterations via Shortcut (OAuth, no token needed).",
+      "capabilities": [
+        "Manage stories",
+        "Manage epics",
+        "Manage iterations"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.shortcut.com/mcp",
       "requires_auth": true,
@@ -13401,6 +14231,11 @@
       "vendor": "SmartBear",
       "category": "Dev & APIs",
       "description": "Swagger API hub tools (Bugsnag and Zephyr available on sibling hosts).",
+      "capabilities": [
+        "Call swagger API hub tools",
+        "Generate an API from a prompt",
+        "Create or update an API"
+      ],
       "transport": "streamable-http",
       "server_url": "https://swagger.mcp.smartbear.com/mcp",
       "requires_auth": true,
@@ -13522,6 +14357,11 @@
       "vendor": "Smartsheet",
       "category": "Project Management",
       "description": "Sheets, rows, and reports via Smartsheet (US; EU mcp.smartsheet.eu, AU mcp.smartsheet.au). OAuth or Bearer API token.",
+      "capabilities": [
+        "Manage sheets",
+        "Manage rows",
+        "Manage reports"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.smartsheet.com",
       "requires_auth": true,
@@ -13705,6 +14545,11 @@
       "vendor": "Snowflake",
       "category": "Data & Analytics",
       "description": "Snowflake-managed Cortex MCP server scoped to a database/schema.",
+      "capabilities": [
+        "Query Cortex data",
+        "Explore database schemas",
+        "Analyze warehouse results"
+      ],
       "transport": "streamable-http",
       "server_url": "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{name}",
       "url_variables": [
@@ -13743,6 +14588,11 @@
       "vendor": "Socket",
       "category": "Security",
       "description": "Dependency/package supply-chain risk lookup (public server, no auth).",
+      "capabilities": [
+        "Review dependency/package supply-chain risk lookup",
+        "Query supply chain, quality, maintenance, vulnerability, license scores",
+        "List orgs the authenticated user belongs to"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.socket.dev/",
       "requires_auth": false,
@@ -13785,6 +14635,11 @@
       "vendor": "SonarQube",
       "category": "Code Quality",
       "description": "SonarQube Cloud-hosted MCP (fixed tool subset). Default https://api.sonarcloud.io/mcp; US-region orgs use https://api.sonarqube.us/mcp. Auth: Bearer user token + SONARQUBE_ORG. Optional SONARQUBE_READ_ONLY (default true) and SONARQUBE_TOOLSETS.",
+      "capabilities": [
+        "Work with bearer user token + SONARQUBE_ORG",
+        "Work with SONARQUBE_TOOLSETS",
+        "Find files sorted by coverage (worst first)"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.sonarcloud.io/mcp",
       "requires_auth": true,
@@ -13897,6 +14752,11 @@
       "vendor": "Sonatype",
       "category": "Security & Identity",
       "description": "Component intelligence: versions, security analysis, Trust Score.",
+      "capabilities": [
+        "Manage versions",
+        "Manage security analysis",
+        "Manage trust Score"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.guide.sonatype.com/mcp",
       "requires_auth": true,
@@ -13932,6 +14792,11 @@
       "vendor": "Square",
       "category": "Payments",
       "description": "Payments, catalog, orders, and customers via Square.",
+      "capabilities": [
+        "Process payments",
+        "Process catalog",
+        "Process orders"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.squareup.com/mcp",
       "requires_auth": true,
@@ -13978,6 +14843,11 @@
       "vendor": "Statsig",
       "category": "Feature Flags & Experimentation",
       "description": "Feature flags, experiments, and analytics in Statsig.",
+      "capabilities": [
+        "Manage feature flags",
+        "Review experiments",
+        "Analyze product metrics"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.statsig.com/v1/mcp",
       "requires_auth": true,
@@ -14000,6 +14870,11 @@
       "vendor": "Storyblok",
       "category": "Web & CMS",
       "description": "Search and manage Storyblok Management API content, spaces, components, assets, workflows, and releases.",
+      "capabilities": [
+        "Search content and spaces",
+        "Manage components and assets",
+        "Work with workflows and releases"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.storyblok.com/mcp",
       "requires_auth": true,
@@ -14052,6 +14927,11 @@
       "vendor": "Stripe",
       "category": "Payments",
       "description": "Payments, subscriptions, and invoices via Stripe.",
+      "capabilities": [
+        "Process payments",
+        "Process subscriptions",
+        "Process invoices"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.stripe.com",
       "requires_auth": true,
@@ -14192,6 +15072,11 @@
       "vendor": "Stytch",
       "category": "Security & Identity",
       "description": "Manage Stytch authentication, users, and connected apps.",
+      "capabilities": [
+        "Manage authentication",
+        "Manage users",
+        "Manage connected apps"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.stytch.dev/mcp",
       "requires_auth": true,
@@ -14252,6 +15137,11 @@
       "vendor": "Supabase",
       "category": "Database",
       "description": "Manage Supabase projects: database, auth, and storage.",
+      "capabilities": [
+        "Query database",
+        "Query auth",
+        "Query storage"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.supabase.com/mcp",
       "requires_auth": true,
@@ -14427,6 +15317,11 @@
       "vendor": "Tavily",
       "category": "Search",
       "description": "Web search and extraction for agents (OAuth keyless; API key also supported).",
+      "capabilities": [
+        "Search web search",
+        "Search extraction",
+        "Real-time web search"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.tavily.com/mcp/",
       "requires_auth": true,
@@ -14475,6 +15370,11 @@
       "vendor": "Teamwork",
       "category": "Project Management",
       "description": "Teamwork.com projects, tasks, and time (enable MCP under Settings > AI).",
+      "capabilities": [
+        "Manage tasks",
+        "Manage time",
+        "Create Desk company"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.ai.teamwork.com",
       "requires_auth": true,
@@ -15217,6 +16117,11 @@
       "vendor": "Telnyx",
       "category": "Communications",
       "description": "Telnyx API actions: messaging, voice, numbers (canonical API MCP endpoint).",
+      "capabilities": [
+        "Work with messaging",
+        "Work with voice",
+        "Work with numbers"
+      ],
       "transport": "streamable-http",
       "server_url": "https://api.telnyx.com/v2/mcp",
       "requires_auth": true,
@@ -15264,6 +16169,11 @@
       "vendor": "ThoughtSpot",
       "category": "Analytics",
       "description": "Query data and analytics in ThoughtSpot.",
+      "capabilities": [
+        "Query data",
+        "Analyze analytics",
+        "Create analysis session"
+      ],
       "transport": "streamable-http",
       "server_url": "https://agent.thoughtspot.app/mcp?api-version=latest",
       "requires_auth": true,
@@ -15319,6 +16229,11 @@
       "vendor": "Tinybird",
       "category": "Data & Analytics",
       "description": "Query workspaces and published API endpoints; token passed as query parameter.",
+      "capabilities": [
+        "Query workspaces and published API endpoints",
+        "List workspace data sources",
+        "List service/organization data sources"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.tinybird.co?token={token}",
       "url_variables": [
@@ -15365,6 +16280,11 @@
       "vendor": "Todoist",
       "category": "Productivity & Docs",
       "description": "Manage Todoist tasks, projects, and workflows.",
+      "capabilities": [
+        "Manage tasks",
+        "Work with projects",
+        "Work with workflows"
+      ],
       "transport": "streamable-http",
       "server_url": "https://ai.todoist.net/mcp",
       "requires_auth": true,
@@ -15597,6 +16517,11 @@
       "vendor": "Twilio",
       "category": "Communications",
       "description": "Twilio documentation and API specs (public docs server, no auth).",
+      "capabilities": [
+        "Work with documentation",
+        "Work with API specs",
+        "Fetch full parameter schemas and response details for one or more…"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.twilio.com/docs",
       "requires_auth": false,
@@ -15619,6 +16544,11 @@
       "vendor": "Vanta",
       "category": "Security & Compliance",
       "description": "Compliance posture, tests, and remediation (US; EU mcp.eu.vanta.com, AUS mcp.aus.vanta.com).",
+      "capabilities": [
+        "Work with compliance posture",
+        "Work with tests",
+        "Work with remediation"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.vanta.com/mcp",
       "requires_auth": true,
@@ -15703,6 +16633,11 @@
       "vendor": "Vercel",
       "category": "Cloud Platform",
       "description": "Manage Vercel projects, deployments, and docs.",
+      "capabilities": [
+        "Manage projects",
+        "Manage deployments",
+        "Manage docs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.vercel.com",
       "requires_auth": true,
@@ -15813,6 +16748,11 @@
       "vendor": "Vimeo",
       "category": "Media & Video",
       "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse).",
+      "capabilities": [
+        "Manage videos",
+        "Query the video library",
+        "Update Vimeo content"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.vimeo.com/mcp",
       "requires_auth": true,
@@ -15842,6 +16782,11 @@
       "vendor": "Vonage",
       "category": "Communication",
       "description": "Vonage API documentation, code snippets, and tutorials.",
+      "capabilities": [
+        "Send and read API documentation",
+        "Send and read code snippets",
+        "Send and read tutorials"
+      ],
       "transport": "streamable-http",
       "server_url": "https://documentation-mcp.vonage.dev/mcp",
       "requires_auth": false,
@@ -15884,6 +16829,11 @@
       "vendor": "Webflow",
       "category": "Web & CMS",
       "description": "Manage Webflow sites, CMS collections, and design.",
+      "capabilities": [
+        "Manage sites",
+        "Manage CMS collections",
+        "Manage design"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.webflow.com/mcp",
       "requires_auth": true,
@@ -16000,6 +16950,11 @@
       "vendor": "Weights & Biases",
       "category": "AI & ML",
       "description": "W&B runs, sweeps, and Weave traces (multi-tenant; dedicated/self-managed use your instance host).",
+      "capabilities": [
+        "Work with W&B runs",
+        "Work with sweeps",
+        "Work with weave traces"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.withwandb.com/mcp",
       "requires_auth": true,
@@ -16078,6 +17033,11 @@
       "vendor": "Wix",
       "category": "Web & CMS",
       "description": "Manage Wix sites, Velo code, and business solutions.",
+      "capabilities": [
+        "Manage sites",
+        "Manage velo code",
+        "Manage business solutions"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.wix.com/mcp",
       "requires_auth": true,
@@ -16153,6 +17113,11 @@
       "vendor": "Workato",
       "category": "Automation",
       "description": "Workato Developer/Embedded API MCP: manage workspace assets and projects.",
+      "capabilities": [
+        "Manage workspace assets",
+        "Work with projects",
+        "Run Workato automations"
+      ],
       "transport": "streamable-http",
       "server_url": "https://app.workato.com/mcp",
       "requires_auth": true,
@@ -16174,6 +17139,11 @@
       "vendor": "Zoom Docs",
       "category": "Communication",
       "description": "Create and retrieve Zoom documents and notes.",
+      "capabilities": [
+        "Send and read retrieve Zoom documents",
+        "Send and read notes",
+        "Create a Zoom Docs document from Markdown"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.zoom.us/mcp/docs/streamable",
       "requires_auth": true,
@@ -16209,6 +17179,11 @@
       "vendor": "Zoom Revenue Accelerator",
       "category": "Communication",
       "description": "Zoom Revenue Accelerator sales insights and deal intelligence.",
+      "capabilities": [
+        "Review sales insights",
+        "Analyze deal intelligence",
+        "Work with conversation data"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.zoom.us/mcp/revenue_accelerator/streamable",
       "requires_auth": true,
@@ -16240,6 +17215,11 @@
       "vendor": "Zoom Team Chat",
       "category": "Communication",
       "description": "Zoom Team Chat channels, messages, and contacts.",
+      "capabilities": [
+        "Send and read channels",
+        "Send and read messages",
+        "Send and read contacts"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.zoom.us/mcp/team_chat/streamable",
       "requires_auth": true,
@@ -16296,6 +17276,11 @@
       "vendor": "Zoom Whiteboard",
       "category": "Communication",
       "description": "Zoom Whiteboard boards and diagrams.",
+      "capabilities": [
+        "Send and read boards",
+        "Send and read diagrams",
+        "Create a whiteboard"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.zoom.us/mcp/whiteboard/streamable",
       "requires_auth": true,
@@ -16372,6 +17357,11 @@
       "vendor": "Zoom Workspace",
       "category": "Communication",
       "description": "Zoom workspace: meetings, chat, docs, and recordings.",
+      "capabilities": [
+        "Send and read meetings",
+        "Send and read chat",
+        "Send and read docs"
+      ],
       "transport": "streamable-http",
       "server_url": "https://mcp.zoom.us/mcp/zoom/streamable",
       "requires_auth": true,
@@ -16432,6 +17422,11 @@
       "vendor": "AWS",
       "category": "Cloud Platform",
       "description": "Search AWS documentation and securely operate AWS services, including Amazon S3 buckets, through IAM-authorized APIs.",
+      "capabilities": [
+        "Search documentation",
+        "Manage securely operate services",
+        "Retrieve domain-specific expertise for a particular AWS domain"
+      ],
       "transport": "streamable-http",
       "server_url": "https://aws-mcp.{region}.api.aws/mcp",
       "url_variables": [
@@ -16502,6 +17497,11 @@
       "vendor": "Outlook",
       "category": "Productivity & Docs",
       "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; tenant needs Microsoft 365 Copilot).",
+      "capabilities": [
+        "Search messages",
+        "Send and reply messages",
+        "Create a draft email"
+      ],
       "transport": "streamable-http",
       "server_url": "https://agent365.svc.cloud.microsoft/agents/tenants/{tenantId}/servers/mcp_MailTools",
       "url_variables": [
