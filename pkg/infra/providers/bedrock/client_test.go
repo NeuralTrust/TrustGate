@@ -36,71 +36,6 @@ func TestNewBedrockClient(t *testing.T) {
 	assert.NotNil(t, NewBedrockClient())
 }
 
-// The body is verbatim from mistral-7b, which reports its token counts nowhere
-// else: without the headers a buffered answer costs zero.
-func TestWithHeaderTokenCounts(t *testing.T) {
-	counted := http.Header{
-		inputCountHeader:  []string{"11"},
-		outputCountHeader: []string{"16"},
-	}
-
-	t.Run("adds the counts a legacy Mistral body omits", func(t *testing.T) {
-		body := []byte(`{"outputs":[{"text":" OK.","stop_reason":"length"}]}`)
-
-		merged := withHeaderTokenCounts(body, counted)
-
-		var got struct {
-			Metrics struct {
-				InputTokenCount  int `json:"inputTokenCount"`
-				OutputTokenCount int `json:"outputTokenCount"`
-			} `json:"amazon-bedrock-invocationMetrics"`
-			Outputs []json.RawMessage `json:"outputs"`
-		}
-		require.NoError(t, json.Unmarshal(merged, &got))
-		assert.Equal(t, 11, got.Metrics.InputTokenCount)
-		assert.Equal(t, 16, got.Metrics.OutputTokenCount)
-		assert.Len(t, got.Outputs, 1)
-	})
-
-	t.Run("lets the body's own metrics win", func(t *testing.T) {
-		body := []byte(`{"amazon-bedrock-invocationMetrics":{"inputTokenCount":7,"outputTokenCount":3}}`)
-
-		merged := withHeaderTokenCounts(body, counted)
-
-		var got struct {
-			Metrics struct {
-				InputTokenCount int `json:"inputTokenCount"`
-			} `json:"amazon-bedrock-invocationMetrics"`
-		}
-		require.NoError(t, json.Unmarshal(merged, &got))
-		assert.Equal(t, 7, got.Metrics.InputTokenCount)
-	})
-
-	t.Run("leaves the body alone when there is nothing to add", func(t *testing.T) {
-		body := []byte(`{"outputs":[]}`)
-
-		assert.Equal(t, body, withHeaderTokenCounts(body, nil))
-		assert.Equal(t, body, withHeaderTokenCounts(body, http.Header{}))
-		assert.Equal(t, body, withHeaderTokenCounts(body, http.Header{
-			inputCountHeader: []string{"not a number"},
-		}))
-	})
-
-	t.Run("keeps malformed bodies untouched", func(t *testing.T) {
-		for _, body := range [][]byte{nil, []byte(""), []byte("not json"), []byte("{")} {
-			assert.Equal(t, body, withHeaderTokenCounts(body, counted))
-		}
-	})
-
-	t.Run("produces valid JSON for an empty object", func(t *testing.T) {
-		merged := withHeaderTokenCounts([]byte(`{ }`), counted)
-
-		var got map[string]any
-		require.NoError(t, json.Unmarshal(merged, &got))
-		assert.Contains(t, got, "amazon-bedrock-invocationMetrics")
-	})
-}
-
 func TestNewBedrockBackendError(t *testing.T) {
 	t.Run("converts AWS HTTP errors to backend errors", func(t *testing.T) {
 		err := &awshttp.ResponseError{
@@ -188,17 +123,6 @@ func TestRequireModel(t *testing.T) {
 		_, err = c.requireModel([]byte(`{"model":"anthropic.claude-*"}`), &providers.Config{})
 		require.ErrorIs(t, err, modelmatch.ErrPatternNotModel)
 	})
-}
-
-func TestStripBedrockFields(t *testing.T) {
-	out := stripBedrockFields([]byte(`{"modelId":"x","model":"x","stream":true,"messages":[{"role":"user"}]}`))
-
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &raw))
-	assert.NotContains(t, raw, "modelId")
-	assert.NotContains(t, raw, "model")
-	assert.NotContains(t, raw, "stream")
-	assert.Contains(t, raw, "messages")
 }
 
 // Inference profile IDs must survive model resolution: rewriting
@@ -308,30 +232,4 @@ func TestEmbeddings_MissingModel(t *testing.T) {
 	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"inputText":"hi"}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
-}
-
-func TestPrepareInvokeBody_NovaRejectsMaxTokens(t *testing.T) {
-	body := []byte(`{"model":"amazon.nova-pro-v1:0","stream":true,"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
-
-	out := prepareInvokeBody(body, "amazon.nova-pro-v1:0")
-
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &raw))
-	assert.NotContains(t, raw, "max_tokens")
-	assert.NotContains(t, raw, "anthropic_version")
-	assert.NotContains(t, raw, "model")
-	assert.NotContains(t, raw, "stream")
-	assert.Contains(t, raw, "inferenceConfig")
-}
-
-func TestPrepareInvokeBody_ClaudeBodyKeepsMaxTokens(t *testing.T) {
-	body := []byte(`{"model":"anthropic.claude-3-5-sonnet-20241022-v2:0","anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
-
-	out := prepareInvokeBody(body, "anthropic.claude-3-5-sonnet-20241022-v2:0")
-
-	var raw map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &raw))
-	assert.Contains(t, raw, "max_tokens")
-	assert.Contains(t, raw, "anthropic_version")
-	assert.NotContains(t, raw, "model")
 }

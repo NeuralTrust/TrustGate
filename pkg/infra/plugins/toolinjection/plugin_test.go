@@ -476,18 +476,22 @@ func anthropicToolBody(t *testing.T, toolName string) []byte {
 	})
 }
 
-func bedrockClaudeToolBody(t *testing.T, toolName string) []byte {
+func bedrockConverseToolBody(t *testing.T, toolName string) []byte {
 	t.Helper()
 	return mustMarshal(t, map[string]any{
-		"anthropic_version": "bedrock-2023-05-31",
-		"system":            "be safe",
-		"max_tokens":        1024,
-		"messages":          []any{map[string]any{"role": "user", "content": "hi"}},
-		"tools": []any{
-			map[string]any{
-				"name":         toolName,
-				"description":  "original",
-				"input_schema": map[string]any{"type": "object"},
+		"system":          []any{map[string]any{"text": "be safe"}},
+		"inferenceConfig": map[string]any{"maxTokens": 1024},
+		"messages": []any{map[string]any{
+			"role":    "user",
+			"content": []any{map[string]any{"text": "hi"}},
+		}},
+		"toolConfig": map[string]any{
+			"tools": []any{
+				map[string]any{"toolSpec": map[string]any{
+					"name":        toolName,
+					"description": "original",
+					"inputSchema": map[string]any{"json": map[string]any{"type": "object"}},
+				}},
 			},
 		},
 	})
@@ -597,12 +601,12 @@ func TestPluginPreRequestProviderMatrix(t *testing.T) {
 			untouchedVal: "projects/p/cachedContents/abc",
 		},
 		{
-			name:         "bedrock claude",
+			name:         "bedrock converse",
 			sourceFormat: string(adapter.FormatBedrock),
 			decodeFormat: adapter.FormatBedrock,
-			body:         bedrockClaudeToolBody(t, "search_docs"),
+			body:         bedrockConverseToolBody(t, "search_docs"),
 			untouchedKey: "system",
-			untouchedVal: "be safe",
+			untouchedVal: []any{map[string]any{"text": "be safe"}},
 		},
 		{
 			name:         "mistral",
