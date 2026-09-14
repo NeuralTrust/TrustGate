@@ -610,7 +610,7 @@ func TestProviderInvoke_LeavesMaxTokensWithinLimit(t *testing.T) {
 	assert.NotContains(t, string(sent), `"max_completion_tokens"`)
 }
 
-func TestProviderInvoke_BedrockNovaBindingDefaultUsesNovaSchema(t *testing.T) {
+func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 	const novaModel = "eu.amazon.nova-pro-v1:0"
 	const novaResponseBody = `{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`
 

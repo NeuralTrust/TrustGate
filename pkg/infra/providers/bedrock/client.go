@@ -15,14 +15,12 @@
 package bedrock
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,16 +31,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithy "github.com/aws/smithy-go"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 const credentialsExpiryWindow = 5 * time.Minute
@@ -52,20 +46,17 @@ var (
 	_ providers.EmbeddingsClient = (*client)(nil)
 )
 
-// Bedrock reports the token counts of a buffered answer in these headers, for
-// every family, whether or not the body repeats them.
-const (
-	inputCountHeader  = "X-Amzn-Bedrock-Input-Token-Count"
-	outputCountHeader = "X-Amzn-Bedrock-Output-Token-Count"
-)
-
 type invokeModelFn func(ctx context.Context, model string, body []byte) ([]byte, error)
+
+type converseFn func(ctx context.Context, input *bedrockruntime.ConverseInput) (*bedrockruntime.ConverseOutput, error)
 
 type client struct {
 	clientPool    *sync.Map
 	buildMu       sync.Mutex
 	bedrockClient bedrockClient.Client
 	invoke        invokeModelFn
+	converse      converseFn
+	systemFold    systemFoldMemo
 }
 
 func NewBedrockClient() providers.Client {
@@ -76,7 +67,8 @@ func NewBedrockClient() providers.Client {
 	}
 }
 
-// Completions sends reqBody raw to InvokeModel (non-streaming).
+// Completions sends the Converse body in reqBody to the Converse API and
+// returns the answer in the same wire JSON.
 func (c *client) Completions(
 	ctx context.Context,
 	cfg *providers.Config,
@@ -86,27 +78,38 @@ func (c *client) Completions(
 	if err != nil {
 		return nil, err
 	}
+	params, err := decodeConverseBody(reqBody)
+	if err != nil {
+		return nil, err
+	}
 
-	reqBody = prepareInvokeBody(reqBody, model)
+	out, err := converseWithSystemFallback(&c.systemFold, model, params,
+		func(p *converseParams) (*bedrockruntime.ConverseOutput, error) {
+			return c.converseModel(ctx, cfg, p.input(model))
+		})
+	if err != nil {
+		if backendErr := newBedrockBackendError(err); backendErr != nil {
+			return nil, backendErr
+		}
+		return nil, fmt.Errorf("failed to converse with model: %w", err)
+	}
+	return converseResponseJSON(out)
+}
+
+func (c *client) converseModel(
+	ctx context.Context,
+	cfg *providers.Config,
+	input *bedrockruntime.ConverseInput,
+) (*bedrockruntime.ConverseOutput, error) {
+	if c.converse != nil {
+		return c.converse(ctx, input)
+	}
 
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
 	}
-
-	resp, err := bedrockCl.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
-		ModelId:     aws.String(model),
-		ContentType: aws.String("application/json"),
-		Body:        reqBody,
-	}, withRawResponse)
-	if err != nil {
-		if backendErr := newBedrockBackendError(err); backendErr != nil {
-			return nil, backendErr
-		}
-		return nil, fmt.Errorf("failed to invoke model: %w", err)
-	}
-
-	return withHeaderTokenCounts(resp.Body, rawResponseHeaders(resp.ResultMetadata)), nil
+	return bedrockCl.Converse(ctx, input)
 }
 
 func (c *client) Embeddings(
@@ -224,75 +227,8 @@ func (c *client) invokeModel(
 	return resp.Body, nil
 }
 
-// withRawResponse keeps the HTTP response reachable from the output metadata,
-// which is the only way to read the token-count headers: they are not modelled
-// in InvokeModelOutput. The SDK copies the options per call, so appending here
-// does not touch the pooled client.
-func withRawResponse(o *bedrockruntime.Options) {
-	o.APIOptions = append(o.APIOptions, awsmiddleware.AddRawResponseToMetadata)
-}
-
-func rawResponseHeaders(md middleware.Metadata) http.Header {
-	raw, ok := awsmiddleware.GetRawResponse(md).(*smithyhttp.Response)
-	if !ok || raw == nil || raw.Response == nil {
-		return nil
-	}
-	return raw.Header
-}
-
-// withHeaderTokenCounts splices the token counts Bedrock reports in headers into
-// the response body, under the same key the streaming path already carries them
-// in. Some families report usage nowhere else — a legacy Mistral answer is a
-// bare {"outputs":[…]} — so without this a buffered call looks free to every
-// plugin that charges for tokens.
-//
-// The counts go in first on purpose: a body that already carries real metrics
-// repeats the key, and the last occurrence is the one Go decodes, so the
-// upstream's own figures still win.
-func withHeaderTokenCounts(body []byte, headers http.Header) []byte {
-	if headers == nil {
-		return body
-	}
-	in := headerCount(headers, inputCountHeader)
-	out := headerCount(headers, outputCountHeader)
-	if in == 0 && out == 0 {
-		return body
-	}
-
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return body
-	}
-	rest := bytes.TrimLeft(trimmed[1:], " \t\r\n")
-	if len(rest) == 0 {
-		return body
-	}
-
-	metrics := fmt.Sprintf(
-		`"amazon-bedrock-invocationMetrics":{"inputTokenCount":%d,"outputTokenCount":%d}`,
-		in, out,
-	)
-	merged := make([]byte, 0, len(metrics)+len(trimmed)+1)
-	merged = append(merged, '{')
-	merged = append(merged, metrics...)
-	if rest[0] != '}' {
-		merged = append(merged, ',')
-	}
-	return append(merged, rest...)
-}
-
-func headerCount(headers http.Header, name string) int {
-	value := headers.Get(name)
-	if value == "" {
-		return 0
-	}
-	count, err := strconv.Atoi(value)
-	if err != nil || count < 0 {
-		return 0
-	}
-	return count
-}
-
+// CompletionsStream sends the Converse body in reqBody to ConverseStream and
+// yields every event as an SSE "data:" line in the adapter's wire JSON.
 func (c *client) CompletionsStream(
 	ctx context.Context,
 	cfg *providers.Config,
@@ -302,52 +238,28 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, err
 	}
-
-	reqBody = prepareInvokeBody(reqBody, model)
+	params, err := decodeConverseBody(reqBody)
+	if err != nil {
+		return nil, err
+	}
 
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
 	}
 
-	resp, err := bedrockCl.InvokeModelWithResponseStream(ctx, &bedrockruntime.InvokeModelWithResponseStreamInput{
-		ModelId:     aws.String(model),
-		ContentType: aws.String("application/json"),
-		Body:        reqBody,
-	})
+	resp, err := converseWithSystemFallback(&c.systemFold, model, params,
+		func(p *converseParams) (*bedrockruntime.ConverseStreamOutput, error) {
+			return bedrockCl.ConverseStream(ctx, p.streamInput(model))
+		})
 	if err != nil {
 		if backendErr := newBedrockBackendError(err); backendErr != nil {
 			return nil, backendErr
 		}
-		return nil, fmt.Errorf("failed to invoke model: %w", err)
+		return nil, fmt.Errorf("failed to converse with model: %w", err)
 	}
 
-	stream := resp.GetStream()
-	return func(yield func([]byte, error) bool) {
-		defer func() { _ = stream.Close() }()
-		for event := range stream.Events() {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				yield(nil, ctxErr)
-				return
-			}
-			chunk, ok := event.(*bedrockTypes.ResponseStreamMemberChunk)
-			if !ok || len(chunk.Value.Bytes) == 0 {
-				continue
-			}
-			line := make([]byte, 0, len(chunk.Value.Bytes)+6)
-			line = append(line, []byte("data: ")...)
-			line = append(line, chunk.Value.Bytes...)
-			if !yield(line, nil) {
-				return
-			}
-			if !yield([]byte{}, nil) {
-				return
-			}
-		}
-		if streamErr := stream.Err(); streamErr != nil {
-			yield(nil, fmt.Errorf("bedrock stream error: %w", streamErr))
-		}
-	}, nil
+	return converseStreamLines(ctx, resp.GetStream()), nil
 }
 
 func newBedrockBackendError(err error) *registrydomain.BackendError {
@@ -501,31 +413,6 @@ func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, regi
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
-// prepareInvokeBody puts the body in the shape InvokeModel accepts for model:
-// the schema of the model's own family, minus the keys Bedrock carries outside
-// the body.
-func prepareInvokeBody(body []byte, model string) []byte {
-	return stripBedrockFields(adapter.NormalizeBedrockRequestForModel(body, model))
-}
-
-// stripBedrockFields removes keys from the JSON body that the Bedrock
-// InvokeModel API does not accept. The model is passed as ModelId in the API
-// call.
-func stripBedrockFields(body []byte) []byte {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return body
-	}
-	delete(raw, "model")
-	delete(raw, "modelId")
-	delete(raw, "stream")
-	out, err := json.Marshal(raw)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
 func (c *client) requireModel(reqBody []byte, cfg *providers.Config) (string, error) {
 	model := c.resolveModel(reqBody, cfg)
 	if model == "" {
@@ -560,7 +447,7 @@ func extractBedrockModelID(body []byte) (string, error) {
 	return probe.ModelID, nil
 }
 
-// The model identifier is passed through to InvokeModel untouched. A geography
+// The model identifier is passed through to Bedrock untouched. A geography
 // prefix such as "eu." or "us." names a cross-region inference profile, which is
 // the only way to invoke many newer models: rewriting it to the bare model ID
 // makes AWS answer "Invocation of model ID … with on-demand throughput isn't
