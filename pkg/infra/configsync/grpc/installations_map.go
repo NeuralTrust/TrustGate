@@ -38,6 +38,16 @@ func installationToProto(in *installationdomain.Installation) *snapshotpb.Instal
 		CatalogCode:  in.CatalogCode,
 		Status:       string(in.Status),
 		InstalledBy:  in.InstalledBy,
+		// The substance of a request: without these the canonical store keeps a
+		// pending row an approver cannot act on — no words to read, and no groups
+		// to grant instead of the person.
+		Reason:          in.Reason,
+		RequesterGroups: append([]string(nil), in.RequesterGroups...),
+		Decision:        string(in.Decision),
+		DecidedBy:       in.DecidedBy,
+	}
+	if !in.DecidedAt.IsZero() {
+		msg.DecidedAtUnix = in.DecidedAt.Unix()
 	}
 	if !in.RegistryID.IsNil() {
 		msg.RegistryId = in.RegistryID.String()
@@ -99,6 +109,15 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 		Status:       installationdomain.Status(msg.GetStatus()),
 		InstalledBy:  msg.GetInstalledBy(),
 		Config:       config,
+		Reason:       msg.GetReason(),
+		Decision:     installationdomain.Decision(msg.GetDecision()),
+		DecidedBy:    msg.GetDecidedBy(),
+	}
+	if groups := msg.GetRequesterGroups(); len(groups) > 0 {
+		out.RequesterGroups = append([]string(nil), groups...)
+	}
+	if ts := msg.GetDecidedAtUnix(); ts > 0 {
+		out.DecidedAt = time.Unix(ts, 0).UTC()
 	}
 	if raw := msg.GetRegistryId(); raw != "" {
 		registryID, err := ids.Parse[ids.RegistryKind](raw)

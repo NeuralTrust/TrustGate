@@ -50,7 +50,18 @@ type Installation struct {
 	UpdatedAtUnix int64                  `protobuf:"varint,9,opt,name=updated_at_unix,json=updatedAtUnix,proto3" json:"updated_at_unix,omitempty"`
 	// registry_id binds the install to one configured instance (registry) of its
 	// code; empty = the code's canonical instance.
-	RegistryId    string `protobuf:"bytes,10,opt,name=registry_id,json=registryId,proto3" json:"registry_id,omitempty"`
+	RegistryId string `protobuf:"bytes,10,opt,name=registry_id,json=registryId,proto3" json:"registry_id,omitempty"`
+	// reason is why the requester asked for the server, in their own words. It is
+	// the whole substance of a pending request — an approver has nothing else to
+	// decide on — so it has to survive the trip to the canonical store.
+	Reason string `protobuf:"bytes,11,opt,name=reason,proto3" json:"reason,omitempty"`
+	// requester_groups are the groups the requester carried when they filed, and
+	// the only ones an approval may grant instead of the person.
+	RequesterGroups []string `protobuf:"bytes,12,rep,name=requester_groups,json=requesterGroups,proto3" json:"requester_groups,omitempty"`
+	// The admin's answer, kept so History survives the trip as well.
+	Decision      string `protobuf:"bytes,13,opt,name=decision,proto3" json:"decision,omitempty"`
+	DecidedBy     string `protobuf:"bytes,14,opt,name=decided_by,json=decidedBy,proto3" json:"decided_by,omitempty"`
+	DecidedAtUnix int64  `protobuf:"varint,15,opt,name=decided_at_unix,json=decidedAtUnix,proto3" json:"decided_at_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -153,6 +164,41 @@ func (x *Installation) GetRegistryId() string {
 		return x.RegistryId
 	}
 	return ""
+}
+
+func (x *Installation) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Installation) GetRequesterGroups() []string {
+	if x != nil {
+		return x.RequesterGroups
+	}
+	return nil
+}
+
+func (x *Installation) GetDecision() string {
+	if x != nil {
+		return x.Decision
+	}
+	return ""
+}
+
+func (x *Installation) GetDecidedBy() string {
+	if x != nil {
+		return x.DecidedBy
+	}
+	return ""
+}
+
+func (x *Installation) GetDecidedAtUnix() int64 {
+	if x != nil {
+		return x.DecidedAtUnix
+	}
+	return 0
 }
 
 type UpsertInstallationRequest struct {
@@ -632,7 +678,7 @@ var File_storeinstall_proto protoreflect.FileDescriptor
 const file_storeinstall_proto_rawDesc = "" +
 	"\n" +
 	"\x12storeinstall.proto\x12\n" +
-	"snapshotpb\"\xaa\x03\n" +
+	"snapshotpb\"\xd0\x04\n" +
 	"\fInstallation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -646,7 +692,13 @@ const file_storeinstall_proto_rawDesc = "" +
 	"\x0fupdated_at_unix\x18\t \x01(\x03R\rupdatedAtUnix\x12\x1f\n" +
 	"\vregistry_id\x18\n" +
 	" \x01(\tR\n" +
-	"registryId\x1a9\n" +
+	"registryId\x12\x16\n" +
+	"\x06reason\x18\v \x01(\tR\x06reason\x12)\n" +
+	"\x10requester_groups\x18\f \x03(\tR\x0frequesterGroups\x12\x1a\n" +
+	"\bdecision\x18\r \x01(\tR\bdecision\x12\x1d\n" +
+	"\n" +
+	"decided_by\x18\x0e \x01(\tR\tdecidedBy\x12&\n" +
+	"\x0fdecided_at_unix\x18\x0f \x01(\x03R\rdecidedAtUnix\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
