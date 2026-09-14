@@ -516,7 +516,7 @@ func TestAdaptRequest_OpenAIToGemini(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-provider: OpenAI → Bedrock (should get anthropic_version)
+// Cross-provider: OpenAI → Bedrock (Converse wire format)
 // ---------------------------------------------------------------------------
 
 func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
@@ -532,11 +532,15 @@ func TestAdaptRequest_OpenAIToBedrock(t *testing.T) {
 	out, err := testRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatBedrock)
 	require.NoError(t, err)
 
-	var result map[string]interface{}
+	var result ConverseRequest
 	require.NoError(t, json.Unmarshal(out, &result))
 
-	assert.Equal(t, "bedrock-2023-05-31", result["anthropic_version"])
-	assert.Equal(t, "Be helpful.", result["system"])
+	require.Len(t, result.System, 1)
+	assert.Equal(t, "Be helpful.", result.System[0].Text)
+	require.Len(t, result.Messages, 1)
+	assert.Equal(t, "Hello", result.Messages[0].Content[0].Text)
+	require.NotNil(t, result.InferenceConfig)
+	assert.Equal(t, 100, result.InferenceConfig.MaxTokens)
 }
 
 // ---------------------------------------------------------------------------
