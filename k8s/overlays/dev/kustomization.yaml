@@ -8,6 +8,10 @@ resources:
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
+# TEMPORARY PUBLIC EXPOSURE: publishes the proxy and MCP data paths on
+# *.sandbox.neuraltrust.ai via the external gateway. Comment this line out to
+# close the public endpoints again; nothing else needs to change.
+- external-exposure/agentgateway-routes-external.yaml
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml
