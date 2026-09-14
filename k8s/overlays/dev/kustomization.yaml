@@ -3,14 +3,14 @@ kind: Kustomization
 metadata:
   name: agentgateway
 # config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
+# TEMPORARY PUBLIC EXPOSURE: publishes the proxy and MCP data paths on
+# *.sandbox.neuraltrust.ai via the external gateway. Comment this line out to
+# close the public endpoints again; nothing else needs to change.
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# TEMPORARY PUBLIC EXPOSURE: publishes the proxy and MCP data paths on
-# *.sandbox.neuraltrust.ai via the external gateway. Comment this line out to
-# close the public endpoints again; nothing else needs to change.
 - external-exposure/agentgateway-routes-external.yaml
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
@@ -46,7 +46,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 850517ec361dbd5b33d62fdf5ac0877c5ee4b277
+  newTag: 84b73a06fe51743b43423beeed3e9a01a25a05d3
 configMapGenerator:
 - behavior: create
   envs:
