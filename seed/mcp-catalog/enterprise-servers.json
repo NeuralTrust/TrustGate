@@ -83,7 +83,7 @@
       "name": "com.airtable/mcp",
       "vendor": "Airtable",
       "category": "Productivity & Docs",
-      "description": "Search, analyze, create, and update Airtable records.",
+      "description": "Search, analyze, create, and update Airtable records, schema, interfaces, forms, and automations.",
       "transport": "streamable-http",
       "server_url": "https://mcp.airtable.com/mcp",
       "requires_auth": true,
@@ -113,16 +113,28 @@
           "description": "Ping the MCP server to check if it is running"
         },
         {
-          "name": "list_bases",
-          "description": "List all bases you have access to"
-        },
-        {
           "name": "list_workspaces",
           "description": "List workspaces and your permission level in each"
         },
         {
+          "name": "list_bases",
+          "description": "List all bases you have access to"
+        },
+        {
+          "name": "search_bases",
+          "description": "Search for bases by name"
+        },
+        {
           "name": "list_tables_for_base",
           "description": "Get a base summary including all table schemas"
+        },
+        {
+          "name": "get_table_schema",
+          "description": "Get field IDs, types, and config for tables/fields"
+        },
+        {
+          "name": "list_views_for_table",
+          "description": "List views in a table (ID, name, and type)"
         },
         {
           "name": "list_pages_for_base",
@@ -141,16 +153,44 @@
           "description": "Free-text search for records in a table"
         },
         {
-          "name": "search_bases",
-          "description": "Search for bases by name"
-        },
-        {
-          "name": "get_table_schema",
-          "description": "Get field IDs, types, and config for tables/fields"
+          "name": "analyze_table",
+          "description": "Analyze records in a table with grouping and aggregations"
         },
         {
           "name": "get_record_for_page",
           "description": "Get a single record from an interface page element"
+        },
+        {
+          "name": "create_records_for_table",
+          "description": "Create new records in a table"
+        },
+        {
+          "name": "update_records_for_table",
+          "description": "Update records (only specified fields change)"
+        },
+        {
+          "name": "delete_records_for_table",
+          "description": "Permanently delete records from a table by ID"
+        },
+        {
+          "name": "revert_action",
+          "description": "Revert a previous eligible mutation using its actionId"
+        },
+        {
+          "name": "search_candidate_linked_records",
+          "description": "Search valid candidates for a linked-record field"
+        },
+        {
+          "name": "create_record_comment",
+          "description": "Create a comment on a record (supports mentions and replies)"
+        },
+        {
+          "name": "list_record_comments",
+          "description": "List comments on a record, newest first"
+        },
+        {
+          "name": "display_records_for_table",
+          "description": "Show an interactive widget of records (opt-in clients)"
         },
         {
           "name": "create_base",
@@ -165,24 +205,92 @@
           "description": "Create a new field in a table"
         },
         {
-          "name": "create_records_for_table",
-          "description": "Create new records in a table"
-        },
-        {
-          "name": "update_records_for_table",
-          "description": "Update records (only specified fields change)"
-        },
-        {
           "name": "update_table",
           "description": "Update a table's name/description"
         },
         {
           "name": "update_field",
-          "description": "Update a field's name/description"
+          "description": "Update a field's name, description, or options"
         },
         {
-          "name": "display_records_for_table",
-          "description": "Show an interactive widget of records (opt-in clients)"
+          "name": "delete_table",
+          "description": "Delete a table and all of its records, fields, and views"
+        },
+        {
+          "name": "create_interface",
+          "description": "Create an interface (group of one or more pages)"
+        },
+        {
+          "name": "create_page",
+          "description": "Create an interface page (visualization, dashboard, or custom)"
+        },
+        {
+          "name": "delete_page",
+          "description": "Delete an interface page"
+        },
+        {
+          "name": "delete_interface",
+          "description": "Delete an interface and all of its pages"
+        },
+        {
+          "name": "describe_page_type",
+          "description": "Discover how to configure an interface page of a given type"
+        },
+        {
+          "name": "describe_page_element",
+          "description": "Discover how to configure interface page elements"
+        },
+        {
+          "name": "get_form_schema",
+          "description": "Get a form page's schema (structure, not submitted data)"
+        },
+        {
+          "name": "submit_form",
+          "description": "Submit a form, creating a record in the form's source table"
+        },
+        {
+          "name": "publish_interface",
+          "description": "Publish an interface so end users see the latest page drafts"
+        },
+        {
+          "name": "list_automations",
+          "description": "List automations in a base, including status and trigger info"
+        },
+        {
+          "name": "get_automation",
+          "description": "Get the full configuration of a single automation"
+        },
+        {
+          "name": "get_create_automation_instructions",
+          "description": "Get the spec for creating or updating automations"
+        },
+        {
+          "name": "create_automation",
+          "description": "Create a draft automation (review and turn on in Airtable)"
+        },
+        {
+          "name": "update_automation",
+          "description": "Replace the draft configuration of an existing automation"
+        },
+        {
+          "name": "delete_automation",
+          "description": "Delete an inactive automation from a base"
+        },
+        {
+          "name": "fetch_automation_input_data",
+          "description": "Fetch dynamic input options for an automation trigger or action"
+        },
+        {
+          "name": "test_automation_webhook_trigger",
+          "description": "Re-run the webhook-trigger test for a genericWebhookReceived automation"
+        },
+        {
+          "name": "list_external_accounts",
+          "description": "List third-party accounts connected to Airtable (Slack, Google, etc.)"
+        },
+        {
+          "name": "list_secrets",
+          "description": "List secrets available to the Airtable account"
         }
       ]
     },
