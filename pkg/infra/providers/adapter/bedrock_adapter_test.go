@@ -16,895 +16,674 @@ package adapter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Bedrock Titan: OpenAI → Bedrock (Titan model)
-// ---------------------------------------------------------------------------
+func decodeConverse(t *testing.T, body []byte) ConverseRequest {
+	t.Helper()
+	var req ConverseRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	return req
+}
 
-func TestAdaptRequest_OpenAIToBedrockTitan(t *testing.T) {
+func topLevelKeys(t *testing.T, body []byte) map[string]json.RawMessage {
+	t.Helper()
+	var keys map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &keys))
+	return keys
+}
+
+func TestBedrock_EncodeRequest_OpenAIText(t *testing.T) {
 	input := `{
-		"model": "amazon.titan-text-express-v1",
+		"model": "amazon.nova-pro-v1:0",
 		"messages": [
-			{"role": "system", "content": "You are helpful."},
-			{"role": "user", "content": "Hello, Titan!"}
-		],
-		"max_tokens": 200,
-		"temperature": 0.8
-	}`
-
-	adapter := &BedrockAdapter{}
-
-	// Step 1: Decode from OpenAI to canonical (via OpenAI adapter).
-	oa := &OpenAIAdapter{}
-	canonical, err := oa.DecodeRequest([]byte(input))
-	require.NoError(t, err)
-	assert.Equal(t, "amazon.titan-text-express-v1", canonical.Model)
-	assert.Equal(t, "You are helpful.", canonical.System)
-
-	// Step 2: Encode canonical to Bedrock (dispatches to Titan).
-	out, err := adapter.EncodeRequest(canonical)
-	require.NoError(t, err)
-
-	var result titanRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-
-	assert.Contains(t, result.InputText, "You are helpful.")
-	assert.Contains(t, result.InputText, "Hello, Titan!")
-	require.NotNil(t, result.TextGenerationConfig)
-	assert.Equal(t, 200, result.TextGenerationConfig.MaxTokenCount)
-	assert.InDelta(t, 0.8, *result.TextGenerationConfig.Temperature, 0.001)
-}
-
-func TestBedrock_Titan_ResponseDecode(t *testing.T) {
-	body := `{
-		"inputTextTokenCount": 15,
-		"results": [{
-			"tokenCount": 42,
-			"outputText": "Hello! I am Titan.",
-			"completionReason": "FINISH"
-		}]
-	}`
-
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeResponse([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "Hello! I am Titan.", cr.Content)
-	assert.Equal(t, "stop", cr.FinishReason)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 15, cr.Usage.InputTokens)
-	assert.Equal(t, 42, cr.Usage.OutputTokens)
-}
-
-func TestBedrock_Titan_StreamChunkDecode(t *testing.T) {
-	chunk := `{"outputText": "Hello from Titan"}`
-	adapter := &BedrockAdapter{}
-	sc, err := adapter.DecodeStreamChunk([]byte(chunk))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "Hello from Titan", sc.Delta)
-}
-
-// ---------------------------------------------------------------------------
-// Bedrock Llama: OpenAI → Bedrock (Llama model)
-// ---------------------------------------------------------------------------
-
-func TestAdaptRequest_OpenAIToBedrockLlama(t *testing.T) {
-	input := `{
-		"model": "meta.llama3-70b-instruct-v1:0",
-		"messages": [
-			{"role": "system", "content": "You are a helpful assistant."},
-			{"role": "user", "content": "What is Go?"}
-		],
-		"max_tokens": 512,
-		"temperature": 0.6
-	}`
-
-	oa := &OpenAIAdapter{}
-	canonical, err := oa.DecodeRequest([]byte(input))
-	require.NoError(t, err)
-
-	adapter := &BedrockAdapter{}
-	out, err := adapter.EncodeRequest(canonical)
-	require.NoError(t, err)
-
-	var result llamaRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-
-	assert.Contains(t, result.Prompt, "<|begin_of_text|>")
-	assert.Contains(t, result.Prompt, "system")
-	assert.Contains(t, result.Prompt, "You are a helpful assistant.")
-	assert.Contains(t, result.Prompt, "What is Go?")
-	assert.Contains(t, result.Prompt, "assistant") // assistant turn open
-	assert.Equal(t, 512, result.MaxGenLen)
-	assert.InDelta(t, 0.6, *result.Temperature, 0.001)
-}
-
-func TestBedrock_Llama_ResponseDecode(t *testing.T) {
-	body := `{
-		"generation": "Go is a programming language by Google.",
-		"prompt_token_count": 25,
-		"generation_token_count": 8,
-		"stop_reason": "stop"
-	}`
-
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeResponse([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "Go is a programming language by Google.", cr.Content)
-	assert.Equal(t, "stop", cr.FinishReason)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 25, cr.Usage.InputTokens)
-	assert.Equal(t, 8, cr.Usage.OutputTokens)
-}
-
-func TestBedrock_Llama_StreamChunkDecode(t *testing.T) {
-	chunk := `{"generation": "Hello from Llama", "stop_reason": null}`
-	adapter := &BedrockAdapter{}
-	sc, err := adapter.DecodeStreamChunk([]byte(chunk))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "Hello from Llama", sc.Delta)
-}
-
-// ---------------------------------------------------------------------------
-// Bedrock Mistral: OpenAI → Bedrock (Mistral model)
-// ---------------------------------------------------------------------------
-
-func TestAdaptRequest_OpenAIToBedrockLegacyMistral(t *testing.T) {
-	input := `{
-		"model": "mistral.mistral-7b-instruct-v0:2",
-		"messages": [
-			{"role": "user", "content": "Explain AI"}
-		],
-		"max_tokens": 300
-	}`
-
-	oa := &OpenAIAdapter{}
-	canonical, err := oa.DecodeRequest([]byte(input))
-	require.NoError(t, err)
-
-	adapter := &BedrockAdapter{}
-	out, err := adapter.EncodeRequest(canonical)
-	require.NoError(t, err)
-
-	var result mistralRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-
-	assert.Contains(t, result.Prompt, "<s>")
-	assert.Contains(t, result.Prompt, "[INST]")
-	assert.Contains(t, result.Prompt, "Explain AI")
-	assert.Contains(t, result.Prompt, "[/INST]")
-	assert.Equal(t, 300, result.MaxTokens)
-}
-
-// Bedrock's Mistral models split across two schemas: the text completion API
-// (7B, Mixtral, Large and Small 24.02) takes a "prompt" string, everything from
-// Large 24.07 onwards takes "messages". Sending a prompt to the newer ones gets
-// "missing field `messages`" back, so unknown Mistral IDs default to messages:
-// the text completion list is closed, no new model joins it.
-func TestAdaptRequest_ModernMistralUsesMessages(t *testing.T) {
-	for _, model := range []string{
-		"mistral.mistral-large-2407-v1:0",
-		"mistral.devstral-2-123b",
-		"eu.mistral.pixtral-large-2502-v1:0",
-	} {
-		t.Run(model, func(t *testing.T) {
-			input := `{"model": "` + model + `", "messages": [{"role": "user", "content": "Explain AI"}], "max_tokens": 300}`
-
-			oa := &OpenAIAdapter{}
-			canonical, err := oa.DecodeRequest([]byte(input))
-			require.NoError(t, err)
-
-			adapter := &BedrockAdapter{}
-			out, err := adapter.EncodeRequest(canonical)
-			require.NoError(t, err)
-
-			var body map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(out, &body))
-			assert.Contains(t, body, "messages")
-			assert.NotContains(t, body, "prompt")
-		})
-	}
-}
-
-func TestBedrock_Mistral_ResponseDecode(t *testing.T) {
-	body := `{"outputs": [{"text": "AI is artificial intelligence.", "stop_reason": "stop"}]}`
-
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeResponse([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "AI is artificial intelligence.", cr.Content)
-	assert.Equal(t, "stop", cr.FinishReason)
-}
-
-func TestBedrock_Mistral_StreamChunkDecode(t *testing.T) {
-	chunk := `{"outputs": [{"text": "Hello from Mistral", "stop_reason": ""}]}`
-	adapter := &BedrockAdapter{}
-	sc, err := adapter.DecodeStreamChunk([]byte(chunk))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "Hello from Mistral", sc.Delta)
-}
-
-// ---------------------------------------------------------------------------
-// Bedrock: Decode incoming model-specific requests
-// ---------------------------------------------------------------------------
-
-func TestBedrock_DecodeTitanRequest(t *testing.T) {
-	body := `{
-		"inputText": "Hello Titan",
-		"textGenerationConfig": {"maxTokenCount": 100, "temperature": 0.5}
-	}`
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeRequest([]byte(body))
-	require.NoError(t, err)
-	require.Len(t, cr.Messages, 1)
-	assert.Equal(t, "Hello Titan", cr.Messages[0].Content)
-	assert.Equal(t, 100, cr.MaxTokens)
-	assert.InDelta(t, 0.5, *cr.Temperature, 0.001)
-}
-
-func TestBedrock_DecodeLlamaRequest(t *testing.T) {
-	body := `{"prompt": "Hello Llama", "max_gen_len": 256, "temperature": 0.7}`
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeRequest([]byte(body))
-	require.NoError(t, err)
-	require.Len(t, cr.Messages, 1)
-	assert.Equal(t, "Hello Llama", cr.Messages[0].Content)
-	assert.Equal(t, 256, cr.MaxTokens)
-}
-
-func TestBedrock_DecodeMistralRequest(t *testing.T) {
-	body := `{"prompt": "<s>[INST] Hello Mistral [/INST]", "max_tokens": 128}`
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeRequest([]byte(body))
-	require.NoError(t, err)
-	require.Len(t, cr.Messages, 1)
-	assert.Contains(t, cr.Messages[0].Content, "Hello Mistral")
-	assert.Equal(t, 128, cr.MaxTokens)
-}
-
-// ---------------------------------------------------------------------------
-// Bedrock OpenAI-compat (DeepSeek): OpenAI → Bedrock (OpenAI model)
-// ---------------------------------------------------------------------------
-
-func TestAdaptRequest_OpenAIToBedrockDeepSeek(t *testing.T) {
-	input := `{
-		"model": "us.deepseek.deepseek-r1-v1:0",
-		"messages": [
-			{"role": "system", "content": "You are a reasoning engine."},
-			{"role": "user", "content": "Solve: 2+2"}
-		],
-		"max_tokens": 1024,
-		"temperature": 0.0
-	}`
-
-	oa := &OpenAIAdapter{}
-	canonical, err := oa.DecodeRequest([]byte(input))
-	require.NoError(t, err)
-	assert.Equal(t, "us.deepseek.deepseek-r1-v1:0", canonical.Model)
-	assert.Equal(t, "You are a reasoning engine.", canonical.System)
-
-	adapter := &BedrockAdapter{}
-	out, err := adapter.EncodeRequest(canonical)
-	require.NoError(t, err)
-
-	// Should produce OpenAI-format body (delegated to OpenAIAdapter).
-	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(out, &result))
-	assert.Equal(t, "us.deepseek.deepseek-r1-v1:0", result["model"])
-	msgs := result["messages"].([]interface{})
-	assert.Len(t, msgs, 2) // system + user
-	assert.Equal(t, float64(1024), result["max_tokens"])
-}
-
-func TestBedrock_DeepSeek_ResponseDecode(t *testing.T) {
-	body := `{
-		"id": "chatcmpl-deepseek-123",
-		"object": "chat.completion",
-		"model": "us.deepseek.deepseek-r1-v1:0",
-		"choices": [{
-			"index": 0,
-			"message": {"role": "assistant", "content": "2+2=4"},
-			"finish_reason": "stop"
-		}],
-		"usage": {
-			"prompt_tokens": 10,
-			"completion_tokens": 5,
-			"total_tokens": 15
-		}
-	}`
-
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeResponse([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "chatcmpl-deepseek-123", cr.ID)
-	assert.Equal(t, "2+2=4", cr.Content)
-	assert.Equal(t, "stop", cr.FinishReason)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 10, cr.Usage.InputTokens)
-	assert.Equal(t, 5, cr.Usage.OutputTokens)
-	assert.Equal(t, 15, cr.Usage.TotalTokens)
-}
-
-func TestBedrock_DeepSeek_StreamChunkDecode(t *testing.T) {
-	chunk := `{
-		"id": "chatcmpl-deepseek-456",
-		"choices": [{
-			"index": 0,
-			"delta": {"content": "The answer"},
-			"finish_reason": null
-		}]
-	}`
-	adapter := &BedrockAdapter{}
-	sc, err := adapter.DecodeStreamChunk([]byte(chunk))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "The answer", sc.Delta)
-}
-
-func TestBedrock_DecodeDeepSeekRequest(t *testing.T) {
-	// An OpenAI-format body arriving as a Bedrock request (no system/anthropic_version).
-	body := `{
-		"model": "us.deepseek.deepseek-r1-v1:0",
-		"messages": [
-			{"role": "user", "content": "Hello DeepSeek!"}
-		],
-		"max_tokens": 256
-	}`
-
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeRequest([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "us.deepseek.deepseek-r1-v1:0", cr.Model)
-	require.Len(t, cr.Messages, 1)
-	assert.Equal(t, "user", cr.Messages[0].Role)
-	assert.Equal(t, "Hello DeepSeek!", cr.Messages[0].Content)
-}
-
-func TestDetectFamilyByModel_OpenAICompat(t *testing.T) {
-	tests := []struct {
-		model  string
-		family string
-	}{
-		{"us.deepseek.deepseek-r1-v1:0", bfOpenAI},
-		{"deepseek.deepseek-r1-v1:0", bfOpenAI},
-		{"ai21.jamba-1.5-large-v1:0", bfOpenAI},
-		{"ai21.jamba-instruct-v1:0", bfOpenAI},
-		{"anthropic.claude-3-5-sonnet-20241022-v2:0", bfClaude},
-		{"meta.llama3-70b-instruct-v1:0", bfLlama},
-		{"amazon.titan-text-express-v1", bfTitan},
-		{"mistral.mistral-7b-instruct-v0:2", bfMistral},
-	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			assert.Equal(t, tt.family, detectFamilyByModel(tt.model))
-		})
-	}
-}
-
-func TestDetectFamilyFromRequestBody_OpenAICompat(t *testing.T) {
-	// OpenAI-compat body: has "messages" but no "system" / "anthropic_version".
-	body := `{"model":"deepseek-r1","messages":[{"role":"user","content":"hi"}],"max_tokens":100}`
-	assert.Equal(t, bfOpenAI, detectFamilyFromRequestBody([]byte(body)))
-
-	// Claude body: has "messages" + "system" string.
-	claudeBody := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"system":"be helpful","max_tokens":100}`
-	assert.Equal(t, bfClaude, detectFamilyFromRequestBody([]byte(claudeBody)))
-
-	// Claude body: has "anthropic_version".
-	claudeBody2 := `{"messages":[{"role":"user","content":"hi"}],"anthropic_version":"bedrock-2023-05-31","max_tokens":100}`
-	assert.Equal(t, bfClaude, detectFamilyFromRequestBody([]byte(claudeBody2)))
-}
-
-func TestUsageExtraction_BedrockTitan(t *testing.T) {
-	runUsageCases(t, &bedrockTitanAdapter{}, []usageCase{
-		{
-			name:      "response with usage",
-			body:      []byte(`{"inputTextTokenCount":11,"results":[{"tokenCount":4,"outputText":"hi","completionReason":"FINISH"}]}`),
-			path:      "response",
-			wantUsage: &CanonicalUsage{InputTokens: 11, OutputTokens: 4, TotalTokens: 15},
-		},
-		{
-			name:      "response no usage",
-			body:      []byte(`{"results":[{"outputText":"hi","completionReason":"FINISH"}]}`),
-			path:      "response",
-			wantUsage: nil,
-		},
-		{
-			name:      "stream final chunk with usage",
-			body:      []byte(`{"outputText":"final","inputTextTokenCount":11,"totalOutputTextTokenCount":4}`),
-			path:      "stream",
-			wantUsage: &CanonicalUsage{InputTokens: 11, OutputTokens: 4, TotalTokens: 15},
-		},
-		{
-			name:      "stream no usage",
-			body:      []byte(`{"outputText":"hi"}`),
-			path:      "stream",
-			wantUsage: nil,
-		},
-	})
-}
-
-func TestUsageExtraction_BedrockLlama(t *testing.T) {
-	runUsageCases(t, &bedrockLlamaAdapter{}, []usageCase{
-		{
-			name:      "response with usage",
-			body:      []byte(`{"generation":"hi","prompt_token_count":11,"generation_token_count":4,"stop_reason":"stop"}`),
-			path:      "response",
-			wantUsage: &CanonicalUsage{InputTokens: 11, OutputTokens: 4, TotalTokens: 15},
-		},
-		{
-			name:      "response no usage",
-			body:      []byte(`{"generation":"hi","stop_reason":"stop"}`),
-			path:      "response",
-			wantUsage: nil,
-		},
-		{
-			name:      "stream final chunk with usage",
-			body:      []byte(`{"generation":"","prompt_token_count":11,"generation_token_count":4,"stop_reason":"stop"}`),
-			path:      "stream",
-			wantUsage: &CanonicalUsage{InputTokens: 11, OutputTokens: 4, TotalTokens: 15},
-		},
-		{
-			name:      "stream no usage",
-			body:      []byte(`{"generation":"hi"}`),
-			path:      "stream",
-			wantUsage: nil,
-		},
-	})
-}
-
-func TestBedrock_InvocationMetricsFallback_Mistral(t *testing.T) {
-	body := []byte(`{"outputs":[{"text":"hi","stop_reason":"stop"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":14,"outputTokenCount":6}}`)
-	cr, err := (&bedrockMistralAdapter{}).DecodeResponse(body)
-	require.NoError(t, err)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 14, cr.Usage.InputTokens)
-	assert.Equal(t, 6, cr.Usage.OutputTokens)
-	assert.Equal(t, 20, cr.Usage.TotalTokens)
-}
-
-func TestBedrock_InvocationMetricsFallback_FamilyFieldsWin(t *testing.T) {
-	body := []byte(`{"inputTextTokenCount":11,"results":[{"tokenCount":4,"outputText":"hi","completionReason":"FINISH"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":99,"outputTokenCount":99}}`)
-	cr, err := (&bedrockTitanAdapter{}).DecodeResponse(body)
-	require.NoError(t, err)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 11, cr.Usage.InputTokens, "Titan native inputTextTokenCount must win over invocation metrics")
-	assert.Equal(t, 4, cr.Usage.OutputTokens, "Titan native results[].tokenCount must win over invocation metrics")
-	assert.Equal(t, 15, cr.Usage.TotalTokens)
-}
-
-func TestBedrock_InvocationMetricsFallback_MetricsAbsent(t *testing.T) {
-	body := []byte(`{"outputs":[{"text":"hi","stop_reason":"stop"}]}`)
-	cr, err := (&bedrockMistralAdapter{}).DecodeResponse(body)
-	require.NoError(t, err)
-	assert.Nil(t, cr.Usage, "Mistral with no metrics and no native counters must return nil")
-}
-
-// ---------------------------------------------------------------------------
-// Bedrock Nova (Amazon Nova)
-// ---------------------------------------------------------------------------
-
-func TestAdaptRequest_OpenAIToBedrockNova(t *testing.T) {
-	input := `{
-		"model": "eu.amazon.nova-lite-v1:0",
-		"messages": [
-			{"role": "system", "content": "You are helpful."},
+			{"role": "system", "content": "Be brief."},
 			{"role": "user", "content": "Hello, Nova!"}
 		],
 		"max_tokens": 256,
-		"temperature": 0.7
+		"temperature": 0.2,
+		"stop": ["END"]
 	}`
 
-	oa := &OpenAIAdapter{}
-	canonical, err := oa.DecodeRequest([]byte(input))
+	out, err := NewRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatBedrock)
 	require.NoError(t, err)
 
-	adapter := &BedrockAdapter{}
-	out, err := adapter.EncodeRequest(canonical)
-	require.NoError(t, err)
+	keys := topLevelKeys(t, out)
+	assert.NotContains(t, keys, "max_tokens")
+	assert.NotContains(t, keys, "anthropic_version")
+	assert.NotContains(t, keys, "model")
 
-	// Nova rejects unknown top-level keys outright, so the Claude encoder's
-	// max_tokens and anthropic_version are what "extraneous key [max_tokens]
-	// is not permitted" was complaining about.
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.NotContains(t, body, "max_tokens")
-	assert.NotContains(t, body, "anthropic_version")
-
-	var result novaRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-	require.Len(t, result.System, 1)
-	assert.Equal(t, "You are helpful.", result.System[0].Text)
-	require.Len(t, result.Messages, 1)
-	assert.Equal(t, "user", result.Messages[0].Role)
-	require.Len(t, result.Messages[0].Content, 1)
-	assert.Equal(t, "Hello, Nova!", result.Messages[0].Content[0].Text)
-	require.NotNil(t, result.InferenceConfig)
-	assert.Equal(t, 256, result.InferenceConfig.MaxTokens)
-	assert.InDelta(t, 0.7, *result.InferenceConfig.Temperature, 0.001)
+	req := decodeConverse(t, out)
+	require.Len(t, req.System, 1)
+	assert.Equal(t, "Be brief.", req.System[0].Text)
+	require.Len(t, req.Messages, 1)
+	assert.Equal(t, "user", req.Messages[0].Role)
+	require.Len(t, req.Messages[0].Content, 1)
+	assert.Equal(t, "Hello, Nova!", req.Messages[0].Content[0].Text)
+	require.NotNil(t, req.InferenceConfig)
+	assert.Equal(t, 256, req.InferenceConfig.MaxTokens)
+	require.NotNil(t, req.InferenceConfig.Temperature)
+	assert.InDelta(t, 0.2, *req.InferenceConfig.Temperature, 1e-9)
+	assert.Equal(t, []string{"END"}, req.InferenceConfig.StopSequences)
+	assert.Nil(t, req.ToolConfig)
 }
 
-func TestBedrock_Nova_ResponseDecode(t *testing.T) {
-	body := `{"output":{"message":{"content":[{"text":"Ok."}],"role":"assistant"}},"stopReason":"max_tokens","usage":{"inputTokens":2,"outputTokens":16,"totalTokens":18}}`
+func TestBedrock_EncodeRequest_IndependentOfModel(t *testing.T) {
+	models := []string{
+		"amazon.nova-pro-v1:0",
+		"eu.amazon.nova-pro-v1:0",
+		"anthropic.claude-3-5-sonnet-20241022-v2:0",
+		"amazon.titan-text-express-v1",
+		"meta.llama3-70b-instruct-v1:0",
+		"arn:aws:bedrock:eu-west-1:065069198444:application-inference-profile/hfeskwe5y945",
+		"",
+	}
 
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeResponse([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "Ok.", cr.Content)
-	assert.Equal(t, "assistant", cr.Role)
-	assert.Equal(t, "length", cr.FinishReason)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 2, cr.Usage.InputTokens)
-	assert.Equal(t, 16, cr.Usage.OutputTokens)
-	assert.Equal(t, 18, cr.Usage.TotalTokens)
-}
+	var reference []byte
+	for _, model := range models {
+		body := `{"model":"` + model + `","messages":[{"role":"user","content":"Hello!"}]}`
+		out, err := NewRegistry().AdaptRequest([]byte(body), FormatOpenAI, FormatBedrock)
+		require.NoError(t, err, model)
 
-func TestBedrock_Nova_StreamChunkDecode(t *testing.T) {
-	adapter := &BedrockAdapter{}
+		keys := topLevelKeys(t, out)
+		assert.NotContains(t, keys, "max_tokens", model)
+		assert.NotContains(t, keys, "anthropic_version", model)
 
-	sc, err := adapter.DecodeStreamChunk([]byte(`{"contentBlockDelta":{"delta":{"text":"Ok"},"contentBlockIndex":0}}`))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "Ok", sc.Delta)
-
-	sc, err = adapter.DecodeStreamChunk([]byte(`{"messageStop":{"stopReason":"end_turn"}}`))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	assert.Equal(t, "stop", sc.FinishReason)
-
-	// Usage closes the stream in its own chunk; miss it and the budget plugin
-	// never charges a streamed Nova answer.
-	sc, err = adapter.DecodeStreamChunk([]byte(`{"metadata":{"usage":{"inputTokens":2,"outputTokens":13}}}`))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	require.NotNil(t, sc.Usage)
-	assert.Equal(t, 2, sc.Usage.InputTokens)
-	assert.Equal(t, 13, sc.Usage.OutputTokens)
-	assert.Equal(t, 15, sc.Usage.TotalTokens)
-
-	for _, empty := range []string{
-		`{"messageStart":{"role":"assistant"}}`,
-		`{"contentBlockStop":{"contentBlockIndex":0}}`,
-	} {
-		sc, err = adapter.DecodeStreamChunk([]byte(empty))
-		require.NoError(t, err)
-		assert.Nil(t, sc, "a chunk with no text, no stop reason and no usage carries nothing")
+		if reference == nil {
+			reference = out
+			continue
+		}
+		assert.JSONEq(t, string(reference), string(out),
+			"the Converse body must not depend on the model ID (%s)", model)
 	}
 }
 
-func TestBedrock_Nova_UsageFallsBackToInvocationMetrics(t *testing.T) {
-	adapter := &BedrockAdapter{}
+func TestBedrock_EncodeRequest_AnthropicIngress(t *testing.T) {
+	input := `{
+		"anthropic_version": "bedrock-2023-05-31",
+		"system": "You are terse.",
+		"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+		"max_tokens": 64
+	}`
 
-	sc, err := adapter.DecodeStreamChunk([]byte(`{"metadata":{"metrics":{}},"amazon-bedrock-invocationMetrics":{"inputTokenCount":7,"outputTokenCount":3}}`))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	require.NotNil(t, sc.Usage)
-	assert.Equal(t, 7, sc.Usage.InputTokens)
-	assert.Equal(t, 3, sc.Usage.OutputTokens)
-
-	sc, err = adapter.DecodeStreamChunk([]byte(`{"metadata":{"usage":{"inputTokens":2,"outputTokens":13}},"amazon-bedrock-invocationMetrics":{"inputTokenCount":99,"outputTokenCount":99}}`))
-	require.NoError(t, err)
-	require.NotNil(t, sc)
-	require.NotNil(t, sc.Usage)
-	assert.Equal(t, 2, sc.Usage.InputTokens, "Nova's own counters must win over the invocation metrics")
-	assert.Equal(t, 13, sc.Usage.OutputTokens)
-}
-
-func TestBedrock_DecodeNovaRequest(t *testing.T) {
-	body := `{"system":[{"text":"Be brief."}],"messages":[{"role":"user","content":[{"text":"Hello Nova"}]}],"inferenceConfig":{"maxTokens":128,"temperature":0.5}}`
-	adapter := &BedrockAdapter{}
-	cr, err := adapter.DecodeRequest([]byte(body))
-	require.NoError(t, err)
-	assert.Equal(t, "Be brief.", cr.System)
-	require.Len(t, cr.Messages, 1)
-	assert.Equal(t, "Hello Nova", cr.Messages[0].Content)
-	assert.Equal(t, 128, cr.MaxTokens)
-	assert.InDelta(t, 0.5, *cr.Temperature, 0.001)
-}
-
-// Bedrock reports "length" on the last chunk of a truncated answer exactly as
-// it does on a whole one. Collapsing it to "stop" tells the client the model
-// finished when it was cut off. Both chunks below are verbatim from Bedrock.
-func TestBedrock_StreamKeepsTruncationReason(t *testing.T) {
-	cases := []struct {
-		name  string
-		chunk string
-	}{
-		{
-			name:  "llama",
-			chunk: `{"generation":",","prompt_token_count":null,"generation_token_count":8,"stop_reason":"length","amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`,
-		},
-		{
-			name:  "mistral",
-			chunk: `{"outputs":[{"text":".","stop_reason":"length"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":12,"outputTokenCount":12}}`,
-		},
-		{
-			name:  "titan",
-			chunk: `{"outputText":".","completionReason":"LENGTH","inputTextTokenCount":12,"totalOutputTextTokenCount":12}`,
-		},
-		{
-			name:  "nova",
-			chunk: `{"messageStop":{"stopReason":"max_tokens"}}`,
-		},
-	}
-	adapter := &BedrockAdapter{}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sc, err := adapter.DecodeStreamChunk([]byte(tc.chunk))
-			require.NoError(t, err)
-			require.NotNil(t, sc)
-			assert.Equal(t, "length", sc.FinishReason)
-		})
-	}
-}
-
-func TestBedrock_StreamUsageStillReadsInvocationMetrics(t *testing.T) {
-	adapter := &BedrockAdapter{}
-	for _, tc := range []struct {
-		name  string
-		chunk string
-	}{
-		{"llama", `{"generation":"","stop_reason":"stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`},
-		{"mistral", `{"outputs":[{"text":"","stop_reason":"stop"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sc, err := adapter.DecodeStreamChunk([]byte(tc.chunk))
-			require.NoError(t, err)
-			require.NotNil(t, sc)
-			require.NotNil(t, sc.Usage)
-			assert.Equal(t, 13, sc.Usage.InputTokens)
-			assert.Equal(t, 8, sc.Usage.OutputTokens)
-			assert.Equal(t, 21, sc.Usage.TotalTokens)
-		})
-	}
-}
-
-// The Mistral template has no system turn, so a system message arriving in the
-// conversation (rather than in the dedicated field) used to vanish.
-func TestBedrock_MistralPromptKeepsSystemMessages(t *testing.T) {
-	prompt := formatMistralPrompt("", []CanonicalMessage{
-		{Role: "system", Content: "Answer in Catalan."},
-		{Role: "user", Content: "Explain AI"},
-	})
-	assert.Contains(t, prompt, "Answer in Catalan.")
-	assert.Contains(t, prompt, "Explain AI")
-}
-
-func TestBedrock_DetectFamilyByModel(t *testing.T) {
-	cases := []struct {
-		model string
-		want  string
-	}{
-		{"anthropic.claude-3-5-sonnet-20240620-v1:0", bfClaude},
-		{"eu.anthropic.claude-haiku-4-5-20251001-v1:0", bfClaude},
-		{"amazon.nova-lite-v1:0", bfNova},
-		{"eu.amazon.nova-lite-v1:0", bfNova},
-		{"amazon.titan-text-express-v1", bfTitan},
-		{"meta.llama3-70b-instruct-v1:0", bfLlama},
-		{"us.deepseek.deepseek-r1-v1:0", bfOpenAI},
-		{"mistral.mistral-7b-instruct-v0:2", bfMistral},
-		{"mistral.mixtral-8x7b-instruct-v0:1", bfMistral},
-		{"mistral.mistral-large-2402-v1:0", bfMistral},
-		{"mistral.mistral-large-2407-v1:0", bfOpenAI},
-		{"mistral.devstral-2-123b", bfOpenAI},
-		{"mistral.mistral-large-3-675b-instruct", bfOpenAI},
-		{"eu.mistral.pixtral-large-2502-v1:0", bfOpenAI},
-		// Vendors Bedrock added after the six original families, each invoked
-		// to confirm it answers the OpenAI chat completions schema.
-		{"openai.gpt-oss-20b-1:0", bfOpenAI},
-		{"qwen.qwen3-32b-v1:0", bfOpenAI},
-		{"google.gemma-3-4b-it", bfOpenAI},
-		{"nvidia.nemotron-nano-9b-v2", bfOpenAI},
-		{"minimax.minimax-m2", bfOpenAI},
-		{"zai.glm-4.7-flash", bfOpenAI},
-		// No vendor in the ID: a provisioned or custom model ARN keeps the
-		// incumbent fallback rather than erroring.
-		{"arn:aws:bedrock:eu-west-1:1234:provisioned-model/abcd", bfClaude},
-	}
-	for _, tc := range cases {
-		t.Run(tc.model, func(t *testing.T) {
-			assert.Equal(t, tc.want, detectFamilyByModel(tc.model))
-		})
-	}
-}
-
-func TestAdaptRequestForModel_BindingDefaultPicksNovaEncoder(t *testing.T) {
-	input := `{"messages":[{"role":"user","content":"Hello, Nova!"}],"max_tokens":256}`
-
-	out, err := NewRegistry().AdaptRequestForModel(
-		[]byte(input), FormatOpenAI, FormatBedrock, "eu.amazon.nova-pro-v1:0",
-	)
+	out, err := NewRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatBedrock)
 	require.NoError(t, err)
 
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.NotContains(t, body, "max_tokens")
-	assert.NotContains(t, body, "anthropic_version")
+	keys := topLevelKeys(t, out)
+	assert.NotContains(t, keys, "anthropic_version")
+	assert.NotContains(t, keys, "max_tokens")
 
-	var result novaRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-	require.NotNil(t, result.InferenceConfig)
-	assert.Equal(t, 256, result.InferenceConfig.MaxTokens)
-	require.Len(t, result.Messages, 1)
-	require.Len(t, result.Messages[0].Content, 1)
-	assert.Equal(t, "Hello, Nova!", result.Messages[0].Content[0].Text)
+	req := decodeConverse(t, out)
+	require.Len(t, req.System, 1)
+	assert.Equal(t, "You are terse.", req.System[0].Text)
+	require.NotNil(t, req.InferenceConfig)
+	assert.Equal(t, 64, req.InferenceConfig.MaxTokens)
+	require.Len(t, req.Messages, 1)
+	assert.Equal(t, "hi", req.Messages[0].Content[0].Text)
 }
 
-func TestAdaptRequestForModel_AnthropicIngressBindingDefault(t *testing.T) {
-	input := `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":64}`
-
-	out, err := NewRegistry().AdaptRequestForModel(
-		[]byte(input), FormatAnthropic, FormatBedrock, "amazon.nova-pro-v1:0",
-	)
-	require.NoError(t, err)
-
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.NotContains(t, body, "max_tokens")
-
-	var result novaRequest
-	require.NoError(t, json.Unmarshal(out, &result))
-	require.NotNil(t, result.InferenceConfig)
-	assert.Equal(t, 64, result.InferenceConfig.MaxTokens)
-}
-
-func TestAdaptRequestForModel_BindingDefaultPicksFamilyEncoder(t *testing.T) {
-	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":128}`
+func TestBedrock_EncodeRequest_Tools(t *testing.T) {
+	const tools = `"tools": [{"type": "function", "function": {
+		"name": "get_weather",
+		"description": "Weather by city",
+		"parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+	}}]`
 
 	tests := []struct {
-		name     string
-		model    string
-		tokenKey func(t *testing.T, out []byte) int
+		name       string
+		toolChoice string
+		assert     func(t *testing.T, cfg *ConverseToolConfig)
 	}{
 		{
-			name:  "titan",
-			model: "amazon.titan-text-express-v1",
-			tokenKey: func(t *testing.T, out []byte) int {
-				var result titanRequest
-				require.NoError(t, json.Unmarshal(out, &result))
-				require.NotNil(t, result.TextGenerationConfig)
-				return result.TextGenerationConfig.MaxTokenCount
+			name:       "required becomes any",
+			toolChoice: `"required"`,
+			assert: func(t *testing.T, cfg *ConverseToolConfig) {
+				require.NotNil(t, cfg)
+				require.NotNil(t, cfg.ToolChoice)
+				assert.NotNil(t, cfg.ToolChoice.Any)
+				assert.Nil(t, cfg.ToolChoice.Auto)
+				assert.Nil(t, cfg.ToolChoice.Tool)
 			},
 		},
 		{
-			name:  "llama",
-			model: "meta.llama3-70b-instruct-v1:0",
-			tokenKey: func(t *testing.T, out []byte) int {
-				var result llamaRequest
-				require.NoError(t, json.Unmarshal(out, &result))
-				return result.MaxGenLen
+			name:       "auto",
+			toolChoice: `"auto"`,
+			assert: func(t *testing.T, cfg *ConverseToolConfig) {
+				require.NotNil(t, cfg)
+				require.NotNil(t, cfg.ToolChoice)
+				assert.NotNil(t, cfg.ToolChoice.Auto)
 			},
 		},
 		{
-			name:  "nova behind an inference profile",
-			model: "us.amazon.nova-lite-v1:0",
-			tokenKey: func(t *testing.T, out []byte) int {
-				var result novaRequest
-				require.NoError(t, json.Unmarshal(out, &result))
-				require.NotNil(t, result.InferenceConfig)
-				return result.InferenceConfig.MaxTokens
+			name:       "named function",
+			toolChoice: `{"type": "function", "function": {"name": "get_weather"}}`,
+			assert: func(t *testing.T, cfg *ConverseToolConfig) {
+				require.NotNil(t, cfg)
+				require.NotNil(t, cfg.ToolChoice)
+				require.NotNil(t, cfg.ToolChoice.Tool)
+				assert.Equal(t, "get_weather", cfg.ToolChoice.Tool.Name)
+			},
+		},
+		{
+			name:       "none withholds the tools",
+			toolChoice: `"none"`,
+			assert: func(t *testing.T, cfg *ConverseToolConfig) {
+				assert.Nil(t, cfg)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := NewRegistry().AdaptRequestForModel([]byte(input), FormatOpenAI, FormatBedrock, tt.model)
+			input := `{"messages":[{"role":"user","content":"weather?"}],` + tools + `,"tool_choice":` + tt.toolChoice + `}`
+			out, err := NewRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatBedrock)
 			require.NoError(t, err)
 
-			var body map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(out, &body))
-			assert.NotContains(t, body, "max_tokens")
-			assert.NotContains(t, body, "anthropic_version")
-			assert.Equal(t, 128, tt.tokenKey(t, out))
-		})
-	}
-}
-
-func TestAdaptRequestForModel_FallbackOnlySeedsBedrock(t *testing.T) {
-	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
-
-	out, err := NewRegistry().AdaptRequestForModel(
-		[]byte(input), FormatOpenAI, FormatAnthropic, "claude-sonnet-4-5",
-	)
-	require.NoError(t, err)
-
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.NotContains(t, body, "model",
-		"a non-Bedrock target must leave the model to EnforceModel, which injects the default unchecked")
-}
-
-func TestAdaptRequestForModel_BodyModelWinsOverFallback(t *testing.T) {
-	input := `{"model":"anthropic.claude-3-5-sonnet-20241022-v2:0","messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
-
-	out, err := NewRegistry().AdaptRequestForModel(
-		[]byte(input), FormatOpenAI, FormatBedrock, "amazon.nova-pro-v1:0",
-	)
-	require.NoError(t, err)
-
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.Contains(t, body, "max_tokens")
-	assert.Contains(t, body, "anthropic_version")
-}
-
-func TestAdaptRequestForModel_NoFallbackKeepsPreviousBehaviour(t *testing.T) {
-	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
-
-	out, err := NewRegistry().AdaptRequestForModel([]byte(input), FormatOpenAI, FormatBedrock, "")
-	require.NoError(t, err)
-
-	var body map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(out, &body))
-	assert.Contains(t, body, "anthropic_version")
-}
-
-func TestNormalizeBedrockRequestForModel(t *testing.T) {
-	tests := []struct {
-		name  string
-		model string
-		body  string
-		nova  bool
-	}{
-		{
-			name:  "claude shaped body on nova",
-			model: "amazon.nova-pro-v1:0",
-			body:  `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
-			nova:  true,
-		},
-		{
-			name:  "openai shaped body on nova behind an inference profile",
-			model: "eu.amazon.nova-pro-v1:0",
-			body:  `{"messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
-			nova:  true,
-		},
-		{
-			name:  "native nova body untouched",
-			model: "amazon.nova-pro-v1:0",
-			body:  `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"inferenceConfig":{"maxTokens":128}}`,
-			nova:  true,
-		},
-		{
-			name:  "claude model keeps its own schema",
-			model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
-			body:  `{"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`,
-			nova:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out := NormalizeBedrockRequestForModel([]byte(tt.body), tt.model)
-
-			var body map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(out, &body))
-			if !tt.nova {
-				assert.JSONEq(t, tt.body, string(out))
-				return
+			req := decodeConverse(t, out)
+			if req.ToolConfig != nil {
+				require.Len(t, req.ToolConfig.Tools, 1)
+				spec := req.ToolConfig.Tools[0].ToolSpec
+				require.NotNil(t, spec)
+				assert.Equal(t, "get_weather", spec.Name)
+				assert.Equal(t, "Weather by city", spec.Description)
+				assert.Equal(t, "object", spec.InputSchema.JSON["type"])
 			}
-			assert.NotContains(t, body, "max_tokens")
-			assert.NotContains(t, body, "anthropic_version")
-
-			var result novaRequest
-			require.NoError(t, json.Unmarshal(out, &result))
-			require.NotNil(t, result.InferenceConfig)
-			assert.Equal(t, 128, result.InferenceConfig.MaxTokens)
-			require.Len(t, result.Messages, 1)
-			require.Len(t, result.Messages[0].Content, 1)
-			assert.Equal(t, "hi", result.Messages[0].Content[0].Text)
+			tt.assert(t, req.ToolConfig)
 		})
 	}
 }
 
-func TestNormalizeBedrockRequestForModel_UnparsableBodyUntouched(t *testing.T) {
-	body := []byte(`not json`)
-	assert.Equal(t, body, NormalizeBedrockRequestForModel(body, "amazon.nova-pro-v1:0"))
+func TestBedrock_EncodeRequest_ToolLoopMergesResultsIntoOneUserTurn(t *testing.T) {
+	input := `{
+		"messages": [
+			{"role": "user", "content": "weather in two cities"},
+			{"role": "assistant", "content": "Checking.", "tool_calls": [
+				{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"Madrid\"}"}},
+				{"id": "call_2", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"Oslo\"}"}}
+			]},
+			{"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+			{"role": "tool", "tool_call_id": "call_2", "content": "snow"}
+		]
+	}`
+
+	out, err := NewRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatBedrock)
+	require.NoError(t, err)
+
+	req := decodeConverse(t, out)
+	require.Len(t, req.Messages, 3, "user, assistant, then one user turn with both results")
+
+	assistant := req.Messages[1]
+	assert.Equal(t, "assistant", assistant.Role)
+	require.Len(t, assistant.Content, 3)
+	assert.Equal(t, "Checking.", assistant.Content[0].Text)
+	require.NotNil(t, assistant.Content[1].ToolUse)
+	assert.Equal(t, "call_1", assistant.Content[1].ToolUse.ToolUseID)
+	assert.Equal(t, "get_weather", assistant.Content[1].ToolUse.Name)
+	assert.JSONEq(t, `{"city":"Madrid"}`, string(assistant.Content[1].ToolUse.Input))
+
+	results := req.Messages[2]
+	assert.Equal(t, "user", results.Role)
+	require.Len(t, results.Content, 2)
+	require.NotNil(t, results.Content[0].ToolResult)
+	assert.Equal(t, "call_1", results.Content[0].ToolResult.ToolUseID)
+	assert.Equal(t, "sunny", results.Content[0].ToolResult.Content[0].Text)
+	require.NotNil(t, results.Content[1].ToolResult)
+	assert.Equal(t, "call_2", results.Content[1].ToolResult.ToolUseID)
+}
+
+func TestBedrock_EncodeRequest_MergesConsecutiveSameRoleTurns(t *testing.T) {
+	req := &CanonicalRequest{Messages: []CanonicalMessage{
+		{Role: "user", Content: "first"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "reply"},
+	}}
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	wire := decodeConverse(t, out)
+	require.Len(t, wire.Messages, 2)
+	require.Len(t, wire.Messages[0].Content, 2)
+	assert.Equal(t, "first", wire.Messages[0].Content[0].Text)
+	assert.Equal(t, "second", wire.Messages[0].Content[1].Text)
+	assert.Equal(t, "assistant", wire.Messages[1].Role)
+}
+
+func TestBedrock_EncodeRequest_DropsEmptyTurns(t *testing.T) {
+	req := &CanonicalRequest{Messages: []CanonicalMessage{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: ""},
+		{Role: "user", Content: "still there?"},
+	}}
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	wire := decodeConverse(t, out)
+	require.Len(t, wire.Messages, 1, "the empty assistant turn is dropped and the user turns merge")
+	require.Len(t, wire.Messages[0].Content, 2)
+}
+
+func TestBedrock_EncodeRequest_MalformedToolArgumentsBecomeEmptyObject(t *testing.T) {
+	req := &CanonicalRequest{Messages: []CanonicalMessage{{
+		Role:      "assistant",
+		ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "noop", Arguments: `{"city": `}},
+	}}}
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	wire := decodeConverse(t, out)
+	require.Len(t, wire.Messages, 1)
+	require.NotNil(t, wire.Messages[0].Content[0].ToolUse)
+	assert.JSONEq(t, `{}`, string(wire.Messages[0].Content[0].ToolUse.Input))
+}
+
+func TestBedrock_DecodeRequest(t *testing.T) {
+	body := `{
+		"system": [{"text": "Be brief."}],
+		"messages": [
+			{"role": "user", "content": [{"text": "weather?"}]},
+			{"role": "assistant", "content": [
+				{"text": "Checking."},
+				{"toolUse": {"toolUseId": "call_1", "name": "get_weather", "input": {"city": "Madrid"}}}
+			]},
+			{"role": "user", "content": [{"toolResult": {"toolUseId": "call_1", "content": [{"json": {"temp": 30}}]}}]}
+		],
+		"inferenceConfig": {"maxTokens": 128, "topP": 0.9, "stopSequences": ["END"]},
+		"toolConfig": {
+			"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"type": "object"}}}}],
+			"toolChoice": {"tool": {"name": "get_weather"}}
+		}
+	}`
+
+	cr, err := (&BedrockAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+
+	assert.Equal(t, "Be brief.", cr.System)
+	require.Len(t, cr.Messages, 3)
+	assert.Equal(t, "weather?", cr.Messages[0].Content)
+	assert.Equal(t, "Checking.", cr.Messages[1].Content)
+	require.Len(t, cr.Messages[1].ToolCalls, 1)
+	assert.Equal(t, "call_1", cr.Messages[1].ToolCalls[0].ID)
+	assert.JSONEq(t, `{"city":"Madrid"}`, cr.Messages[1].ToolCalls[0].Arguments)
+	assert.Equal(t, "tool", cr.Messages[2].Role)
+	assert.Equal(t, "call_1", cr.Messages[2].ToolCallID)
+	assert.JSONEq(t, `{"temp":30}`, cr.Messages[2].Content)
+	assert.Equal(t, 128, cr.MaxTokens)
+	require.NotNil(t, cr.TopP)
+	assert.InDelta(t, 0.9, *cr.TopP, 1e-9)
+	assert.Equal(t, []string{"END"}, cr.Stop)
+	require.Len(t, cr.Tools, 1)
+	assert.Equal(t, "get_weather", cr.Tools[0].Name)
+	require.NotNil(t, cr.ToolChoice)
+	assert.Equal(t, "tool", cr.ToolChoice.Type)
+	assert.Equal(t, "get_weather", cr.ToolChoice.Name)
+}
+
+func TestBedrock_DecodeRequest_ReadsGraftedModelAndStream(t *testing.T) {
+	body := `{"model":"amazon.nova-pro-v1:0","stream":true,"messages":[{"role":"user","content":[{"text":"hi"}]}]}`
+
+	cr, err := (&BedrockAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+
+	assert.Equal(t, "amazon.nova-pro-v1:0", cr.Model)
+	assert.True(t, cr.Stream)
+}
+
+func TestBedrock_DecodeRequest_ToolResultsPrecedeTextAndKeepErrors(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":[
+		{"text":"and now?"},
+		{"toolResult":{"toolUseId":"call_1","status":"error","content":[{"text":"timeout"}]}}
+	]}]}`
+
+	cr, err := (&BedrockAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+
+	require.Len(t, cr.Messages, 2)
+	assert.Equal(t, "tool", cr.Messages[0].Role, "results answer the previous assistant turn, so they come first")
+	assert.Equal(t, "error: timeout", cr.Messages[0].Content)
+	assert.Equal(t, "user", cr.Messages[1].Role)
+	assert.Equal(t, "and now?", cr.Messages[1].Content)
+}
+
+func TestBedrock_EncodeRequest_NoneKeepsToolsWhenConversationUsesThem(t *testing.T) {
+	req := &CanonicalRequest{
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "weather?"},
+			{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Madrid"}`}}},
+			{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
+		},
+		Tools:      []CanonicalTool{{Name: "get_weather"}},
+		ToolChoice: &CanonicalToolChoice{Type: "none"},
+	}
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	wire := decodeConverse(t, out)
+	require.NotNil(t, wire.ToolConfig, "toolUse/toolResult blocks are invalid without a toolConfig")
+	require.Len(t, wire.ToolConfig.Tools, 1)
+	assert.Nil(t, wire.ToolConfig.ToolChoice, "none relaxes to the default choice")
+}
+
+func TestBedrock_DecodeResponse(t *testing.T) {
+	body := `{
+		"output": {"message": {"role": "assistant", "content": [
+			{"reasoningContent": {"reasoningText": {"text": "They want the weather.", "signature": "sig"}}},
+			{"text": "Let me check."},
+			{"toolUse": {"toolUseId": "call_1", "name": "get_weather", "input": {"city": "Madrid"}}}
+		]}},
+		"stopReason": "tool_use",
+		"usage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19, "cacheReadInputTokens": 4, "cacheWriteInputTokens": 2},
+		"metrics": {"latencyMs": 321}
+	}`
+
+	cr, err := (&BedrockAdapter{}).DecodeResponse([]byte(body))
+	require.NoError(t, err)
+
+	assert.Equal(t, "assistant", cr.Role)
+	assert.Equal(t, "Let me check.", cr.Content)
+	assert.Equal(t, "tool_calls", cr.FinishReason)
+	require.Len(t, cr.ToolCalls, 1)
+	assert.Equal(t, "call_1", cr.ToolCalls[0].ID)
+	assert.Equal(t, "get_weather", cr.ToolCalls[0].Name)
+	assert.JSONEq(t, `{"city":"Madrid"}`, cr.ToolCalls[0].Arguments)
+	require.NotNil(t, cr.Reasoning)
+	assert.Equal(t, "They want the weather.", cr.Reasoning.ThinkingText)
+	require.NotNil(t, cr.Usage)
+	assert.Equal(t, 12, cr.Usage.InputTokens)
+	assert.Equal(t, 7, cr.Usage.OutputTokens)
+	assert.Equal(t, 19, cr.Usage.TotalTokens)
+	assert.Equal(t, 4, cr.Usage.CachedInputTokens)
+	assert.Equal(t, 2, cr.Usage.CacheWriteInputTokens)
+}
+
+func TestBedrock_DecodeResponse_StopReasons(t *testing.T) {
+	tests := map[string]string{
+		"end_turn":                      "stop",
+		"stop_sequence":                 "stop",
+		"max_tokens":                    "length",
+		"model_context_window_exceeded": "model_context_window_exceeded",
+		"tool_use":                      "tool_calls",
+		"guardrail_intervened":          "content_filter",
+		"content_filtered":              "content_filter",
+		"malformed_model_output":        "malformed_model_output",
+	}
+	for stop, want := range tests {
+		t.Run(stop, func(t *testing.T) {
+			body := `{"output":{"message":{"role":"assistant","content":[{"text":"x"}]}},"stopReason":"` + stop + `"}`
+			cr, err := (&BedrockAdapter{}).DecodeResponse([]byte(body))
+			require.NoError(t, err)
+			assert.Equal(t, want, cr.FinishReason)
+		})
+	}
+}
+
+func TestBedrock_EncodeResponse_RoundTrip(t *testing.T) {
+	in := &CanonicalResponse{
+		Role:         "assistant",
+		Content:      "Let me check.",
+		FinishReason: "tool_calls",
+		ToolCalls:    []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Madrid"}`}},
+		Reasoning:    &CanonicalReasoning{ThinkingText: "thinking"},
+		Usage:        &CanonicalUsage{InputTokens: 3, OutputTokens: 4, TotalTokens: 7, CachedInputTokens: 1},
+	}
+
+	body, err := (&BedrockAdapter{}).EncodeResponse(in)
+	require.NoError(t, err)
+
+	var wire ConverseResponse
+	require.NoError(t, json.Unmarshal(body, &wire))
+	assert.Equal(t, "tool_use", wire.StopReason)
+	require.NotNil(t, wire.Output.Message)
+	require.Len(t, wire.Output.Message.Content, 3)
+	require.NotNil(t, wire.Output.Message.Content[0].ReasoningContent)
+	assert.Equal(t, "Let me check.", wire.Output.Message.Content[1].Text)
+	require.NotNil(t, wire.Output.Message.Content[2].ToolUse)
+	require.NotNil(t, wire.Usage)
+	assert.Equal(t, 1, wire.Usage.CacheReadInputTokens)
+
+	back, err := (&BedrockAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+	assert.Equal(t, in.Content, back.Content)
+	assert.Equal(t, in.FinishReason, back.FinishReason)
+	assert.Equal(t, in.ToolCalls[0].ID, back.ToolCalls[0].ID)
+	assert.JSONEq(t, in.ToolCalls[0].Arguments, back.ToolCalls[0].Arguments)
+	assert.Equal(t, in.Reasoning.ThinkingText, back.Reasoning.ThinkingText)
+	assert.Equal(t, in.Usage, back.Usage)
+}
+
+func TestBedrock_EncodeResponse_StopMarksToolUse(t *testing.T) {
+	body, err := (&BedrockAdapter{}).EncodeResponse(&CanonicalResponse{
+		FinishReason: "stop",
+		ToolCalls:    []CanonicalToolCall{{ID: "call_1", Name: "noop", Arguments: "{}"}},
+	})
+	require.NoError(t, err)
+
+	var wire ConverseResponse
+	require.NoError(t, json.Unmarshal(body, &wire))
+	assert.Equal(t, "tool_use", wire.StopReason)
+}
+
+func TestBedrock_DecodeStreamChunk(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk string
+		want  *CanonicalStreamChunk
+	}{
+		{
+			name:  "message start opens the assistant turn",
+			chunk: `{"messageStart":{"role":"assistant"}}`,
+			want:  &CanonicalStreamChunk{Role: "assistant"},
+		},
+		{
+			name:  "text delta",
+			chunk: `{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"text":"Hel"}}}`,
+			want:  &CanonicalStreamChunk{Delta: "Hel"},
+		},
+		{
+			name:  "reasoning delta",
+			chunk: `{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"text":"hmm"}}}}`,
+			want:  &CanonicalStreamChunk{ReasoningDelta: "hmm"},
+		},
+		{
+			name:  "reasoning signature says nothing",
+			chunk: `{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig"}}}}`,
+			want:  nil,
+		},
+		{
+			name:  "tool use start names the tool",
+			chunk: `{"contentBlockStart":{"contentBlockIndex":1,"start":{"toolUse":{"toolUseId":"call_1","name":"get_weather"}}}}`,
+			want:  &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_1", Name: "get_weather"}}},
+		},
+		{
+			name:  "tool use delta streams arguments",
+			chunk: `{"contentBlockDelta":{"contentBlockIndex":1,"delta":{"toolUse":{"input":"{\"city\":"}}}}`,
+			want:  &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ArgumentsDelta: `{"city":`}}},
+		},
+		{
+			name:  "content block stop is silent",
+			chunk: `{"contentBlockStop":{"contentBlockIndex":0}}`,
+			want:  nil,
+		},
+		{
+			name:  "message stop carries the finish reason",
+			chunk: `{"messageStop":{"stopReason":"max_tokens"}}`,
+			want:  &CanonicalStreamChunk{FinishReason: "length"},
+		},
+		{
+			name:  "metadata carries usage",
+			chunk: `{"metadata":{"usage":{"inputTokens":5,"outputTokens":9,"totalTokens":14},"metrics":{"latencyMs":100}}}`,
+			want:  &CanonicalStreamChunk{Usage: &CanonicalUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14}},
+		},
+		{
+			name:  "unknown event is skipped",
+			chunk: `{"somethingNew":{}}`,
+			want:  nil,
+		},
+		{
+			name:  "non-JSON is skipped",
+			chunk: `not json`,
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := (&BedrockAdapter{}).DecodeStreamChunk([]byte(tt.chunk))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBedrock_EncodeStreamChunk(t *testing.T) {
+	lines, err := (&BedrockAdapter{}).EncodeStreamChunk(&CanonicalStreamChunk{
+		Role:  "assistant",
+		Delta: "Hi",
+		ToolCallDeltas: []StreamToolCallDelta{
+			{Index: 1, ID: "call_1", Name: "get_weather"},
+			{Index: 1, ArgumentsDelta: `{"city":"Madrid"}`},
+		},
+		FinishReason: "tool_calls",
+		Usage:        &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+	})
+	require.NoError(t, err)
+
+	var events []ConverseStreamEvent
+	for i := 0; i < len(lines); i += 2 {
+		require.True(t, len(lines[i]) > 6 && string(lines[i][:6]) == "data: ", "line %d: %q", i, lines[i])
+		assert.Empty(t, lines[i+1], "every data line is followed by a blank separator")
+		var ev ConverseStreamEvent
+		require.NoError(t, json.Unmarshal(lines[i][6:], &ev))
+		events = append(events, ev)
+	}
+
+	require.Len(t, events, 6)
+	assert.Equal(t, "assistant", events[0].MessageStart.Role)
+	assert.Equal(t, "Hi", events[1].ContentBlockDelta.Delta.Text)
+	assert.Equal(t, "call_1", events[2].ContentBlockStart.Start.ToolUse.ToolUseID)
+	assert.Equal(t, 1, events[2].ContentBlockStart.ContentBlockIndex)
+	assert.Equal(t, `{"city":"Madrid"}`, events[3].ContentBlockDelta.Delta.ToolUse.Input)
+	assert.Equal(t, "tool_use", events[4].MessageStop.StopReason)
+	assert.Equal(t, 3, events[5].Metadata.Usage.TotalTokens)
+}
+
+func TestBedrock_EncodeStreamChunk_EmptyChunkEmitsNothing(t *testing.T) {
+	lines, err := (&BedrockAdapter{}).EncodeStreamChunk(&CanonicalStreamChunk{})
+	require.NoError(t, err)
+	assert.Empty(t, lines)
+}
+
+func TestBedrock_AdaptResponseToOpenAI(t *testing.T) {
+	body := `{
+		"output": {"message": {"role": "assistant", "content": [{"text": "Hello from Nova"}]}},
+		"stopReason": "end_turn",
+		"usage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+	}`
+
+	out, err := NewRegistry().AdaptResponse([]byte(body), FormatOpenAI, FormatBedrock)
+	require.NoError(t, err)
+
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage struct {
+			TotalTokens int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(out, &resp))
+	require.Len(t, resp.Choices, 1)
+	assert.Equal(t, "Hello from Nova", resp.Choices[0].Message.Content)
+	assert.Equal(t, "stop", resp.Choices[0].FinishReason)
+	assert.Equal(t, 7, resp.Usage.TotalTokens)
+}
+
+func TestBedrock_AdaptStreamToOpenAI_ToolCall(t *testing.T) {
+	events := []string{
+		`{"messageStart":{"role":"assistant"}}`,
+		`{"contentBlockStart":{"contentBlockIndex":0,"start":{}}}`,
+		`{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"text":"Checking."}}}`,
+		`{"contentBlockStop":{"contentBlockIndex":0}}`,
+		`{"contentBlockStart":{"contentBlockIndex":1,"start":{"toolUse":{"toolUseId":"call_1","name":"get_weather"}}}}`,
+		`{"contentBlockDelta":{"contentBlockIndex":1,"delta":{"toolUse":{"input":"{\"city\":"}}}}`,
+		`{"contentBlockDelta":{"contentBlockIndex":1,"delta":{"toolUse":{"input":"\"Madrid\"}"}}}}`,
+		`{"contentBlockStop":{"contentBlockIndex":1}}`,
+		`{"messageStop":{"stopReason":"tool_use"}}`,
+		`{"metadata":{"usage":{"inputTokens":5,"outputTokens":9,"totalTokens":14}}}`,
+	}
+
+	type openAIChunk struct {
+		Choices []struct {
+			Delta struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					Index    int    `json:"index"`
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *struct {
+			TotalTokens int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	var (
+		content, arguments, toolID, toolName string
+		finish                               string
+		totalTokens                          int
+	)
+	for _, ev := range events {
+		lines, err := NewRegistry().AdaptStreamChunk([]byte(ev), FormatOpenAI, FormatBedrock)
+		require.NoError(t, err, ev)
+		for _, line := range lines {
+			if len(line) == 0 {
+				continue
+			}
+			require.True(t, strings.HasPrefix(string(line), "data: "), "%q", line)
+			var chunk openAIChunk
+			require.NoError(t, json.Unmarshal(line[6:], &chunk), "%q", line)
+			if chunk.Usage != nil {
+				totalTokens = chunk.Usage.TotalTokens
+			}
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+			choice := chunk.Choices[0]
+			content += choice.Delta.Content
+			for _, tc := range choice.Delta.ToolCalls {
+				if tc.ID != "" {
+					toolID = tc.ID
+				}
+				if tc.Function.Name != "" {
+					toolName = tc.Function.Name
+				}
+				arguments += tc.Function.Arguments
+			}
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				finish = *choice.FinishReason
+			}
+		}
+	}
+
+	assert.Equal(t, "Checking.", content)
+	assert.Equal(t, "call_1", toolID)
+	assert.Equal(t, "get_weather", toolName)
+	assert.JSONEq(t, `{"city":"Madrid"}`, arguments)
+	assert.Equal(t, "tool_calls", finish)
+	assert.Equal(t, 14, totalTokens)
 }
