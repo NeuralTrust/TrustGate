@@ -1,0 +1,1002 @@
+{
+  "io.aha/mcp": [
+    "View product roadmaps",
+    "Capture ideas and features",
+    "Manage Aha! records"
+  ],
+  "com.ahrefs/mcp": [
+    "Analyze SEO performance",
+    "Research backlinks",
+    "Compare keywords and competitors"
+  ],
+  "ai.airbyte/agents": [
+    "Query connected data",
+    "Act across business apps",
+    "Work with synced sources"
+  ],
+  "com.airtable/mcp": [
+    "Search records",
+    "Analyze and create records",
+    "Work with schema and interfaces"
+  ],
+  "com.algolia/mcp": [
+    "Search application indices",
+    "Get recommendations",
+    "Browse indexed content"
+  ],
+  "com.amplitude/mcp": [
+    "Analyze dashboards",
+    "Analyze charts",
+    "Analyze experiments"
+  ],
+  "com.apify/mcp": [
+    "Run scrapers",
+    "Run crawlers",
+    "Automate data collection"
+  ],
+  "io.apollo/mcp": [
+    "Prospect accounts and contacts",
+    "Enrich sales records",
+    "Search buyer intelligence"
+  ],
+  "dev.arcade/mcp": [
+    "Call tools across integrations",
+    "Run automation actions",
+    "Connect business apps"
+  ],
+  "com.asana/mcp": [
+    "Manage tasks",
+    "Manage projects",
+    "Manage reporting"
+  ],
+  "com.assemblyai/docs": [
+    "Look up documentation",
+    "Look up API reference lookup",
+    "Search and read AssemblyAI ai"
+  ],
+  "com.atlan/mcp": [
+    "Explore metadata",
+    "Explore lineage",
+    "Explore catalog"
+  ],
+  "com.atlassian/mcp": [
+    "Manage Jira issues",
+    "Manage Confluence pages",
+    "Manage Compass"
+  ],
+  "com.attio/mcp": [
+    "Search records",
+    "Create and update records",
+    "Full-text search for records (people, companies, deals)"
+  ],
+  "co.axiom/mcp": [
+    "Query events and logs",
+    "Observability prompts",
+    "List available Axiom datasets"
+  ],
+  "com.betterstack/mcp": [
+    "Monitor uptime",
+    "Investigate incidents and logs",
+    "Manage on-call and status pages"
+  ],
+  "com.box/mcp": [
+    "Search and manage file",
+    "Search and manage folder operations",
+    "Search and manage AI"
+  ],
+  "dev.braintrust/mcp": [
+    "Work with LLM evals",
+    "Work with experiments",
+    "Work with logs"
+  ],
+  "com.brex/mcp": [
+    "Manage corporate cards",
+    "Manage expenses",
+    "Manage budgets"
+  ],
+  "com.brightdata/mcp": [
+    "Web search, scraping, and Web Unlocker",
+    "Scrape search results from Google, Bing, or Yandex",
+    "Run up to 10 search queries in parallel"
+  ],
+  "com.browserbase/mcp": [
+    "Automate hosted cloud browser runtime",
+    "Navigate to a URL",
+    "Find actionable elements on the page"
+  ],
+  "io.builder/cms-mcp": [
+    "Publish site content",
+    "Edit CMS entries",
+    "Manage Builder spaces"
+  ],
+  "com.buildkite/mcp": [
+    "Manage CI/CD pipelines",
+    "Manage builds",
+    "Manage jobs"
+  ],
+  "com.cal/mcp": [
+    "Manage bookings",
+    "Manage availability",
+    "Manage event types"
+  ],
+  "com.calendly/mcp": [
+    "Work with event types",
+    "Work with availability",
+    "Work with reschedule"
+  ],
+  "com.canva/mcp": [
+    "Generate designs",
+    "Edit assets",
+    "Manage brand kits"
+  ],
+  "com.chargebee/mcp": [
+    "Search Chargebee docs for detailed information and usage guides",
+    "Generate code outlines/samples for integrating Chargebee APIs",
+    "Search and read Chargebee billing"
+  ],
+  "com.checkr/mcp": [
+    "Manage retrieve screening reports",
+    "Get a candidate by ID",
+    "List candidates with filtering, formatted for table display"
+  ],
+  "com.clickhouse/cloud-mcp": [
+    "List databases/tables",
+    "Query schemas",
+    "Query read-only queries"
+  ],
+  "com.clickup/mcp": [
+    "Manage tasks and lists",
+    "Work with docs",
+    "Track projects"
+  ],
+  "com.close/mcp": [
+    "Manage CRM sales pipeline management",
+    "Add an address to a lead",
+    "Create call task"
+  ],
+  "com.cloudflare/ai-gateway": [
+    "Search AI Gateway logs",
+    "Configure gateways",
+    "Inspect request traces"
+  ],
+  "com.cloudflare/api-mcp": [
+    "Search the Cloudflare API",
+    "Call Cloudflare endpoints",
+    "Manage account resources"
+  ],
+  "com.cloudflare/bindings": [
+    "Manage KV",
+    "Manage R2",
+    "Manage D1"
+  ],
+  "com.cloudflare/docs": [
+    "Search Cloudflare developer documentation",
+    "Search the Cloudflare documentation",
+    "Migrate pages to workers guide"
+  ],
+  "com.cloudflare/observability": [
+    "Query Cloudflare Workers logs",
+    "Monitor analytics",
+    "Query Workers Observability to analyze logs and metrics"
+  ],
+  "com.cloudflare/radar": [
+    "Monitor internet traffic insights",
+    "Monitor URL scanning",
+    "Search URL scans"
+  ],
+  "com.cloudinary/asset-management": [
+    "Work with media asset management",
+    "Work with transformations",
+    "Search folders"
+  ],
+  "io.coda/mcp": [
+    "Read docs and tables",
+    "Write pages and rows",
+    "Search workspace content"
+  ],
+  "com.coinbase/bazaar": [
+    "Discover paid endpoints",
+    "Call x402 payment APIs",
+    "Run agent payments"
+  ],
+  "com.contentful/mcp": [
+    "Manage spaces",
+    "Work with content types",
+    "Work with entries"
+  ],
+  "dev.cube/mcp": [
+    "Query the semantic layer",
+    "Explore Cube metrics",
+    "Analyze workspace data"
+  ],
+  "com.customer.io/mcp": [
+    "Analyze campaigns",
+    "Analyze segments",
+    "Analyze people"
+  ],
+  "com.daloopa/mcp": [
+    "Manage fundamental financial data",
+    "Manage models",
+    "Search documents"
+  ],
+  "com.databricks/mcp": [
+    "Ask Genie spaces",
+    "Search vector indexes",
+    "Run SQL"
+  ],
+  "com.datadoghq/mcp": [
+    "Monitor metrics",
+    "Monitor logs",
+    "Monitor traces"
+  ],
+  "com.getdbt/mcp": [
+    "Query semantic layer",
+    "Query model metadata",
+    "Query discovery"
+  ],
+  "com.deepwiki/mcp": [
+    "Read repository docs",
+    "Ask questions about GitHub wikis",
+    "Browse documentation topics"
+  ],
+  "com.devexpress/docs": [
+    "Call documentation search",
+    "Call retrieval",
+    "Search and read DevExpress dev"
+  ],
+  "com.digitalocean/accounts": [
+    "Manage billing",
+    "Manage team info",
+    "Get a specific invoice"
+  ],
+  "com.digitalocean/apps": [
+    "Manage apps",
+    "Manage deployments",
+    "Apps create app from spec"
+  ],
+  "com.digitalocean/databases": [
+    "Create a new database cluster",
+    "Create a topic for a Kafka cluster",
+    "Create a new database user for a cluster"
+  ],
+  "com.digitalocean/droplets": [
+    "Create and manage Droplets",
+    "Resize and rebuild compute",
+    "Control backups and kernels"
+  ],
+  "com.digitalocean/kubernetes": [
+    "Manage Kubernetes clusters",
+    "Scale node pools",
+    "Inspect cluster options"
+  ],
+  "com.dropbox/mcp": [
+    "Search files",
+    "Read and manage files",
+    "Search files/folders by name or content"
+  ],
+  "com.dynatrace/mcp": [
+    "Monitor DQL queries",
+    "Monitor problems",
+    "Monitor vulnerabilities"
+  ],
+  "com.egnyte/mcp": [
+    "Search files",
+    "Upload and manage documents",
+    "Work with secure folders"
+  ],
+  "co.elastic/agent-builder-mcp": [
+    "Search Elastic data",
+    "Query observability signals",
+    "Use Agent Builder tools"
+  ],
+  "com.endorlabs/docs-mcp": [
+    "Review documentation search",
+    "Search across the Endor Labs Documentation knowledge base to find…",
+    "Run a read-only shell-like query against a virtualized, in-memory…"
+  ],
+  "ai.exa/exa": [
+    "Search fast web search",
+    "Search crawling",
+    "Search the web for any topic and get clean, ready-to-use content"
+  ],
+  "com.excalidraw/mcp": [
+    "Create and edit edit diagrams",
+    "Create view",
+    "Read checkpoint state for restore"
+  ],
+  "ai.fathom/mcp": [
+    "Work with meeting recordings",
+    "Work with transcripts",
+    "Work with AI summaries"
+  ],
+  "io.fibery/mcp": [
+    "Manage entities",
+    "Manage databases",
+    "Manage relations"
+  ],
+  "dev.firecrawl/mcp": [
+    "Scrape web pages",
+    "Crawl sites",
+    "Extract structured data"
+  ],
+  "ai.fireflies/mcp": [
+    "Work with meeting transcripts",
+    "Work with summaries",
+    "Work with action items"
+  ],
+  "com.freshworks/mcp": [
+    "Manage tickets",
+    "Look up assets",
+    "Search the knowledge base"
+  ],
+  "com.frontapp/mcp": [
+    "Manage act",
+    "Search conversations",
+    "Create a draft reply (no send)"
+  ],
+  "com.github/copilot-mcp": [
+    "Work with repos",
+    "Work with issues",
+    "Work with pull requests"
+  ],
+  "com.gitlab/mcp": [
+    "Work with projects",
+    "Work with merge requests",
+    "Work with issues"
+  ],
+  "com.glean/mcp": [
+    "Work with knowledge",
+    "Retrieve documents by ID or URL",
+    "Search Glean's content index"
+  ],
+  "io.globalping/mcp": [
+    "Run network measurements",
+    "List available probe locations",
+    "Retrieve a prior measurement by ID"
+  ],
+  "ai.gooddata/mcp": [
+    "Query cloud analytics per workspace",
+    "Create governed metric",
+    "Create memory item"
+  ],
+  "com.slack/mcp": [
+    "Search messages, files, and people",
+    "Read channels and threads",
+    "Send messages and update canvases"
+  ],
+  "com.google.workspace/gmail": [
+    "Search threads",
+    "Read messages",
+    "Create drafts"
+  ],
+  "com.google.workspace/calendar": [
+    "List calendars",
+    "Manage events",
+    "Work with suggest free time"
+  ],
+  "com.google.workspace/drive": [
+    "Search files",
+    "Read content",
+    "Search Drive files matching a query"
+  ],
+  "com.google.cloud/androidmanagement": [
+    "List enterprises",
+    "List devices",
+    "List policies"
+  ],
+  "com.google.cloud/bigtableadmin": [
+    "Manage admin",
+    "Create instance",
+    "Create table"
+  ],
+  "com.google.cloud/composer": [
+    "Manage google Cloud Cloud Composer",
+    "Create a Managed Airflow environment (default settings)",
+    "Manage pypi packages"
+  ],
+  "com.google.cloud/compute": [
+    "Create a new Google Compute Engine virtual machine (VM) instance",
+    "List instance attached disks",
+    "List instances"
+  ],
+  "com.google.cloud/container": [
+    "Create cluster",
+    "Create node pool",
+    "Update cluster"
+  ],
+  "com.google.cloud/datastream": [
+    "Run stream",
+    "List connection profiles",
+    "List streams"
+  ],
+  "com.google.cloud/design": [
+    "Search icons",
+    "Search fonts",
+    "Generate color scheme"
+  ],
+  "com.google.cloud/developerknowledge": [
+    "Search documents",
+    "Get documents",
+    "Answer query"
+  ],
+  "com.google.cloud/firestore": [
+    "Create a Firestore database",
+    "Create a composite index",
+    "Update a document from a Firestore database"
+  ],
+  "com.google.cloud/mapstools": [
+    "Search places",
+    "Lookup weather",
+    "Compute routes"
+  ],
+  "com.google.cloud/memorystore": [
+    "Create a Memorystore for Valkey instance",
+    "Update a Memorystore for Valkey instance",
+    "List all Memorystore for Valkey instances"
+  ],
+  "com.google.cloud/monitoring": [
+    "Manage google Cloud Cloud Monitoring",
+    "Query range",
+    "List timeseries"
+  ],
+  "com.google.cloud/run": [
+    "Manage google Cloud Cloud Run",
+    "List services",
+    "Get info about a Cloud Run service, such as its URI and whether the…"
+  ],
+  "com.google.cloud/sqladmin": [
+    "Manage google Cloud Cloud SQL Admin",
+    "Create instance",
+    "Create a database user for a Cloud SQL instance"
+  ],
+  "com.google.cloud/stitch": [
+    "Create project",
+    "Create design system",
+    "Create design system from design md"
+  ],
+  "com.gorgias/mcp": [
+    "Manage helpdesk tickets",
+    "Look up customers",
+    "Work with support conversations"
+  ],
+  "com.grafana/mcp": [
+    "Browse dashboards",
+    "Query datasources",
+    "Manage alerts"
+  ],
+  "ai.granola/mcp": [
+    "Work with meeting notes",
+    "Work with transcripts",
+    "Work with folders"
+  ],
+  "com.getguru/mcp": [
+    "Work with connect AI tools to your knowledge base",
+    "Search the Guru knowledge base / connected sources",
+    "Create a new Card draft"
+  ],
+  "tech.hex/mcp": [
+    "Query notebooks",
+    "Query data apps",
+    "Query projects"
+  ],
+  "com.holded/mcp": [
+    "Create and manage invoices",
+    "Update contacts and products",
+    "Track payments and stock"
+  ],
+  "io.honeycomb/mcp": [
+    "Query traces",
+    "Monitor events",
+    "Monitor metrics"
+  ],
+  "com.hubspot/mcp": [
+    "Manage CRM contacts",
+    "Manage deals",
+    "Manage tickets"
+  ],
+  "com.haloitsm/mcp": [
+    "Manage tickets",
+    "Search the knowledge base",
+    "Work with assets and runbooks"
+  ],
+  "co.huggingface/mcp": [
+    "Search models",
+    "Browse datasets",
+    "Discover Spaces"
+  ],
+  "com.incident/mcp": [
+    "Work with incidents",
+    "Work with on-call",
+    "Work with follow-ups"
+  ],
+  "com.infobip/mcp": [
+    "Send SMS and RCS",
+    "Message WhatsApp and Viber",
+    "Run omnichannel campaigns"
+  ],
+  "com.intercom/mcp": [
+    "Work with conversations",
+    "Work with contacts",
+    "Work with help center"
+  ],
+  "dev.jam/mcp": [
+    "Manage bug reports with logs",
+    "Manage network",
+    "Manage repro data"
+  ],
+  "io.jfrog/mcp": [
+    "Work with artifact",
+    "Work with package",
+    "Work with security data"
+  ],
+  "ai.jina/mcp": [
+    "Search web reading",
+    "Search grounding",
+    "Search the entire web for current information, news, articles, and…"
+  ],
+  "com.jotform/mcp": [
+    "Work with edit forms",
+    "List forms",
+    "Create or retrieve form submissions"
+  ],
+  "com.jumpcloud/genai": [
+    "Manage identity",
+    "Manage device resources",
+    "List administrators"
+  ],
+  "com.klaviyo/mcp": [
+    "Analyze profiles",
+    "Analyze lists",
+    "Analyze campaigns"
+  ],
+  "com.langfuse/mcp": [
+    "Work with traces",
+    "Work with prompts",
+    "Work with datasets"
+  ],
+  "com.launchdarkly/mcp": [
+    "Work with feature flag management",
+    "Work with observability",
+    "Create a feature flag"
+  ],
+  "app.linear/mcp": [
+    "Manage issues",
+    "Manage projects",
+    "Manage cycles"
+  ],
+  "com.lithic/mcp": [
+    "Manage explore endpoints",
+    "Run live requests",
+    "Search endpoints"
+  ],
+  "com.mailchimp/transactional": [
+    "Analyze transactional email sending",
+    "Analyze reporting",
+    "List available API endpoints"
+  ],
+  "com.make/mcp": [
+    "Build automation workflows",
+    "Run scenarios",
+    "Manage workflow connections"
+  ],
+  "ai.mem0/mcp": [
+    "Work with persistent memory store",
+    "Semantic search across memories",
+    "Update memory"
+  ],
+  "com.mercury/mcp": [
+    "Manage accounts",
+    "Manage transactions",
+    "Get account by ID"
+  ],
+  "com.microsoft/azure-devops": [
+    "Work with projects",
+    "Work with repos",
+    "Work with PRs"
+  ],
+  "com.microsoft/learn": [
+    "Search Learn documentation",
+    "Search official Microsoft/Azure documentation to find the most…",
+    "Search for code snippets and examples in official Microsoft Learn…"
+  ],
+  "com.microsoft/sentinel": [
+    "Review security data exploration",
+    "Semantic search of data-lake table catalog/schema",
+    "Query lake"
+  ],
+  "com.miro/mcp": [
+    "Manage boards",
+    "Manage items",
+    "Manage collaboration"
+  ],
+  "com.mixpanel/mcp": [
+    "Analyze event analytics",
+    "Analyze funnels",
+    "Analyze reports"
+  ],
+  "com.moderntreasury/mcp": [
+    "Manage platform API access",
+    "Manage documentation",
+    "Search endpoints"
+  ],
+  "com.mollie/mcp": [
+    "Process payments",
+    "Process balances",
+    "Fetch and parse documentation from a given URL or local file"
+  ],
+  "com.monday/mcp": [
+    "Manage boards",
+    "Manage items",
+    "Manage workflows"
+  ],
+  "com.getmontecarlo/mcp": [
+    "Work with incidents",
+    "Work with monitors",
+    "Work with assets"
+  ],
+  "com.motherduck/mcp": [
+    "Query modify cloud data",
+    "Create Dives",
+    "Search catalog"
+  ],
+  "com.mux/mcp": [
+    "Work with assets",
+    "Work with live streams",
+    "Work with data"
+  ],
+  "tech.neon/mcp": [
+    "Manage Postgres projects",
+    "Query branches",
+    "Query queries"
+  ],
+  "com.netsuite/ai-connector": [
+    "Query records and transactions",
+    "Run saved searches and reports",
+    "Execute SuiteQL"
+  ],
+  "com.newrelic/mcp": [
+    "Query telemetry",
+    "Monitor dashboards",
+    "Monitor alerts"
+  ],
+  "finance.norman/mcp": [
+    "Work with AI-powered bookkeeping",
+    "Work with tax filing",
+    "Create a new invoice"
+  ],
+  "com.notion/mcp": [
+    "Work with pages",
+    "Work with databases",
+    "Work with workspaces"
+  ],
+  "io.n8n/mcp": [
+    "Search workflows",
+    "Run automations",
+    "Build workflows for agents"
+  ],
+  "com.paddle/mcp": [
+    "Manage subscriptions",
+    "Manage transactions",
+    "Manage products"
+  ],
+  "com.pagerduty/mcp": [
+    "Work with incidents",
+    "Work with services",
+    "Work with schedules"
+  ],
+  "com.pandadoc/mcp": [
+    "Manage documents",
+    "Work with templates",
+    "Update contacts and webhooks"
+  ],
+  "com.paypal/mcp": [
+    "Create a new invoice",
+    "Create an order",
+    "Create a shipment tracking record"
+  ],
+  "io.pendo/mcp": [
+    "Work with product analytics",
+    "Work with guides",
+    "Work with usage data"
+  ],
+  "io.pinecone/assistant": [
+    "Retrieve assistant context",
+    "Search uploaded files",
+    "Read relevant snippets"
+  ],
+  "com.pipedream/mcp": [
+    "Call tools across connected apps",
+    "Run hosted automations",
+    "Connect 3,000+ services"
+  ],
+  "com.plaid/mcp": [
+    "Work with dashboard",
+    "Work with items",
+    "Work with financial data access"
+  ],
+  "dev.pscale/planetscale": [
+    "Query branches",
+    "List organizations you can access",
+    "Get details about an organization"
+  ],
+  "io.port/mcp": [
+    "Manage catalog",
+    "Manage scorecards",
+    "Manage actions"
+  ],
+  "com.posthog/mcp": [
+    "Analyze product analytics",
+    "Analyze feature flags",
+    "Analyze session replays"
+  ],
+  "com.postman/mcp": [
+    "Call collections",
+    "Call APIs",
+    "Call workspaces"
+  ],
+  "io.prisma/mcp": [
+    "Manage Postgres databases",
+    "Create a managed Prisma Postgres backup",
+    "Create a connection string for a database"
+  ],
+  "io.prismic/mcp": [
+    "Manage content types",
+    "Manage documents",
+    "Search documents by keyword with filters"
+  ],
+  "com.railway/mcp": [
+    "Manage develop",
+    "Manage debug projects",
+    "Manage deployments"
+  ],
+  "com.ramp/mcp": [
+    "Manage cards",
+    "Manage transactions",
+    "Manage bills"
+  ],
+  "com.razorpay/mcp": [
+    "Process payments",
+    "Process orders",
+    "Process refunds"
+  ],
+  "com.render/mcp": [
+    "Manage services",
+    "Manage deploys",
+    "Manage databases"
+  ],
+  "com.replicate/mcp": [
+    "Work with discover",
+    "Work with compare",
+    "Search public models by query"
+  ],
+  "com.rootly/mcp": [
+    "Work with incident management",
+    "Work with on-call scheduling",
+    "Work with analysis"
+  ],
+  "com.salesforce/mcp": [
+    "Query Salesforce records",
+    "Update CRM objects",
+    "Search accounts and opportunities"
+  ],
+  "io.sanity/mcp": [
+    "Manage content",
+    "Manage datasets",
+    "Search Sanity docs"
+  ],
+  "com.scrapingant/mcp": [
+    "Scrape cloud web scraping with real browsers",
+    "Scrape JS rendering",
+    "Search and read ScrapingAnt web scraping"
+  ],
+  "ai.semgrep/mcp": [
+    "Review findings",
+    "Review rules",
+    "Review code scanning"
+  ],
+  "com.semrush/mcp": [
+    "Analyze SEO",
+    "Analyze keyword",
+    "Analyze competitive research"
+  ],
+  "com.sectigo/mcp": [
+    "Issue and renew certificates",
+    "Revoke certificates",
+    "Search and report on certificates"
+  ],
+  "dev.sentry/mcp": [
+    "Monitor error tracking",
+    "Monitor performance",
+    "Monitor issues"
+  ],
+  "com.serpapi/mcp": [
+    "Search google",
+    "Search bing",
+    "Search other search engine results"
+  ],
+  "com.servicenow/mcp": [
+    "Manage incidents and requests",
+    "Search the knowledge base",
+    "Work with ServiceNow records"
+  ],
+  "com.shopify/storefront": [
+    "Work with product search",
+    "Work with cart",
+    "Work with policy tools"
+  ],
+  "com.shortcut/mcp": [
+    "Manage stories",
+    "Manage epics",
+    "Manage iterations"
+  ],
+  "com.smartbear/mcp": [
+    "Call swagger API hub tools",
+    "Generate an API from a prompt",
+    "Create or update an API"
+  ],
+  "com.smartsheet/mcp": [
+    "Manage sheets",
+    "Manage rows",
+    "Manage reports"
+  ],
+  "com.snowflake/mcp": [
+    "Query Cortex data",
+    "Explore database schemas",
+    "Analyze warehouse results"
+  ],
+  "dev.socket/mcp": [
+    "Review dependency/package supply-chain risk lookup",
+    "Query supply chain, quality, maintenance, vulnerability, license scores",
+    "List orgs the authenticated user belongs to"
+  ],
+  "com.sonarsource/cloud-mcp": [
+    "Work with bearer user token + SONARQUBE_ORG",
+    "Work with SONARQUBE_TOOLSETS",
+    "Find files sorted by coverage (worst first)"
+  ],
+  "com.sonatype/mcp": [
+    "Manage versions",
+    "Manage security analysis",
+    "Manage trust Score"
+  ],
+  "com.squareup/mcp": [
+    "Process payments",
+    "Process catalog",
+    "Process orders"
+  ],
+  "com.statsig/mcp": [
+    "Manage feature flags",
+    "Review experiments",
+    "Analyze product metrics"
+  ],
+  "com.storyblok/mcp": [
+    "Search content and spaces",
+    "Manage components and assets",
+    "Work with workflows and releases"
+  ],
+  "com.stripe/mcp": [
+    "Process payments",
+    "Process subscriptions",
+    "Process invoices"
+  ],
+  "dev.stytch/mcp": [
+    "Manage authentication",
+    "Manage users",
+    "Manage connected apps"
+  ],
+  "com.supabase/mcp": [
+    "Query database",
+    "Query auth",
+    "Query storage"
+  ],
+  "com.tavily/mcp": [
+    "Search web search",
+    "Search extraction",
+    "Real-time web search"
+  ],
+  "com.teamwork/mcp": [
+    "Manage tasks",
+    "Manage time",
+    "Create Desk company"
+  ],
+  "com.telnyx/mcp": [
+    "Work with messaging",
+    "Work with voice",
+    "Work with numbers"
+  ],
+  "app.thoughtspot/mcp": [
+    "Query data",
+    "Analyze analytics",
+    "Create analysis session"
+  ],
+  "co.tinybird/mcp": [
+    "Query workspaces and published API endpoints",
+    "List workspace data sources",
+    "List service/organization data sources"
+  ],
+  "net.todoist/mcp": [
+    "Manage tasks",
+    "Work with projects",
+    "Work with workflows"
+  ],
+  "com.twilio/docs": [
+    "Work with documentation",
+    "Work with API specs",
+    "Fetch full parameter schemas and response details for one or more…"
+  ],
+  "com.vanta/mcp": [
+    "Work with compliance posture",
+    "Work with tests",
+    "Work with remediation"
+  ],
+  "com.vercel/mcp": [
+    "Manage projects",
+    "Manage deployments",
+    "Manage docs"
+  ],
+  "com.vimeo/mcp": [
+    "Manage videos",
+    "Query the video library",
+    "Update Vimeo content"
+  ],
+  "dev.vonage/docs-mcp": [
+    "Send and read API documentation",
+    "Send and read code snippets",
+    "Send and read tutorials"
+  ],
+  "com.webflow/mcp": [
+    "Manage sites",
+    "Manage CMS collections",
+    "Manage design"
+  ],
+  "ai.wandb/mcp": [
+    "Work with W&B runs",
+    "Work with sweeps",
+    "Work with weave traces"
+  ],
+  "com.wix/mcp": [
+    "Manage sites",
+    "Manage velo code",
+    "Manage business solutions"
+  ],
+  "com.workato/developer-api": [
+    "Manage workspace assets",
+    "Work with projects",
+    "Run Workato automations"
+  ],
+  "us.zoom/docs": [
+    "Send and read retrieve Zoom documents",
+    "Send and read notes",
+    "Create a Zoom Docs document from Markdown"
+  ],
+  "us.zoom/revenue-accelerator": [
+    "Review sales insights",
+    "Analyze deal intelligence",
+    "Work with conversation data"
+  ],
+  "us.zoom/team-chat": [
+    "Send and read channels",
+    "Send and read messages",
+    "Send and read contacts"
+  ],
+  "us.zoom/whiteboard": [
+    "Send and read boards",
+    "Send and read diagrams",
+    "Create a whiteboard"
+  ],
+  "us.zoom/workspace": [
+    "Send and read meetings",
+    "Send and read chat",
+    "Send and read docs"
+  ],
+  "com.amazon.aws/mcp": [
+    "Search documentation",
+    "Manage securely operate services",
+    "Retrieve domain-specific expertise for a particular AWS domain"
+  ],
+  "com.microsoft/outlook": [
+    "Search messages",
+    "Send and reply messages",
+    "Create a draft email"
+  ]
+}
