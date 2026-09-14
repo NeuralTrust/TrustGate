@@ -478,7 +478,7 @@ func TestProviderInvoke_BedrockNovaBindingDefaultUsesNovaSchema(t *testing.T) {
 	var body map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(sent, &body))
 	assert.NotContains(t, body, "max_tokens",
-		"Nova rejects the Claude-on-Bedrock max_tokens outright (ENG-1526)")
+		"Nova rejects the Claude-on-Bedrock max_tokens outright (RUN-1554)")
 	assert.NotContains(t, body, "anthropic_version")
 	assert.Contains(t, body, "inferenceConfig")
 }

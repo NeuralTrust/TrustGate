@@ -154,12 +154,19 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 	return r.AdaptRequestForModel(body, source, target, "")
 }
 
-// AdaptRequestForModel converts a request the way AdaptRequest does, seeding the
-// canonical model with fallbackModel when the body carries none. Bedrock hosts
-// one wire schema per model family and picks the encoder from the model alone,
-// so without the fallback a body that leaves the model to the binding default
-// encodes as Claude and Nova answers "extraneous key [max_tokens] is not
-// permitted" (ENG-1526): the default is only applied further down the pipeline.
+// AdaptRequestForModel converts a request the way AdaptRequest does and, when
+// target is Bedrock and the body carries no model, seeds the canonical model
+// with fallbackModel. Bedrock hosts one wire schema per model family and picks
+// the encoder from the model alone, so without the fallback a body that leaves
+// the model to the binding default encodes as Claude and Nova answers
+// "extraneous key [max_tokens] is not permitted" (RUN-1554): the default is
+// only applied further down the pipeline.
+//
+// Every other target is left without a model on purpose. Their encoders would
+// write fallbackModel into the body, and EnforceModel then validates it against
+// the allow-list, whereas a body with no model has the default injected
+// unchecked — seeding it would turn a binding whose default sits outside its
+// allow-list from working into a rejection.
 func (r *Registry) AdaptRequestForModel(body []byte, source, target Format, fallbackModel string) ([]byte, error) {
 	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
@@ -182,7 +189,7 @@ func (r *Registry) AdaptRequestForModel(body []byte, source, target Format, fall
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
-	if canonical.Model == "" {
+	if canonical.Model == "" && target == FormatBedrock {
 		canonical.Model = fallbackModel
 	}
 

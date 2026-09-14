@@ -755,6 +755,73 @@ func TestAdaptRequestForModel_AnthropicIngressBindingDefault(t *testing.T) {
 	assert.Equal(t, 64, result.InferenceConfig.MaxTokens)
 }
 
+func TestAdaptRequestForModel_BindingDefaultPicksFamilyEncoder(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":128}`
+
+	tests := []struct {
+		name     string
+		model    string
+		tokenKey func(t *testing.T, out []byte) int
+	}{
+		{
+			name:  "titan",
+			model: "amazon.titan-text-express-v1",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result titanRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				require.NotNil(t, result.TextGenerationConfig)
+				return result.TextGenerationConfig.MaxTokenCount
+			},
+		},
+		{
+			name:  "llama",
+			model: "meta.llama3-70b-instruct-v1:0",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result llamaRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				return result.MaxGenLen
+			},
+		},
+		{
+			name:  "nova behind an inference profile",
+			model: "us.amazon.nova-lite-v1:0",
+			tokenKey: func(t *testing.T, out []byte) int {
+				var result novaRequest
+				require.NoError(t, json.Unmarshal(out, &result))
+				require.NotNil(t, result.InferenceConfig)
+				return result.InferenceConfig.MaxTokens
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewRegistry().AdaptRequestForModel([]byte(input), FormatOpenAI, FormatBedrock, tt.model)
+			require.NoError(t, err)
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &body))
+			assert.NotContains(t, body, "max_tokens")
+			assert.NotContains(t, body, "anthropic_version")
+			assert.Equal(t, 128, tt.tokenKey(t, out))
+		})
+	}
+}
+
+func TestAdaptRequestForModel_FallbackOnlySeedsBedrock(t *testing.T) {
+	input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
+
+	out, err := NewRegistry().AdaptRequestForModel(
+		[]byte(input), FormatOpenAI, FormatAnthropic, "claude-sonnet-4-5",
+	)
+	require.NoError(t, err)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.NotContains(t, body, "model",
+		"a non-Bedrock target must leave the model to EnforceModel, which injects the default unchecked")
+}
+
 func TestAdaptRequestForModel_BodyModelWinsOverFallback(t *testing.T) {
 	input := `{"model":"anthropic.claude-3-5-sonnet-20241022-v2:0","messages":[{"role":"user","content":"hi"}],"max_tokens":32}`
 
