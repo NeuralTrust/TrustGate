@@ -93,6 +93,10 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 		assert.Contains(t, sent, `"max_completion_tokens"`)
 		assert.NotContains(t, sent, `"max_tokens"`)
 		assert.NotContains(t, sent, "web_search_20250305")
+		// RUN-1553: the type string never survives the conversion on its own,
+		// so only the empty name proves the block was dropped rather than
+		// forwarded as a nameless function.
+		assert.NotContains(t, sent, `"name":""`)
 	})
 
 	t.Run("anthropic streaming request receives anthropic SSE events", func(t *testing.T) {

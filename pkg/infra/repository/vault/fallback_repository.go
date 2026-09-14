@@ -50,7 +50,32 @@ func NewFallbackRepository(primary, fallback domain.Repository) domain.Repositor
 	if fallback == nil {
 		return primary
 	}
-	return &fallbackRepository{primary: primary, fallback: fallback}
+	repo := &fallbackRepository{primary: primary, fallback: fallback}
+	if locker, ok := fallback.(refreshLocker); ok {
+		return &refreshFallbackRepository{fallbackRepository: repo, refreshLocker: locker}
+	}
+	return repo
+}
+
+type refreshLocker interface {
+	AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+}
+
+type refreshFallbackRepository struct {
+	*fallbackRepository
+	refreshLocker
+}
+
+// UpsertRefreshed keeps a rotated grant in the store that supplied it.
+func (r *fallbackRepository) UpsertRefreshed(ctx context.Context, c *domain.Credential) error {
+	_, err := r.primary.Find(ctx, c.GatewayID, c.PrincipalSub, c.Provider)
+	if errors.Is(err, domain.ErrNotFound) {
+		return r.fallback.Upsert(ctx, c)
+	}
+	if err != nil {
+		return err
+	}
+	return r.primary.Upsert(ctx, c)
 }
 
 func (r *fallbackRepository) Upsert(ctx context.Context, c *domain.Credential) error {

@@ -70,3 +70,29 @@ func TestContextWindowPreflight_RefusesOversizedToolset(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, 1, up.Hits())
 }
+
+func TestNamelessServerTool_NotForwardedToOpenAI(t *testing.T) {
+	defer Track(t, "NamelessServerTool")()
+
+	up := newJSONUpstream(t, "ok")
+	apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+	payload := anthropicChatRequest("gpt-4o-mini")
+	payload["tools"] = []map[string]any{
+		{
+			"name":         "edit_file",
+			"description":  "Replace a string in a file.",
+			"input_schema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{"type": "web_search_20250305"},
+	}
+
+	status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/messages", payload)
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+	require.Equal(t, 1, up.Hits())
+
+	sent := string(up.LastBody())
+	assert.Contains(t, sent, `"name":"edit_file"`)
+	assert.NotContains(t, sent, `"name":""`)
+	assert.NotContains(t, sent, "web_search_20250305")
+}

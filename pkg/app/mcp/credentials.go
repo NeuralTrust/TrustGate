@@ -109,6 +109,14 @@ type CredentialConnectGateway interface {
 
 var _ CredentialResolver = (*credentialResolver)(nil)
 
+type credentialRefreshLocker interface {
+	AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+}
+
+type credentialRefreshWriter interface {
+	UpsertRefreshed(context.Context, *vaultdomain.Credential) error
+}
+
 type credentialResolver struct {
 	exchanger sts.Exchanger
 	vault     vaultdomain.Repository
@@ -155,6 +163,9 @@ func NewCredentialResolver(
 }
 
 const vaultRefreshSkew = 60 * time.Second
+
+const credentialRefreshTimeout = 30 * time.Second
+const credentialPersistenceTimeout = 5 * time.Second
 
 const rejectedCredentialRefreshCooldown = 30 * time.Second
 
@@ -298,9 +309,28 @@ func (r *credentialResolver) refreshCredential(
 	// provider name: two instances of one catalog code pointing at different
 	// deployments hold different credentials, and the guards around a refresh
 	// (singleflight, cooldown, dead grant) have to divide the same way.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	vaultProvider := registrydomain.ForwardedVaultProvider(reg)
 	key := gatewayID.String() + "|" + subject + "|" + vaultProvider
-	v, err, _ := r.refresh.Do(key, func() (any, error) {
+	result := r.refresh.DoChan(key, func() (any, error) {
+		// A caller disconnect must not abandon a rotating grant shared by other callers.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialRefreshTimeout)
+		defer cancel()
+		if locker, ok := r.vault.(credentialRefreshLocker); ok {
+			unlock, err := locker.AcquireRefreshLock(ctx, gatewayID, subject, vaultProvider)
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), credentialPersistenceTimeout)
+				defer releaseCancel()
+				if err := unlock(releaseCtx); err != nil {
+					r.logger.Warn("mcp credentials: failed to release refresh lock", "error", err)
+				}
+			}()
+		}
 		cred, err := r.vault.Find(ctx, gatewayID, subject, vaultProvider)
 		if err != nil {
 			return nil, err
@@ -355,13 +385,15 @@ func (r *credentialResolver) refreshCredential(
 			}
 			return nil, err
 		}
+		refreshed := *cred
+		cred = &refreshed
 		previousRefreshToken := cred.RefreshToken
 		cred.AccessToken = fresh.AccessToken
 		if fresh.RefreshToken != "" {
 			cred.RefreshToken = fresh.RefreshToken
 		}
 		cred.ExpiresAt = fresh.ExpiresAt
-		if err := r.vault.Upsert(ctx, cred); err != nil {
+		if err := r.persistRefreshed(ctx, cred); err != nil {
 			r.logger.Error("mcp credentials: failed to persist refreshed credential",
 				"provider", provider, "subject", subject, "gateway_id", gatewayID.String(),
 				"from", grantFingerprint(previousRefreshToken), "to", grantFingerprint(cred.RefreshToken),
@@ -387,6 +419,14 @@ func (r *credentialResolver) refreshCredential(
 		}
 		return cred, nil
 	})
+	var v any
+	var err error
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case completed := <-result:
+		v, err = completed.Val, completed.Err
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, errGrantExhausted):
@@ -426,6 +466,15 @@ func (r *credentialResolver) refreshCredential(
 		return nil, errors.New("mcp credentials: unexpected singleflight result type")
 	}
 	return cred, nil
+}
+
+func (r *credentialResolver) persistRefreshed(ctx context.Context, cred *vaultdomain.Credential) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialPersistenceTimeout)
+	defer cancel()
+	if writer, ok := r.vault.(credentialRefreshWriter); ok {
+		return writer.UpsertRefreshed(ctx, cred)
+	}
+	return r.vault.Upsert(ctx, cred)
 }
 
 func (r *credentialResolver) grantIsDead(key, refreshToken string) bool {

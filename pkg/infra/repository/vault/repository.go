@@ -30,12 +30,17 @@ import (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn   *database.Connection
-	cipher domain.Encrypter
+	conn         *database.Connection
+	cipher       domain.Encrypter
+	refreshSlots chan struct{}
 }
 
 func NewRepository(conn *database.Connection, cipher domain.Encrypter) *Repository {
-	return &Repository{conn: conn, cipher: cipher}
+	slots := 8
+	if conn != nil && conn.Pool != nil {
+		slots = min(slots, int(conn.Pool.Config().MaxConns))
+	}
+	return &Repository{conn: conn, cipher: cipher, refreshSlots: make(chan struct{}, max(1, slots))}
 }
 
 func (r *Repository) Upsert(ctx context.Context, c *domain.Credential) error {
