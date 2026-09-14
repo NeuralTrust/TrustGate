@@ -80,6 +80,33 @@
       }
     },
     {
+      "name": "com.airops/mcp",
+      "vendor": "AirOps",
+      "category": "Marketing",
+      "description": "AirOps brand context, knowledge bases, and content workflows.",
+      "transport": "streamable-http",
+      "server_url": "https://app.airops.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.airops.com/oauth/authorize",
+        "token_url": "https://app.airops.com/oauth/token",
+        "resource": "https://app.airops.com/mcp",
+        "scopes": [
+          "api"
+        ]
+      },
+      "config_guide": {
+        "summary": "Sign in to AirOps to connect the hosted MCP server.",
+        "docs_url": "https://docs.airops.com/developers/mcp-server"
+      },
+      "relevance": 45
+    },
+    {
       "name": "com.airtable/mcp",
       "vendor": "Airtable",
       "category": "Productivity & Docs",
@@ -10858,6 +10885,369 @@
       }
     },
     {
+      "name": "com.bigdata/mcp",
+      "vendor": "Bigdata.com",
+      "category": "Finance",
+      "description": "Financial research and market data from Bigdata.com.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.bigdata.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://clerk.bigdata.com/oauth/authorize",
+        "token_url": "https://clerk.bigdata.com/oauth/token",
+        "resource": "https://mcp.bigdata.com/",
+        "scopes": [
+          "openid"
+        ]
+      }
+    },
+    {
+      "name": "org.candid/mcp",
+      "vendor": "Candid",
+      "category": "Nonprofit",
+      "description": "Nonprofit data, grants, and organization research from Candid.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.candid.org/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.candid.org/authorize",
+        "token_url": "https://mcp.candid.org/token",
+        "resource": "https://mcp.candid.org",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ]
+      }
+    },
+    {
+      "name": "io.commonroom/mcp",
+      "vendor": "Common Room",
+      "category": "Customer Support",
+      "description": "Community intelligence: members, conversations, and signals.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.commonroom.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://login.commonroom.io/oauth/authorize",
+        "token_url": "https://login.commonroom.io/oauth/token",
+        "resource": "https://mcp.commonroom.io/",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ]
+      },
+      "relevance": 50
+    },
+    {
+      "name": "com.context7/mcp",
+      "vendor": "Context7",
+      "category": "Dev & APIs",
+      "description": "Up-to-date, version-specific library docs and code examples.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.context7.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://clerk.context7.com/oauth/authorize",
+        "token_url": "https://clerk.context7.com/oauth/token",
+        "resource": "https://mcp.context7.com",
+        "scopes": [
+          "profile",
+          "email"
+        ]
+      },
+      "config_guide": {
+        "summary": "Sign in to Context7, or use an API key if your client prefers it.",
+        "docs_url": "https://context7.com/docs/overview"
+      },
+      "relevance": 70
+    },
+    {
+      "name": "com.descript/mcp",
+      "vendor": "Descript",
+      "category": "Media",
+      "description": "Import media, inspect projects, and run Descript workflows.",
+      "transport": "streamable-http",
+      "server_url": "https://api.descript.com/v2/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://web.descript.com/mcp",
+        "token_url": "https://api.descript.com/oauth/token",
+        "resource": "https://api.descript.com/v2/mcp"
+      },
+      "config_guide": {
+        "summary": "Sign in to Descript to authorize the MCP server.",
+        "docs_url": "https://www.descript.com/api"
+      },
+      "relevance": 50
+    },
+    {
+      "name": "com.domotz/mcp",
+      "vendor": "Domotz",
+      "category": "Observability",
+      "description": "Network monitoring, devices, and alerts from Domotz.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.domotz.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.domotz.com/realms/domotz/protocol/openid-connect/auth",
+        "token_url": "https://auth.domotz.com/realms/domotz/protocol/openid-connect/token",
+        "resource": "https://mcp.domotz.com",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ]
+      }
+    },
+    {
+      "name": "ai.explorium/mcp",
+      "vendor": "Explorium",
+      "category": "Sales Intelligence",
+      "description": "B2B data, prospecting, and company enrichment.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.explorium.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.explorium.ai/authorize",
+        "token_url": "https://mcp.explorium.ai/token",
+        "resource": "https://mcp.explorium.ai/mcp"
+      },
+      "relevance": 45
+    },
+    {
+      "name": "com.figma/mcp",
+      "vendor": "Figma",
+      "category": "Design",
+      "description": "Read and act on Figma files, frames, and design context.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.figma.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.figma.com/oauth",
+        "token_url": "https://api.figma.com/v1/oauth/token",
+        "resource": "https://mcp.figma.com/mcp",
+        "scopes": [
+          "mcp:connect"
+        ]
+      },
+      "config_guide": {
+        "summary": "Sign in to Figma to connect the official remote MCP server.",
+        "steps": [
+          "Select Connect and complete Figma OAuth.",
+          "Paste a Figma file or frame URL when asking about a design."
+        ],
+        "docs_url": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/"
+      },
+      "relevance": 80
+    },
+    {
+      "name": "com.gocardless/mcp",
+      "vendor": "GoCardless",
+      "category": "Payments",
+      "description": "Bank payments, mandates, and payouts via GoCardless.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.gocardless.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.gocardless.com/authorize",
+        "token_url": "https://mcp.gocardless.com/token",
+        "resource": "https://mcp.gocardless.com"
+      },
+      "relevance": 50
+    },
+    {
+      "name": "ai.higgsfield/mcp",
+      "vendor": "Higgsfield",
+      "category": "AI & ML",
+      "description": "Generate images, video, and characters with Higgsfield.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.higgsfield.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://clerk.higgsfield.ai/oauth/authorize",
+        "token_url": "https://clerk.higgsfield.ai/oauth/token",
+        "resource": "https://mcp.higgsfield.ai/mcp",
+        "scopes": [
+          "openid",
+          "email",
+          "offline_access"
+        ]
+      }
+    },
+    {
+      "name": "com.jentic/mcp",
+      "vendor": "Jentic",
+      "category": "Dev & APIs",
+      "description": "API integration catalog and agent tools from Jentic.",
+      "transport": "streamable-http",
+      "server_url": "https://api.jentic.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "resource": "https://api.jentic.com"
+      }
+    },
+    {
+      "name": "com.onkernel/mcp",
+      "vendor": "Kernel",
+      "category": "Browser Automation",
+      "description": "Cloud browsers and browser automation from Kernel.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.onkernel.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.onkernel.com/authorize",
+        "token_url": "https://mcp.onkernel.com/token",
+        "resource": "https://mcp.onkernel.com"
+      },
+      "relevance": 45
+    },
+    {
+      "name": "com.lilt/mcp",
+      "vendor": "LILT",
+      "category": "Productivity & Docs",
+      "description": "Translation and localization workflows from LILT.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.lilt.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://blissful-celebration-62.authkit.app/oauth2/authorize",
+        "token_url": "https://blissful-celebration-62.authkit.app/oauth2/token",
+        "resource": "https://mcp.lilt.com/mcp"
+      }
+    },
+    {
+      "name": "com.longbridge/mcp",
+      "vendor": "Longbridge",
+      "category": "Finance",
+      "description": "Market data and trading context from Longbridge.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.longbridge.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://openapi.longbridge.com/oauth2/authorize",
+        "token_url": "https://mcp.longbridge.com/oauth2/token",
+        "resource": "https://mcp.longbridge.com"
+      }
+    },
+    {
+      "name": "app.lucid/mcp",
+      "vendor": "Lucid",
+      "category": "Design",
+      "description": "Search, retrieve, share, export, and create Lucid documents.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.lucid.app/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.lucid.app/oauth/authorize",
+        "token_url": "https://mcp.lucid.app/oauth/token",
+        "resource": "https://mcp.lucid.app/mcp"
+      },
+      "relevance": 60
+    },
+    {
+      "name": "com.magicpatterns/mcp",
+      "vendor": "Magic Patterns",
+      "category": "Design",
+      "description": "Create and iterate on interface designs with Magic Patterns.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.magicpatterns.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://oauth.magicpatterns.com/oauth/authorize",
+        "token_url": "https://oauth.magicpatterns.com/oauth/token",
+        "resource": "https://mcp.magicpatterns.com",
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline_access"
+        ]
+      }
+    },
+    {
       "name": "com.microsoft/learn",
       "vendor": "Microsoft",
       "category": "Productivity & Docs",
@@ -11023,6 +11413,31 @@
         ],
         "docs_url": "https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-overview"
       }
+    },
+    {
+      "name": "com.mintlify/mcp",
+      "vendor": "Mintlify",
+      "category": "Dev & APIs",
+      "description": "Search and edit Mintlify documentation projects.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.mintlify.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.mintlify.com/authorize",
+        "token_url": "https://mcp.mintlify.com/token",
+        "resource": "https://mcp.mintlify.com",
+        "scopes": [
+          "docs:read",
+          "docs:write",
+          "offline_access"
+        ]
+      },
+      "relevance": 55
     },
     {
       "name": "com.miro/mcp",
@@ -12889,6 +13304,79 @@
       ]
     },
     {
+      "name": "com.netlify/mcp",
+      "vendor": "Netlify",
+      "category": "Cloud Platform",
+      "description": "Deploy and manage Netlify sites, builds, and environment config.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.netlify.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.netlify.com/oauth-server/auth",
+        "token_url": "https://mcp.netlify.com/oauth-server/token",
+        "resource": "https://mcp.netlify.com/mcp",
+        "scopes": [
+          "offline_access",
+          "read",
+          "write"
+        ]
+      },
+      "config_guide": {
+        "summary": "Sign in to Netlify to connect the official MCP server.",
+        "docs_url": "https://docs.netlify.com/build/build-with-ai/netlify-mcp-server/"
+      },
+      "relevance": 70
+    },
+    {
+      "name": "co.octagonai/mcp",
+      "vendor": "Octagon",
+      "category": "Finance",
+      "description": "Public- and private-market intelligence from Octagon.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.octagonai.co/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://login.octagonai.co/oauth2/authorize",
+        "token_url": "https://login.octagonai.co/oauth2/token",
+        "resource": "https://mcp.octagonai.co/mcp"
+      },
+      "relevance": 45
+    },
+    {
+      "name": "ai.otter/mcp",
+      "vendor": "Otter.ai",
+      "category": "Productivity & Docs",
+      "description": "Meeting transcripts, conversations, and Otter.ai profile data.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.otter.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://otter.ai/oauth2/authorize",
+        "token_url": "https://otter.ai/oauth/token",
+        "resource": "https://mcp.otter.ai/",
+        "scopes": [
+          "profile:read",
+          "conversations:read"
+        ]
+      },
+      "relevance": 55
+    },
+    {
       "name": "com.paddle/mcp",
       "vendor": "Paddle",
       "category": "Billing & Payments",
@@ -13980,6 +14468,26 @@
       ]
     },
     {
+      "name": "com.quicknode/mcp",
+      "vendor": "QuickNode",
+      "category": "Blockchain",
+      "description": "Live blockchain data plus QuickNode endpoint and security management.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.quicknode.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.quicknode.com/authorize",
+        "token_url": "https://mcp.quicknode.com/token",
+        "resource": "https://mcp.quicknode.com/"
+      },
+      "relevance": 45
+    },
+    {
       "name": "com.railway/mcp",
       "vendor": "Railway",
       "category": "Cloud Platform",
@@ -14398,6 +14906,30 @@
       ]
     },
     {
+      "name": "com.resend/mcp",
+      "vendor": "Resend",
+      "category": "Communication",
+      "description": "Send and manage transactional email through Resend.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.resend.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.resend.com/oauth/authorize",
+        "token_url": "https://api.resend.com/oauth/token",
+        "resource": "https://mcp.resend.com"
+      },
+      "config_guide": {
+        "summary": "Sign in to Resend to connect the official MCP server.",
+        "docs_url": "https://resend.com/docs/mcp"
+      },
+      "relevance": 60
+    },
+    {
       "name": "com.rootly/mcp",
       "vendor": "Rootly",
       "category": "Incident Management",
@@ -14707,6 +15239,25 @@
       ]
     },
     {
+      "name": "io.scorecard/mcp",
+      "vendor": "Scorecard",
+      "category": "AI & ML",
+      "description": "Evaluate and score AI agent outputs with Scorecard.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.scorecard.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://clerk.scorecard.io/oauth/authorize",
+        "token_url": "https://clerk.scorecard.io/oauth/token",
+        "resource": "https://mcp.scorecard.io/mcp"
+      }
+    },
+    {
       "name": "com.scrapingant/mcp",
       "vendor": "ScrapingAnt",
       "category": "Web Scraping & Data",
@@ -14745,6 +15296,29 @@
         ],
         "docs_url": "https://docs.scrapingant.com/mcp-server"
       }
+    },
+    {
+      "name": "io.searchapi/mcp",
+      "vendor": "SearchAPI",
+      "category": "Search",
+      "description": "Hosted search-engine results (Google and others) via SearchAPI.",
+      "transport": "streamable-http",
+      "server_url": "https://www.searchapi.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.searchapi.io/oauth/authorize",
+        "token_url": "https://www.searchapi.io/oauth/token",
+        "resource": "https://www.searchapi.io/mcp",
+        "scopes": [
+          "mcp"
+        ]
+      },
+      "relevance": 40
     },
     {
       "name": "ai.semgrep/mcp",
@@ -15225,6 +15799,23 @@
           "description": "Get a team by ID"
         }
       ]
+    },
+    {
+      "name": "io.simplescraper/mcp",
+      "vendor": "Simplescraper",
+      "category": "Web Scraping & Data",
+      "description": "Run scrapers and extract structured web data from Simplescraper.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.simplescraper.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.simplescraper.io/authorize"
+      }
     },
     {
       "name": "com.smartbear/mcp",
@@ -15783,6 +16374,31 @@
           "Enter the raw token below; TrustGate adds the Bearer prefix."
         ],
         "docs_url": "https://guide.sonatype.com/mcp"
+      }
+    },
+    {
+      "name": "com.splice/mcp",
+      "vendor": "Splice",
+      "category": "Media",
+      "description": "Music, samples, and Splice library access for agents.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.splice.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.splice.com/oauth/authorize",
+        "token_url": "https://mcp.splice.com/oauth/token",
+        "resource": "https://mcp.splice.com/mcp",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ]
       }
     },
     {
@@ -17536,6 +18152,26 @@
       ]
     },
     {
+      "name": "sh.vantage/mcp",
+      "vendor": "Vantage",
+      "category": "Cloud Platform",
+      "description": "Cloud cost reports, resources, and recommendations from Vantage.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.vantage.sh/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.vantage.sh/authorize",
+        "token_url": "https://mcp.vantage.sh/token",
+        "resource": "https://mcp.vantage.sh/mcp"
+      },
+      "relevance": 50
+    },
+    {
       "name": "com.vercel/mcp",
       "vendor": "Vercel",
       "category": "Cloud Platform",
@@ -18009,6 +18645,34 @@
         ],
         "docs_url": "https://docs.workato.com/en/mcp/developer-api-mcp",
         "note": "This tile uses the US data center. Other regions need a Custom MCP URL such as app.eu.workato.com/mcp."
+      }
+    },
+    {
+      "name": "com.zernio/mcp",
+      "vendor": "Zernio",
+      "category": "Marketing",
+      "description": "Social posts, accounts, ads, and automations from Zernio.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.zernio.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://zernio.com/oauth/authorize",
+        "token_url": "https://zernio.com/oauth/token",
+        "resource": "https://mcp.zernio.com/mcp",
+        "scopes": [
+          "posts:read",
+          "posts:write",
+          "accounts:read"
+        ]
+      },
+      "config_guide": {
+        "summary": "Sign in to Zernio to connect the hosted MCP server.",
+        "docs_url": "https://docs.zernio.com/"
       }
     },
     {
