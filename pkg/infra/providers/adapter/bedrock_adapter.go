@@ -20,1152 +20,744 @@ import (
 	"strings"
 )
 
-// BedrockAdapter converts between AWS Bedrock model-specific formats and the
-// canonical internal model. Bedrock hosts multiple model families (Claude,
-// Titan, Llama, Mistral, DeepSeek/OpenAI-compat) each with its own wire
-// format. This adapter dispatches to the appropriate sub-adapter based on
-// model family detection.
-type BedrockAdapter struct {
-	claude  AnthropicAdapter
-	openai  OpenAIAdapter // DeepSeek, AI21 Jamba, and other OpenAI-compat models
-	titan   bedrockTitanAdapter
-	llama   bedrockLlamaAdapter
-	mistral bedrockMistralAdapter
-	nova    bedrockNovaAdapter
+// BedrockAdapter converts between the canonical model and the Bedrock Converse
+// wire format. Converse is one request, response and stream schema for every
+// model Bedrock hosts: AWS translates to the model's native shape server-side,
+// so nothing here depends on which family sits behind a model ID. That is what
+// makes a cross-region inference profile or an application inference profile
+// ARN — identifiers that carry no family at all — work like a plain model ID.
+type BedrockAdapter struct{}
+
+// ConverseRequest is the body of a Converse or ConverseStream call, minus the
+// model, which travels in the URL.
+type ConverseRequest struct {
+	Messages        []ConverseMessage        `json:"messages"`
+	System          []ConverseSystemBlock    `json:"system,omitempty"`
+	InferenceConfig *ConverseInferenceConfig `json:"inferenceConfig,omitempty"`
+	ToolConfig      *ConverseToolConfig      `json:"toolConfig,omitempty"`
 }
 
-// ---------------------------------------------------------------------------
-// Model family constants & detection
-// ---------------------------------------------------------------------------
-
-const (
-	bfClaude  = "claude"
-	bfOpenAI  = "openai" // DeepSeek, AI21 Jamba, newer Mistral, etc.
-	bfTitan   = "titan"
-	bfLlama   = "llama"
-	bfMistral = "mistral"
-	bfNova    = "nova"
-)
-
-// legacyMistralModels are the Mistral models whose Bedrock schema is the text
-// completion one (a single "prompt" string). Every other Mistral model — the
-// 2025 generation onwards: devstral, magistral, ministral 3, mistral large 3,
-// voxtral, pixtral — speaks the chat completions schema and answers "missing
-// field `messages`" if given a prompt. mistral-7b and mixtral are the mirror
-// image: they answer "Messages not supported for this model".
-var legacyMistralModels = []string{
-	"mistral-7b-instruct",
-	"mixtral-8x7b-instruct",
-	"mistral-large-2402",
-	"mistral-small-2402",
+// ConverseMessage is one conversation turn. Roles are user and assistant only;
+// system instructions ride in ConverseRequest.System.
+type ConverseMessage struct {
+	Role    string                 `json:"role"`
+	Content []ConverseContentBlock `json:"content"`
 }
 
-// openAICompatibleVendors are the Bedrock vendors whose InvokeModel schema is
-// the OpenAI chat completions one — {"messages":[…]} in, {"choices":[…]} out.
-// Each was invoked to confirm it, because the responses of all of them already
-// decode as OpenAI: leaving the request on the Claude fallback would encode and
-// decode the same model as two different families, and it is only accepted at
-// all because these endpoints tolerate the anthropic_version stowaway.
-var openAICompatibleVendors = []string{
-	"openai.", // gpt-oss
-	"qwen.",
-	"google.gemma",
-	"nvidia.",
-	"minimax.",
-	"zai.",
-	"deepseek",
-	"ai21.jamba",
+// ConverseContentBlock is a tagged union: exactly one field is set.
+type ConverseContentBlock struct {
+	Text             string                    `json:"text,omitempty"`
+	ToolUse          *ConverseToolUse          `json:"toolUse,omitempty"`
+	ToolResult       *ConverseToolResult       `json:"toolResult,omitempty"`
+	ReasoningContent *ConverseReasoningContent `json:"reasoningContent,omitempty"`
 }
 
-// detectFamilyByModel returns the model family from a Bedrock model ID. The ID
-// may carry a geography prefix ("eu.", "us.") naming a cross-region inference
-// profile, so every match is a substring rather than an equality.
-func detectFamilyByModel(model string) string {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "anthropic.claude"), strings.Contains(m, "claude"):
-		return bfClaude
-	case strings.Contains(m, "amazon.nova"):
-		return bfNova
-	case containsAny(m, openAICompatibleVendors):
-		return bfOpenAI
-	case strings.Contains(m, "amazon.titan"):
-		return bfTitan
-	case strings.Contains(m, "meta.llama"), strings.Contains(m, "llama"):
-		return bfLlama
-	case strings.Contains(m, "mistral"), strings.Contains(m, "mixtral"):
-		if containsAny(m, legacyMistralModels) {
-			return bfMistral
-		}
-		return bfOpenAI
-	default:
-		// Claude, because an unrecognised ID is as likely to be a provisioned
-		// or custom model ARN — which carries no family at all — as a vendor
-		// nobody has mapped yet.
-		return bfClaude
-	}
-}
-
-func containsAny(model string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(model, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-// present records that a key was in the JSON without keeping its value, which
-// is all family detection needs. json.RawMessage would copy the whole subtree
-// instead, and detection runs once per streamed chunk — that is a copy per
-// token, on every provider.
-type present bool
-
-func (p *present) UnmarshalJSON([]byte) error {
-	*p = true
-	return nil
-}
-
-// detectFamilyFromRequestBody inspects the JSON body to determine the model
-// family heuristically.
-func detectFamilyFromRequestBody(body []byte) string {
-	var probe struct {
-		InputText        present         `json:"inputText"`
-		Prompt           present         `json:"prompt"`
-		Messages         present         `json:"messages"`
-		MaxGenLen        present         `json:"max_gen_len"`
-		System           json.RawMessage `json:"system"` // the value decides Claude vs OpenAI
-		AnthropicVersion present         `json:"anthropic_version"`
-		InferenceConfig  present         `json:"inferenceConfig"`
-	}
-	if json.Unmarshal(body, &probe) != nil {
-		return bfClaude
-	}
-	if probe.InferenceConfig {
-		return bfNova
-	}
-	if probe.InputText {
-		return bfTitan
-	}
-	if probe.Prompt && !probe.Messages {
-		if probe.MaxGenLen {
-			return bfLlama
-		}
-		return bfMistral
-	}
-	// Has "messages" — distinguish Claude (Anthropic) from OpenAI-compat.
-	// Anthropic format has top-level "system" string or "anthropic_version".
-	if probe.Messages {
-		if probe.AnthropicVersion {
-			return bfClaude
-		}
-		if probe.System != nil {
-			var s string
-			if json.Unmarshal(probe.System, &s) == nil {
-				return bfClaude
-			}
-		}
-		// messages without system/anthropic_version → OpenAI-compat (DeepSeek, etc.)
-		return bfOpenAI
-	}
-	return bfClaude
-}
-
-// detectFamilyFromResponseBody inspects the response JSON.
-func detectFamilyFromResponseBody(body []byte) string {
-	var probe struct {
-		Results    present `json:"results"`    // Titan
-		Generation present `json:"generation"` // Llama
-		Outputs    present `json:"outputs"`    // Mistral
-		Choices    present `json:"choices"`    // OpenAI-compat (DeepSeek, etc.)
-		Content    present `json:"content"`    // Claude (Anthropic)
-		Output     present `json:"output"`     // Nova
-	}
-	if json.Unmarshal(body, &probe) != nil {
-		return bfClaude
-	}
-	if probe.Output {
-		return bfNova
-	}
-	if probe.Results {
-		return bfTitan
-	}
-	if probe.Generation {
-		return bfLlama
-	}
-	if probe.Outputs {
-		return bfMistral
-	}
-	if probe.Choices {
-		return bfOpenAI
-	}
-	return bfClaude
-}
-
-// detectFamilyFromStreamChunk inspects a single streaming chunk.
-func detectFamilyFromStreamChunk(chunk []byte) string {
-	var probe struct {
-		OutputText        present `json:"outputText"` // Titan
-		Generation        present `json:"generation"` // Llama
-		Outputs           present `json:"outputs"`    // Mistral
-		Choices           present `json:"choices"`    // OpenAI-compat (DeepSeek)
-		Type              present `json:"type"`       // Claude/Anthropic
-		MessageStart      present `json:"messageStart"`
-		ContentBlockDelta present `json:"contentBlockDelta"`
-		ContentBlockStop  present `json:"contentBlockStop"`
-		MessageStop       present `json:"messageStop"`
-		Metadata          present `json:"metadata"` // Nova, but too generic to lead with
-	}
-	if json.Unmarshal(chunk, &probe) != nil {
-		return bfClaude
-	}
-	if probe.MessageStart || probe.ContentBlockDelta ||
-		probe.ContentBlockStop || probe.MessageStop {
-		return bfNova
-	}
-	if probe.OutputText {
-		return bfTitan
-	}
-	if probe.Generation {
-		return bfLlama
-	}
-	if probe.Outputs {
-		return bfMistral
-	}
-	if probe.Choices {
-		return bfOpenAI
-	}
-	// The chunk that closes a Nova stream carries only usage, under a key
-	// generic enough that it is worth ruling out every other family first.
-	if probe.Metadata {
-		return bfNova
-	}
-	return bfClaude
-}
-
-// ---------------------------------------------------------------------------
-// Request: Decode (Bedrock → Canonical)
-// ---------------------------------------------------------------------------
-
-func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	family := detectFamilyFromRequestBody(body)
-	switch family {
-	case bfOpenAI:
-		return a.openai.DecodeRequest(body)
-	case bfNova:
-		return a.nova.DecodeRequest(body)
-	case bfTitan:
-		return a.titan.DecodeRequest(body)
-	case bfLlama:
-		return a.llama.DecodeRequest(body)
-	case bfMistral:
-		return a.mistral.DecodeRequest(body)
-	default:
-		return a.claude.DecodeRequest(body)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Bedrock)
-// ---------------------------------------------------------------------------
-
-func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	family := detectFamilyByModel(req.Model)
-	switch family {
-	case bfOpenAI:
-		return a.openai.EncodeRequest(req)
-	case bfNova:
-		return a.nova.EncodeRequest(req)
-	case bfTitan:
-		return a.titan.EncodeRequest(req)
-	case bfLlama:
-		return a.llama.EncodeRequest(req)
-	case bfMistral:
-		return a.mistral.EncodeRequest(req)
-	default:
-		return a.encodeClaude(req)
-	}
-}
-
-// encodeClaude wraps the Anthropic encoder, injects anthropic_version, and
-// strips fields that Bedrock does not accept in the body (model, stream).
-// Bedrock resolves the model from the InvokeModel URL path and uses
-// InvokeModelWithResponseStream for streaming instead of a body field.
-func (a *BedrockAdapter) encodeClaude(req *CanonicalRequest) ([]byte, error) {
-	b, err := a.claude.EncodeRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return nil, err
-	}
-	raw["anthropic_version"], _ = json.Marshal("bedrock-2023-05-31")
-	delete(raw, "model")  // model is in the Bedrock URL, not the body
-	delete(raw, "stream") // streaming is via InvokeModelWithResponseStream
-	return json.Marshal(raw)
-}
-
-// NormalizeBedrockRequestForModel rewrites a Claude-on-Bedrock request body
-// into the schema model expects. It is the last seam before InvokeModel, where
-// the model is finally known, and it exists for one body no earlier conversion
-// reaches: a client on the Bedrock-native route still sending the Claude shape
-// it used before the registry moved to Nova.
-//
-// Only Amazon Nova is rewritten, and only when the body carries max_tokens or
-// anthropic_version — the keys Nova rejects outright. A body that is wrong in
-// other ways (max_completion_tokens, string content) is passed through and
-// fails at Bedrock as it did before. Every other family either tolerates the
-// extra keys or fails on something this cannot repair, and a needless round
-// trip through the canonical model would drop whatever it cannot represent.
-func NormalizeBedrockRequestForModel(body []byte, model string) []byte {
-	if detectFamilyByModel(model) != bfNova || !carriesNonNovaKeys(body) {
-		return body
-	}
-	var a BedrockAdapter
-	canonical, err := a.DecodeRequest(body)
-	if err != nil {
-		return body
-	}
-	canonical.Model = model
-	out, err := a.EncodeRequest(canonical)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
-// carriesNonNovaKeys reports whether body has the top-level keys Nova rejects
-// outright rather than ignores, which is what makes a mis-encoded body fail
-// with ValidationException instead of merely losing a setting.
-func carriesNonNovaKeys(body []byte) bool {
-	var probe struct {
-		MaxTokens        present `json:"max_tokens"`
-		AnthropicVersion present `json:"anthropic_version"`
-	}
-	if json.Unmarshal(body, &probe) != nil {
-		return false
-	}
-	return bool(probe.MaxTokens) || bool(probe.AnthropicVersion)
-}
-
-// ---------------------------------------------------------------------------
-// Response: Decode / Encode
-// ---------------------------------------------------------------------------
-
-func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	family := detectFamilyFromResponseBody(body)
-	switch family {
-	case bfOpenAI:
-		return a.openai.DecodeResponse(body)
-	case bfNova:
-		return a.nova.DecodeResponse(body)
-	case bfTitan:
-		return a.titan.DecodeResponse(body)
-	case bfLlama:
-		return a.llama.DecodeResponse(body)
-	case bfMistral:
-		return a.mistral.DecodeResponse(body)
-	default:
-		return a.claude.DecodeResponse(body)
-	}
-}
-
-func (a *BedrockAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
-	// Response encoding uses Claude format by default; for non-Claude responses,
-	// the caller would need to hint the target family. This covers the common
-	// case where TrustGate proxies *to* Bedrock and translates the response
-	// back to the source format.
-	return a.claude.EncodeResponse(resp)
-}
-
-// ---------------------------------------------------------------------------
-// Stream: Decode / Encode
-// ---------------------------------------------------------------------------
-
-func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	family := detectFamilyFromStreamChunk(chunk)
-	switch family {
-	case bfOpenAI:
-		return a.openai.DecodeStreamChunk(chunk)
-	case bfNova:
-		return a.nova.DecodeStreamChunk(chunk)
-	case bfTitan:
-		return a.titan.DecodeStreamChunk(chunk)
-	case bfLlama:
-		return a.llama.DecodeStreamChunk(chunk)
-	case bfMistral:
-		return a.mistral.DecodeStreamChunk(chunk)
-	default:
-		return a.claude.DecodeStreamChunk(chunk)
-	}
-}
-
-func (a *BedrockAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	return a.claude.EncodeStreamChunk(chunk)
-}
-
-// =========================================================================
-//
-//	TITAN  (Amazon Titan Text)
-//
-// =========================================================================
-
-type bedrockTitanAdapter struct{}
-
-// Typed structs ---------------------------------------------------------------
-
-type titanRequest struct {
-	InputText            string          `json:"inputText"`
-	TextGenerationConfig *titanGenConfig `json:"textGenerationConfig,omitempty"`
-}
-
-type titanGenConfig struct {
-	MaxTokenCount int      `json:"maxTokenCount,omitempty"`
-	Temperature   *float64 `json:"temperature,omitempty"`
-	TopP          *float64 `json:"topP,omitempty"`
-	StopSequences []string `json:"stopSequences,omitempty"`
-}
-
-type titanResponse struct {
-	InputTextTokenCount int           `json:"inputTextTokenCount"`
-	Results             []titanResult `json:"results"`
-}
-
-type titanResult struct {
-	TokenCount       int    `json:"tokenCount"`
-	OutputText       string `json:"outputText"`
-	CompletionReason string `json:"completionReason"`
-	Reasoning        string `json:"reasoning,omitempty"` // optional; future API extension
-}
-
-type titanStreamChunk struct {
-	OutputText                string                    `json:"outputText"`
-	TokenCount                int                       `json:"tokenCount,omitempty"`
-	CompletionReason          *string                   `json:"completionReason,omitempty"`
-	InputTextTokenCount       int                       `json:"inputTextTokenCount,omitempty"`
-	TotalOutputTextTokenCount int                       `json:"totalOutputTextTokenCount,omitempty"`
-	Metrics                   *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
-}
-
-// Request ---------------------------------------------------------------------
-
-func (t *bedrockTitanAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	var req titanRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalRequest{
-		Messages: []CanonicalMessage{{Role: "user", Content: req.InputText}},
-	}
-	if gc := req.TextGenerationConfig; gc != nil {
-		cr.MaxTokens = gc.MaxTokenCount
-		cr.Temperature = gc.Temperature
-		cr.TopP = gc.TopP
-		cr.Stop = gc.StopSequences
-	}
-	return cr, nil
-}
-
-func (t *bedrockTitanAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	out := titanRequest{
-		InputText: formatMessagesAsText(req.System, req.Messages),
-	}
-	var gc titanGenConfig
-	hasGC := false
-	if req.MaxTokens > 0 {
-		gc.MaxTokenCount = req.MaxTokens
-		hasGC = true
-	}
-	if req.Temperature != nil {
-		gc.Temperature = req.Temperature
-		hasGC = true
-	}
-	if req.TopP != nil {
-		gc.TopP = req.TopP
-		hasGC = true
-	}
-	if len(req.Stop) > 0 {
-		gc.StopSequences = req.Stop
-		hasGC = true
-	}
-	if hasGC {
-		out.TextGenerationConfig = &gc
-	}
-	return json.Marshal(out)
-}
-
-// Response --------------------------------------------------------------------
-
-// titanFinishReason maps a Titan completion reason onto the canonical
-// vocabulary, for both the buffered and the streamed path.
-func titanFinishReason(reason string) string {
-	switch reason {
-	case "FINISH", "":
-		return "stop"
-	case "LENGTH":
-		return "length"
-	default:
-		return reason
-	}
-}
-
-func (t *bedrockTitanAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	var resp titanResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalResponse{Role: "assistant"}
-	if len(resp.Results) > 0 {
-		r := resp.Results[0]
-		cr.Content = r.OutputText
-		cr.FinishReason = titanFinishReason(r.CompletionReason)
-		if r.Reasoning != "" {
-			cr.Reasoning = &CanonicalReasoning{ThinkingText: r.Reasoning}
-		}
-	}
-	cr.Usage = mergeBedrockUsage(body, resp.InputTextTokenCount, sumTitanOutputTokens(resp.Results))
-	return cr, nil
-}
-
-// Stream ----------------------------------------------------------------------
-
-func (t *bedrockTitanAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	var c titanStreamChunk
-	if err := json.Unmarshal(chunk, &c); err != nil {
-		return nil, nil
-	}
-	var finishReason string
-	if c.CompletionReason != nil && *c.CompletionReason != "" {
-		finishReason = titanFinishReason(*c.CompletionReason)
-	}
-	usage := mergeParsedUsage(c.InputTextTokenCount, c.TotalOutputTextTokenCount, 0, c.Metrics)
-	if c.OutputText == "" && finishReason == "" && usage == nil {
-		return nil, nil
-	}
-	return &CanonicalStreamChunk{
-		Delta:        c.OutputText,
-		FinishReason: finishReason,
-		Usage:        usage,
-	}, nil
-}
-
-// =========================================================================
-//
-//	LLAMA  (Meta Llama on Bedrock)
-//
-// =========================================================================
-
-type bedrockLlamaAdapter struct{}
-
-// Typed structs ---------------------------------------------------------------
-
-type llamaRequest struct {
-	Prompt      string   `json:"prompt"`
-	MaxGenLen   int      `json:"max_gen_len,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	TopP        *float64 `json:"top_p,omitempty"`
-}
-
-type llamaResponse struct {
-	Generation           string `json:"generation"`
-	PromptTokenCount     int    `json:"prompt_token_count"`
-	GenerationTokenCount int    `json:"generation_token_count"`
-	StopReason           string `json:"stop_reason"`
-	Reasoning            string `json:"reasoning,omitempty"` // optional; future API extension
-}
-
-type llamaStreamChunk struct {
-	Generation           string                    `json:"generation"`
-	PromptTokenCount     *int                      `json:"prompt_token_count,omitempty"`
-	GenerationTokenCount *int                      `json:"generation_token_count,omitempty"`
-	StopReason           *string                   `json:"stop_reason,omitempty"`
-	Metrics              *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
-}
-
-// Request ---------------------------------------------------------------------
-
-func (l *bedrockLlamaAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	var req llamaRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalRequest{
-		MaxTokens:   req.MaxGenLen,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		Messages:    []CanonicalMessage{{Role: "user", Content: req.Prompt}},
-	}
-	return cr, nil
-}
-
-func (l *bedrockLlamaAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	out := llamaRequest{
-		Prompt:      formatLlamaPrompt(req.System, req.Messages),
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-	}
-	if req.MaxTokens > 0 {
-		out.MaxGenLen = req.MaxTokens
-	}
-	return json.Marshal(out)
-}
-
-// Response --------------------------------------------------------------------
-
-// llamaFinishReason maps a Llama stop reason onto the canonical vocabulary.
-// Both the buffered and the streamed path go through it: Bedrock reports
-// "length" on the last chunk exactly as it does on a whole answer, and a client
-// that only sees "stop" cannot tell a complete answer from a truncated one.
-func llamaFinishReason(stop string) string {
-	switch stop {
-	case "stop", "end_of_text", "":
-		return "stop"
-	case "length":
-		return "length"
-	default:
-		return stop
-	}
-}
-
-func (l *bedrockLlamaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	var resp llamaResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalResponse{
-		Role:         "assistant",
-		Content:      resp.Generation,
-		FinishReason: llamaFinishReason(resp.StopReason),
-	}
-	if resp.Reasoning != "" {
-		cr.Reasoning = &CanonicalReasoning{ThinkingText: resp.Reasoning}
-	}
-	cr.Usage = mergeBedrockUsage(body, resp.PromptTokenCount, resp.GenerationTokenCount)
-	return cr, nil
-}
-
-// Stream ----------------------------------------------------------------------
-
-func (l *bedrockLlamaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	var c llamaStreamChunk
-	if err := json.Unmarshal(chunk, &c); err != nil {
-		return nil, nil
-	}
-	var finishReason string
-	if c.StopReason != nil && *c.StopReason != "" {
-		finishReason = llamaFinishReason(*c.StopReason)
-	}
-	var in, out int
-	if c.PromptTokenCount != nil {
-		in = *c.PromptTokenCount
-	}
-	if c.GenerationTokenCount != nil {
-		out = *c.GenerationTokenCount
-	}
-	usage := mergeParsedUsage(in, out, 0, c.Metrics)
-	if c.Generation == "" && finishReason == "" && usage == nil {
-		return nil, nil
-	}
-	return &CanonicalStreamChunk{
-		Delta:        c.Generation,
-		FinishReason: finishReason,
-		Usage:        usage,
-	}, nil
-}
-
-// =========================================================================
-//
-//	MISTRAL  (Mistral on Bedrock)
-//
-// =========================================================================
-
-type bedrockMistralAdapter struct{}
-
-// Typed structs ---------------------------------------------------------------
-
-type mistralRequest struct {
-	Prompt      string   `json:"prompt"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	TopP        *float64 `json:"top_p,omitempty"`
-	TopK        *int     `json:"top_k,omitempty"`
-	Stop        []string `json:"stop,omitempty"`
-}
-
-type mistralResponse struct {
-	Outputs []mistralOutput `json:"outputs"`
-}
-
-type mistralOutput struct {
-	Text       string `json:"text"`
-	StopReason string `json:"stop_reason"`
-	Reasoning  string `json:"reasoning,omitempty"` // optional; future API extension
-}
-
-type mistralStreamChunk struct {
-	Outputs []mistralOutput           `json:"outputs,omitempty"`
-	Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
-}
-
-// Request ---------------------------------------------------------------------
-
-func (m *bedrockMistralAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	var req mistralRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalRequest{
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		TopK:        req.TopK,
-		Stop:        req.Stop,
-		Messages:    []CanonicalMessage{{Role: "user", Content: req.Prompt}},
-	}
-	return cr, nil
-}
-
-func (m *bedrockMistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	out := mistralRequest{
-		Prompt:      formatMistralPrompt(req.System, req.Messages),
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		TopK:        req.TopK,
-		Stop:        req.Stop,
-	}
-	if req.MaxTokens > 0 {
-		out.MaxTokens = req.MaxTokens
-	}
-	return json.Marshal(out)
-}
-
-// Response --------------------------------------------------------------------
-
-// mistralFinishReason maps a Mistral stop reason onto the canonical vocabulary.
-// Shared with the streamed path: the chunk that closes a truncated answer says
-// "length" just like the buffered body does.
-func mistralFinishReason(stop string) string {
-	switch stop {
-	case "stop", "end_turn", "":
-		return "stop"
-	case "length":
-		return "length"
-	default:
-		return stop
-	}
-}
-
-func (m *bedrockMistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	var resp mistralResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	cr := &CanonicalResponse{Role: "assistant"}
-	if len(resp.Outputs) > 0 {
-		o := resp.Outputs[0]
-		cr.Content = o.Text
-		cr.FinishReason = mistralFinishReason(o.StopReason)
-		if o.Reasoning != "" {
-			cr.Reasoning = &CanonicalReasoning{ThinkingText: o.Reasoning}
-		}
-	}
-	// Mistral has no native usage counters on Bedrock; invocation metrics is
-	// the sole source and propagates as nil when absent.
-	cr.Usage = parseBedrockInvocationMetrics(body)
-	return cr, nil
-}
-
-// Stream ----------------------------------------------------------------------
-
-func (m *bedrockMistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	var c mistralStreamChunk
-	if err := json.Unmarshal(chunk, &c); err != nil {
-		return nil, nil
-	}
-	var delta, finishReason string
-	if len(c.Outputs) > 0 {
-		delta = c.Outputs[0].Text
-		if c.Outputs[0].StopReason != "" {
-			finishReason = mistralFinishReason(c.Outputs[0].StopReason)
-		}
-	}
-	usage := mergeParsedUsage(0, 0, 0, c.Metrics)
-	if delta == "" && finishReason == "" && usage == nil {
-		return nil, nil
-	}
-	return &CanonicalStreamChunk{
-		Delta:        delta,
-		FinishReason: finishReason,
-		Usage:        usage,
-	}, nil
-}
-
-// =========================================================================
-//
-//	NOVA  (Amazon Nova)
-//
-// =========================================================================
-
-// bedrockNovaAdapter speaks the Nova schema: content is a list of typed blocks
-// rather than a string, and the sampling knobs live under "inferenceConfig".
-// Nova rejects unknown top-level keys, so the Claude encoder's max_tokens and
-// anthropic_version make it answer "extraneous key [max_tokens] is not
-// permitted".
-type bedrockNovaAdapter struct{}
-
-// Typed structs ---------------------------------------------------------------
-
-type novaTextBlock struct {
+// ConverseSystemBlock is one system instruction.
+type ConverseSystemBlock struct {
 	Text string `json:"text"`
 }
 
-type novaMessage struct {
-	Role    string          `json:"role"`
-	Content []novaTextBlock `json:"content"`
+// ConverseToolUse is a tool call requested by the model.
+type ConverseToolUse struct {
+	ToolUseID string          `json:"toolUseId"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
 }
 
-type novaInferenceConfig struct {
+// ConverseToolResult carries the caller's answer to a ConverseToolUse.
+type ConverseToolResult struct {
+	ToolUseID string                      `json:"toolUseId"`
+	Content   []ConverseToolResultContent `json:"content"`
+	Status    string                      `json:"status,omitempty"`
+}
+
+// ConverseToolResultContent is a tagged union: exactly one field is set.
+type ConverseToolResultContent struct {
+	Text string          `json:"text,omitempty"`
+	JSON json.RawMessage `json:"json,omitempty"`
+}
+
+// ConverseReasoningContent is a model's reasoning, either readable or redacted.
+type ConverseReasoningContent struct {
+	ReasoningText   *ConverseReasoningText `json:"reasoningText,omitempty"`
+	RedactedContent []byte                 `json:"redactedContent,omitempty"`
+}
+
+// ConverseReasoningText is readable reasoning plus the signature some models
+// need to accept it back in a later turn.
+type ConverseReasoningText struct {
+	Text      string `json:"text"`
+	Signature string `json:"signature,omitempty"`
+}
+
+// ConverseInferenceConfig holds the sampling knobs Converse models for every
+// family. Anything else is model-specific and has no place here.
+type ConverseInferenceConfig struct {
 	MaxTokens     int      `json:"maxTokens,omitempty"`
 	Temperature   *float64 `json:"temperature,omitempty"`
 	TopP          *float64 `json:"topP,omitempty"`
-	TopK          *int     `json:"topK,omitempty"`
 	StopSequences []string `json:"stopSequences,omitempty"`
 }
 
-type novaRequest struct {
-	System          []novaTextBlock      `json:"system,omitempty"`
-	Messages        []novaMessage        `json:"messages"`
-	InferenceConfig *novaInferenceConfig `json:"inferenceConfig,omitempty"`
+// ConverseToolConfig declares the tools a model may call and how freely.
+type ConverseToolConfig struct {
+	Tools      []ConverseTool      `json:"tools"`
+	ToolChoice *ConverseToolChoice `json:"toolChoice,omitempty"`
 }
 
-type novaUsage struct {
-	InputTokens  int `json:"inputTokens"`
-	OutputTokens int `json:"outputTokens"`
-	TotalTokens  int `json:"totalTokens"`
+// ConverseTool is a tagged union with a single member today.
+type ConverseTool struct {
+	ToolSpec *ConverseToolSpec `json:"toolSpec,omitempty"`
 }
 
-// The invocation metrics ride in the same JSON as the answer, so both response
-// and chunk parse them in the same pass: on a stream this runs per chunk, and a
-// second Unmarshal of every chunk just to look for a fallback is latency spent
-// on every token.
-type novaResponse struct {
-	Output struct {
-		Message novaMessage `json:"message"`
-	} `json:"output"`
-	StopReason string                    `json:"stopReason"`
-	Usage      *novaUsage                `json:"usage"`
-	Metrics    *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
+// ConverseToolSpec describes one callable tool.
+type ConverseToolSpec struct {
+	Name        string                  `json:"name"`
+	Description string                  `json:"description,omitempty"`
+	InputSchema ConverseToolInputSchema `json:"inputSchema"`
 }
 
-type novaStreamChunk struct {
-	ContentBlockDelta *struct {
-		Delta struct {
-			Text string `json:"text"`
-		} `json:"delta"`
-	} `json:"contentBlockDelta"`
-	MessageStop *struct {
-		StopReason string `json:"stopReason"`
-	} `json:"messageStop"`
-	Metadata *struct {
-		Usage *novaUsage `json:"usage"`
-	} `json:"metadata"`
-	Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
+// ConverseToolInputSchema wraps the JSON Schema of a tool's arguments.
+type ConverseToolInputSchema struct {
+	JSON map[string]interface{} `json:"json"`
 }
 
-// novaFinishReason maps a Nova stop reason onto the canonical vocabulary.
-func novaFinishReason(stop string) string {
-	switch stop {
-	case "end_turn", "stop_sequence", "":
-		return "stop"
-	case "max_tokens":
-		return "length"
-	default:
-		return stop
+// ConverseToolChoice is a tagged union: exactly one field is set.
+type ConverseToolChoice struct {
+	Auto *ConverseEmpty        `json:"auto,omitempty"`
+	Any  *ConverseEmpty        `json:"any,omitempty"`
+	Tool *ConverseSpecificTool `json:"tool,omitempty"`
+}
+
+// ConverseEmpty is the {} payload of the parameterless tool-choice members.
+type ConverseEmpty struct{}
+
+// ConverseSpecificTool forces one named tool.
+type ConverseSpecificTool struct {
+	Name string `json:"name"`
+}
+
+// ConverseResponse is the body of a buffered Converse answer.
+type ConverseResponse struct {
+	Output     ConverseOutput   `json:"output"`
+	StopReason string           `json:"stopReason"`
+	Usage      *ConverseUsage   `json:"usage,omitempty"`
+	Metrics    *ConverseMetrics `json:"metrics,omitempty"`
+}
+
+// ConverseOutput wraps the assistant turn of a ConverseResponse.
+type ConverseOutput struct {
+	Message *ConverseMessage `json:"message,omitempty"`
+}
+
+// ConverseUsage is the token accounting Converse reports for every family.
+type ConverseUsage struct {
+	InputTokens           int `json:"inputTokens"`
+	OutputTokens          int `json:"outputTokens"`
+	TotalTokens           int `json:"totalTokens"`
+	CacheReadInputTokens  int `json:"cacheReadInputTokens,omitempty"`
+	CacheWriteInputTokens int `json:"cacheWriteInputTokens,omitempty"`
+}
+
+// ConverseMetrics is the latency Bedrock measured for the call.
+type ConverseMetrics struct {
+	LatencyMs int64 `json:"latencyMs"`
+}
+
+// ConverseStreamEvent is one ConverseStream event, keyed by its type the way
+// the Bedrock REST API frames it. Exactly one field is set.
+type ConverseStreamEvent struct {
+	MessageStart      *ConverseMessageStart      `json:"messageStart,omitempty"`
+	ContentBlockStart *ConverseContentBlockStart `json:"contentBlockStart,omitempty"`
+	ContentBlockDelta *ConverseContentBlockDelta `json:"contentBlockDelta,omitempty"`
+	ContentBlockStop  *ConverseContentBlockStop  `json:"contentBlockStop,omitempty"`
+	MessageStop       *ConverseMessageStop       `json:"messageStop,omitempty"`
+	Metadata          *ConverseMetadata          `json:"metadata,omitempty"`
+}
+
+// ConverseMessageStart opens the assistant turn.
+type ConverseMessageStart struct {
+	Role string `json:"role"`
+}
+
+// ConverseContentBlockStart opens a content block; only tool-use blocks carry
+// anything at this point.
+type ConverseContentBlockStart struct {
+	ContentBlockIndex int                     `json:"contentBlockIndex"`
+	Start             ConverseBlockStartValue `json:"start"`
+}
+
+// ConverseBlockStartValue is a tagged union with a single member today.
+type ConverseBlockStartValue struct {
+	ToolUse *ConverseToolUseStart `json:"toolUse,omitempty"`
+}
+
+// ConverseToolUseStart names the tool whose arguments the following deltas
+// stream in.
+type ConverseToolUseStart struct {
+	ToolUseID string `json:"toolUseId"`
+	Name      string `json:"name"`
+}
+
+// ConverseContentBlockDelta appends to an open content block.
+type ConverseContentBlockDelta struct {
+	ContentBlockIndex int                `json:"contentBlockIndex"`
+	Delta             ConverseDeltaValue `json:"delta"`
+}
+
+// ConverseDeltaValue is a tagged union: exactly one field is set.
+type ConverseDeltaValue struct {
+	Text             string                  `json:"text,omitempty"`
+	ToolUse          *ConverseToolUseDelta   `json:"toolUse,omitempty"`
+	ReasoningContent *ConverseReasoningDelta `json:"reasoningContent,omitempty"`
+}
+
+// ConverseToolUseDelta is a fragment of a tool call's JSON arguments.
+type ConverseToolUseDelta struct {
+	Input string `json:"input"`
+}
+
+// ConverseReasoningDelta is a fragment of the model's reasoning.
+type ConverseReasoningDelta struct {
+	Text            string `json:"text,omitempty"`
+	Signature       string `json:"signature,omitempty"`
+	RedactedContent []byte `json:"redactedContent,omitempty"`
+}
+
+// ConverseContentBlockStop closes a content block.
+type ConverseContentBlockStop struct {
+	ContentBlockIndex int `json:"contentBlockIndex"`
+}
+
+// ConverseMessageStop closes the assistant turn.
+type ConverseMessageStop struct {
+	StopReason string `json:"stopReason"`
+}
+
+// ConverseMetadata closes the stream with the token accounting.
+type ConverseMetadata struct {
+	Usage   *ConverseUsage   `json:"usage,omitempty"`
+	Metrics *ConverseMetrics `json:"metrics,omitempty"`
+}
+
+const (
+	converseRoleUser      = "user"
+	converseRoleAssistant = "assistant"
+)
+
+func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
+	// model and stream are not Converse keys — the gateway grafts them onto the
+	// adapted body (EnforceModel, the stream flag) and plugins that decode it
+	// expect to read them back.
+	var req struct {
+		ConverseRequest
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, err
+	}
+	cr := &CanonicalRequest{
+		Model:    req.Model,
+		Stream:   req.Stream,
+		System:   converseSystemText(req.System),
+		Messages: make([]CanonicalMessage, 0, len(req.Messages)),
+	}
+	for _, m := range req.Messages {
+		cr.Messages = append(cr.Messages, converseMessageToCanonical(m)...)
+	}
+	if ic := req.InferenceConfig; ic != nil {
+		cr.MaxTokens = ic.MaxTokens
+		cr.Temperature = ic.Temperature
+		cr.TopP = ic.TopP
+		cr.Stop = ic.StopSequences
+	}
+	if tc := req.ToolConfig; tc != nil {
+		for _, t := range tc.Tools {
+			if t.ToolSpec == nil {
+				continue
+			}
+			cr.Tools = append(cr.Tools, CanonicalTool{
+				Name:        t.ToolSpec.Name,
+				Description: t.ToolSpec.Description,
+				Schema:      t.ToolSpec.InputSchema.JSON,
+			})
+		}
+		cr.ToolChoice = converseToolChoiceToCanonical(tc.ToolChoice)
+	}
+	return cr, nil
 }
 
-func novaText(blocks []novaTextBlock) string {
-	// A single block is the norm; joining it would copy the string for nothing.
+func converseSystemText(blocks []ConverseSystemBlock) string {
 	switch len(blocks) {
 	case 0:
 		return ""
 	case 1:
 		return blocks[0].Text
 	}
-	var sb strings.Builder
+	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		sb.WriteString(b.Text)
+		parts = append(parts, b.Text)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// converseMessageToCanonical splits one Converse turn into canonical messages:
+// text and tool-use blocks fold into a single message, while every tool result
+// becomes its own "tool" message placed first, so that on re-encoding the
+// results still directly follow the assistant turn that requested them.
+//
+// The canonical model has no slot for reasoning blocks or structured tool
+// results, so a round trip through it renders reasoning away and JSON results
+// as text. Only bodies a plugin rewrites take that trip; a plain proxy pass
+// never decodes the Converse body.
+func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
+	var (
+		out  []CanonicalMessage
+		turn = CanonicalMessage{Role: m.Role}
+		text strings.Builder
+	)
+	for _, b := range m.Content {
+		switch {
+		case b.ToolResult != nil:
+			content := converseToolResultText(b.ToolResult.Content)
+			if b.ToolResult.Status == "error" && content != "" {
+				content = "error: " + content
+			}
+			out = append(out, CanonicalMessage{
+				Role:       "tool",
+				ToolCallID: b.ToolResult.ToolUseID,
+				Content:    content,
+			})
+		case b.ToolUse != nil:
+			turn.ToolCalls = append(turn.ToolCalls, CanonicalToolCall{
+				ID:        b.ToolUse.ToolUseID,
+				Name:      b.ToolUse.Name,
+				Arguments: converseToolInputArguments(b.ToolUse.Input),
+			})
+		case b.Text != "":
+			text.WriteString(b.Text)
+		}
+	}
+	turn.Content = text.String()
+	if turn.Content != "" || len(turn.ToolCalls) > 0 {
+		out = append(out, turn)
+	}
+	return out
+}
+
+func converseToolResultText(content []ConverseToolResultContent) string {
+	var sb strings.Builder
+	for _, c := range content {
+		if len(c.JSON) > 0 {
+			sb.Write(c.JSON)
+			continue
+		}
+		sb.WriteString(c.Text)
 	}
 	return sb.String()
 }
 
-// Request ---------------------------------------------------------------------
-
-func (n *bedrockNovaAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	var req novaRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
+func converseToolInputArguments(input json.RawMessage) string {
+	if len(input) == 0 {
+		return "{}"
 	}
-	cr := &CanonicalRequest{
-		System:   novaText(req.System),
-		Messages: make([]CanonicalMessage, 0, len(req.Messages)),
-	}
-	for _, m := range req.Messages {
-		cr.Messages = append(cr.Messages, CanonicalMessage{
-			Role:    m.Role,
-			Content: novaText(m.Content),
-		})
-	}
-	if ic := req.InferenceConfig; ic != nil {
-		cr.MaxTokens = ic.MaxTokens
-		cr.Temperature = ic.Temperature
-		cr.TopP = ic.TopP
-		cr.TopK = ic.TopK
-		cr.Stop = ic.StopSequences
-	}
-	return cr, nil
+	return string(input)
 }
 
-func (n *bedrockNovaAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	out := novaRequest{Messages: make([]novaMessage, 0, len(req.Messages))}
+func converseToolChoiceToCanonical(tc *ConverseToolChoice) *CanonicalToolChoice {
+	switch {
+	case tc == nil:
+		return nil
+	case tc.Tool != nil:
+		return &CanonicalToolChoice{Type: "tool", Name: tc.Tool.Name}
+	case tc.Any != nil:
+		return &CanonicalToolChoice{Type: "any"}
+	default:
+		return &CanonicalToolChoice{Type: "auto"}
+	}
+}
+
+func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
+	out := ConverseRequest{Messages: make([]ConverseMessage, 0, len(req.Messages))}
 	if req.System != "" {
-		out.System = []novaTextBlock{{Text: req.System}}
+		out.System = []ConverseSystemBlock{{Text: req.System}}
 	}
 	for _, m := range req.Messages {
-		// Nova only accepts user and assistant turns; a system message reaching
-		// here belongs in the dedicated field, not in the conversation.
+		// Converse has no system turn; instructions found in the conversation
+		// join the dedicated field rather than being dropped.
 		if m.Role == "system" {
-			out.System = append(out.System, novaTextBlock{Text: m.Content})
+			out.System = append(out.System, ConverseSystemBlock{Text: m.Content})
 			continue
 		}
-		out.Messages = append(out.Messages, novaMessage{
-			Role:    m.Role,
-			Content: []novaTextBlock{{Text: m.Content}},
-		})
+		out.Messages = appendConverseMessage(out.Messages, converseMessageFromCanonical(m))
 	}
-
-	if req.MaxTokens > 0 || req.Temperature != nil || req.TopP != nil ||
-		req.TopK != nil || len(req.Stop) > 0 {
-		out.InferenceConfig = &novaInferenceConfig{
-			MaxTokens:     req.MaxTokens,
-			Temperature:   req.Temperature,
-			TopP:          req.TopP,
-			TopK:          req.TopK,
-			StopSequences: req.Stop,
-		}
-	}
+	out.InferenceConfig = converseInferenceConfigFrom(req)
+	out.ToolConfig = converseToolConfigFrom(req)
 	return json.Marshal(out)
 }
 
-// Response --------------------------------------------------------------------
+// appendConverseMessage merges msg into the previous turn when both share a
+// role. Converse requires user and assistant turns to alternate, and every tool
+// result answering one assistant turn must arrive in the same user message. A
+// turn with nothing to say is dropped: Bedrock rejects an empty content list.
+func appendConverseMessage(msgs []ConverseMessage, msg ConverseMessage) []ConverseMessage {
+	if len(msg.Content) == 0 {
+		return msgs
+	}
+	if n := len(msgs); n > 0 && msgs[n-1].Role == msg.Role {
+		msgs[n-1].Content = append(msgs[n-1].Content, msg.Content...)
+		return msgs
+	}
+	return append(msgs, msg)
+}
 
-func (n *bedrockNovaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	var resp novaResponse
+func converseMessageFromCanonical(m CanonicalMessage) ConverseMessage {
+	if m.Role == "tool" {
+		return ConverseMessage{
+			Role: converseRoleUser,
+			Content: []ConverseContentBlock{{ToolResult: &ConverseToolResult{
+				ToolUseID: m.ToolCallID,
+				Content:   []ConverseToolResultContent{{Text: m.Content}},
+			}}},
+		}
+	}
+	role := converseRoleUser
+	if m.Role == converseRoleAssistant {
+		role = converseRoleAssistant
+	}
+	blocks := make([]ConverseContentBlock, 0, 1+len(m.ToolCalls))
+	if m.Content != "" {
+		blocks = append(blocks, ConverseContentBlock{Text: m.Content})
+	}
+	for _, tc := range m.ToolCalls {
+		blocks = append(blocks, ConverseContentBlock{ToolUse: &ConverseToolUse{
+			ToolUseID: tc.ID,
+			Name:      tc.Name,
+			Input:     converseToolInput(tc.Arguments),
+		}})
+	}
+	return ConverseMessage{Role: role, Content: blocks}
+}
+
+// converseToolInput turns the canonical arguments string into the JSON object
+// Converse requires. A model that streamed malformed arguments gets an empty
+// object rather than a body Bedrock rejects wholesale.
+func converseToolInput(arguments string) json.RawMessage {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" || trimmed[0] != '{' || !json.Valid([]byte(trimmed)) {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(trimmed)
+}
+
+// converseInferenceConfigFrom maps the sampling knobs Converse understands.
+// TopK is deliberately absent: Converse only accepts it under the model's own
+// name in additionalModelRequestFields, which would tie the encoder back to the
+// family this adapter exists to stop caring about.
+func converseInferenceConfigFrom(req *CanonicalRequest) *ConverseInferenceConfig {
+	if req.MaxTokens <= 0 && req.Temperature == nil && req.TopP == nil && len(req.Stop) == 0 {
+		return nil
+	}
+	return &ConverseInferenceConfig{
+		MaxTokens:     req.MaxTokens,
+		Temperature:   req.Temperature,
+		TopP:          req.TopP,
+		StopSequences: req.Stop,
+	}
+}
+
+// converseToolConfigFrom declares the tools. A "none" choice has no Converse
+// spelling, so it withholds the tools instead — the only way to guarantee the
+// model calls nothing. The exception is a conversation that already carries
+// tool calls or results: Bedrock rejects those blocks without a toolConfig, so
+// the tools stay declared and the choice relaxes to auto.
+func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
+	if len(req.Tools) == 0 {
+		return nil
+	}
+	choice := req.ToolChoice
+	if choice != nil && choice.Type == "none" {
+		if !conversationUsesTools(req.Messages) {
+			return nil
+		}
+		choice = nil
+	}
+	cfg := &ConverseToolConfig{Tools: make([]ConverseTool, 0, len(req.Tools))}
+	for i, t := range req.Tools {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			name = fmt.Sprintf("tool_%d", i)
+		}
+		schema := t.Schema
+		if len(schema) == 0 {
+			schema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		}
+		cfg.Tools = append(cfg.Tools, ConverseTool{ToolSpec: &ConverseToolSpec{
+			Name:        name,
+			Description: t.Description,
+			InputSchema: ConverseToolInputSchema{JSON: schema},
+		}})
+	}
+	cfg.ToolChoice = converseToolChoiceFrom(choice)
+	return cfg
+}
+
+func conversationUsesTools(msgs []CanonicalMessage) bool {
+	for _, m := range msgs {
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func converseToolChoiceFrom(tc *CanonicalToolChoice) *ConverseToolChoice {
+	if tc == nil {
+		return nil
+	}
+	switch tc.Type {
+	case "tool":
+		return &ConverseToolChoice{Tool: &ConverseSpecificTool{Name: tc.Name}}
+	case "any", "required":
+		return &ConverseToolChoice{Any: &ConverseEmpty{}}
+	default:
+		return &ConverseToolChoice{Auto: &ConverseEmpty{}}
+	}
+}
+
+func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
+	var resp ConverseResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
 	cr := &CanonicalResponse{
-		Role:         "assistant",
-		Content:      novaText(resp.Output.Message.Content),
-		FinishReason: novaFinishReason(resp.StopReason),
+		Role:         converseRoleAssistant,
+		FinishReason: converseFinishReason(resp.StopReason),
+		Usage:        converseUsageToCanonical(resp.Usage),
 	}
-	if resp.Output.Message.Role != "" {
-		cr.Role = resp.Output.Message.Role
+	if msg := resp.Output.Message; msg != nil {
+		if msg.Role != "" {
+			cr.Role = msg.Role
+		}
+		var thinking []string
+		for _, b := range msg.Content {
+			switch {
+			case b.ToolUse != nil:
+				cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
+					ID:        b.ToolUse.ToolUseID,
+					Name:      b.ToolUse.Name,
+					Arguments: converseToolInputArguments(b.ToolUse.Input),
+				})
+			case b.ReasoningContent != nil && b.ReasoningContent.ReasoningText != nil:
+				thinking = append(thinking, b.ReasoningContent.ReasoningText.Text)
+			default:
+				cr.Content += b.Text
+			}
+		}
+		if len(thinking) > 0 {
+			cr.Reasoning = &CanonicalReasoning{ThinkingText: strings.Join(thinking, "\n\n")}
+		}
 	}
-	cr.Usage = novaCanonicalUsage(resp.Usage, resp.Metrics)
 	return cr, nil
 }
 
-// Stream ----------------------------------------------------------------------
+func (a *BedrockAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
+	msg := &ConverseMessage{Role: converseRoleAssistant, Content: []ConverseContentBlock{}}
+	if resp.Role != "" {
+		msg.Role = resp.Role
+	}
+	if resp.Reasoning != nil && resp.Reasoning.ThinkingText != "" {
+		msg.Content = append(msg.Content, ConverseContentBlock{ReasoningContent: &ConverseReasoningContent{
+			ReasoningText: &ConverseReasoningText{Text: resp.Reasoning.ThinkingText},
+		}})
+	}
+	if resp.Content != "" {
+		msg.Content = append(msg.Content, ConverseContentBlock{Text: resp.Content})
+	}
+	for _, tc := range resp.ToolCalls {
+		msg.Content = append(msg.Content, ConverseContentBlock{ToolUse: &ConverseToolUse{
+			ToolUseID: tc.ID,
+			Name:      tc.Name,
+			Input:     converseToolInput(tc.Arguments),
+		}})
+	}
+	return json.Marshal(ConverseResponse{
+		Output:     ConverseOutput{Message: msg},
+		StopReason: converseStopReason(resp.FinishReason, len(resp.ToolCalls) > 0),
+		Usage:      converseUsageFromCanonical(resp.Usage),
+	})
+}
 
-func (n *bedrockNovaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
-	var c novaStreamChunk
-	if err := json.Unmarshal(chunk, &c); err != nil {
+func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	var ev ConverseStreamEvent
+	if err := json.Unmarshal(chunk, &ev); err != nil {
 		return nil, nil
 	}
-
-	var delta, finishReason string
-	if c.ContentBlockDelta != nil {
-		delta = c.ContentBlockDelta.Delta.Text
-	}
-	if c.MessageStop != nil {
-		finishReason = novaFinishReason(c.MessageStop.StopReason)
-	}
-	// Usage closes the stream in its own metadata chunk, which carries no text.
-	var usage *novaUsage
-	if c.Metadata != nil {
-		usage = c.Metadata.Usage
-	}
-	canonicalUsage := novaCanonicalUsage(usage, c.Metrics)
-
-	// Nova emits a contentBlockStop after every delta, so about half the chunks
-	// of a stream say nothing: they must not cost an allocation.
-	if delta == "" && finishReason == "" && canonicalUsage == nil {
+	switch {
+	case ev.MessageStart != nil:
+		return &CanonicalStreamChunk{Role: converseRoleAssistant}, nil
+	case ev.ContentBlockStart != nil:
+		start := ev.ContentBlockStart
+		if start.Start.ToolUse == nil {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{
+			Index: start.ContentBlockIndex,
+			ID:    start.Start.ToolUse.ToolUseID,
+			Name:  start.Start.ToolUse.Name,
+		}}}, nil
+	case ev.ContentBlockDelta != nil:
+		return converseDeltaToCanonical(ev.ContentBlockDelta), nil
+	case ev.MessageStop != nil:
+		return &CanonicalStreamChunk{FinishReason: converseFinishReason(ev.MessageStop.StopReason)}, nil
+	case ev.Metadata != nil:
+		usage := converseUsageToCanonical(ev.Metadata.Usage)
+		if usage == nil {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{Usage: usage}, nil
+	default:
 		return nil, nil
 	}
-	return &CanonicalStreamChunk{
-		Delta:        delta,
-		FinishReason: finishReason,
-		Usage:        canonicalUsage,
-	}, nil
 }
 
-func novaCanonicalUsage(usage *novaUsage, metrics *bedrockInvocationMetrics) *CanonicalUsage {
-	var in, out, total int
-	if usage != nil {
-		in, out, total = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
-	}
-	return mergeParsedUsage(in, out, total, metrics)
-}
-
-// =========================================================================
-//
-//	Prompt template helpers
-//
-// =========================================================================
-
-// formatMessagesAsText renders canonical messages as plain text for models
-// that use a single "inputText" or "prompt" field (Titan).
-func formatMessagesAsText(system string, msgs []CanonicalMessage) string {
-	var sb strings.Builder
-	if system != "" {
-		sb.WriteString(system)
-		sb.WriteString("\n\n")
-	}
-	for _, m := range msgs {
-		switch m.Role {
-		case "user":
-			fmt.Fprintf(&sb, "User: %s\n", m.Content)
-		case "assistant":
-			fmt.Fprintf(&sb, "Assistant: %s\n", m.Content)
-		default:
-			fmt.Fprintf(&sb, "%s: %s\n", m.Role, m.Content)
+func converseDeltaToCanonical(d *ConverseContentBlockDelta) *CanonicalStreamChunk {
+	switch {
+	case d.Delta.ToolUse != nil:
+		if d.Delta.ToolUse.Input == "" {
+			return nil
 		}
-	}
-	return strings.TrimSpace(sb.String())
-}
-
-// formatLlamaPrompt renders canonical messages using the Llama 3 chat
-// template with special tokens.
-func formatLlamaPrompt(system string, msgs []CanonicalMessage) string {
-	var sb strings.Builder
-	sb.WriteString("<|begin_of_text|>")
-	if system != "" {
-		sb.WriteString("<|start_header_id|>system<|end_header_id|>\n\n")
-		sb.WriteString(system)
-		sb.WriteString("<|eot_id|>")
-	}
-	for _, m := range msgs {
-		role := m.Role
-		if role == "" {
-			role = "user"
+		return &CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{
+			Index:          d.ContentBlockIndex,
+			ArgumentsDelta: d.Delta.ToolUse.Input,
+		}}}
+	case d.Delta.ReasoningContent != nil:
+		if d.Delta.ReasoningContent.Text == "" {
+			return nil
 		}
-		fmt.Fprintf(&sb, "<|start_header_id|>%s<|end_header_id|>\n\n%s<|eot_id|>", role, m.Content)
-	}
-	// Open the assistant turn for the model to continue.
-	sb.WriteString("<|start_header_id|>assistant<|end_header_id|>\n\n")
-	return sb.String()
-}
-
-// formatMistralPrompt renders canonical messages using the Mistral instruct
-// template: <s>[INST] message [/INST]
-func formatMistralPrompt(system string, msgs []CanonicalMessage) string {
-	var sb strings.Builder
-	sb.WriteString("<s>")
-
-	// Pair up user/assistant turns.
-	var sysPrefix string
-	if system != "" {
-		sysPrefix = system + "\n\n"
-	}
-
-	for _, m := range msgs {
-		switch m.Role {
-		case "system":
-			// The template has no system turn, so it rides on the next user
-			// one. Dropping it would silently discard the instructions a
-			// caller put in the conversation instead of the system field.
-			sysPrefix += m.Content + "\n\n"
-		case "user":
-			content := m.Content
-			if sysPrefix != "" {
-				content = sysPrefix + content
-				sysPrefix = ""
-			}
-			fmt.Fprintf(&sb, "[INST] %s [/INST]", content)
-		case "assistant":
-			sb.WriteString(m.Content)
-			sb.WriteString("</s>")
-		}
-	}
-
-	return sb.String()
-}
-
-// bedrockInvocationMetrics is the cross-family usage block Bedrock appends
-// alongside the model's own answer.
-type bedrockInvocationMetrics struct {
-	InputTokenCount  int `json:"inputTokenCount"`
-	OutputTokenCount int `json:"outputTokenCount"`
-}
-
-// parseBedrockInvocationMetrics reads the cross-family
-// `amazon-bedrock-invocationMetrics` block as a fallback usage source. It
-// returns nil when the block is absent, both counts are zero, or the body
-// is not valid JSON. The helper is package-private and best-effort;
-// callers must honor the nil-when-absent contract.
-func parseBedrockInvocationMetrics(body []byte) *CanonicalUsage {
-	var probe struct {
-		Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
-	}
-	if err := json.Unmarshal(body, &probe); err != nil {
+		return &CanonicalStreamChunk{ReasoningDelta: d.Delta.ReasoningContent.Text}
+	case d.Delta.Text != "":
+		return &CanonicalStreamChunk{Delta: d.Delta.Text}
+	default:
 		return nil
 	}
-	if probe.Metrics == nil {
+}
+
+func (a *BedrockAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
+	var events []ConverseStreamEvent
+	if chunk.Role != "" {
+		events = append(events, ConverseStreamEvent{MessageStart: &ConverseMessageStart{Role: chunk.Role}})
+	}
+	if chunk.ReasoningDelta != "" {
+		events = append(events, ConverseStreamEvent{ContentBlockDelta: &ConverseContentBlockDelta{
+			Delta: ConverseDeltaValue{ReasoningContent: &ConverseReasoningDelta{Text: chunk.ReasoningDelta}},
+		}})
+	}
+	if chunk.Delta != "" {
+		events = append(events, ConverseStreamEvent{ContentBlockDelta: &ConverseContentBlockDelta{
+			Delta: ConverseDeltaValue{Text: chunk.Delta},
+		}})
+	}
+	for _, tc := range chunk.ToolCallDeltas {
+		if tc.ID != "" || tc.Name != "" {
+			events = append(events, ConverseStreamEvent{ContentBlockStart: &ConverseContentBlockStart{
+				ContentBlockIndex: tc.Index,
+				Start:             ConverseBlockStartValue{ToolUse: &ConverseToolUseStart{ToolUseID: tc.ID, Name: tc.Name}},
+			}})
+		}
+		if tc.ArgumentsDelta != "" {
+			events = append(events, ConverseStreamEvent{ContentBlockDelta: &ConverseContentBlockDelta{
+				ContentBlockIndex: tc.Index,
+				Delta:             ConverseDeltaValue{ToolUse: &ConverseToolUseDelta{Input: tc.ArgumentsDelta}},
+			}})
+		}
+	}
+	if chunk.FinishReason != "" {
+		// The deltas of a streamed tool call arrive in earlier chunks, so only
+		// the finish reason itself can tell tool_use from end_turn here.
+		events = append(events, ConverseStreamEvent{MessageStop: &ConverseMessageStop{
+			StopReason: converseStopReason(chunk.FinishReason, false),
+		}})
+	}
+	if chunk.Usage != nil {
+		events = append(events, ConverseStreamEvent{Metadata: &ConverseMetadata{Usage: converseUsageFromCanonical(chunk.Usage)}})
+	}
+
+	lines := make([][]byte, 0, 2*len(events))
+	for _, ev := range events {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, append([]byte("data: "), data...), []byte{})
+	}
+	return lines, nil
+}
+
+// converseFinishReason maps a Converse stop reason onto the canonical
+// vocabulary shared by the buffered and streamed paths. Reasons with no
+// canonical equivalent pass through unchanged: model_context_window_exceeded
+// in particular must not read as "length", which clients retry with a bigger
+// max_tokens.
+func converseFinishReason(stop string) string {
+	switch stop {
+	case "end_turn", "stop_sequence", "":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	case "tool_use":
+		return "tool_calls"
+	case "guardrail_intervened", "content_filtered":
+		return "content_filter"
+	default:
+		return stop
+	}
+}
+
+// converseStopReason is the inverse of converseFinishReason. A "stop" that
+// carries tool calls is reported as tool_use, which is what a Converse client
+// keys its tool loop on.
+func converseStopReason(finish string, hasToolCalls bool) string {
+	switch finish {
+	case "stop", "":
+		if hasToolCalls {
+			return "tool_use"
+		}
+		return "end_turn"
+	case "length":
+		return "max_tokens"
+	case "tool_calls":
+		return "tool_use"
+	case "content_filter":
+		return "content_filtered"
+	default:
+		return finish
+	}
+}
+
+func converseUsageToCanonical(u *ConverseUsage) *CanonicalUsage {
+	if u == nil {
 		return nil
 	}
-	return newCanonicalUsage(probe.Metrics.InputTokenCount, probe.Metrics.OutputTokenCount, 0)
+	cu := newCanonicalUsage(u.InputTokens, u.OutputTokens, u.TotalTokens)
+	if cu == nil {
+		return nil
+	}
+	cu.CachedInputTokens = u.CacheReadInputTokens
+	cu.CacheWriteInputTokens = u.CacheWriteInputTokens
+	return cu
 }
 
-// mergeParsedUsage is mergeBedrockUsage over values a caller has already
-// decoded. The streaming decoders use it so a chunk is parsed once instead of
-// once for its own fields and again for the metrics — a saving paid per token.
-func mergeParsedUsage(familyIn, familyOut, familyTotal int, metrics *bedrockInvocationMetrics) *CanonicalUsage {
-	in, out := familyIn, familyOut
-	if metrics != nil {
-		if in == 0 {
-			in = metrics.InputTokenCount
-		}
-		if out == 0 {
-			out = metrics.OutputTokenCount
-		}
+func converseUsageFromCanonical(u *CanonicalUsage) *ConverseUsage {
+	if u == nil {
+		return nil
 	}
-	return newCanonicalUsage(in, out, familyTotal)
-}
-
-// mergeBedrockUsage applies the family-wins fallback: native family token counts
-// win when non-zero; amazon-bedrock-invocationMetrics fills only the zero buckets.
-// Returns nil when neither source reports any tokens.
-func mergeBedrockUsage(body []byte, familyIn, familyOut int) *CanonicalUsage {
-	in, out := familyIn, familyOut
-	if fb := parseBedrockInvocationMetrics(body); fb != nil {
-		if in == 0 {
-			in = fb.InputTokens
-		}
-		if out == 0 {
-			out = fb.OutputTokens
-		}
+	return &ConverseUsage{
+		InputTokens:           u.InputTokens,
+		OutputTokens:          u.OutputTokens,
+		TotalTokens:           u.TotalTokens,
+		CacheReadInputTokens:  u.CachedInputTokens,
+		CacheWriteInputTokens: u.CacheWriteInputTokens,
 	}
-	return newCanonicalUsage(in, out, 0)
-}
-
-// sumTitanOutputTokens returns the total output token count across Titan
-// response results.
-func sumTitanOutputTokens(results []titanResult) int {
-	var out int
-	for _, r := range results {
-		out += r.TokenCount
-	}
-	return out
 }
