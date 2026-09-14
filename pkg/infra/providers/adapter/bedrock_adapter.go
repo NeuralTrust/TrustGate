@@ -294,6 +294,49 @@ func (a *BedrockAdapter) encodeClaude(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(raw)
 }
 
+// NormalizeBedrockRequestForModel rewrites a Claude-on-Bedrock request body
+// into the schema model expects. It is the last seam before InvokeModel, where
+// the model is finally known, and it exists for one body no earlier conversion
+// reaches: a client on the Bedrock-native route still sending the Claude shape
+// it used before the registry moved to Nova.
+//
+// Only Amazon Nova is rewritten, and only when the body carries max_tokens or
+// anthropic_version — the keys Nova rejects outright. A body that is wrong in
+// other ways (max_completion_tokens, string content) is passed through and
+// fails at Bedrock as it did before. Every other family either tolerates the
+// extra keys or fails on something this cannot repair, and a needless round
+// trip through the canonical model would drop whatever it cannot represent.
+func NormalizeBedrockRequestForModel(body []byte, model string) []byte {
+	if detectFamilyByModel(model) != bfNova || !carriesNonNovaKeys(body) {
+		return body
+	}
+	var a BedrockAdapter
+	canonical, err := a.DecodeRequest(body)
+	if err != nil {
+		return body
+	}
+	canonical.Model = model
+	out, err := a.EncodeRequest(canonical)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// carriesNonNovaKeys reports whether body has the top-level keys Nova rejects
+// outright rather than ignores, which is what makes a mis-encoded body fail
+// with ValidationException instead of merely losing a setting.
+func carriesNonNovaKeys(body []byte) bool {
+	var probe struct {
+		MaxTokens        present `json:"max_tokens"`
+		AnthropicVersion present `json:"anthropic_version"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return false
+	}
+	return bool(probe.MaxTokens) || bool(probe.AnthropicVersion)
+}
+
 func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	family := detectFamilyFromResponseBody(body)
 	switch family {
