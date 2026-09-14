@@ -511,12 +511,14 @@ func (t *storeTool) reasonRequired(
 	if err != nil {
 		return nil, err
 	}
+	name := t.displayNameFor(code)
 	text := fmt.Sprintf(
 		"%s is outside your access, so getting it files a request an administrator has to decide on.",
-		code,
+		name,
 	)
 	structured := map[string]any{
 		"code":            code,
+		"name":            name,
 		"requires_reason": true,
 	}
 	if requestURL == "" {
@@ -527,12 +529,35 @@ func (t *storeTool) reasonRequired(
 			structured,
 		)
 	}
+	// The label is spelled out because a ticket URL is ~130 characters: pasted
+	// raw it wraps over three lines and buries the one thing the user has to do.
+	label := "Request access to " + name
 	structured["request_url"] = requestURL
+	structured["request_link_label"] = label
 	return marshalToolResult(
-		text+" Give the user this link and let them write, in their own words, why they need it: "+requestURL+
-			" — the request is filed when they submit it. Do not write the reason for them, and do not re-run install.",
+		text+" Show the user this as a link titled \""+label+"\", not as a bare URL: "+requestURL+
+			" — they write, in their own words, why they need it, and the request is filed when they submit"+
+			" the form. Do not write the reason for them, and do not re-run install.",
 		structured,
 	)
+}
+
+// displayNameFor is the catalog's name for a code, for text a person reads.
+// Falls back to the code, which is all there is for an entry the catalog on this
+// plane does not carry.
+func (t *storeTool) displayNameFor(code string) string {
+	if t == nil || t.catalog == nil {
+		return code
+	}
+	for _, entry := range t.catalog.ListMCPServers() {
+		if entry.Code == code {
+			if name := strings.TrimSpace(entry.DisplayName); name != "" {
+				return name
+			}
+			break
+		}
+	}
+	return code
 }
 
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
