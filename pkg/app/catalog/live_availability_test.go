@@ -221,3 +221,112 @@ func TestLiveAvailabilityFilter_CachesLiveListingPerCredentials(t *testing.T) {
 	assert.Equal(t, []string{"gpt-5.6"}, slugsOf(second))
 	assert.Equal(t, 1, source.calls, "second render must reuse the cached provider listing")
 }
+
+func compatibleRegistry(auth *registrydomain.TargetAuth) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](),
+		LLMTarget: &registrydomain.LLMTarget{
+			Provider: providers.ProviderOpenAICompatible,
+			Auth:     auth,
+		},
+	}
+}
+
+// A self-hosted endpoint has no catalog rows by design, so narrowing had
+// nothing to narrow and the picker was handed an empty list for a registry
+// whose connection test had just listed its models (RUN-1552).
+func TestLiveCatalog_ListsARegistryTheCatalogDoesNotCarry(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{
+		models: []appcatalog.LiveModel{
+			{ID: "my-private-finetune", DisplayName: "My private finetune"},
+			{ID: "llama-3.1-70b"},
+		},
+	}
+
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(compatibleRegistry(apiKeyAuth("sk-local")), nil).Once()
+
+	_, lister := appcatalog.NewLiveCatalog(finder, source, discardLogger())
+	got := lister.List(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderOpenAICompatible,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+	})
+
+	assert.Len(t, got, 2)
+	assert.Equal(t, "my-private-finetune", got[0].Slug)
+	assert.Equal(t, "my-private-finetune", got[0].ExternalID)
+	assert.Equal(t, "My private finetune", got[0].DisplayName)
+	assert.True(t, got[0].Enabled)
+	// A model with no name of its own is still selectable under its id.
+	assert.Equal(t, "llama-3.1-70b", got[1].DisplayName)
+}
+
+func TestLiveCatalog_NeverWidensACatalogThatAnswered(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	source := &stubLiveModelSource{models: liveIDs("gpt-4o-mini", "gpt-5.6")}
+
+	_, lister := appcatalog.NewLiveCatalog(finder, source, discardLogger())
+	got := lister.List(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderOpenAI,
+		GatewayID:    ids.New[ids.GatewayKind](),
+		RegistryID:   ids.New[ids.RegistryKind](),
+		Models:       []catalogdomain.Model{{Slug: "gpt-4o-mini"}},
+	})
+
+	assert.Nil(t, got, "narrowing owns a catalog that has rows; listing only answers when it has none")
+	assert.Zero(t, source.calls, "the provider must not be called to answer a question the catalog answered")
+}
+
+func TestLiveCatalog_StaysSilentWithoutARegistryToAsk(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	source := &stubLiveModelSource{models: liveIDs("whatever")}
+
+	_, lister := appcatalog.NewLiveCatalog(finder, source, discardLogger())
+
+	assert.Nil(t, lister.List(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderOpenAICompatible,
+	}), "an unscoped listing has no credentials to list against")
+}
+
+func TestLiveCatalog_LeavesBedrockAlone(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	source := &stubLiveModelSource{models: liveIDs("anthropic.claude")}
+
+	_, lister := appcatalog.NewLiveCatalog(finder, source, discardLogger())
+	got := lister.List(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderBedrock,
+		GatewayID:    ids.New[ids.GatewayKind](),
+		RegistryID:   ids.New[ids.RegistryKind](),
+	})
+
+	assert.Nil(t, got, "Bedrock is listed through the AWS control plane, not this path")
+	assert.Zero(t, source.calls)
+}
+
+func TestLiveCatalog_ReportsNothingWhenTheProviderCannotBeAsked(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	source := &stubLiveModelSource{err: errors.New("connection refused")}
+
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(compatibleRegistry(apiKeyAuth("sk-local")), nil).Once()
+
+	_, lister := appcatalog.NewLiveCatalog(finder, source, discardLogger())
+	got := lister.List(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderOpenAICompatible,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+	})
+
+	assert.Nil(t, got, "an unreachable endpoint leaves the empty catalog as it was")
+}
