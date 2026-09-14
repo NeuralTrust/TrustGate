@@ -179,7 +179,7 @@ func TestDiscovery_OrderSurvivesTheFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if names := toolNames(got); len(names) != 2 || names[0] != "first" || names[1] != "second" {
+	if names := toolNames(got); len(names) != 2 || names[0] != namedFor(regA, "first") || names[1] != namedFor(regB, "second") {
 		t.Fatalf("tools = %v, want the slow first registry to stay first", names)
 	}
 }
@@ -304,7 +304,7 @@ func TestDiscovery_AnUnreachableUpstreamIsNotDialledOnEveryRequest(t *testing.T)
 		if err != nil {
 			t.Fatalf("fail-open should still serve the reachable upstream: %v", err)
 		}
-		if names := toolNames(got); len(names) != 1 || names[0] != "weather" {
+		if names := toolNames(got); len(names) != 1 || names[0] != namedFor(up, "weather") {
 			t.Fatalf("tools = %v, want the healthy upstream's", names)
 		}
 	}

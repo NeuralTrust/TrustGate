@@ -114,7 +114,7 @@ func (c *composer) ToolInventory(ctx context.Context, rc *appconsumer.RoutableCo
 			candidates = append(candidates, surface.bindings...)
 		}
 	}
-	resolved := resolveNames(candidates)
+	resolved := resolveNames(candidates, registries)
 
 	out := &ToolInventory{Servers: make([]InventoryServer, 0, len(surfaces))}
 	cursor := 0

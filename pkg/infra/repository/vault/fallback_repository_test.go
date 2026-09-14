@@ -17,7 +17,9 @@ package vault_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -204,4 +206,58 @@ func TestFallbackRepository(t *testing.T) {
 			t.Fatal("a nil fallback must return the primary unchanged")
 		}
 	})
+}
+
+func TestFallbackRepositoryPersistsRefreshInOriginalStore(t *testing.T) {
+	for _, inPrimary := range []bool{true, false} {
+		t.Run(fmt.Sprint(inPrimary), func(t *testing.T) {
+			primary, fallback := newMemVault(), newMemVault()
+			old := cred("provider", "account")
+			if inPrimary {
+				primary.creds[old.Provider] = old
+			} else {
+				fallback.creds[old.Provider] = old
+			}
+			repo := vaultrepo.NewFallbackRepository(primary, fallback)
+			writer := repo.(interface {
+				UpsertRefreshed(context.Context, *domain.Credential) error
+			})
+			fresh := *old
+			fresh.RefreshToken = "rotated"
+			if err := writer.UpsertRefreshed(context.Background(), &fresh); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := repo.Find(context.Background(), ids.New[ids.GatewayKind](), "user", "provider")
+			if err != nil || stored.RefreshToken != "rotated" {
+				t.Fatalf("stored=%v err=%v", stored, err)
+			}
+			if !inPrimary && len(primary.creds) != 0 {
+				t.Fatal("refresh migrated the grant away from the data plane")
+			}
+		})
+	}
+}
+
+func TestFallbackRepositorySharesRedisRefreshLock(t *testing.T) {
+	redisVault, _, _ := newRedisVaultRepo(t)
+	repo := vaultrepo.NewFallbackRepository(newMemVault(), redisVault)
+	type locker interface {
+		AcquireRefreshLock(context.Context, ids.GatewayID, string, string) (func(context.Context) error, error)
+	}
+	gw := ids.New[ids.GatewayKind]()
+	release, err := redisVault.(locker).AcquireRefreshLock(context.Background(), gw, "user", "provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := release(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = repo.(locker).AcquireRefreshLock(ctx, gw, "user", "provider")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected shared lock contention, got %v", err)
+	}
 }

@@ -253,8 +253,8 @@ func TestComposer_ListTools_CollisionAutoPrefix(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	names := toolNames(got)
-	if len(names) != 2 || names[0] != "github_search" || names[1] != "slack_search" {
-		t.Fatalf("tools = %v, want [github_search slack_search]", names)
+	if len(names) != 2 || names[0] != namedFor(regA, "search") || names[1] != namedFor(regB, "search") {
+		t.Fatalf("tools = %v, want [%s %s]", names, namedFor(regA, "search"), namedFor(regB, "search"))
 	}
 }
 
@@ -288,8 +288,8 @@ func TestComposer_FailMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if names := toolNames(got); len(names) != 1 || names[0] != "alive" {
-			t.Fatalf("tools = %v, want [alive]", names)
+		if names := toolNames(got); len(names) != 1 || names[0] != namedFor(regA, "alive") {
+			t.Fatalf("tools = %v, want [%s]", names, namedFor(regA, "alive"))
 		}
 	})
 }
@@ -333,8 +333,8 @@ func TestComposer_PartialConsentServesLinkedUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if names := toolNames(got); len(names) != 1 || names[0] != "search" {
-		t.Fatalf("tools = %v, want [search] from the linked upstream only", names)
+	if names := toolNames(got); len(names) != 1 || names[0] != namedFor(regLinked, "search") {
+		t.Fatalf("tools = %v, want [%s] from the linked upstream only", names, namedFor(regLinked, "search"))
 	}
 }
 
@@ -351,7 +351,7 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 	c := newTestComposer(dialer)
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
 
-	res, err := c.CallTool(context.Background(), rc, "slack_search", nil)
+	res, err := c.CallTool(context.Background(), rc, namedFor(regB, "search"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.
 		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
 	}, notion, graphite)
 
-	res, err := c.CallTool(context.Background(), rc, "list_diffs", nil)
+	res, err := c.CallTool(context.Background(), rc, namedFor(graphite, "list_diffs"), nil)
 	if err != nil {
 		t.Fatalf("call routed to a healthy upstream must succeed, got %v", err)
 	}
@@ -427,7 +427,7 @@ func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
 		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
 	}, notion, graphite)
 
-	_, err := c.CallTool(context.Background(), rc, "search", nil)
+	_, err := c.CallTool(context.Background(), rc, namedFor(notion, "search"), nil)
 	var consentErr *ConsentRequiredError
 	if !errors.As(err, &consentErr) {
 		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
@@ -496,7 +496,7 @@ func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
 		},
 	}, notion, linear)
 
-	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	_, err := c.CallTool(context.Background(), rc, namedFor(notion, "notion-search"), nil)
 	var consent *ConsentRequiredError
 	if errors.As(err, &consent) {
 		t.Fatal("a forbidden tool must not send the user through a consent flow")
@@ -562,7 +562,7 @@ func TestComposer_ListPrompts_MergesAndPrefixesCollisions(t *testing.T) {
 	for _, p := range got {
 		names = append(names, p.Name)
 	}
-	want := []string{"github_summarize", "triage", "slack_summarize"}
+	want := []string{namedFor(regA, "summarize"), namedFor(regA, "triage"), namedFor(regB, "summarize")}
 	if len(names) != 3 || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
 		t.Fatalf("prompts = %v, want %v", names, want)
 	}
@@ -612,7 +612,7 @@ func TestComposer_GetPrompt_RoutesToOwningUpstream(t *testing.T) {
 	c := newTestComposer(dialer)
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
 
-	res, err := c.GetPrompt(context.Background(), rc, "slack_summarize", nil)
+	res, err := c.GetPrompt(context.Background(), rc, namedFor(regB, "summarize"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -818,8 +818,8 @@ func TestComposer_ListPrompts_PartialConsentServesLinkedUpstream(t *testing.T) {
 		for _, p := range got {
 			names = append(names, p.Name)
 		}
-		if len(names) != 1 || names[0] != "triage" {
-			t.Fatalf("prompts = %v, want [triage] from the linked upstream only", names)
+		if len(names) != 1 || names[0] != namedFor(regLinked, "triage") {
+			t.Fatalf("prompts = %v, want [%s] from the linked upstream only", names, namedFor(regLinked, "triage"))
 		}
 	}
 }
@@ -862,13 +862,13 @@ func TestComposer_GetPrompt_UnknownPromptSurfacesPendingConsent(t *testing.T) {
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regLinked, regPending)
 
 	var consentErr *ConsentRequiredError
-	if _, err := c.GetPrompt(context.Background(), rc, "summarize", nil); !errors.As(err, &consentErr) {
+	if _, err := c.GetPrompt(context.Background(), rc, namedFor(regPending, "summarize"), nil); !errors.As(err, &consentErr) {
 		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
 	}
 	if consentErr.Provider != "com.notion/mcp" {
 		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
 	}
-	if _, err := c.GetPrompt(context.Background(), rc, "triage", nil); err != nil {
+	if _, err := c.GetPrompt(context.Background(), rc, namedFor(regLinked, "triage"), nil); err != nil {
 		t.Fatalf("prompt on the linked upstream must still resolve: %v", err)
 	}
 }

@@ -81,7 +81,7 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	}
 	principal := identity.PrincipalFromContext(c.UserContext())
 	streamCtx := c.UserContext()
-	path := c.Path()
+	path := strings.Clone(c.Path())
 	gatewayID, _ := appconsumer.GatewayIDFromContext(streamCtx)
 	snapshot := func() string {
 		ctx, cancel := context.WithTimeout(streamCtx, 5*time.Second)
