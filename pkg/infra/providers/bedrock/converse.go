@@ -271,7 +271,7 @@ func sdkInferenceConfig(ic *adapter.ConverseInferenceConfig) *bedrockTypes.Infer
 		if maxTokens > math.MaxInt32 {
 			maxTokens = math.MaxInt32
 		}
-		out.MaxTokens = aws.Int32(int32(maxTokens))
+		out.MaxTokens = aws.Int32(int32(maxTokens)) // #nosec G115 -- clamped to math.MaxInt32 just above
 	}
 	if ic.Temperature != nil {
 		out.Temperature = aws.Float32(float32(*ic.Temperature))
