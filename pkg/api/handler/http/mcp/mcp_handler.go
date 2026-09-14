@@ -298,7 +298,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
-			"cause": consentErr.Cause,
+			"cause":       consentErr.Cause,
 		})
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
@@ -426,6 +426,9 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
 	}
 	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
+		if data.StoreConsumer != nil {
+			return data.StoreConsumer, nil
+		}
 		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 		if !ok {
 			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
