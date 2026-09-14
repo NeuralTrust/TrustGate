@@ -309,3 +309,29 @@ func TestEmbeddings_MissingModel(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
 }
+
+func TestPrepareInvokeBody_NovaRejectsMaxTokens(t *testing.T) {
+	body := []byte(`{"model":"amazon.nova-pro-v1:0","stream":true,"anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+
+	out := prepareInvokeBody(body, "amazon.nova-pro-v1:0")
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &raw))
+	assert.NotContains(t, raw, "max_tokens")
+	assert.NotContains(t, raw, "anthropic_version")
+	assert.NotContains(t, raw, "model")
+	assert.NotContains(t, raw, "stream")
+	assert.Contains(t, raw, "inferenceConfig")
+}
+
+func TestPrepareInvokeBody_ClaudeBodyKeepsMaxTokens(t *testing.T) {
+	body := []byte(`{"model":"anthropic.claude-3-5-sonnet-20241022-v2:0","anthropic_version":"bedrock-2023-05-31","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+
+	out := prepareInvokeBody(body, "anthropic.claude-3-5-sonnet-20241022-v2:0")
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &raw))
+	assert.Contains(t, raw, "max_tokens")
+	assert.Contains(t, raw, "anthropic_version")
+	assert.NotContains(t, raw, "model")
+}
