@@ -471,7 +471,8 @@ func TestConfigurePage_ASentRequestSaysSoAndStopsAsking(t *testing.T) {
 	t.Parallel()
 	html := renderToString(t, func(c *fiber.Ctx) error {
 		return renderConfigurePage(c, &appoauth.ConfigurePage{
-			Code: "com.ahrefs/mcp", ServerName: "Ahrefs", Saved: true, Pending: true,
+			Code: "com.ahrefs/mcp", ServerName: "Ahrefs",
+			AskReason: true, Saved: true, Pending: true,
 		})
 	})
 	if strings.Contains(html, "<textarea") || strings.Contains(html, "<form") {
@@ -479,6 +480,15 @@ func TestConfigurePage_ASentRequestSaysSoAndStopsAsking(t *testing.T) {
 	}
 	if !strings.Contains(html, "An administrator has to approve it") {
 		t.Fatalf("a sent request must say it is waiting on an approver: %s", html)
+	}
+	// The confirmation is titled by what the form was. Dropping the flag on save
+	// left someone who had just asked for access looking at "Configure Ahrefs —
+	// enter your setup values", which is neither what they did nor what happened.
+	if !strings.Contains(html, "Request access to Ahrefs") {
+		t.Fatalf("a sent request must still be titled a request: %s", html)
+	}
+	if strings.Contains(html, "Enter your setup values") {
+		t.Fatalf("a sent request must not read as a configuration form: %s", html)
 	}
 }
 
