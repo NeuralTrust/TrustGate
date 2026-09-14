@@ -10,6 +10,12 @@ import "embed"
 //go:embed enterprise-servers.json
 var EnterpriseServersJSON []byte
 
+// PortalCapabilitiesJSON is the Portal “What you can do” copy for every
+// catalog server (three lines per code). Merged at catalog load.
+//
+//go:embed portal-capabilities.json
+var PortalCapabilitiesJSON []byte
+
 // BrandsFS holds the MCP vendor logos used by the consent pages, keyed the
 // same way as NeuralTrust/app `mcpBrands.ts`.
 //
