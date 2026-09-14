@@ -138,8 +138,9 @@ type MCPOAuth struct {
 	ResourceMetadata bool `json:"resource_metadata"`
 	// Registration is the recommended gateway registration mode derived from
 	// DCR support: "auto" when the server supports Dynamic Client Registration
-	// (RFC 7591). A nil pointer means it could not be determined (e.g. a
-	// tenant-templated host that must be probed per-instance).
+	// (the gateway self-registers and the user just logs in at runtime),
+	// "manual" when an operator must pre-register a client. Empty means the
+	// server is tenant-hosted and discovery happens per-instance at connect time.
 	Registration string `json:"registration,omitempty"`
 	// DCR reports whether the server supports OAuth Dynamic Client Registration
 	// (RFC 7591). A nil pointer means it could not be determined (e.g. a
