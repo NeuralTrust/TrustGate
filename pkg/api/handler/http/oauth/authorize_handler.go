@@ -47,5 +47,10 @@ func (h *AuthorizeHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeOAuthError(c, err)
 	}
+	// Bind the IdP leg to this browser so the callback can refuse a state (and
+	// the code that comes with it) that was minted for someone else.
+	if state := gatewayStateOf(location, req.State); state != "" {
+		setStateCookie(c, state)
+	}
 	return c.Redirect(location, fiber.StatusFound)
 }

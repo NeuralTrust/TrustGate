@@ -110,57 +110,6 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	return httpio.WriteNoContent(c)
 }
 
-// AttachRole godoc
-// @Summary      Attach a role to a consumer
-// @Description  Associates a role with a role_based consumer (idempotent). Returns 409 for inline consumers.
-// @Tags         consumers
-// @Produce      json
-// @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        role_id     path  string  true  "Role id"      format(uuid)
-// @Success      204         "No Content"
-// @Failure      400         {object}  httpio.ErrorBody
-// @Failure      401         {object}  httpio.ErrorBody
-// @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [post]
-func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
-	if err := h.associator.AttachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return httpio.WriteError(c, err)
-	}
-	return httpio.WriteNoContent(c)
-}
-
-// DetachRole godoc
-// @Summary      Detach a role from a consumer
-// @Description  Removes the association between a role and a consumer (idempotent).
-// @Tags         consumers
-// @Produce      json
-// @Security     BearerAuth
-// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
-// @Param        id          path  string  true  "Consumer id"  format(uuid)
-// @Param        role_id     path  string  true  "Role id"      format(uuid)
-// @Success      204         "No Content"
-// @Failure      400         {object}  httpio.ErrorBody
-// @Failure      401         {object}  httpio.ErrorBody
-// @Failure      404         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [delete]
-func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
-	if err != nil {
-		return httpio.WriteError(c, err)
-	}
-	if err := h.associator.DetachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return httpio.WriteError(c, err)
-	}
-	return httpio.WriteNoContent(c)
-}
-
 // AttachAuth godoc
 // @Summary      Attach an auth to a consumer
 // @Description  Associates an auth credential with a consumer (idempotent).

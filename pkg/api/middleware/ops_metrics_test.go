@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"unsafe"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/gofiber/fiber/v2"
@@ -284,5 +285,31 @@ func TestClassifyOutcomeUsesLinearEnums(t *testing.T) {
 	}
 	for _, tc := range tests {
 		require.Equal(t, tc.want, classifyOutcome(tc.route, tc.status))
+	}
+}
+
+// boundedMethod must not hand back a view of the caller's bytes. The server's
+// method string points into a request buffer that is reused, so a value retained
+// by a metric attribute set or a span name would change after the fact — which
+// showed up in the sink as methods nobody sent ("GETT", "POS") and as a second
+// duplicate series per instrument.
+func TestBoundedMethodSurvivesMutationOfTheCallersBuffer(t *testing.T) {
+	for _, want := range []string{
+		fiber.MethodGet, fiber.MethodPost, fiber.MethodPut, fiber.MethodPatch,
+		fiber.MethodDelete, fiber.MethodOptions, fiber.MethodHead,
+	} {
+		buf := []byte(want)
+		got := boundedMethod(unsafe.String(&buf[0], len(buf)))
+		require.Equal(t, want, got)
+
+		// Reuse the buffer exactly as the server does between requests.
+		copy(buf, "XXXXXXX")
+		require.Equal(t, want, got, "returned method aliased the caller's buffer")
+	}
+}
+
+func TestBoundedMethodCollapsesAnythingElse(t *testing.T) {
+	for _, in := range []string{"TRACE", "CONNECT", "", "get", "GETT"} {
+		require.Equal(t, "OTHER", boundedMethod(in))
 	}
 }

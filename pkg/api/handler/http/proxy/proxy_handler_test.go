@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,35 +90,18 @@ func authStubWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Met
 // is valid for the gateway but NOT attached to the consumer that matches the
 // path, so the handler must reject the request with 403.
 func authStubForbidden(gatewayID ids.GatewayID, slug string) fiber.Handler {
+	return authStubForbiddenWithMethod(gatewayID, slug, appauth.MethodAPIKey)
+}
+
+func authStubForbiddenWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Method) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
+		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	}
-}
-
-func authStubRoleBased(gatewayID ids.GatewayID, slug string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
-	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     consumerRoles,
-		}},
-	})
-	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodOIDC, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
 		return c.Next()
@@ -213,54 +197,15 @@ func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
+func TestHandle_OIDCAttachedAuthSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gwID,
-			Slug:        consumerSlug,
-			Active:      true,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{roleID},
-		}},
-	})
 	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		authID := ids.New[ids.AuthKind]()
-		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gwID, AuthID: authID}
-		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
-		ctx = appconsumer.WithGatewayID(ctx, gwID)
-		ctx = appconsumer.WithAuthID(ctx, authID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	})
-	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/*", handler.Handle)
-
-	resp, err := app.Test(newProxyRequest())
-	if err != nil {
-		t.Fatalf("app.Test: %v", err)
-	}
-	if resp.StatusCode != fiber.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
-	fwd := proxymocks.NewForwarder(t)
-	gwID := ids.New[ids.GatewayKind]()
-	roleID := ids.New[ids.RoleKind]()
-	app := fiber.New()
-	app.Use(authStubRoleBased(gwID, consumerSlug, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
+	app.Use(authStubWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Consumer.Consumer.RoutingMode == domainconsumer.RoutingModeRoleBased
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
 		})).
 		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
 		Once()
@@ -275,22 +220,19 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 }
 
 // authStubPlayground mimics the auth middleware after the playground identity
-// resolver validated a server-minted playground token: MethodPlayground, no
-// AuthID, and the consumer's own roles as effective roles.
-func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domainconsumer.RoutingMode) fiber.Handler {
-	roleIDs := []ids.RoleID{ids.New[ids.RoleKind]()}
+// resolver validated a server-minted playground token: MethodPlayground and no
+// AuthID.
+func authStubPlayground(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			Slug:        slug,
-			Active:      true,
-			RoutingMode: routingMode,
-			RoleIDs:     roleIDs,
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: gatewayID,
+			Slug:      slug,
+			Active:    true,
 		}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user", RoleIDs: roleIDs}
+		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user"}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
@@ -300,35 +242,24 @@ func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domain
 }
 
 func TestHandle_PlaygroundSucceeds(t *testing.T) {
-	tests := []struct {
-		name        string
-		routingMode domainconsumer.RoutingMode
-	}{
-		{name: "inline consumer", routingMode: domainconsumer.RoutingModeInline},
-		{name: "role-based consumer", routingMode: domainconsumer.RoutingModeRoleBased},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fwd := proxymocks.NewForwarder(t)
-			app := fiber.New()
-			app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug, tt.routingMode))
-			handler := proxyhttp.NewForwardedHandler(fwd)
-			app.All("/*", handler.Handle)
-			fwd.EXPECT().
-				Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-					return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
-				})).
-				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
-				Once()
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
 
-			resp, err := app.Test(newProxyRequest())
-			if err != nil {
-				t.Fatalf("app.Test: %v", err)
-			}
-			if resp.StatusCode != fiber.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-		})
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -354,10 +285,10 @@ func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	}
 }
 
-func TestHandle_Forbidden_IDPLacksRole(t *testing.T) {
+func TestHandle_Forbidden_OIDCAuthNotAttached(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
+	app.Use(authStubForbiddenWithMethod(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOIDC))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 
@@ -547,6 +478,88 @@ func TestHandle_InvalidRequestPayload(t *testing.T) {
 	}
 }
 
+func TestHandle_InvalidRequestPayload_AnthropicEnvelope(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrInvalidRequestPayload).
+		Once()
+
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"type":"error"`) {
+		t.Fatalf("body = %s, want anthropic error envelope", raw)
+	}
+	if !strings.Contains(string(raw), `"invalid_request_error"`) {
+		t.Fatalf("body = %s, want invalid_request_error", raw)
+	}
+}
+
+func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
+	stream := func(yield func([]byte, error) bool) {
+		if !yield([]byte("data: a"), nil) {
+			return
+		}
+		_ = yield(nil, errors.New("boom"))
+	}
+
+	t.Run("messages", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "event: error") {
+			t.Fatalf("body = %s, want event: error", body)
+		}
+		if !strings.Contains(string(body), `"type":"error"`) {
+			t.Fatalf("body = %s, want type error", body)
+		}
+	})
+
+	t.Run("chat completions", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Return(&appproxy.ForwardResult{
+				StatusCode: 200,
+				Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+				Stream:     stream,
+			}, nil).
+			Once()
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), `"type":"upstream_error"`) {
+			t.Fatalf("body = %s, want openai stream error", body)
+		}
+		if strings.Contains(string(body), "event: error") {
+			t.Fatalf("openai stream must not emit event: error")
+		}
+	})
+}
+
 func TestHandle_CapabilityNotSupported(t *testing.T) {
 	app, fwd := newTestApp(t)
 	fwd.EXPECT().
@@ -642,9 +655,8 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.Anything).
-		Return(nil, fmt.Errorf("%w: %q (Anthropic: restricted by its model allow-list; "+
-			"OpenAI: not in the provider catalog)",
-			routingdomain.ErrNoRegistryServesModel, "claude-sonnet-4-5")).
+		Return(nil, fmt.Errorf("%w: %q (tried openai, vertex)",
+			routingdomain.ErrNoRegistryServesModel, "gemini-3-flash-preview")).
 		Once()
 
 	rt := trace.New("trace-no-registry", trace.Metadata{})
@@ -668,15 +680,11 @@ func TestHandle_NoRegistryServesModelReturns404ModelNotSupported(t *testing.T) {
 	if eb.Error != "model_not_supported" {
 		t.Fatalf("error = %q, want model_not_supported", eb.Error)
 	}
-	if !strings.Contains(eb.Message, "claude-sonnet-4-5") {
+	if !strings.Contains(eb.Message, "gemini-3-flash-preview") {
 		t.Fatalf("message = %q, want the requested model named", eb.Message)
 	}
-	if !strings.Contains(eb.Message, "Anthropic") || !strings.Contains(eb.Message, "OpenAI") {
-		t.Fatalf("message = %q, want every bound registry named", eb.Message)
-	}
-	if !strings.Contains(eb.Message, "restricted by its model allow-list") ||
-		!strings.Contains(eb.Message, "not in the provider catalog") {
-		t.Fatalf("message = %q, want the forwarder's message relayed whole, not truncated", eb.Message)
+	if !strings.Contains(eb.Message, "openai") || !strings.Contains(eb.Message, "vertex") {
+		t.Fatalf("message = %q, want the probed providers listed", eb.Message)
 	}
 }
 

@@ -442,6 +442,65 @@ func (_c *Composer_ReadResource_Call) RunAndReturn(run func(context.Context, *co
 	return _c
 }
 
+// ToolInventory provides a mock function with given fields: ctx, rc
+func (_m *Composer) ToolInventory(ctx context.Context, rc *consumer.RoutableConsumer) (*mcp.ToolInventory, error) {
+	ret := _m.Called(ctx, rc)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ToolInventory")
+	}
+
+	var r0 *mcp.ToolInventory
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer) (*mcp.ToolInventory, error)); ok {
+		return rf(ctx, rc)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer) *mcp.ToolInventory); ok {
+		r0 = rf(ctx, rc)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*mcp.ToolInventory)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer) error); ok {
+		r1 = rf(ctx, rc)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Composer_ToolInventory_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ToolInventory'
+type Composer_ToolInventory_Call struct {
+	*mock.Call
+}
+
+// ToolInventory is a helper method to define mock.On call
+//   - ctx context.Context
+//   - rc *consumer.RoutableConsumer
+func (_e *Composer_Expecter) ToolInventory(ctx interface{}, rc interface{}) *Composer_ToolInventory_Call {
+	return &Composer_ToolInventory_Call{Call: _e.mock.On("ToolInventory", ctx, rc)}
+}
+
+func (_c *Composer_ToolInventory_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer)) *Composer_ToolInventory_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer))
+	})
+	return _c
+}
+
+func (_c *Composer_ToolInventory_Call) Return(_a0 *mcp.ToolInventory, _a1 error) *Composer_ToolInventory_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Composer_ToolInventory_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer) (*mcp.ToolInventory, error)) *Composer_ToolInventory_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewComposer creates a new instance of Composer. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewComposer(t interface {

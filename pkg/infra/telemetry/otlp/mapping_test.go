@@ -299,3 +299,23 @@ func TestSensibleView_CarriesRetention(t *testing.T) {
 
 	assert.Equal(t, evt.Retention, evt.SensibleView().Retention)
 }
+
+// TestEventToRecord_PrincipalMethodPassesThroughVerbatim pins the RUN-1501
+// principal-method values on the wire. The attribute is a low-cardinality
+// string with no mapping table on either side, so whatever the gateway stamps
+// is exactly what an operator reads.
+func TestEventToRecord_PrincipalMethodPassesThroughVerbatim(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"oauth", "external_jwt", "api_key", "mtls", "introspection", "jwt"} {
+		t.Run(method, func(t *testing.T) {
+			rec := eventToRecord(&events.Event{
+				SchemaVersion:   events.SchemaVersion,
+				Kind:            events.KindLLM,
+				TraceID:         "trace-1",
+				GatewayID:       "gw-1",
+				PrincipalMethod: method,
+			})
+			assert.Equal(t, method, attrsOf(rec)[attrPrincipalMethod].AsString())
+		})
+	}
+}

@@ -38,17 +38,52 @@ const (
 
 var _ domain.Repository = (*Repository)(nil)
 
+// DeleteHook prunes what a registry delete leaves behind, using the delete's own
+// transaction so both writes commit or roll back together. It reports what it
+// pruned so the caller can record it after the commit.
+type DeleteHook func(
+	ctx context.Context,
+	tx pgx.Tx,
+	gatewayID ids.GatewayID,
+	registryID ids.RegistryID,
+) (domain.PruneReport, error)
+
+// Option customizes the repository at construction time.
+type Option func(*Repository)
+
+// WithDeleteHook registers a hook that runs inside the delete transaction,
+// before the registry row is removed.
+func WithDeleteHook(hook DeleteHook) Option {
+	return func(r *Repository) {
+		if hook != nil {
+			r.deleteHooks = append(r.deleteHooks, hook)
+		}
+	}
+}
+
 type Repository struct {
-	conn   *database.Connection
-	cipher vaultdomain.Encrypter
-	outbox outbox.Appender
+	conn        *database.Connection
+	cipher      vaultdomain.Encrypter
+	outbox      outbox.Appender
+	deleteHooks []DeleteHook
 }
 
 // NewRepository builds the pgx registry repository from the shared connection.
 // Each write commits its config-snapshot change marker in the same transaction
 // via the injected outbox appender.
-func NewRepository(conn *database.Connection, cipher vaultdomain.Encrypter, appender outbox.Appender) *Repository {
-	return &Repository{conn: conn, cipher: cipher, outbox: appender}
+func NewRepository(
+	conn *database.Connection,
+	cipher vaultdomain.Encrypter,
+	appender outbox.Appender,
+	opts ...Option,
+) *Repository {
+	r := &Repository{conn: conn, cipher: cipher, outbox: appender}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
 }
 
 // withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
@@ -151,12 +186,29 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	})
 }
 
-func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error {
+// RUN-1501: a registry delete prunes every routing reference; it never refuses
+// one. The `active = TRUE AND fallback->'chain' @> id` guard that used to run
+// here made one request answer two ways - a 409 for a reference in an active
+// consumer's fallback chain, a silent rewrite for the same reference in its
+// lb_config - and, reading without FOR UPDATE, let a chain edit committed
+// between the check and the hook's lock through anyway. The schema already chose
+// cascade for consumer_registry (20260611150000); the routing JSONB simply had
+// no cascade to inherit, which is the bug this ticket fixes. Removing the check
+// leaves one contract and no window to race.
+func (r *Repository) Delete(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	id ids.RegistryID,
+) (domain.PruneReport, error) {
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-
-		if err := ensureNotInFallbackChain(ctx, tx, gatewayID, id); err != nil {
-			return err
+	var report domain.PruneReport
+	if err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		for _, hook := range r.deleteHooks {
+			hookReport, err := hook(ctx, tx, gatewayID, id)
+			if err != nil {
+				return fmt.Errorf("registry repository: prune dependents: %w", err)
+			}
+			report.Merge(hookReport)
 		}
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
@@ -166,26 +218,10 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 			return domain.ErrNotFound
 		}
 		return nil
-	})
-}
-
-func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, gatewayID ids.GatewayID, id ids.RegistryID) error {
-	const query = `
-		SELECT EXISTS (
-			SELECT 1 FROM consumers
-			 WHERE gateway_id = $2
-			   AND active = TRUE
-			   AND fallback IS NOT NULL
-			   AND fallback->'chain' @> to_jsonb($1::text)
-		)`
-	var referenced bool
-	if err := tx.QueryRow(ctx, query, id.String(), gatewayID).Scan(&referenced); err != nil {
-		return fmt.Errorf("registry repository: fallback-chain check: %w", err)
+	}); err != nil {
+		return domain.PruneReport{}, err
 	}
-	if referenced {
-		return domain.ErrHasDependents
-	}
-	return nil
+	return report, nil
 }
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {

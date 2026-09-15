@@ -20,6 +20,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -30,6 +31,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	backendmocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -41,7 +43,6 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 		Name:        "c",
 		Type:        domain.TypeLLM,
 		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 		AuthIDs:     authIDs,
@@ -97,7 +98,7 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, nil, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -154,6 +155,56 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	}
 }
 
+func TestDataFinder_FindByGateway_AppliesGlobalPoliciesToStoreConsumer(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	globalPolicy := &policydomain.Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: gwID,
+		Slug:      "per_tool_rate_limiter",
+		Enabled:   true,
+		Global:    true,
+		Stages:    []policydomain.Stage{policydomain.StagePreRequest},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{globalPolicy}, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(
+		repo,
+		backendmocks.NewRepository(t),
+		policyRepo,
+		authmocks.NewRepository(t),
+		pluginRegistry,
+		newCacheManager(),
+		newTestLogger(),
+	)
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	if data.StoreConsumer == nil || !domain.IsStoreConsumer(data.StoreConsumer.Consumer) {
+		t.Fatal("expected the aggregate to contain the synthetic Store consumer")
+	}
+	if len(data.StoreConsumer.Policies) != 1 || data.StoreConsumer.Policies[0].ID != globalPolicy.ID {
+		t.Fatalf("Store policies = %+v, want global policy %s", data.StoreConsumer.Policies, globalPolicy.ID)
+	}
+	if data.StoreConsumer.PolicyPlan == nil || !data.StoreConsumer.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("expected the Store policy plan to contain the global pre-request policy")
+	}
+	if len(data.Consumers) != 0 {
+		t.Fatalf("synthetic Store consumer must not appear in persisted consumers: %+v", data.Consumers)
+	}
+}
+
 func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
@@ -161,12 +212,11 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -199,7 +249,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -226,12 +276,11 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	fbEnabled, fbDisabled := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -263,7 +312,7 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -298,7 +347,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -325,7 +374,7 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)

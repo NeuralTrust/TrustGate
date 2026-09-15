@@ -52,6 +52,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_sort", Message: err.Error()}
 	case errors.Is(err, ErrInvalidFilter):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: err.Error()}
+	case errors.Is(err, commonerrors.ErrForbidden):
+		return fiber.StatusForbidden, ErrorBody{Error: "forbidden", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, ErrorBody{Error: "not_found"}
 	case errors.Is(err, commonerrors.ErrAlreadyExists):

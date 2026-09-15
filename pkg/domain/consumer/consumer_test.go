@@ -32,23 +32,6 @@ func validParams() CreateParams {
 	}
 }
 
-func TestNewRoutingMode_Normalizes(t *testing.T) {
-	t.Parallel()
-	cases := map[string]RoutingMode{
-		"inline":       RoutingModeInline,
-		"  inline  ":   RoutingModeInline,
-		"INLINE":       RoutingModeInline,
-		"Role_Based":   RoutingModeRoleBased,
-		" role_based ": RoutingModeRoleBased,
-		"":             RoutingMode(""),
-	}
-	for raw, want := range cases {
-		if got := NewRoutingMode(raw); got != want {
-			t.Errorf("NewRoutingMode(%q) = %q, want %q", raw, got, want)
-		}
-	}
-}
-
 func TestConsumer_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	p := validParams()
@@ -64,9 +47,6 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	}
 	if c.Type != TypeLLM {
 		t.Fatalf("Type = %q, want %q", c.Type, TypeLLM)
-	}
-	if c.RoutingMode != RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", c.RoutingMode, RoutingModeInline)
 	}
 	if !c.Active {
 		t.Fatal("Active should default to true")
@@ -139,31 +119,9 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidSlug,
 		},
 		{
-			name:    "invalid routing mode",
-			mutate:  func(c *Consumer) { c.RoutingMode = "mixed" },
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
-			name: "role based rejects inline registries",
-			mutate: func(c *Consumer) {
-				c.RoutingMode = RoutingModeRoleBased
-			},
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
 			name:    "mcp policy on llm consumer",
 			mutate:  func(c *Consumer) { c.MCP = &MCPPolicy{} },
 			wantErr: ErrInvalidType,
-		},
-		{
-			name: "role based rejects mcp policy",
-			mutate: func(c *Consumer) {
-				c.Type = TypeMCP
-				c.RoutingMode = RoutingModeRoleBased
-				c.RegistryIDs = nil
-				c.MCP = &MCPPolicy{}
-			},
-			wantErr: ErrInvalidRoutingMode,
 		},
 		{
 			name: "duplicate backend",
@@ -177,50 +135,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			name:    "nil backend uuid",
 			mutate:  func(c *Consumer) { c.RegistryIDs = []ids.RegistryID{{}} },
 			wantErr: ErrInvalidModelPolicy,
-		},
-		{
-			name: "role based rejects lb config",
-			mutate: func(c *Consumer) {
-				c.RoutingMode = RoutingModeRoleBased
-				c.RegistryIDs = nil
-				c.LBConfig = &LBConfig{}
-			},
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
-			name: "role based rejects enabled fallback",
-			mutate: func(c *Consumer) {
-				c.RoutingMode = RoutingModeRoleBased
-				c.RegistryIDs = nil
-				c.Fallback = &Fallback{Enabled: true}
-			},
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
-			name: "role based rejects model policies",
-			mutate: func(c *Consumer) {
-				c.RoutingMode = RoutingModeRoleBased
-				c.RegistryIDs = nil
-				c.ModelPolicies = ModelPolicies{ids.New[ids.RegistryKind](): {}}
-			},
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
-			name: "inline rejects roles",
-			mutate: func(c *Consumer) {
-				c.RoleIDs = []ids.RoleID{ids.New[ids.RoleKind]()}
-			},
-			wantErr: ErrInvalidRoutingMode,
-		},
-		{
-			name: "role based rejects duplicate roles",
-			mutate: func(c *Consumer) {
-				c.RoutingMode = RoutingModeRoleBased
-				c.RegistryIDs = nil
-				id := ids.New[ids.RoleKind]()
-				c.RoleIDs = []ids.RoleID{id, id}
-			},
-			wantErr: ErrInvalidRoutingMode,
 		},
 	}
 	for _, tc := range tests {
@@ -276,7 +190,6 @@ func TestConsumer_Rehydrate(t *testing.T) {
 		Name:        "x",
 		Type:        TypeMCP,
 		Slug:        "X84Yhsy8",
-		RoutingMode: RoutingModeInline,
 		Headers:     map[string]string{"X-K": "v"},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{beID},

@@ -68,6 +68,9 @@ type RegisteredClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
+	// ClientName is the client_name the client was registered with. Empty on
+	// rows written before the name became configurable (the default name).
+	ClientName string `json:"client_name,omitempty"`
 }
 
 type ClientStore interface {

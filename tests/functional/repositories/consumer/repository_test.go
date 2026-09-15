@@ -15,7 +15,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
@@ -23,7 +22,6 @@ import (
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
-	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,11 +34,10 @@ func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 }
 
 type fixture struct {
-	repo  *repo.Repository
-	gw    *gatewayrepo.Repository
-	be    *registryrepo.Repository
-	roles *rolerepo.Repository
-	conn  *database.Connection
+	repo *repo.Repository
+	gw   *gatewayrepo.Repository
+	be   *registryrepo.Repository
+	conn *database.Connection
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -75,17 +72,16 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_role, consumer_registry, consumers, roles, registries, gateways CASCADE")
+			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	appender := outboxrepo.NewRepository(conn)
 	return fixture{
-		repo:  repo.NewRepository(conn, appender),
-		gw:    gatewayrepo.NewRepository(conn, appender),
-		be:    newRegistryRepo(conn),
-		roles: rolerepo.NewRepository(conn, appender),
-		conn:  conn,
+		repo: repo.NewRepository(conn, appender),
+		gw:   gatewayrepo.NewRepository(conn, appender),
+		be:   newRegistryRepo(conn),
+		conn: conn,
 	}
 }
 
@@ -114,21 +110,6 @@ func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID,
 		t.Fatalf("backend Save: %v", err)
 	}
 	return b.ID
-}
-
-func seedRole(t *testing.T, roles *rolerepo.Repository, gwID ids.GatewayID, name string) ids.RoleID {
-	t.Helper()
-	role, err := roledomain.New(roledomain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-	})
-	if err != nil {
-		t.Fatalf("role domain.New: %v", err)
-	}
-	if err := roles.Save(context.Background(), role); err != nil {
-		t.Fatalf("role Save: %v", err)
-	}
-	return role.ID
 }
 
 func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
@@ -191,9 +172,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Slug != c.Slug {
 		t.Fatalf("Slug = %q, want %q", got.Slug, c.Slug)
 	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
-	}
 }
 
 func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
@@ -224,57 +202,6 @@ func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
 	}
 }
 
-// TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries pins the write
-// order the routing-mode DB guard imposes: the consumers row has to leave
-// role_based before any registry link can be inserted.
-func TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "rb-to-inline")
-	beID := seedRegistry(t, f.be, gwID, "rb-to-inline-be")
-	roleID := seedRole(t, f.roles, gwID, "rb-to-inline-role")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "rb-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	c.RoutingMode = domain.RoutingModeInline
-	c.RoleIDs = nil
-	c.RegistryIDs = []ids.RegistryID{beID}
-	c.RegistryWeights = map[ids.RegistryID]int{beID: 40}
-	bindings := &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
-	if err := f.repo.Update(ctx, c, bindings); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if got.RoutingMode != domain.RoutingModeInline {
-		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
-	}
-	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
-		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
-	}
-	if got.WeightFor(beID) != 40 {
-		t.Fatalf("WeightFor(%s) = %d, want 40", beID, got.WeightFor(beID))
-	}
-	if len(got.RoleIDs) != 0 {
-		t.Fatalf("RoleIDs = %v, want none", got.RoleIDs)
-	}
-}
-
 // TestRepository_UpdateReplacesRegistryLinks asserts Update persists the whole
 // association set: dropped registries are detached and order is rewritten.
 func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
@@ -289,7 +216,7 @@ func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
 	saveWithRegistries(t, f, c)
 
 	c.RegistryIDs = []ids.RegistryID{third, second}
-	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}); err != nil {
+	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}, nil); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -688,7 +615,7 @@ func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
 
 	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
 	c.UpdatedAt = time.Now().UTC()
-	err := f.repo.Update(ctx, c, nil)
+	err := f.repo.Update(ctx, c, nil, nil)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -699,7 +626,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-u2")
 	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
-	err := f.repo.Update(context.Background(), c, nil)
+	err := f.repo.Update(context.Background(), c, nil, nil)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -764,35 +691,6 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 }
 
-func TestRepository_Save_PersistsRoleBindings(t *testing.T) {
-	f := setupRepo(t)
-	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "pool-roles")
-	roleID := seedRole(t, f.roles, gwID, "role-bind")
-
-	c, err := domain.New(domain.CreateParams{
-		GatewayID:   gwID,
-		Name:        "role-based-consumer",
-		Type:        domain.TypeLLM,
-		RoutingMode: domain.RoutingModeRoleBased,
-		RoleIDs:     []ids.RoleID{roleID},
-	})
-	if err != nil {
-		t.Fatalf("consumer domain.New: %v", err)
-	}
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := f.repo.FindByID(ctx, c.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != roleID {
-		t.Fatalf("RoleIDs = %v, want [%s]", got.RoleIDs, roleID)
-	}
-}
-
 func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
@@ -802,7 +700,7 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	c := validConsumer(t, gwID, "uses-be", beID)
 	saveWithRegistries(t, f, c)
 
-	if err := f.be.Delete(ctx, gwID, beID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, beID); err != nil {
 		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
 	}
 
@@ -815,7 +713,10 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	}
 }
 
-func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.T) {
+// RUN-1501 replaced the ErrHasDependents guard on an active consumer's fallback
+// chain: a registry delete now prunes every routing reference instead of
+// refusing the ones that sit in a fallback chain.
+func TestRepository_DeleteRegistry_PrunesActiveConsumerFallbackChain(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-fbd")
@@ -827,15 +728,28 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    registrydomain.Registries{fbBE},
+		Chain:    registrydomain.Registries{fbBE, poolBE},
 	}
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, fbBE)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, fbBE)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's chain pruned", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, []string{registrydomain.PrunedFallback}, nil)
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback == nil {
+		t.Fatal("Fallback was dropped even though the pool step remains")
+	}
+	if len(got.Fallback.Chain) != 1 || got.Fallback.Chain[0] != poolBE {
+		t.Fatalf("Chain = %v, want [%s]", got.Fallback.Chain, poolBE)
 	}
 }
 
@@ -858,7 +772,7 @@ func TestRepository_DeleteRegistry_IgnoresCrossGatewayFallbackConsumer(t *testin
 		t.Fatalf("Save: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwReg, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwReg, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (cross-gateway consumer must not block)", err)
 	}
 }
@@ -884,12 +798,12 @@ func TestRepository_DeleteRegistry_IgnoresInactiveConsumer(t *testing.T) {
 		t.Fatalf("deactivate consumer: %v", err)
 	}
 
-	if err := f.be.Delete(ctx, gwID, regID); err != nil {
+	if _, err := f.be.Delete(ctx, gwID, regID); err != nil {
 		t.Fatalf("Delete: %v, want success (inactive consumer must not block)", err)
 	}
 }
 
-func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing.T) {
+func TestRepository_DeleteRegistry_NullsActiveConsumerFallbackLosingItsLastStep(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "gw-block")
@@ -907,8 +821,21 @@ func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, gwID, regID)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	registries := newPruningRegistryRepo(f.conn, f.repo)
+	report, err := registries.Delete(ctx, gwID, regID)
+	if err != nil {
+		t.Fatalf("Delete: %v, want the active consumer's fallback nulled", err)
+	}
+	assertPrunedConsumer(t, report, c.ID, nil, []string{registrydomain.PrunedFallback})
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback != nil {
+		t.Fatalf("Fallback = %+v, want nil once its only step is gone", got.Fallback)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("pruned consumer no longer validates: %v", err)
 	}
 }

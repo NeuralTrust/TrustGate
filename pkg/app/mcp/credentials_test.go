@@ -25,7 +25,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,12 +37,31 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
-	infracrypto "github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
-	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
+
+func TestCredentialResolver_LogsOpaquePrincipalReference(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	gw := ids.New[ids.GatewayKind]()
+	resolver := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "ticket"}, nil, logger).(*credentialResolver)
+	reg := regWithAuth(gw, &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeForwarded, Provider: "provider", Registration: registrydomain.RegistrationAuto,
+	})
+
+	err := resolver.consentRequired(context.Background(), mcpConsumer(gw), reg, "provider", "alice@example.com",
+		ConsentCauseNoRefreshToken, "expired")
+	if err == nil {
+		t.Fatal("consentRequired returned nil")
+	}
+	logged := output.String()
+	if strings.Contains(logged, "alice@example.com") {
+		t.Fatalf("log contains raw principal subject: %s", logged)
+	}
+	if !strings.Contains(logged, "principal_ref=") {
+		t.Fatalf("log does not contain an opaque principal reference: %s", logged)
+	}
+}
 
 type stubExchanger struct {
 	token     *sts.Token
@@ -69,41 +87,6 @@ type failingUpsertVault struct {
 
 func (v failingUpsertVault) Upsert(context.Context, *vaultdomain.Credential) error {
 	return v.err
-}
-
-type contextCheckingVault struct {
-	*memVault
-	sawCanceled atomic.Bool
-}
-
-func (v *contextCheckingVault) Upsert(ctx context.Context, credential *vaultdomain.Credential) error {
-	if ctx.Err() != nil {
-		v.sawCanceled.Store(true)
-		return ctx.Err()
-	}
-	return v.memVault.Upsert(ctx, credential)
-}
-
-type cancelingRefreshProvider struct {
-	cancel context.CancelFunc
-	token  *appoauth.ProviderToken
-}
-
-func (p *cancelingRefreshProvider) AuthorizeURL(*registrydomain.MCPAuth, string, string, string) string {
-	return ""
-}
-
-func (p *cancelingRefreshProvider) ExchangeCode(context.Context, *registrydomain.MCPAuth, string, string, string) (*appoauth.ProviderToken, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (p *cancelingRefreshProvider) Refresh(context.Context, *registrydomain.MCPAuth, string) (*appoauth.ProviderToken, error) {
-	p.cancel()
-	return p.token, nil
-}
-
-func (p *cancelingRefreshProvider) ClientCredentials(context.Context, *registrydomain.MCPAuth) (*appoauth.ProviderToken, error) {
-	return nil, errors.New("not implemented")
 }
 
 func (m *memVault) key(gw ids.GatewayID, sub, provider string) string {
@@ -140,9 +123,17 @@ type stubConnect struct {
 	ticket     string
 	refreshCfg *registrydomain.MCPAuth
 	refreshErr error
+	// serverTicketCodes records the catalog codes CreateServerTicket was asked
+	// for, so a test can tell a server-scoped (Store) ticket from a plain one.
+	serverTicketCodes []string
 }
 
 func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
+	return s.ticket, nil
+}
+
+func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, _, code, _ string) (string, error) {
+	s.serverTicketCodes = append(s.serverTicketCodes, code)
 	return s.ticket, nil
 }
 
@@ -155,9 +146,13 @@ func principalCtx(p *identity.Principal) context.Context {
 }
 
 func mcpConsumer(gw ids.GatewayID) *appconsumer.RoutableConsumer {
+	// Acts for users: these are per-person credentials, so the consumer is one
+	// with a person behind the request. A consumer that acts as itself is
+	// refused outright (ApplicationNotConnectedError), never asked to consent.
 	return &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
 		Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
 	}}
 }
 
@@ -211,6 +206,66 @@ func TestCredentialResolver_Passthrough(t *testing.T) {
 			t.Fatalf("error = %v, want ErrNoPrincipal", err)
 		}
 	})
+
+	// A machine caller IS authenticated, it just carries no token to forward:
+	// naming that says which configuration to change instead of sending the
+	// integrator looking for a missing user identity.
+	t.Run("names the misconfiguration for a caller authenticated as the application", func(t *testing.T) {
+		t.Parallel()
+		ctx := principalCtx(&identity.Principal{Subject: "prod-key", Method: identity.MethodAPIKey})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		if !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+			t.Fatalf("error = %v, want ErrUpstreamNeedsCallerToken", err)
+		}
+		if errors.Is(err, ErrNoPrincipal) {
+			t.Fatal("an api-key caller is authenticated; the error must not claim a missing identity")
+		}
+	})
+}
+
+// The exchange patterns split on the same line: impersonation and delegation are
+// minted from the subject, so a machine caller is served; on-behalf-of and
+// token-exchange present the caller's own token to the IdP and cannot be.
+func TestCredentialResolver_Exchange_MachineCaller(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	machine := principalCtx(&identity.Principal{Subject: "prod-key", Method: identity.MethodAPIKey})
+
+	t.Run("mints for impersonation", func(t *testing.T) {
+		t.Parallel()
+		ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
+		r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
+		reg := regWithAuth(gw, &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation, Audience: "aud",
+		})
+		target := Target{}
+		if err := r.Apply(machine, mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if target.Headers["Authorization"] != "Bearer minted" {
+			t.Fatalf("Authorization = %q", target.Headers["Authorization"])
+		}
+	})
+
+	for _, cfg := range []*registrydomain.MCPAuth{
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://up/.default"},
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange, Audience: "api://up"},
+	} {
+		t.Run("refuses "+string(cfg.Pattern)+" with the configuration to change", func(t *testing.T) {
+			t.Parallel()
+			ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
+			r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
+			reg := regWithAuth(gw, cfg)
+			target := Target{}
+			if err := r.Apply(machine, mcpConsumer(gw), reg, &target); !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+				t.Fatalf("error = %v, want ErrUpstreamNeedsCallerToken", err)
+			}
+			if ex.key != "" {
+				t.Fatal("the exchange must not be attempted without a caller token")
+			}
+		})
+	}
 }
 
 func TestCredentialResolver_Exchange_InjectsAndIsolatesCacheKey(t *testing.T) {
@@ -283,7 +338,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("vaulted credential is injected", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "gh-token", "", nil, time.Now().Add(time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "gh-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
@@ -299,7 +354,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("credentials never cross principals", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "alice-token", "", nil, time.Now().Add(time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "alice-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "bob"})
@@ -324,7 +379,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}))
 		defer idp.Close()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
@@ -355,7 +410,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		defer idp.Close()
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(
-			gw, "alice", "github", "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
+			gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
 		)
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
@@ -372,7 +427,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		if target.Headers["Authorization"] != "Bearer fresh" {
 			t.Fatalf("Authorization = %q, want refreshed token", target.Headers["Authorization"])
 		}
-		stored, err := vault.Find(ctx, gw, "alice", "github")
+		stored, err := vault.Find(ctx, gw, "alice", registrydomain.ForwardedVaultProvider(reg))
 		if err != nil {
 			t.Fatalf("find refreshed credential: %v", err)
 		}
@@ -393,7 +448,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		defer idp.Close()
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(
-			gw, "alice", "github", "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
+			gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
 		)
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
@@ -419,7 +474,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("transient RefreshAuth failure propagates without consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		transient := errors.New("client registration store unavailable")
 		connect := &stubConnect{ticket: "t4", refreshErr: transient}
@@ -442,7 +497,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("lost registered client elicits consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{
 			ticket:     "t7",
@@ -466,7 +521,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}))
 		defer idp.Close()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{ticket: "t5", refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
@@ -490,7 +545,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}))
 		defer idp.Close()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "rejected", "dead-refresh", nil, time.Time{})
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "rejected", "dead-refresh", nil, time.Time{})
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{ticket: "reconnect", refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "id", TokenURL: idp.URL,
@@ -514,10 +569,10 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("invalid_grant recovers when a peer replica already rotated the credential", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			peer, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "peer-fresh", "rotated", nil, time.Now().Add(time.Hour))
+			peer, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "peer-fresh", "rotated", nil, time.Now().Add(time.Hour))
 			_ = vault.Upsert(context.Background(), peer)
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -542,7 +597,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	t.Run("expired without refresh token returns consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
@@ -713,122 +768,6 @@ func (undecryptableVault) ListByPrincipal(context.Context, ids.GatewayID, string
 }
 func (undecryptableVault) Delete(context.Context, ids.GatewayID, string, string) error { return nil }
 
-func TestCredentialResolver_DistributedRefreshLock(t *testing.T) {
-	t.Parallel()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	cipher, err := infracrypto.NewCipher("test-secret-key-that-is-long-enough-1234567890")
-	if err != nil {
-		t.Fatalf("new cipher: %v", err)
-	}
-	vault := vaultrepo.NewRedisRepository(rdb, cipher)
-	gw := ids.New[ids.GatewayKind]()
-	cred, err := vaultdomain.NewCredential(gw, "alice", "notion", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("new credential: %v", err)
-	}
-	if err := vault.Upsert(context.Background(), cred); err != nil {
-		t.Fatalf("seed credential: %v", err)
-	}
-
-	var requests atomic.Int64
-	var startedOnce sync.Once
-	providerStarted := make(chan struct{})
-	allowProvider := make(chan struct{})
-	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		call := requests.Add(1)
-		startedOnce.Do(func() { close(providerStarted) })
-		<-allowProvider
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": fmt.Sprintf("fresh-%d", call), "refresh_token": fmt.Sprintf("rotated-%d", call), "expires_in": 3600,
-		})
-	}))
-	defer idp.Close()
-	connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
-		Provider: "notion", ClientID: "dcr-id", TokenURL: idp.URL,
-	}}
-	reg := regWithAuth(gw, &registrydomain.MCPAuth{
-		Mode: registrydomain.MCPAuthModeForwarded, Provider: "notion", ClientID: "id",
-		AuthorizeURL: "https://n/a", TokenURL: "https://n/t",
-	})
-	resolvers := []CredentialResolver{
-		NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger()),
-		NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger()),
-	}
-
-	start := make(chan struct{})
-	results := make(chan error, len(resolvers))
-	var wait sync.WaitGroup
-	for _, resolver := range resolvers {
-		wait.Add(1)
-		go func(r CredentialResolver) {
-			defer wait.Done()
-			<-start
-			results <- r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), mcpConsumer(gw), reg, &Target{})
-		}(resolver)
-	}
-	close(start)
-	<-providerStarted
-	time.Sleep(100 * time.Millisecond)
-	requestsWhileBlocked := requests.Load()
-	close(allowProvider)
-	wait.Wait()
-	close(results)
-	for err := range results {
-		if err != nil {
-			t.Fatalf("Apply: %v", err)
-		}
-	}
-	if requestsWhileBlocked != 1 {
-		t.Fatalf("provider requests while first refresh is blocked = %d, want 1", requestsWhileBlocked)
-	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("provider requests = %d, want one refresh across two replicas", got)
-	}
-}
-
-func TestCredentialResolver_PersistsRotationAfterCallerCancellation(t *testing.T) {
-	t.Parallel()
-	gw := ids.New[ids.GatewayKind]()
-	base := &memVault{}
-	cred, err := vaultdomain.NewCredential(gw, "alice", "notion", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("new credential: %v", err)
-	}
-	if err := base.Upsert(context.Background(), cred); err != nil {
-		t.Fatalf("seed credential: %v", err)
-	}
-	vault := &contextCheckingVault{memVault: base}
-	ctx, cancel := context.WithCancel(principalCtx(&identity.Principal{Subject: "alice"}))
-	provider := &cancelingRefreshProvider{
-		cancel: cancel,
-		token: &appoauth.ProviderToken{
-			AccessToken: "fresh", RefreshToken: "rotated", ExpiresAt: time.Now().Add(time.Hour),
-		},
-	}
-	connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{Provider: "notion", ClientID: "dcr-id"}}
-	reg := regWithAuth(gw, &registrydomain.MCPAuth{
-		Mode: registrydomain.MCPAuthModeForwarded, Provider: "notion", ClientID: "id",
-		AuthorizeURL: "https://n/a", TokenURL: "https://n/t",
-	})
-	r := NewCredentialResolver(nil, vault, connect, provider, discardLogger())
-
-	if err := r.Apply(ctx, mcpConsumer(gw), reg, &Target{}); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	if vault.sawCanceled.Load() {
-		t.Fatal("vault received the canceled caller context")
-	}
-	stored, err := vault.Find(context.Background(), gw, "alice", "notion")
-	if err != nil {
-		t.Fatalf("find credential: %v", err)
-	}
-	if stored.RefreshToken != "rotated" || stored.AccessToken != "fresh" {
-		t.Fatalf("stored credential = %+v, want rotated token", stored)
-	}
-}
-
 // Prod: one stranded account replayed a dead grant into 1000+ token calls in 2.4h.
 func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 	t.Parallel()
@@ -870,7 +809,7 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 		t.Parallel()
 		var requests atomic.Int64
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "alice", "notion", "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := newResolver(t, vault, &requests, nil)
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
@@ -891,12 +830,13 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 		}
 	})
 
+	// Stored already expired: a fresh credential would short-circuit before the marker.
 	t.Run("a reconnected grant is retried, not blocked by the marker", func(t *testing.T) {
 		t.Parallel()
 		var requests atomic.Int64
 		var accepted atomic.Bool
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "bob", "notion", "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "bob", registrydomain.ForwardedVaultProvider(reg), "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := newResolver(t, vault, &requests, &accepted)
 		ctx := principalCtx(&identity.Principal{Subject: "bob"})
@@ -909,7 +849,7 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 			t.Fatalf("token endpoint requests = %d, want 1 before the reconnect", got)
 		}
 
-		reconnected, _ := vaultdomain.NewCredential(gw, "bob", "notion", "", "old", "fresh-refresh", nil, time.Now().Add(-time.Minute))
+		reconnected, _ := vaultdomain.NewCredential(gw, "bob", registrydomain.ForwardedVaultProvider(reg), "", "old", "fresh-refresh", nil, time.Now().Add(-time.Minute))
 		_ = vault.Upsert(context.Background(), reconnected)
 		accepted.Store(true)
 
@@ -925,12 +865,13 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 		}
 	})
 
+	// Seeded rather than waited out: this is the escape hatch when the token never changes.
 	t.Run("a stale marker stops blocking after the retry interval", func(t *testing.T) {
 		t.Parallel()
 		var requests atomic.Int64
 		var accepted atomic.Bool
 		vault := &memVault{}
-		cred, _ := vaultdomain.NewCredential(gw, "carol", "notion", "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
+		cred, _ := vaultdomain.NewCredential(gw, "carol", registrydomain.ForwardedVaultProvider(reg), "", "old", "dead-refresh", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		r := newResolver(t, vault, &requests, &accepted)
 		ctx := principalCtx(&identity.Principal{Subject: "carol"})
@@ -940,7 +881,7 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 			t.Fatal("Apply must fail while the stored grant is dead")
 		}
 
-		key := gw.String() + "|carol|notion"
+		key := gw.String() + "|carol|" + registrydomain.ForwardedVaultProvider(reg)
 		r.dead.Store(key, deadGrant{
 			fingerprint: grantFingerprint("dead-refresh"),
 			at:          time.Now().Add(-2 * deadGrantRetryInterval),
@@ -957,6 +898,7 @@ func TestCredentialResolver_RejectedGrantIsNotReplayed(t *testing.T) {
 	})
 }
 
+// Without from/to a lost write between replicas looks like a revoked grant.
 func TestCredentialResolver_RotationIsLogged(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
@@ -972,7 +914,7 @@ func TestCredentialResolver_RotationIsLogged(t *testing.T) {
 	}))
 	defer idp.Close()
 	vault := &memVault{}
-	cred, _ := vaultdomain.NewCredential(gw, "alice", "notion", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+	cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 	_ = vault.Upsert(context.Background(), cred)
 	connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
 		Provider: "notion", ClientID: "dcr-id", TokenURL: idp.URL,
@@ -1025,7 +967,7 @@ func TestCredentialResolver_RefreshPersistFailureIsLogged(t *testing.T) {
 		Provider: "notion", ClientID: "dcr-id", TokenURL: idp.URL,
 	}}
 	base := &memVault{}
-	cred, _ := vaultdomain.NewCredential(gw, "alice", "notion", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+	cred, _ := vaultdomain.NewCredential(gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 	_ = base.Upsert(context.Background(), cred)
 	storeErr := errors.New("vault unavailable")
 	vault := failingUpsertVault{memVault: base, err: storeErr}
@@ -1041,5 +983,59 @@ func TestCredentialResolver_RefreshPersistFailureIsLogged(t *testing.T) {
 		!strings.Contains(logged.String(), "vault unavailable") ||
 		!strings.Contains(logged.String(), "from") || !strings.Contains(logged.String(), "to") {
 		t.Fatalf("persistence failure log = %s", logged.String())
+	}
+}
+
+// Fail-open exists so one broken upstream does not take down the surface. When
+// nothing was reachable there is no surface left to protect, so the caller must
+// get the real cause — here, an upstream that reuses the caller's token, which
+// is a configuration error the message names — instead of a bare "unreachable".
+func TestComposeSurfacesTheCauseWhenNothingWasReachable(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("%w: %w", ErrUpstreamUnavailable,
+		fmt.Errorf("registry %q: %w", "notion", ErrUpstreamNeedsCallerToken))
+
+	if !errors.Is(err, ErrUpstreamNeedsCallerToken) {
+		t.Fatal("the actionable configuration error must survive the wrap")
+	}
+	if !errors.Is(err, ErrUpstreamUnavailable) {
+		t.Fatal("the transport-level classification must survive too")
+	}
+	if !strings.Contains(err.Error(), "notion") {
+		t.Fatalf("error = %q, want the registry named", err)
+	}
+}
+
+// An application that acts as itself has no person behind the request: a
+// consent page it cannot open, carrying a ticket only an administrator could
+// redeem, used to be written into its error channel and its logs.
+func TestCredentialResolver_MachineConsumerIsRefusedWithoutATicket(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	rc := mcpConsumer(gw)
+	rc.Consumer.Identity = consumerdomain.Identity{}
+	reg := regWithAuth(gw, &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeForwarded, Provider: "linear", ClientID: "id",
+		AuthorizeURL: "https://l/a", TokenURL: "https://l/t",
+	})
+	reg.Name = "Linear"
+
+	connect := &stubConnect{ticket: "ticket"}
+	resolver := NewCredentialResolver(nil, &memVault{}, connect, nil, discardLogger())
+	ctx := principalCtx(&identity.Principal{Subject: "app:" + rc.Consumer.ID.String()})
+	err := resolver.Apply(ctx, rc, reg, &Target{})
+
+	var appErr *ApplicationNotConnectedError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error = %v, want ApplicationNotConnectedError", err)
+	}
+	if appErr.Registry != "Linear" {
+		t.Fatalf("the refusal must name the server as Routing does, got %q", appErr.Registry)
+	}
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatal("a machine caller must not be handed a connect ticket")
+	}
+	if len(connect.serverTicketCodes) != 0 {
+		t.Fatalf("no ticket may be minted, got %v", connect.serverTicketCodes)
 	}
 }

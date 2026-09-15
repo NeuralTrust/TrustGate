@@ -28,14 +28,17 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	vaultmocks "github.com/NeuralTrust/TrustGate/pkg/domain/vault/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
@@ -81,7 +84,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), nil)
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app
@@ -115,7 +118,6 @@ func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) 
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -167,12 +169,115 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), nil)
 	app.Post(mcpPath, handler.Handle)
 
 	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
 	if status != fiber.StatusOK {
 		t.Fatalf("status = %d, want 200 (default IdP must be accepted for a consumer with no attached auth)", status)
+	}
+}
+
+func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
+	t.Parallel()
+	// The MCP Store is not in the gateway's persisted consumer data; the handler
+	// synthesises it from the reserved /store/mcp path and serves it, so the
+	// fixed catalog URL initializes on any gateway.
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	data := appconsumer.NewData(gwID, nil)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (the synthetic Store must initialize at its fixed URL)", res.StatusCode)
+	}
+}
+
+func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
+	t.Parallel()
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	globalPolicy := &policydomain.Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: gwID,
+		Slug:      "per_tool_rate_limiter",
+		Enabled:   true,
+		Global:    true,
+		Stages:    []policydomain.Stage{policydomain.StagePreRequest},
+	}
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	data := appconsumer.NewData(gwID, nil)
+	data.StoreConsumer = &appconsumer.RoutableConsumer{
+		Consumer:   consumerdomain.BuildStoreConsumer(gwID),
+		Policies:   []*policydomain.Policy{globalPolicy},
+		PolicyPlan: appplugins.NewStagePlan(pluginRegistry, []*policydomain.Policy{globalPolicy}, discardLogger()),
+	}
+
+	executor := pluginmocks.NewExecutor(t)
+	executor.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+		return in.Stage == policydomain.StagePreRequest &&
+			len(in.Policies) == 1 && in.Policies[0].ID == globalPolicy.ID &&
+			in.Plan != nil && in.Plan.Has(policydomain.StagePreRequest)
+	})).Return(nil, &appplugins.PluginError{StatusCode: 429, Message: "rate limit exceeded"}).Once()
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), appmcp.NewPluginRunner(executor, discardLogger()), nil),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notion-search","arguments":{}}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if !strings.Contains(string(raw), `"code":-32004`) {
+		t.Fatalf("response = %s, want rate-limit JSON-RPC error", raw)
 	}
 }
 
@@ -186,6 +291,12 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	result := body["result"].(map[string]any)
 	if result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("protocolVersion = %v, want echo of requested", result["protocolVersion"])
+	}
+	// The gateway steers the agent to route through TrustGate rather than wiring
+	// upstream MCP servers directly into the client.
+	instructions, _ := result["instructions"].(string)
+	if !strings.Contains(instructions, "TrustGate") || !strings.Contains(instructions, "bypass") {
+		t.Fatalf("initialize must carry governance instructions, got %q", instructions)
 	}
 }
 
@@ -257,6 +368,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
+			Cause: appmcp.ConsentCauseRegisteredClientLost,
 		}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -276,6 +388,12 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	connectURL, _ := data["connect_url"].(string)
 	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
 		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
+	}
+	// Which condition asked for the reconnect. Without it a client reports every
+	// cause as "the session expired" and the real one is only in the gateway's
+	// logs.
+	if data["cause"] != appmcp.ConsentCauseRegisteredClientLost {
+		t.Fatalf("cause = %v, want the condition that produced the prompt", data["cause"])
 	}
 }
 
@@ -426,8 +544,7 @@ func newAppWithVault(
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
@@ -579,7 +696,6 @@ func TestHandler_StampsJWTEmailOnTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -617,8 +733,10 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	rt := trace.New("trace-id", trace.Metadata{})
 	principal := &identity.Principal{Subject: "dogfood-key", Method: identity.MethodAPIKey}
 	vault := vaultmocks.NewRepository(t)
+	// The credential's name is what called; the account it reaches belongs to
+	// the application, so the vault is read under the consumer's subject.
 	vault.EXPECT().
-		ListByPrincipal(mock.Anything, gwID, "dogfood-key").
+		ListByPrincipal(mock.Anything, gwID, consumerdomain.AppSubject(cons.ID)).
 		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil).
 		Once()
 
@@ -633,8 +751,7 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 

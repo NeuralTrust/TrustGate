@@ -73,6 +73,31 @@ func evaluateTransport() http.RoundTripper {
 	return InternalTransport("trustguard", "trustguard.evaluate")
 }
 
+type recordingRoundTripper struct {
+	calls  int
+	target string
+}
+
+func (rt *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.calls++
+	rt.target = req.URL.String()
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+}
+
+func TestInternalTransportOverInstrumentsTheGivenBase(t *testing.T) {
+	usePropagator(t, propagation.TraceContext{})
+	base := &recordingRoundTripper{}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://guard.invalid/v1/evaluate", nil)
+	require.NoError(t, err)
+	res, err := InternalTransportOver(base, "trustguard", "trustguard.evaluate").RoundTrip(req)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+
+	require.Equal(t, 1, base.calls)
+	require.Equal(t, "http://guard.invalid/v1/evaluate", base.target)
+}
+
 // The gateway is only upstream of anything if it writes traceparent, so both
 // halves of the edge are pinned: the header on the wire, and the client span that
 // hangs off the server span.

@@ -14,18 +14,26 @@
 
 package catalog
 
+import "strings"
+
 // MCPServer is a single entry in the curated catalog of remote MCP servers,
 // used to prefill MCP registry creation.
 type MCPServer struct {
-	Code         string `json:"code"`
-	DisplayName  string `json:"display_name"`
-	Vendor       string `json:"vendor,omitempty"`
-	Category     string `json:"category,omitempty"`
-	Description  string `json:"description,omitempty"`
-	URL          string `json:"url"`
-	Transport    string `json:"transport"`
-	AuthHint     string `json:"auth_hint"` // none | static | oauth
-	RequiresAuth bool   `json:"requires_auth"`
+	Code        string `json:"code"`
+	DisplayName string `json:"display_name"`
+	Vendor      string `json:"vendor,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url"`
+	Transport   string `json:"transport"`
+	AuthHint    string `json:"auth_hint"` // none | static | oauth
+	// AuthMethods lists every auth method an operator may pick when installing
+	// this server: "static" (API key / header) and/or "oauth". It is the
+	// authoritative declaration the UI uses to decide whether to offer a choice
+	// of auth (both present) or a single fixed method. AuthHint stays the coarse
+	// default/prefill; AuthMethods is the full menu. Empty ⇒ derive from AuthHint.
+	AuthMethods  []string `json:"auth_methods,omitempty"`
+	RequiresAuth bool     `json:"requires_auth"`
 	// RequiresConfig reports whether the operator must supply input before the
 	// server can be connected (a required URL variable, a static secret, or a
 	// manual/tenant OAuth client). When false the UI can connect it by default
@@ -34,6 +42,29 @@ type MCPServer struct {
 	// at runtime.
 	RequiresConfig bool `json:"requires_config"`
 	PlatformClient bool `json:"platform_client,omitempty"`
+	// SelfService reports whether a user can install this server from the Store
+	// with nothing configured by an admin: OAuth with dynamic client registration
+	// or a platform-held client, a public server, or a static server whose only
+	// credential is a per-user secret URL variable. False means an admin must
+	// connect an instance first (a shared API key, a manual OAuth client, or a
+	// client_credentials grant).
+	//
+	// Declared per entry in the catalog seed as self_service, not derived: the
+	// answer is a property of the server, and reading it off the entry is how it
+	// stays legible. The one thing that moves it is a platform-held OAuth
+	// client, which the seed cannot know (see applyPlatformOAuth). The zero
+	// value is the conservative answer.
+	SelfService bool `json:"self_service"`
+	// MultiInstance reports whether more than one registry of this server is
+	// meaningful on one gateway: two of them can only differ in what an operator
+	// configures — a templated URL, a credential of its own, an OAuth client they
+	// register — so a server that is one URL behind per-user OAuth holds exactly
+	// one, and a second would be a copy of the first.
+	//
+	// Declared per entry in the catalog seed as multi_instance, like
+	// SelfService, and nothing moves it after load. The zero value is the
+	// conservative answer.
+	MultiInstance bool `json:"multi_instance"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`
@@ -47,9 +78,12 @@ type MCPServer struct {
 	// the catalog UI; the authoritative per-connection tool set is discovered at
 	// runtime by the gateway's introspector (and may be tenant/user-specific).
 	// Empty when the server requires auth to list tools.
-	Tools    []MCPTool      `json:"tools,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Source   string         `json:"source"`
+	Tools []MCPTool `json:"tools,omitempty"`
+	// Capabilities are the three “What you can do” lines the Employee Portal
+	// shows. Seeded when curated; otherwise derived from Tools at catalog load.
+	Capabilities []string       `json:"capabilities,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	Source       string         `json:"source"`
 }
 
 // MCPConfigGuide contains concise operator setup help for a catalog server.
@@ -78,7 +112,22 @@ type MCPURLVariable struct {
 	Secret bool `json:"secret,omitempty"`
 	// In is where the variable is substituted: "path" (default) or "query".
 	In string `json:"in,omitempty"`
+	// Options closes the value to a fixed set the vendor publishes — a region,
+	// an edition. One entry then covers what would otherwise be a near-duplicate
+	// entry per value. Empty means free text.
+	Options []MCPURLVariableOption `json:"options,omitempty"`
 }
+
+// MCPURLVariableOption is one allowed value of a closed URL variable.
+type MCPURLVariableOption struct {
+	// Value is substituted into the template.
+	Value string `json:"value"`
+	// Label is what the operator picks by — "Europe", not "mcp.eu.vanta.com".
+	Label string `json:"label,omitempty"`
+}
+
+// HasOptions reports whether this variable is closed to a fixed set of values.
+func (v MCPURLVariable) HasOptions() bool { return len(v.Options) > 0 }
 
 // MCPAuthHeader describes a header the upstream MCP server expects for
 // authentication (API key / bearer token / custom header).
@@ -131,4 +180,25 @@ type MCPOAuth struct {
 	// TokenEndpointAuthMethod is used with client_credentials:
 	// client_secret_basic (default) or client_secret_post.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+}
+
+// SupportedAuthMethods reports which install methods the entry offers: an
+// explicit AuthMethods list wins; otherwise the coarse AuthHint plus the
+// presence of an OAuth spec / auth headers decide.
+func (s MCPServer) SupportedAuthMethods() (static, oauth bool) {
+	if len(s.AuthMethods) > 0 {
+		for _, m := range s.AuthMethods {
+			switch strings.ToLower(strings.TrimSpace(m)) {
+			case "static":
+				static = true
+			case "oauth":
+				oauth = true
+			}
+		}
+		return static, oauth
+	}
+	hint := strings.ToLower(strings.TrimSpace(s.AuthHint))
+	oauth = hint == "oauth" || s.OAuth != nil
+	static = hint == "static" || len(s.AuthHeaders) > 0
+	return static, oauth
 }

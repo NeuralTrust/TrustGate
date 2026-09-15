@@ -50,8 +50,12 @@ const peerServiceAttribute = "peer.service"
 // would put the request target there, which is the one thing the repo's bounded
 // route enums exist to prevent.
 func InternalTransport(peerService, spanName string) http.RoundTripper {
+	return InternalTransportOver(http.DefaultTransport, peerService, spanName)
+}
+
+func InternalTransportOver(base http.RoundTripper, peerService, spanName string) http.RoundTripper {
 	return otelhttp.NewTransport(
-		http.DefaultTransport,
+		base,
 		otelhttp.WithPropagators(globalPropagator{}),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			return r.Method + " " + spanName

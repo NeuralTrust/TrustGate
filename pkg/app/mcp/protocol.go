@@ -149,6 +149,13 @@ type Target struct {
 	PinKey   string
 	Revision string
 	OpenAPI  *appopenapi.Source
+	// RestrictPrivateNetwork is set when URL was produced by per-user variable
+	// substitution. The dialer then refuses to connect to loopback, private
+	// (RFC 1918), link-local, CGNAT, unspecified or multicast addresses — at
+	// connect time, on the resolved address — so a user-controlled host can not
+	// reach the gateway's own network, even through DNS rebinding. Admin-fixed
+	// URLs leave it false.
+	RestrictPrivateNetwork bool
 }
 
 type RPCError struct {

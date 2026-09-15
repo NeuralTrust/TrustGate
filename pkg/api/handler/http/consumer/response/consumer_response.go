@@ -30,18 +30,18 @@ type ConsumerResponse struct {
 	Name            string                   `json:"name"`
 	Type            string                   `json:"type"`
 	Slug            string                   `json:"slug"`
-	RoutingMode     string                   `json:"routing_mode"`
 	LBConfig        *LBConfigResponse        `json:"lb_config,omitempty"`
 	Headers         map[string]string        `json:"headers,omitempty"`
 	Active          bool                     `json:"active"`
 	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
 	RegistryWeights []RegistryWeightResponse `json:"registry_weights,omitempty"`
-	RoleIDs         []ids.RoleID             `json:"role_ids"`
 	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
 	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
 	FailMode        string                   `json:"fail_mode,omitempty"`
+	Identity        IdentityResponse         `json:"identity"`
+	AuthBinding     AuthBindingResponse      `json:"auth_binding"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
 }
@@ -130,28 +130,24 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if authIDs == nil {
 		authIDs = []ids.AuthID{}
 	}
-	roleIDs := c.RoleIDs
-	if roleIDs == nil {
-		roleIDs = []ids.RoleID{}
-	}
 	return ConsumerResponse{
 		ID:              c.ID,
 		GatewayID:       c.GatewayID,
 		Name:            c.Name,
 		Type:            string(c.Type),
 		Slug:            c.Slug,
-		RoutingMode:     string(c.RoutingMode),
 		LBConfig:        fromLBConfig(c.LBConfig),
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
 		RegistryWeights: fromRegistryWeights(c.RegistryWeights),
-		RoleIDs:         roleIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
 		Toolkit:         fromToolkit(c.Toolkit()),
 		FailMode:        string(c.FailMode()),
+		Identity:        fromIdentity(c.Identity),
+		AuthBinding:     fromAuthBinding(c.AuthBinding),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -287,4 +283,40 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 		},
 		Chain: chain,
 	}
+}
+
+// IdentityResponse says who the consumer acts for.
+type IdentityResponse struct {
+	ActsForUsers  bool   `json:"acts_for_users"`
+	Source        string `json:"source,omitempty"`
+	EndUserHeader bool   `json:"end_user_header,omitempty"`
+}
+
+func fromIdentity(i domain.Identity) IdentityResponse {
+	return IdentityResponse{
+		ActsForUsers:  i.ActsForUsers,
+		Source:        string(i.Source),
+		EndUserHeader: i.EndUserHeader,
+	}
+}
+
+// AuthBindingResponse narrows which callers of a shared auth may enter the
+// consumer; empty lists accept every caller the auth verifies.
+type AuthBindingResponse struct {
+	AllowedClientIDs           []string `json:"allowed_client_ids"`
+	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects"`
+}
+
+func fromAuthBinding(b domain.AuthBinding) AuthBindingResponse {
+	out := AuthBindingResponse{
+		AllowedClientIDs:           b.AllowedClientIDs,
+		AllowedCertificateSubjects: b.AllowedCertificateSubjects,
+	}
+	if out.AllowedClientIDs == nil {
+		out.AllowedClientIDs = []string{}
+	}
+	if out.AllowedCertificateSubjects == nil {
+		out.AllowedCertificateSubjects = []string{}
+	}
+	return out
 }

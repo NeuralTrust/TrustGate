@@ -15,6 +15,7 @@
 package trace
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,9 @@ type Metadata struct {
 	PrincipalSubject string
 	PrincipalMethod  string
 	PrincipalEmail   string
+	// EndUser is the opaque end-user id an application forwarded for
+	// attribution (LLM) or to select per-user connections (MCP).
+	EndUser string
 }
 
 type RequestTrace struct {
@@ -143,6 +147,16 @@ func (t *RequestTrace) SetPrincipalIdentity(subject, method, email string) {
 	if email != "" {
 		t.meta.PrincipalEmail = email
 	}
+}
+
+// SetEndUser records the end-user id the application forwarded.
+func (t *RequestTrace) SetEndUser(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.EndUser = strings.Clone(id)
+	t.mu.Unlock()
 }
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }

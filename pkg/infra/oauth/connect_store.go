@@ -29,7 +29,7 @@ const (
 	ticketPrefix  = "oauth:connect:ticket:"
 	connectPrefix = "oauth:connect:state:"
 	clientPrefix  = "oauth:dcr:client:"
-	ticketTTL     = 15 * time.Minute
+	ticketTTL     = appoauth.ConnectTicketTTL
 	connectTTL    = 10 * time.Minute
 )
 

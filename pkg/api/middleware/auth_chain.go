@@ -117,10 +117,14 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
 	}
-	if token := bearerToken(c); token != "" {
+	// An api key presented as a bearer token is an api key, not a token to hand
+	// to the IdP validators: most MCP clients can only send Authorization, and
+	// the proxy plane has always accepted that form. A bearer without the api-key
+	// marker keeps its precedence over the key headers.
+	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
 		return r.resolveBearer(c.UserContext(), token, scope)
 	}
-	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
+	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
 	return Identity{}, resolver.ErrUnauthenticated
@@ -143,7 +147,11 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	hasOAuth2 := false
 	hasEnabledOAuth2 := false
 	hasEnabledAuth := false
+	signInMatch := false
 	for _, m := range matches {
+		if m.Consumer.WantsSignIn() {
+			signInMatch = true
+		}
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
 			if a.Enabled {
@@ -157,11 +165,17 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 			}
 		}
 	}
-	// The built-in provider bootstraps consumers that carry no credential of
-	// their own. Once a path has an enabled one — an api key, mTLS, or its own
-	// oauth2 IdP — that credential is the only way in: falling back here would
-	// let any platform login reach the consumer without it.
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
+	// The built-in provider bootstraps consumers whose *users sign in* and that
+	// carry no identity provider of their own. Two things exclude it. An enabled
+	// credential on the path — an api key, mTLS, or its own oauth2 IdP — is then
+	// the only way in: falling back here would let any platform login reach the
+	// consumer without it. And a consumer that is not entered by a person —
+	// acts_for_users off, or the app source, where the application authenticates
+	// as itself and names its end users — must not be rescued when it holds no
+	// credential: revoking its last api key would otherwise not lock it down but
+	// open it up, since an empty auth binding accepts any client the provider
+	// verifies.
+	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth && signInMatch
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}

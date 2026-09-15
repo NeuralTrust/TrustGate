@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -39,6 +40,9 @@ type Composer interface {
 	ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error)
 	ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error)
 	GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error)
+	// ToolInventory reports the surface server by server, including the servers
+	// ListTools has to leave out because they are serving nothing yet.
+	ToolInventory(ctx context.Context, rc *appconsumer.RoutableConsumer) (*ToolInventory, error)
 }
 
 var _ Composer = (*composer)(nil)
@@ -47,17 +51,33 @@ type composer struct {
 	dialer    Dialer
 	creds     CredentialResolver
 	discovery DiscoveryCache
+	urlvars   URLValueResolver
 	flight    singleflight.Group
 	logger    *slog.Logger
 }
 
-func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger) Composer {
-	return &composer{
+// ComposerOption configures optional composer collaborators without widening the
+// constructor for the common case.
+type ComposerOption func(*composer)
+
+// WithURLValues wires the resolver that fills a registry's per-user URL
+// placeholders (e.g. {account_url}) from the calling principal's install before
+// dialing. Omitted, servers that declare URL variables cannot be reached.
+func WithURLValues(r URLValueResolver) ComposerOption {
+	return func(c *composer) { c.urlvars = r }
+}
+
+func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger, opts ...ComposerOption) Composer {
+	c := &composer{
 		dialer:    dialer,
 		creds:     creds,
 		discovery: discovery,
 		logger:    logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type binding struct {
@@ -99,19 +119,9 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 			return up.CallTool(ctx, b.tool.Name, arguments)
 		})
 	}
-	// The upstream offers this tool but the consumer's toolkit excludes it: a
-	// policy denial, and the answer must say so. Connecting an account would not
-	// change it, so this is checked before any pending consent — otherwise a
-	// forbidden tool sends the user off to an authorization flow that cannot
-	// grant it.
 	if _, forbidden := comp.denied[name]; forbidden {
 		return nil, &ToolNotPermittedError{Tool: name}
 	}
-	// No reachable upstream exposes this tool. If another upstream is still
-	// awaiting consent it may be the one that owns the tool, so the consent
-	// requirement is the useful answer; otherwise the tool genuinely does not
-	// exist. A tool served by a reachable upstream never reaches this point, so
-	// an unconnected provider can no longer break calls routed elsewhere.
 	if comp.consent != nil {
 		return nil, comp.consent
 	}
@@ -153,76 +163,122 @@ func hostFromURL(raw string) string {
 	return u.Host
 }
 
-// compose discovers every upstream bound to the consumer and returns the tool
-// bindings of the reachable ones. An upstream awaiting user consent never
-// aborts the composition — it is skipped so the linked upstreams still federate
-// — and its consent requirement is reported separately so each caller can
-// decide whether it is relevant: listing ignores it, calling a tool no reachable
-// upstream serves reports it. Only when nothing at all could be composed does it
-// become the returned error.
+// serverSurface is one bound MCP server's contribution to a request: the tool
+// bindings it offered after the consumer's toolkit had its say, the tool names
+// that toolkit turned away, or why the server offered nothing at all. Both the
+// federated surface (compose) and the inventory meta-tool read these, so the
+// list a caller is shown and the tools it can actually call come from one
+// discovery pass and can never disagree.
+type serverSurface struct {
+	registry *registrydomain.Registry
+	bindings []binding
+	denied   []string
+	// policy is what the consumer's toolkit permits on this server. It is known
+	// whether or not the server answered, which is what lets a caller be told
+	// what an unreachable server would offer without overstating it.
+	policy toolPolicy
+	// consent is set when the server is waiting for this principal to connect
+	// their account: it holds no tools yet, and connecting is what changes that.
+	consent *ConsentRequiredError
+	// err is any other reason discovery failed (unreachable, misconfigured).
+	err error
+}
+
+func (c *composer) serverSurfaces(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	registries []*registrydomain.Registry,
+) ([]serverSurface, error) {
+	toolkit := rc.Consumer.Toolkit()
+	out := make([]serverSurface, 0, len(registries))
+	for _, found := range c.discoverTools(ctx, rc, registries) {
+		reg, tools := found.registry, found.items
+		surface := serverSurface{registry: reg, policy: toolkitPolicy(toolkit, reg)}
+		if err := found.err; err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if consentErr, ok := errors.AsType[*ConsentRequiredError](err); ok {
+				surface.consent = consentErr
+				c.logger.Info("mcp composer: skipping upstream pending consent",
+					"registry", reg.Name, "provider", consentErr.Provider)
+			} else {
+				surface.err = err
+			}
+			out = append(out, surface)
+			continue
+		}
+		surface.bindings = selectTools(toolkit, reg, tools)
+		if toolkit != nil {
+			allowed := make(map[string]struct{}, len(surface.bindings))
+			for _, b := range surface.bindings {
+				allowed[b.tool.Name] = struct{}{}
+			}
+			for _, t := range tools {
+				if _, ok := allowed[t.Name]; !ok {
+					surface.denied = append(surface.denied, t.Name)
+				}
+			}
+		}
+		out = append(out, surface)
+	}
+	return out, nil
+}
+
 func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) (*composition, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
+	surfaces, err := c.serverSurfaces(ctx, rc, registries)
+	if err != nil {
+		return nil, err
+	}
 	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
-	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []binding
 	var pendingConsent *ConsentRequiredError
+
+	var firstSkipped error
 	denied := make(map[string]struct{})
 	reachable := 0
-	for _, found := range c.discoverTools(ctx, rc, registries) {
-		reg, tools := found.registry, found.items
-		if err := found.err; err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+	for _, surface := range surfaces {
+		reg := surface.registry
+		if surface.consent != nil {
+			if pendingConsent == nil {
+				pendingConsent = surface.consent
 			}
-			var consentErr *ConsentRequiredError
-			if errors.As(err, &consentErr) {
-				// Partial consent is allowed on the connect page — skip unlinked
-				// upstreams during federation and serve tools from linked ones.
-				if pendingConsent == nil {
-					pendingConsent = consentErr
-				}
-				c.logger.Info("mcp composer: skipping upstream pending consent",
-					"registry", reg.Name, "provider", consentErr.Provider)
-				continue
-			}
+			continue
+		}
+		if surface.err != nil {
 			if !failOpen {
-				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
+				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, surface.err)
+			}
+			if firstSkipped == nil {
+				firstSkipped = fmt.Errorf("registry %q: %w", reg.Name, surface.err)
 			}
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
-				"registry", reg.Name, "error", err)
+				"registry", reg.Name, "error", surface.err)
 			continue
 		}
 		reachable++
-		kept := selectTools(toolkit, reg, tools)
-		candidates = append(candidates, kept...)
-		// Remember what the toolkit turned away. A call for one of these is a
-		// policy denial, and answering it with "not found" — or worse, with a
-		// consent prompt for an unrelated upstream — hides the real reason.
-		if toolkit != nil {
-			allowed := make(map[string]struct{}, len(kept))
-			for _, b := range kept {
-				allowed[b.tool.Name] = struct{}{}
-			}
-			for _, t := range tools {
-				if _, ok := allowed[t.Name]; !ok {
-					denied[t.Name] = struct{}{}
-				}
-			}
+		candidates = append(candidates, surface.bindings...)
+		for _, name := range surface.denied {
+			denied[name] = struct{}{}
+			names := resolveExposedNames([]exposedName{exposedNameFor(name, reg)}, len(registries) > 1)
+			denied[names[0]] = struct{}{}
 		}
 	}
 	if reachable == 0 {
-		// Nothing could be composed. A pending consent requirement is the more
-		// actionable explanation, so it wins over a bare "unreachable".
 		if pendingConsent != nil {
 			return nil, pendingConsent
 		}
+		if firstSkipped != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, firstSkipped)
+		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	bindings := resolveNames(candidates)
+	bindings := resolveNames(candidates, registries)
 	// A name that another registry ends up exposing was never really denied.
 	for _, b := range bindings {
 		delete(denied, b.exposed)
@@ -230,13 +286,44 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	return &composition{bindings: bindings, denied: denied, consent: pendingConsent}, nil
 }
 
-// composition is the consumer's effective MCP surface for one request: the tool
-// bindings it may use, the tools its toolkit turned away, and any upstream that
-// is still awaiting user consent.
 type composition struct {
 	bindings []binding
 	denied   map[string]struct{}
 	consent  *ConsentRequiredError
+}
+
+type toolPolicy struct {
+	restricted bool
+	names      []string
+}
+
+func (p toolPolicy) permits(tool string) bool {
+	if !p.restricted {
+		return true
+	}
+	return slices.Contains(p.names, tool)
+}
+
+// toolkitPolicy reads off what the toolkit allows on one server, by the same
+// rule selectTools applies to the tools it discovered: no toolkit allows
+// everything, a wildcard entry allows everything this server offers, and named
+// entries allow exactly those — a toolkit that names nothing for the server
+// allowing nothing.
+func toolkitPolicy(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry) toolPolicy {
+	if toolkit == nil {
+		return toolPolicy{}
+	}
+	entries := toolkit.EntriesFor(reg.ID)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Tool == consumerdomain.ToolWildcard {
+			return toolPolicy{}
+		}
+		if e.Tool != "" {
+			names = append(names, e.Tool)
+		}
+	}
+	return toolPolicy{restricted: true, names: names}
 }
 
 func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {

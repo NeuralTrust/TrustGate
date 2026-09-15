@@ -127,26 +127,26 @@ func (_c *ConnectService_ChainURL_Call) RunAndReturn(run func(context.Context, s
 	return _c
 }
 
-func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string) (string, error) {
-	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+func (_m *ConnectService) CreateAppTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string, code string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 
 	if len(ret) == 0 {
-		panic("no return value specified for CreateAPIKeyTicket")
+		panic("no return value specified for CreateAppTicket")
 	}
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)); ok {
-		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) string); ok {
-		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) error); ok {
-		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -154,27 +154,79 @@ func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.
 	return r0, r1
 }
 
-type ConnectService_CreateAPIKeyTicket_Call struct {
+type ConnectService_CreateAppTicket_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) CreateAPIKeyTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}) *ConnectService_CreateAPIKeyTicket_Call {
-	return &ConnectService_CreateAPIKeyTicket_Call{Call: _e.mock.On("CreateAPIKeyTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)}
+func (_e *ConnectService_Expecter) CreateAppTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}, code interface{}) *ConnectService_CreateAppTicket_Call {
+	return &ConnectService_CreateAppTicket_Call{Call: _e.mock.On("CreateAppTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers, code)}
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string)) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string, code string)) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string), args[7].(string))
 	})
 	return _c
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateAppTicket_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAppTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string, string) (string, error)) *ConnectService_CreateAppTicket_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) CredentialUsable(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry) (bool, error) {
+	ret := _m.Called(ctx, gatewayID, reg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CredentialUsable")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)); ok {
+		return rf(ctx, gatewayID, reg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) bool); ok {
+		r0 = rf(ctx, gatewayID, reg)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) error); ok {
+		r1 = rf(ctx, gatewayID, reg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CredentialUsable_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CredentialUsable(ctx interface{}, gatewayID interface{}, reg interface{}) *ConnectService_CredentialUsable_Call {
+	return &ConnectService_CredentialUsable_Call{Call: _e.mock.On("CredentialUsable", ctx, gatewayID, reg)}
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry)) *ConnectService_CredentialUsable_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(*registry.Registry))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) Return(_a0 bool, _a1 error) *ConnectService_CredentialUsable_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CredentialUsable_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], *registry.Registry) (bool, error)) *ConnectService_CredentialUsable_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -231,16 +283,68 @@ func (_c *ConnectService_CreateTicket_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
-func (_m *ConnectService) Disconnect(ctx context.Context, ticketID string, provider string) error {
-	ret := _m.Called(ctx, ticketID, provider)
+func (_m *ConnectService) CreateServerTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, code string, instanceID string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, code, instanceID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateServerTicket")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, code, instanceID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, code, instanceID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, code, instanceID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CreateServerTicket_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CreateServerTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, code interface{}, instanceID interface{}) *ConnectService_CreateServerTicket_Call {
+	return &ConnectService_CreateServerTicket_Call{Call: _e.mock.On("CreateServerTicket", ctx, gatewayID, principalSub, consumerPath, code, instanceID)}
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, code string, instanceID string)) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(string), args[5].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, string, string) (string, error)) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+func (_m *ConnectService) Disconnect(ctx context.Context, ticketID string, provider string, instanceID string) error {
+	ret := _m.Called(ctx, ticketID, provider, instanceID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Disconnect")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
-		r0 = rf(ctx, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, ticketID, provider, instanceID)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -252,13 +356,13 @@ type ConnectService_Disconnect_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) Disconnect(ctx interface{}, ticketID interface{}, provider interface{}) *ConnectService_Disconnect_Call {
-	return &ConnectService_Disconnect_Call{Call: _e.mock.On("Disconnect", ctx, ticketID, provider)}
+func (_e *ConnectService_Expecter) Disconnect(ctx interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Disconnect_Call {
+	return &ConnectService_Disconnect_Call{Call: _e.mock.On("Disconnect", ctx, ticketID, provider, instanceID)}
 }
 
-func (_c *ConnectService_Disconnect_Call) Run(run func(ctx context.Context, ticketID string, provider string)) *ConnectService_Disconnect_Call {
+func (_c *ConnectService_Disconnect_Call) Run(run func(ctx context.Context, ticketID string, provider string, instanceID string)) *ConnectService_Disconnect_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
 	})
 	return _c
 }
@@ -268,7 +372,7 @@ func (_c *ConnectService_Disconnect_Call) Return(_a0 error) *ConnectService_Disc
 	return _c
 }
 
-func (_c *ConnectService_Disconnect_Call) RunAndReturn(run func(context.Context, string, string) error) *ConnectService_Disconnect_Call {
+func (_c *ConnectService_Disconnect_Call) RunAndReturn(run func(context.Context, string, string, string) error) *ConnectService_Disconnect_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -435,8 +539,8 @@ func (_c *ConnectService_RefreshAuth_Call) RunAndReturn(run func(context.Context
 	return _c
 }
 
-func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID string, provider string) (string, error) {
-	ret := _m.Called(ctx, baseURL, ticketID, provider)
+func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string) (string, error) {
+	ret := _m.Called(ctx, baseURL, ticketID, provider, instanceID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")
@@ -444,17 +548,17 @@ func (_m *ConnectService) Start(ctx context.Context, baseURL string, ticketID st
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) (string, error)); ok {
-		return rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) (string, error)); ok {
+		return rf(ctx, baseURL, ticketID, provider, instanceID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) string); ok {
-		r0 = rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string) string); ok {
+		r0 = rf(ctx, baseURL, ticketID, provider, instanceID)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
-		r1 = rf(ctx, baseURL, ticketID, provider)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string) error); ok {
+		r1 = rf(ctx, baseURL, ticketID, provider, instanceID)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -466,13 +570,13 @@ type ConnectService_Start_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, ticketID interface{}, provider interface{}) *ConnectService_Start_Call {
-	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, ticketID, provider)}
+func (_e *ConnectService_Expecter) Start(ctx interface{}, baseURL interface{}, ticketID interface{}, provider interface{}, instanceID interface{}) *ConnectService_Start_Call {
+	return &ConnectService_Start_Call{Call: _e.mock.On("Start", ctx, baseURL, ticketID, provider, instanceID)}
 }
 
-func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, ticketID string, provider string)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) Run(run func(ctx context.Context, baseURL string, ticketID string, provider string, instanceID string)) *ConnectService_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string))
 	})
 	return _c
 }
@@ -482,7 +586,7 @@ func (_c *ConnectService_Start_Call) Return(_a0 string, _a1 error) *ConnectServi
 	return _c
 }
 
-func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string) (string, error)) *ConnectService_Start_Call {
+func (_c *ConnectService_Start_Call) RunAndReturn(run func(context.Context, string, string, string, string) (string, error)) *ConnectService_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -5,7 +5,7 @@ traffic between applications, AI agents, and LLM providers.
 
 <div align="center">
 
-<img src="assets/ai-agent-security-hero-trustguard-policies-dashboard-updated-2x.webp" alt="TrustGate" width="100%"/>
+<img src="assets/trustgate-hero.png" alt="TrustGate" width="100%"/>
 
 **A security-first LLM and AI Agent gateway built in Go.**
 
@@ -57,15 +57,17 @@ TrustGate is purpose-built for teams that need **enterprise-grade governance** o
 curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
 ```
 
-This clones the repo, seeds `.env`, and starts the full stack. When Go is installed, it also builds the `trustgate` CLI.
+This clones the repo, seeds `.env` (including `SERVER_SECRET_KEY`), and starts the full stack. When Go is installed, it also builds the `trustgate` CLI.
 
 ### Option B: Docker Compose
 
 ```bash
 git clone https://github.com/NeuralTrust/TrustGate.git && cd TrustGate
-cp .env.example .env
 make up
 ```
+
+`make up` creates `.env` and generates `SERVER_SECRET_KEY` when needed. On Apple
+Silicon the first image build runs under `linux/amd64` emulation and takes longer.
 
 ### Verify it's running
 
@@ -207,7 +209,6 @@ flowchart LR
     subgraph Infra["Infrastructure"]
         PG[("Postgres")]
         RD[("Redis")]
-        KFK[["Kafka"]]
     end
 
     APP -->|API key| PROXY
@@ -220,7 +221,6 @@ flowchart LR
     PROXY --- PG
     PROXY --- RD
     MCP --- PG
-    PROXY -->|telemetry| KFK
 ```
 
 | Plane | Port | Responsibilities |
@@ -290,7 +290,6 @@ SERVER_MCP_PORT=8082
 # Infrastructure
 DB_HOST=localhost
 REDIS_HOST=localhost
-KAFKA_BROKERS=localhost:9092
 ```
 
 See [`.env.example`](.env.example) for all options.
@@ -347,7 +346,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 The **Admin** plane (`:8080`) configures gateways, providers, and consumers. The **Proxy** (`:8081`) serves OpenAI-compatible traffic. End-to-end setup:
 
 ```bash
-make up   # admin :8080, proxy :8081 + Postgres/Redis/Kafka
+make up   # admin :8080, proxy :8081, mcp :8082 + Postgres/Redis
 
 ADMIN="http://localhost:8080"
 PROXY="http://localhost:8081"

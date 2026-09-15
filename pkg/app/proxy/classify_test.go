@@ -73,6 +73,7 @@ func TestClassifyOutcome(t *testing.T) {
 			OutcomeTerminal,
 		},
 		{"invalid payload is terminal", nil, ErrInvalidRequestPayload, fallbackTriggers{}, OutcomeTerminal},
+		{"context window exceeded is terminal", nil, ErrContextWindowExceeded, fallbackTriggers{}, OutcomeTerminal},
 		{"capability unsupported is terminal", nil, ErrCapabilityNotSupported, fallbackTriggers{}, OutcomeTerminal},
 		{"nil response no error", nil, nil, fallbackTriggers{}, OutcomeRetryable},
 		{"committed stream", committedStream, nil, fallbackTriggers{}, OutcomeSuccess},

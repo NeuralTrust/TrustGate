@@ -16,6 +16,7 @@ package mcp
 
 import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -31,7 +32,7 @@ func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []strin
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
-				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+				"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, connections),
 			},
 		},
 	}

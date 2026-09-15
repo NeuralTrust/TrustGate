@@ -106,6 +106,12 @@ func TestConnectionToolDefinitionsListOnlyPendingProviders(t *testing.T) {
 	notion := marshalTool(t, defs[1])
 	require.Equal(t, "trustgate_connect_notion", notion["name"])
 	require.Contains(t, notion["description"], "needs to be reconnected")
+
+	// A gateway tool has to be listed to be callable, so a client asked what the
+	// user has reads it alongside their own tools. Both definitions say they are
+	// not part of that answer.
+	require.Contains(t, linear["description"], appmcp.GatewayToolDisclaimer)
+	require.Contains(t, notion["description"], appmcp.GatewayToolDisclaimer)
 }
 
 func TestConnectionToolDefinitionsFailOpen(t *testing.T) {
@@ -154,7 +160,10 @@ func TestConnectionToolCallReturnsOptionalConnectLink(t *testing.T) {
 		result.StructuredContent["connect_url"],
 	)
 	require.Equal(t, "user_confirmation_required", result.StructuredContent["action"])
-	require.Contains(t, result.Content[0].Text, "let them decide whether to open it")
+	require.Equal(t, "Connect linear", result.StructuredContent["connect_label"])
+	// The link is presented as a labeled markdown link, not a raw URL.
+	require.Contains(t, result.Content[0].Text, "[Connect linear](https://mcp.example.com/research/mcp/connect?ticket=ticket%2B%2F%3F)")
+	require.Contains(t, result.Content[0].Text, "Let them decide whether to open it")
 	require.True(t, tool.Handles("trustgate_connect_linear"))
 	require.False(t, tool.Handles("echo"))
 }
@@ -174,6 +183,43 @@ func TestConnectionToolCallRequiresPrincipalAndValidOrigin(t *testing.T) {
 	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
 	_, err = tool.Call(ctx, rc, "javascript:alert(1)", "trustgate_connect_linear")
 	require.ErrorIs(t, err, appmcp.ErrConnectionToolUnavailable)
+}
+
+func TestConnectionToolCallSatisfiesPublishedOutputSchema(t *testing.T) {
+	t.Parallel()
+	gw := &recordingGateway{
+		ticket:   "ticket",
+		statuses: []appoauth.ProviderStatus{{Provider: "notion", Registry: "notion-mcp"}},
+	}
+	tool, err := appmcp.NewConnectionTool(gw)
+	require.NoError(t, err)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Slug:      "research",
+	}}
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+
+	defs := tool.Definitions(ctx, rc)
+	require.Len(t, defs, 1)
+	schema, ok := marshalTool(t, defs[0])["outputSchema"].(map[string]any)
+	require.True(t, ok)
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, schema["additionalProperties"])
+
+	raw, err := tool.Call(ctx, rc, "https://mcp.example.com", "trustgate_connect_notion")
+	require.NoError(t, err)
+	var result struct {
+		StructuredContent map[string]string `json:"structuredContent"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.NotEmpty(t, result.StructuredContent)
+	for key := range result.StructuredContent {
+		require.Contains(t, properties, key, "structuredContent key %q missing from outputSchema", key)
+	}
+	for _, required := range schema["required"].([]any) {
+		require.Contains(t, result.StructuredContent, required.(string))
+	}
 }
 
 func TestConnectionToolCallWrapsTicketFailure(t *testing.T) {

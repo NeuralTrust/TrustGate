@@ -23,20 +23,24 @@ import (
 )
 
 type ListModelsHandler struct {
-	service      appcatalog.Service
-	availability appcatalog.RegistryAvailability
+	service    appcatalog.Service
+	serverless appcatalog.ServerlessFilter
+	live       appcatalog.LiveAvailabilityFilter
+	liveList   appcatalog.LiveCatalogLister
 }
 
 func NewListModelsHandler(
 	service appcatalog.Service,
-	availability appcatalog.RegistryAvailability,
+	serverless appcatalog.ServerlessFilter,
+	live appcatalog.LiveAvailabilityFilter,
+	liveList appcatalog.LiveCatalogLister,
 ) *ListModelsHandler {
-	return &ListModelsHandler{service: service, availability: availability}
+	return &ListModelsHandler{service: service, serverless: serverless, live: live, liveList: liveList}
 }
 
 // Handle godoc
 // @Summary      List model catalog
-// @Description  Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.
+// @Description  Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.
 // @Tags         catalog
 // @Produce      json
 // @Security     BearerAuth
@@ -59,12 +63,26 @@ func (h *ListModelsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, gatewayErr := ids.Parse[ids.GatewayKind](c.Query("gateway_id"))
 	registryID, registryErr := ids.Parse[ids.RegistryKind](c.Query("registry_id"))
 	if gatewayErr == nil && registryErr == nil {
-		models = h.availability.Narrow(c.UserContext(), appcatalog.ServerlessFilterInput{
+		in := appcatalog.ServerlessFilterInput{
 			ProviderCode: providerCode,
 			GatewayID:    gatewayID,
 			RegistryID:   registryID,
 			Models:       models,
-		})
+		}
+		// Bedrock narrows through the AWS control plane; every other provider
+		// narrows through its authenticated models endpoint. Each filter no-ops
+		// on providers it does not own.
+		models = h.serverless.Filter(c.UserContext(), in)
+		in.Models = models
+		models = h.live.Filter(c.UserContext(), in)
+
+		// A self-hosted endpoint has no catalog rows at all, so there was nothing
+		// to narrow and the caller got an empty list for a registry that serves
+		// hundreds of models. Ask it what it has (RUN-1552).
+		if len(models) == 0 {
+			in.Models = nil
+			models = h.liveList.List(c.UserContext(), in)
+		}
 	}
 
 	out := make([]response.ModelResponse, 0, len(models))

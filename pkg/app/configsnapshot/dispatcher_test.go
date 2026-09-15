@@ -27,7 +27,6 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
@@ -61,7 +60,6 @@ func newDispatchCompiler(gateways appsnapshot.GatewayReader) *appsnapshot.Compil
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
 		nil,
 	)

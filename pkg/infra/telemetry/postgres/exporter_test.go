@@ -44,7 +44,7 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "t1",
 		GatewayID:     "g1",
-		TenantID:        "team1",
+		TenantID:      "team1",
 		OccurredOn:    42,
 		IP:            "1.2.3.4",
 		Request:       events.Request{Body: "req-body", Headers: map[string][]string{"h": {"v"}}},

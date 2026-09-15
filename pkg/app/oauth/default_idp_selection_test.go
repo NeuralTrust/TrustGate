@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
 )
@@ -81,20 +82,119 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":    {{GatewayID: gw}},
+		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":     {{GatewayID: gw}},
 	}}
 	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
 
-	_, err = p.authForResource(t.Context(), "https://gw.example.com/api-key/mcp")
-	var oauthError *OAuthError
-	require.True(t, errors.As(err, &oauthError))
-	require.Equal(t, "invalid_target", oauthError.Code)
+	for _, resource := range []string{"https://gw.example.com/api-key/mcp", "https://gw.example.com/nil-consumer"} {
+		_, err = p.authForResource(t.Context(), resource)
+		var oauthError *OAuthError
+		require.True(t, errors.As(err, &oauthError), resource)
+		require.Equal(t, "invalid_target", oauthError.Code, resource)
+	}
 
 	// A consumer with no credential of its own still reaches the default.
 	auth, err := p.authForResource(t.Context(), "https://gw.example.com/bare/mcp")
 	require.NoError(t, err)
 	require.True(t, appauth.IsDefaultIdP(auth))
+}
+
+// Whether a login may be brokered here is decided by Consumer.WantsSignIn,
+// the same predicate the request-time auth chain asks. So the identity source
+// is load-bearing, not just acts_for_users: a platform-source consumer's
+// residual api key or client certificate is not its credential and must not
+// suppress the login, while for an app-source consumer the api key is the only
+// legal credential and the login must stay refused — advertising one there
+// walked the user through a flow the chain then 401'd (RUN-1501).
+func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true)
+	require.NoError(t, err)
+	mtls := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeMTLS,
+		Enabled:   true,
+	}
+	validationOnlyIdP := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeOAuth2,
+		Enabled:   true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
+
+	tests := []struct {
+		name        string
+		identity    consumerdomain.Identity
+		store       bool
+		auths       []*authdomain.Auth
+		wantDefault bool
+	}{
+		{
+			name:        "platform source with residual api key",
+			identity:    platformUsersIdentity(),
+			auths:       []*authdomain.Auth{apiKey},
+			wantDefault: true,
+		},
+		{
+			name:        "platform source with residual client certificate",
+			identity:    platformUsersIdentity(),
+			auths:       []*authdomain.Auth{mtls},
+			wantDefault: true,
+		},
+		{name: "platform source with no links", identity: platformUsersIdentity(), wantDefault: true},
+		// A platform-source consumer whose only link is a validation-only
+		// oauth2 keeps the refusal rather than routing to the default IdP: the
+		// operator pinned that provider, and overriding an explicit pin with
+		// the built-in default would widen who gets in on the gateway's own
+		// initiative. ValidateAuthConfig already refuses the pairing at write
+		// time, so this state is only reachable through a residual row and
+		// failing closed is the deliberate dead end (RUN-1501).
+		{
+			name:     "platform source with validation only idp stays a dead end",
+			identity: platformUsersIdentity(),
+			auths:    []*authdomain.Auth{validationOnlyIdP},
+		},
+		{name: "app source with api key", identity: appUsersIdentity(), auths: []*authdomain.Auth{apiKey}},
+		{name: "app source with client certificate", identity: appUsersIdentity(), auths: []*authdomain.Auth{mtls}},
+		{name: "store consumer with residual api key", store: true, auths: []*authdomain.Auth{apiKey}, wantDefault: true},
+		{name: "machine consumer brings own credential", auths: []*authdomain.Auth{apiKey}},
+		{name: "machine consumer brings own client certificate", auths: []*authdomain.Auth{mtls}},
+		{name: "machine consumer with no links", wantDefault: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cons := mcpConsumer(gw, tt.identity)
+			if tt.store {
+				cons = consumerdomain.BuildStoreConsumer(gw)
+			}
+			paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+				"/v1/mcp/app": {{GatewayID: gw, Consumer: cons, Auths: tt.auths}},
+			}}
+			p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
+
+			auth, err := p.authForResource(t.Context(), "https://gw.example.com/v1/mcp/app")
+			if tt.wantDefault {
+				require.NoError(t, err)
+				require.True(t, appauth.IsDefaultIdP(auth))
+				require.Equal(t, gw, auth.GatewayID)
+				return
+			}
+			var oauthError *OAuthError
+			require.True(t, errors.As(err, &oauthError))
+			require.Equal(t, "invalid_target", oauthError.Code)
+		})
+	}
 }
 
 func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {

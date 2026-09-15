@@ -39,3 +39,26 @@ type ToolNotPermittedError struct {
 func (e *ToolNotPermittedError) Error() string {
 	return fmt.Sprintf("mcp: tool %q is not permitted for this consumer", e.Tool)
 }
+
+// ApplicationNotConnectedError reports a server the calling application has no
+// account on. It is the machine's counterpart to ConsentRequiredError: a
+// consumer that acts as itself has no person behind the request, so there is
+// nobody to walk an OAuth page — and minting a connect ticket for it would drop
+// a bearer capability into the application's error channel and its logs, where
+// it is of no use to the only party who can redeem it. The administrator
+// authorizes the application from Consumers → Routing instead.
+type ApplicationNotConnectedError struct {
+	Provider string
+	Registry string
+}
+
+func (e *ApplicationNotConnectedError) Error() string {
+	server := e.Registry
+	if server == "" {
+		server = e.Provider
+	}
+	return fmt.Sprintf(
+		"mcp: this application has no account on %q; an administrator must authorize it from Consumers → Routing",
+		server,
+	)
+}

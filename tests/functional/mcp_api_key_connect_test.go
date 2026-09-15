@@ -394,14 +394,19 @@ func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
 	})
 }
 
-func TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals(t *testing.T) {
+// The linked upstream account belongs to the application, not to the key that
+// linked it: every credential of one consumer reaches it, and no credential of
+// another consumer does. That is the whole point of keying the vault by
+// app:<consumer_id> — rotating or adding a key must not strand the account, and
+// two applications must never cross.
+func TestMCPAPIKeyConnect_GrantBelongsToTheApplicationNotTheKey(t *testing.T) {
 	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
 
 	fx := newForwardedFixture(t)
 	consumerA, keyA := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
-	_, foreignKey := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
-	otherAuthID, otherKey := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-key"))
-	AttachAuth(t, fx.gatewayID, consumerA, otherAuthID)
+	consumerB, keyB := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
+	secondAuthID, secondKeyOfA := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-key"))
+	AttachAuth(t, fx.gatewayID, consumerA, secondAuthID)
 
 	host := mcpHostOf(t, fx.gatewayID)
 	slugA := ConsumerSlug(t, consumerA)
@@ -422,13 +427,25 @@ func TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals(t *testing.T
 	requireBearerMatches(t, fx.idp.bearer(), sharedBearer)
 	require.Equal(t, 1, fx.idp.tokenExchanges(), "reusing the stored grant must not run consent again")
 
+	// A different key of the same application — what a rotation leaves behind —
+	// reaches the same account without a second consent.
 	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(otherKey), "tools/call", echoToolCall())
-	requireConsentRequired(t, status, body)
-	_, seenOther := fx.capture.observed()
-	require.Zero(t, seenOther, "a second api-key principal must not reach the upstream on the first principal's grant")
+	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(secondKeyOfA), "tools/call", echoToolCall())
+	requireRPCSucceeded(t, status, body)
+	rotatedBearer, seenRotated := fx.capture.observed()
+	require.GreaterOrEqual(t, seenRotated, 1, "another credential of the same application must reach the upstream")
+	requireBearerMatches(t, fx.idp.bearer(), rotatedBearer)
+	require.Equal(t, 1, fx.idp.tokenExchanges(), "the account is the application's: no new consent, no refresh exchange")
 
-	rejected := mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {foreignKey}})
+	// Another application bound to the same server has its own account, and has
+	// not linked one, so it is asked to connect instead of borrowing this grant.
+	fx.capture.reset()
+	status, body = mcpRPC(t, fx.gatewayID, consumerB, apiKeyHeaders(keyB), "tools/call", echoToolCall())
+	requireConsentRequired(t, status, body)
+	_, seenB := fx.capture.observed()
+	require.Zero(t, seenB, "a second application must not reach the upstream on the first one's grant")
+
+	rejected := mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {keyB}})
 	defer func() { _ = rejected.Body.Close() }()
 	require.Equal(t, http.StatusUnauthorized, rejected.StatusCode)
 }

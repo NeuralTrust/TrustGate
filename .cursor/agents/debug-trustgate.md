@@ -53,7 +53,7 @@ Run these steps in order. Skip a step only if its goal is already satisfied.
 
 5. **Verify the data in Postgres** (this is the core check — no MCP needed)
    - Inspect via the container so no host `psql` is required:
-     `docker compose exec -T postgres psql -U postgres -d trustgate -c "<SQL>"`
+     `docker compose exec -T postgres psql -U trustgate -d trustgate -c "<SQL>"`
    - Useful queries:
      - List tables: `\dt`
      - Migration state: `SELECT * FROM migration_version ORDER BY 1;`
@@ -72,11 +72,11 @@ Run these steps in order. Skip a step only if its goal is already satisfied.
 
 ```bash
 # tables
-docker compose exec -T postgres psql -U postgres -d trustgate -c "\dt"
+docker compose exec -T postgres psql -U trustgate -d trustgate -c "\dt"
 # describe a table
-docker compose exec -T postgres psql -U postgres -d trustgate -c "\d+ <table>"
+docker compose exec -T postgres psql -U trustgate -d trustgate -c "\d+ <table>"
 # latest rows
-docker compose exec -T postgres psql -U postgres -d trustgate -c "SELECT * FROM <table> ORDER BY created_at DESC LIMIT 10;"
+docker compose exec -T postgres psql -U trustgate -d trustgate -c "SELECT * FROM <table> ORDER BY created_at DESC LIMIT 10;"
 ```
 
 ## Safety rules
