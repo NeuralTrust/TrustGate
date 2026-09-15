@@ -941,9 +941,15 @@ tool's description says what its answer excludes, and the answer itself ends by
 saying it is the whole list. The text body carries it, not only
 `structuredContent`, because the text is the part many clients hand the model.
 
-It is offered to every consumer with an MCP server bound, and withheld from a
-deny-all toolkit — a consumer meant to expose nothing gets no gateway tools
-either, the rule the connect tool already followed (`metaToolsPermitted`).
+It is offered to every consumer the gateway may add its own tools to, and
+withheld from a deny-all toolkit — a consumer meant to expose nothing gets no
+gateway tools either, the rule the connect tool already followed
+(`metaToolsPermitted`). An empty surface is not an exception: it once withheld
+the tool, on the reasoning that one which can only answer "nothing" is noise,
+but since the answer carries what the Store lets the user add, "nothing yet,
+and here is what you may add" is the whole of what someone with nothing bound
+needs — and withholding it left exactly that person looking at a tool list
+holding only the Store's own tools.
 Descriptions are truncated per entry: a caller wanting a tool's full schema gets
 it from `tools/list` once the tool is callable.
 
