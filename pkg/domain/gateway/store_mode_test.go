@@ -16,20 +16,21 @@ package gateway
 
 import "testing"
 
-// TestStoreMode_DefaultsToOpenOnEveryTier guards the zero-friction default: a
-// gateway with nothing stamped is open whatever its plan, so a self-service
-// user reaches "install Notion" without configuring anything.
-func TestStoreMode_DefaultsToOpenOnEveryTier(t *testing.T) {
+// TestStoreMode_DefaultsToCuratedOnEveryTier guards the governed default: a
+// gateway nobody has configured grants nobody anything, whatever its plan.
+// Opening the whole catalog is a decision an admin makes, and an org that has
+// decided nothing must not have it made for them.
+func TestStoreMode_DefaultsToCuratedOnEveryTier(t *testing.T) {
 	t.Parallel()
 	for _, tier := range []string{"free", "standard", "enterprise", ""} {
 		g := &Gateway{Entitlements: Entitlements{Tier: tier}}
-		if got := g.StoreMode(); got != StoreModeOpen {
-			t.Fatalf("tier %q unstamped: StoreMode = %q, want open", tier, got)
+		if got := g.StoreMode(); got != StoreModeCurated {
+			t.Fatalf("tier %q unstamped: StoreMode = %q, want curated", tier, got)
 		}
 	}
 	var nilGateway *Gateway
-	if got := nilGateway.StoreMode(); got != StoreModeOpen {
-		t.Fatalf("nil gateway StoreMode = %q, want open", got)
+	if got := nilGateway.StoreMode(); got != StoreModeCurated {
+		t.Fatalf("nil gateway StoreMode = %q, want curated", got)
 	}
 }
 

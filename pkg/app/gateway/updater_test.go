@@ -513,7 +513,9 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
+// Opening the Store is now the decision someone has to make, so it is the one
+// that gets written down.
+func TestUpdater_Update_StoreModeOpenIsStamped(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
@@ -523,8 +525,8 @@ func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.StoreMode() == domain.StoreModeCurated &&
-				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeCurated
+			return g.StoreMode() == domain.StoreModeOpen &&
+				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeOpen
 		})).
 		Return(nil).
 		Once()
@@ -540,13 +542,13 @@ func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:        id,
-		StoreMode: ptr(domain.StoreModeCurated),
+		StoreMode: ptr(domain.StoreModeOpen),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeCurated {
-		t.Fatalf("StoreMode = %q, want curated", got.StoreMode())
+	if got.StoreMode() != domain.StoreModeOpen {
+		t.Fatalf("StoreMode = %q, want open", got.StoreMode())
 	}
 }
 
@@ -587,19 +589,21 @@ func TestUpdater_Update_StoreModeNonePersists(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_StoreModeOpenClearsCurated(t *testing.T) {
+// curated is the default, so it is the one mode the metadata does not carry:
+// setting it clears the key, and a gateway with nothing stamped reads curated.
+func TestUpdater_Update_StoreModeCuratedClearsTheStamp(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
-	existing.Metadata = domain.WithStoreMode(nil, domain.StoreModeCurated)
+	existing.Metadata = domain.WithStoreMode(nil, domain.StoreModeOpen)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			_, present := g.Metadata[domain.MetadataStoreModeKey]
-			return g.StoreMode() == domain.StoreModeOpen && !present
+			return g.StoreMode() == domain.StoreModeCurated && !present
 		})).
 		Return(nil).
 		Once()
@@ -615,13 +619,13 @@ func TestUpdater_Update_StoreModeOpenClearsCurated(t *testing.T) {
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:        id,
-		StoreMode: ptr(domain.StoreModeOpen),
+		StoreMode: ptr(domain.StoreModeCurated),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeOpen {
-		t.Fatalf("StoreMode = %q, want open", got.StoreMode())
+	if got.StoreMode() != domain.StoreModeCurated {
+		t.Fatalf("StoreMode = %q, want curated", got.StoreMode())
 	}
 }
 

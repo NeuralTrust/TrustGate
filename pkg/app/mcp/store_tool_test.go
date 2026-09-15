@@ -89,11 +89,13 @@ func storeRC() *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 }
 
-// selfServiceCtx carries a self-service (free tier) gateway with nothing
-// stamped: the zero-friction default, where the Store is open.
+// selfServiceCtx carries a self-service (free tier) gateway whose admin has
+// opened the Store. Open is a decision now — an ungoverned gateway is curated —
+// so a test that means "the whole catalog is browsable" has to say so.
 func selfServiceCtx() context.Context {
 	return appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{
 		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
+		Metadata:     gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen),
 	})
 }
 

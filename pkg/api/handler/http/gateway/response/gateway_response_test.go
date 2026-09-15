@@ -82,10 +82,12 @@ func TestFromDomain_ReportsTheStoreMode(t *testing.T) {
 		metadata map[string]string
 		want     string
 	}{
-		{"stamped curated", map[string]string{domain.MetadataStoreModeKey: domain.StoreModeCurated}, domain.StoreModeCurated},
+		{"stamped open", map[string]string{domain.MetadataStoreModeKey: domain.StoreModeOpen}, domain.StoreModeOpen},
 		{"stamped none", map[string]string{domain.MetadataStoreModeKey: domain.StoreModeNone}, domain.StoreModeNone},
-		{"unstamped", nil, domain.StoreModeOpen},
-		{"nonsense", map[string]string{domain.MetadataStoreModeKey: "whatever"}, domain.StoreModeOpen},
+		// Nothing stamped is a gateway nobody has governed, which grants nobody
+		// anything rather than opening the catalog to the whole org.
+		{"unstamped", nil, domain.StoreModeCurated},
+		{"nonsense", map[string]string{domain.MetadataStoreModeKey: "whatever"}, domain.StoreModeCurated},
 	} {
 		gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, domain.ClientTLSConfig{}, nil, now, now)
 		gw.Metadata = tc.metadata
