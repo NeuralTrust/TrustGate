@@ -509,3 +509,54 @@ func TestConfigurePage_StillConfiguresWithoutAskingTheReason(t *testing.T) {
 		t.Fatalf("a configure form must still collect its variables: %s", html)
 	}
 }
+
+// A closed variable is a choice the vendor publishes, and the submit refuses
+// anything outside it. A text box would let someone type a value the save can
+// only reject, so the form offers the set and nothing else.
+func TestConfigurePage_ClosedVariableIsOfferedAsAChoice(t *testing.T) {
+	t.Parallel()
+	html := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConfigurePage(c, &appoauth.ConfigurePage{
+			Code: "com.vanta/mcp", ServerName: "Vanta",
+			Variables: []appoauth.ConfigureVariable{{
+				Name: "host", Required: true,
+				Options: []appoauth.ConfigureVariableOption{
+					{Value: "mcp.vanta.com", Label: "United States"},
+					{Value: "mcp.eu.vanta.com", Label: "Europe"},
+				},
+			}},
+		})
+	})
+	if !strings.Contains(html, `<select id="host" name="host" required>`) {
+		t.Fatalf("a closed variable must be a picker: %s", html)
+	}
+	for _, want := range []string{
+		`<option value="mcp.vanta.com">United States</option>`,
+		`<option value="mcp.eu.vanta.com">Europe</option>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("the form must offer %s: %s", want, html)
+		}
+	}
+	if strings.Contains(html, `<input id="host"`) {
+		t.Fatalf("a closed variable must not also be typeable: %s", html)
+	}
+}
+
+// Options are the exception. A variable without them is still the text box every
+// other catalog entry depends on.
+func TestConfigurePage_OpenVariableStaysATextBox(t *testing.T) {
+	t.Parallel()
+	html := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConfigurePage(c, &appoauth.ConfigurePage{
+			Code: "snowflake", ServerName: "Snowflake",
+			Variables: []appoauth.ConfigureVariable{{Name: "account_url", Required: true}},
+		})
+	})
+	if strings.Contains(html, "<select") {
+		t.Fatalf("an open variable must not become a picker: %s", html)
+	}
+	if !strings.Contains(html, `<input id="account_url"`) {
+		t.Fatalf("an open variable must stay typeable: %s", html)
+	}
+}

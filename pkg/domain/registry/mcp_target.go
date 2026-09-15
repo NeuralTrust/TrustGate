@@ -166,6 +166,38 @@ type MCPURLVariable struct {
 	// In is where the placeholder sits: "" (a host or path segment, validated to a
 	// structure-safe charset) or "query" (a query-string value, percent-escaped).
 	In string `json:"in,omitempty"`
+	// Options closes the value to a fixed set. Some servers differ only by a
+	// region or an edition whose hosts the vendor publishes — the answer is a
+	// choice, not free text, and writing it out lets one catalog entry cover
+	// every one of them instead of a near-duplicate entry each. Empty means the
+	// value is free text, validated by the charset rules alone.
+	Options []MCPURLVariableOption `json:"options,omitempty"`
+}
+
+// MCPURLVariableOption is one allowed value of a closed URL variable.
+type MCPURLVariableOption struct {
+	// Value is substituted into the template; it obeys the same charset rules as
+	// any other value of this variable.
+	Value string `json:"value"`
+	// Label is what the operator picks by — "Europe", not "mcp.eu.vanta.com".
+	Label string `json:"label,omitempty"`
+}
+
+// HasOptions reports whether this variable is closed to a fixed set of values.
+func (v MCPURLVariable) HasOptions() bool { return len(v.Options) > 0 }
+
+// AllowsValue reports whether val is one of the variable's options. An open
+// variable allows anything its charset rules accept.
+func (v MCPURLVariable) AllowsValue(val string) bool {
+	if !v.HasOptions() {
+		return true
+	}
+	for _, option := range v.Options {
+		if option.Value == val {
+			return true
+		}
+	}
+	return false
 }
 
 // URLVariableIn values.

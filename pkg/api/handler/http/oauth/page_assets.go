@@ -196,6 +196,13 @@ button.btn.ghost-danger:active{color:var(--danger-active)}
 .input input:placeholder-shown:not(:focus)+label{
   top:50%;transform:translateY(-50%);font-size:.875rem;line-height:18px;
 }
+.input.choice select{
+  width:100%;height:100%;border:0;background:transparent;color:var(--fg-default);
+  font-family:inherit;font-size:.875rem;line-height:1rem;font-weight:500;padding:20px 0 6px;outline:none;
+  appearance:none;cursor:pointer;
+}
+.input.choice{background-image:linear-gradient(45deg,transparent 50%,var(--fg-muted) 50%),linear-gradient(135deg,var(--fg-muted) 50%,transparent 50%);background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.input.choice select option{background:var(--bg-default);color:var(--fg-default)}
 .input.area{height:auto;align-items:stretch;padding:24px 16px 10px}
 .input.area textarea{
   width:100%;border:0;background:transparent;color:var(--fg-default);
@@ -412,10 +419,16 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 <p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>{{end}}
 {{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>{{if .Pending}}Sent. An administrator has to approve it; you can return to your application.{{else}}Saved. You can return to your application.{{end}}</div></div>{{end}}
 {{if not .Saved}}<form class="connect-form" method="post">
-  {{range .Variables}}<div class="input">
+  {{range .Variables}}{{if .Options}}<div class="input choice">
+    <select id="{{.Name}}" name="{{.Name}}"{{if and .Required (not .Set)}} required{{end}}>
+      <option value="">Select…</option>
+      {{range .Options}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+    </select>
+    <label for="{{.Name}}">{{.Name}}{{if .Set}} (set — leave blank to keep){{else if not .Required}} (optional){{end}}</label>
+  </div>{{else}}<div class="input">
     <input id="{{.Name}}" name="{{.Name}}" type="{{if .Secret}}password{{else}}text{{end}}" autocomplete="off"{{if and .Required (not .Set)}} required{{end}} placeholder=" ">
     <label for="{{.Name}}">{{.Name}}{{if .Set}} (set — leave blank to keep){{else if not .Required}} (optional){{end}}</label>
-  </div>{{end}}
+  </div>{{end}}{{end}}
   {{if .AskReason}}<div class="input area">
     <textarea id="{{.ReasonField}}" name="{{.ReasonField}}" rows="4" maxlength="{{.ReasonMaxChars}}" autocomplete="off" required placeholder=" "></textarea>
     <label for="{{.ReasonField}}">Why do you need it?</label>
