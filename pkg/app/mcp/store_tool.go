@@ -776,6 +776,58 @@ func (t *storeTool) search(
 	return raw, nil
 }
 
+// StoreOffer is what the Store lets the calling principal add to their surface.
+type StoreOffer struct {
+	// Mode is the Store mode in force for them: open, curated or none.
+	Mode string
+	// Servers are the catalog entries they can install without asking anyone.
+	// It is filled only when Bounded is true.
+	Servers []catalogdomain.MCPServer
+	// Bounded reports whether Servers is the whole of what they may add. Under
+	// Open access every entry in the catalog qualifies, and a list of all of
+	// them is not an answer — a caller is told to search instead.
+	Bounded bool
+}
+
+// StoreOfferReader reports what the Store offers the calling principal, so a
+// view of their surface can say what is missing from it as well as what is on
+// it. storeTool satisfies it: the grants, the mode and the catalog it needs are
+// the same ones its search reads.
+type StoreOfferReader interface {
+	StoreOffer(ctx context.Context, rc *appconsumer.RoutableConsumer) (StoreOffer, error)
+}
+
+// StoreOffer answers what this principal may install. It is search's own rule
+// narrowed to the servers that install outright: a server they would have to
+// request is not something they have.
+func (t *storeTool) StoreOffer(ctx context.Context, rc *appconsumer.RoutableConsumer) (StoreOffer, error) {
+	if t == nil || t.catalog == nil {
+		return StoreOffer{}, ErrStoreToolUnavailable
+	}
+	mode := t.effectiveStoreMode(ctx, rc)
+	if mode == gatewaydomain.StoreModeNone || mode == gatewaydomain.StoreModeOpen {
+		return StoreOffer{Mode: mode}, nil
+	}
+	access, err := t.loadStoreAccess(ctx, rc)
+	if err != nil {
+		return StoreOffer{}, err
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	groups := principal.Groups()
+	subject := ""
+	if principal != nil {
+		subject = principal.Subject
+	}
+	all := t.catalog.ListMCPServers()
+	offered := make([]catalogdomain.MCPServer, 0, len(all))
+	for i := range all {
+		if storeAvailability(access, all[i].Code, mode, groups, subject) == storeStateAvailable {
+			offered = append(offered, all[i])
+		}
+	}
+	return StoreOffer{Mode: mode, Servers: offered, Bounded: true}, nil
+}
+
 func (t *storeTool) loadStoreAccess(ctx context.Context, rc *appconsumer.RoutableConsumer) (*storeAccessIndex, error) {
 	if rc == nil || rc.Consumer == nil || t.grants == nil {
 		return nil, nil
