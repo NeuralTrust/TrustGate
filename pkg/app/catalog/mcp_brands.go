@@ -224,6 +224,8 @@ var vendorBrandIcons = map[string]string{ // #nosec G101 -- static brand icon as
 	"todoist":                       "mcp/todoist.svg",
 	"twilio":                        "mcp/twilio.png",
 	"vanta":                         "mcp/vanta.png",
+	"vantaaus":                      "mcp/vanta.png",
+	"vantaeu":                       "mcp/vanta.png",
 	"vercel":                        "mcp/vercel.svg",
 	"vimeo":                         "mcp/vimeo.svg",
 	"vonage":                        "mcp/vonage.svg",
