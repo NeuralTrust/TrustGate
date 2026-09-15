@@ -255,23 +255,44 @@ func TestInventoryTool_SaysSoWhenNothingMatches(t *testing.T) {
 	}
 }
 
-// A consumer with no MCP server bound has nothing to inventory, and a tool that
-// can only ever answer "nothing" is noise in every client's tool list.
-func TestInventoryTool_OffersItselfOnlyWhereThereIsAServerToList(t *testing.T) {
+// An empty surface used to withhold the tool, on the reasoning that a tool
+// which can only answer "nothing" is noise. It no longer can: the answer now
+// carries what the Store lets the user add, which is the whole of what someone
+// with nothing bound needs to hear. Withholding it left exactly that person
+// looking at a tool list holding only the Store's own tools, with no way to ask.
+func TestInventoryTool_OffersItselfEvenOnAnEmptySurface(t *testing.T) {
 	t.Parallel()
-	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil)
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: vantaOffer()}))
 	if err != nil {
 		t.Fatalf("new inventory tool: %v", err)
 	}
 	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP}
 
-	if defs := tool.Definitions(context.Background(), routable(consumer)); len(defs) != 0 {
-		t.Fatalf("definitions = %v, want none for a consumer with no MCP server", defs)
+	defs := tool.Definitions(context.Background(), routable(consumer))
+	if len(defs) != 1 || defs[0].Name != InventoryToolName {
+		t.Fatalf("definitions = %v, want just %s", defs, InventoryToolName)
+	}
+
+	// And it has to answer, not error, for the surface that is not there.
+	result := callInventory(t, tool, "")
+	if servers := structuredServers(t, result); len(servers) != 0 {
+		t.Fatalf("servers = %v, want none", servers)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "no MCP servers") {
+		t.Fatalf("an empty surface must say so: %s", text)
+	}
+	if !strings.Contains(text, "Vanta") {
+		t.Fatalf("an empty surface is exactly where the Store offer matters: %s", text)
+	}
+	// "also" would be following nothing.
+	if strings.Contains(text, "can also add") {
+		t.Fatalf("with nothing on the surface the offer is not an afterthought: %s", text)
 	}
 
 	reg := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
-	defs := tool.Definitions(context.Background(), routable(consumer, reg))
-	if len(defs) != 1 || defs[0].Name != InventoryToolName {
+	if defs := tool.Definitions(context.Background(), routable(consumer, reg)); len(defs) != 1 {
 		t.Fatalf("definitions = %v, want just %s", defs, InventoryToolName)
 	}
 }

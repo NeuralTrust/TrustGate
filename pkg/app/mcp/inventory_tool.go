@@ -111,16 +111,19 @@ func (t *inventoryTool) Handles(name string) bool {
 	return name == InventoryToolName
 }
 
-// Definitions offers the inventory to every consumer that has an MCP server
-// bound. Even a fully connected surface benefits — tools/list flattens every
-// server into one list, so it never says which server a tool came from, nor
-// which of the user's servers contributed nothing — and on an incomplete
-// surface it is the only way to see what is missing and what would fix it.
+// Definitions offers the inventory to every consumer the gateway may add its
+// own tools to (the dispatcher applies that rule). Even a fully connected
+// surface benefits — tools/list flattens every server into one list, so it
+// never says which server a tool came from, nor which of the user's servers
+// contributed nothing — and on an incomplete surface it is the only way to see
+// what is missing and what would fix it.
+//
+// An empty surface is not an exception. It used to be: with no server bound the
+// tool withheld itself, which left the one person who most needs the answer —
+// "you have nothing yet, and here is what you may add" — with no way to ask for
+// it, staring at a tool list holding only the Store's own tools.
 func (t *inventoryTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsumer) []Tool {
 	if t == nil || t.surface == nil || rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	if len(mcpRegistries(rc)) == 0 {
 		return nil
 	}
 	def, err := inventoryDefinition()
@@ -394,7 +397,7 @@ func inventorySummary(
 		} else {
 			b.WriteString("You have no MCP servers on your surface.")
 		}
-		writeInstallable(&b, installable, storeMode)
+		writeInstallable(&b, installable, storeMode, true)
 		b.WriteString(inventoryClosingNote)
 		return b.String()
 	}
@@ -417,7 +420,7 @@ func inventorySummary(
 			fmt.Fprintf(&b, "\n  blocked by policy: %s", strings.Join(denied, ", "))
 		}
 	}
-	writeInstallable(&b, installable, storeMode)
+	writeInstallable(&b, installable, storeMode, false)
 	b.WriteString(inventoryClosingNote)
 	return b.String()
 }
@@ -425,9 +428,14 @@ func inventorySummary(
 // writeInstallable names the servers the user may add but has not. A client
 // that only reads the text would otherwise report the surface as everything
 // available to them, when the Store is holding more of it a tool call away.
-func writeInstallable(b *strings.Builder, installable []map[string]any, storeMode string) {
+func writeInstallable(b *strings.Builder, installable []map[string]any, storeMode string, surfaceEmpty bool) {
 	if len(installable) > 0 {
-		fmt.Fprintf(b, "\n\nYou can also add %d server(s) from the Store, with %s:", len(installable), StoreInstallToolName)
+		// "also" reads as an afterthought when there is nothing for it to follow.
+		also := "also "
+		if surfaceEmpty {
+			also = ""
+		}
+		fmt.Fprintf(b, "\n\nYou can %sadd %d server(s) from the Store, with %s:", also, len(installable), StoreInstallToolName)
 		for _, entry := range installable {
 			fmt.Fprintf(b, "\n• %s (%s)", displayString(entry["name"]), displayString(entry["code"]))
 			if desc := displayString(entry["description"]); desc != "" {
