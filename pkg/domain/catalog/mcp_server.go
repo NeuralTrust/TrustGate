@@ -78,9 +78,12 @@ type MCPServer struct {
 	// the catalog UI; the authoritative per-connection tool set is discovered at
 	// runtime by the gateway's introspector (and may be tenant/user-specific).
 	// Empty when the server requires auth to list tools.
-	Tools    []MCPTool      `json:"tools,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Source   string         `json:"source"`
+	Tools []MCPTool `json:"tools,omitempty"`
+	// Capabilities are the three “What you can do” lines the Employee Portal
+	// shows. Seeded when curated; otherwise derived from Tools at catalog load.
+	Capabilities []string       `json:"capabilities,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	Source       string         `json:"source"`
 }
 
 // MCPConfigGuide contains concise operator setup help for a catalog server.
