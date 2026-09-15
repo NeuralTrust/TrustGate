@@ -17537,7 +17537,7 @@
     },
     {
       "name": "com.vanta/mcp-eu",
-      "vendor": "Vanta",
+      "vendor": "Vanta EU",
       "category": "Security & Compliance",
       "description": "Compliance posture, tests, and remediation (EU region; other regions use com.vanta/mcp (US), com.vanta/mcp-eu (EU), com.vanta/mcp-aus (AUS)).",
       "transport": "streamable-http",
@@ -17618,7 +17618,7 @@
     },
     {
       "name": "com.vanta/mcp-aus",
-      "vendor": "Vanta",
+      "vendor": "Vanta AUS",
       "category": "Security & Compliance",
       "description": "Compliance posture, tests, and remediation (AUS region; other regions use com.vanta/mcp (US), com.vanta/mcp-eu (EU), com.vanta/mcp-aus (AUS)).",
       "transport": "streamable-http",
