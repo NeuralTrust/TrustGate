@@ -43,7 +43,7 @@ func FromContext(ctx context.Context) *OriginalRequest {
 func metadataHeaders(headers map[string][]string) map[string][]string {
 	out := make(map[string][]string)
 	for key, values := range headers {
-		key = http.CanonicalHeaderKey(key)
+		key = strings.Clone(http.CanonicalHeaderKey(key))
 		switch key {
 		case "Accept", "Content-Type", "User-Agent", "X-Request-Id":
 			for _, value := range values {

@@ -32,6 +32,7 @@ import (
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -172,6 +173,8 @@ func MCP(c *container.Container) error {
 type mcpHandlerParams struct {
 	dig.In
 
+	Config *config.Config
+
 	Gateway   *mcphttp.RPCGateway
 	Vault     vaultdomain.Repository
 	Installs  installationdomain.Repository `optional:"true"`
@@ -183,7 +186,7 @@ func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
 	// dispatcher applies to tools/list, so an admin revoking a grant pushes
 	// tools/list_changed to the affected user's clients.
 	surface := appmcp.NewSurfaceWatcher(p.Vault, p.Installs, appmcp.WithSurfaceScoper(p.Gateway.StoreScoper()))
-	return mcphttp.NewHandler(p.Gateway, surface, mcphttp.WithConsumerFinder(p.Consumers))
+	return mcphttp.NewHandler(p.Gateway, surface, mcphttp.WithConsumerFinder(p.Consumers), mcphttp.WithClientIPResolver(requestmeta.NewIPResolver(p.Config.ClientIP.Mode, p.Config.ClientIP.TrustedProxyCIDRs)))
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the
