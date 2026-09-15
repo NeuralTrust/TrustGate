@@ -284,13 +284,14 @@ func newE2EHarness(t *testing.T, servers ...catalogdomain.MCPServer) *e2eHarness
 	}
 }
 
-// selfServiceDefaultCtx is the zero-friction self-service default: a free-tier
-// gateway with nothing stamped and a token carrying no store_access claim. This
-// is the state a fresh self-service org is in before its admin configures any
-// governance, so the Store is open.
+// selfServiceDefaultCtx is a free-tier gateway whose admin has opened the Store,
+// with a token carrying no store_access claim. Open is a decision now, not what
+// an unconfigured gateway falls back to, so the self-service path is exercised
+// from the state that actually offers the whole catalog.
 func selfServiceDefaultCtx(sub string) context.Context {
 	gw := &gatewaydomain.Gateway{
 		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
+		Metadata:     gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen),
 	}
 	principal := &identity.Principal{Subject: sub, Claims: map[string]any{
 		identity.ClaimGroups: []string{"eng"},

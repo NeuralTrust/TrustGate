@@ -113,13 +113,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
 	}
 	// store_mode is a reserved key stripped from client metadata, so re-stamp it
-	// after the metadata block. Preserve the existing mode unless it is being set.
-	// open is the default, so it is represented by the absence of the key.
+	// after the metadata block. Preserve the existing mode unless it is being
+	// set. curated is the default, so it is represented by the absence of the
+	// key — a gateway nobody has governed grants nobody anything.
 	storeMode := old.StoreMode()
 	if in.StoreMode != nil {
 		storeMode = *in.StoreMode
 	}
-	if storeMode == domain.StoreModeCurated || storeMode == domain.StoreModeNone {
+	if storeMode == domain.StoreModeOpen || storeMode == domain.StoreModeNone {
 		g.Metadata = domain.WithStoreMode(g.Metadata, storeMode)
 	} else if g.Metadata != nil {
 		delete(g.Metadata, domain.MetadataStoreModeKey)

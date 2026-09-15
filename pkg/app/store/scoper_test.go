@@ -41,11 +41,14 @@ func withPrincipal(sub string) context.Context {
 	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: sub})
 }
 
-// withOpenPrincipal is a principal on a gateway whose Store is open (All): every
-// install is exposed regardless of grants. Without a gateway in the context the
-// mode fails closed to Selected, where only granted instances are exposed.
+// withOpenPrincipal is a principal on a gateway an admin has opened (All): every
+// install is exposed regardless of grants. The mode has to be stamped — an
+// ungoverned gateway is Selected, where only granted instances are exposed, and
+// so is a context with no gateway at all.
 func withOpenPrincipal(sub string) context.Context {
-	return appgateway.WithGateway(withPrincipal(sub), &gatewaydomain.Gateway{})
+	return appgateway.WithGateway(withPrincipal(sub), &gatewaydomain.Gateway{
+		Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen),
+	})
 }
 
 func githubRegistry() *registrydomain.Registry {

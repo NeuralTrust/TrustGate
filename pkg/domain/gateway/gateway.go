@@ -62,9 +62,12 @@ const MetadataStoreModeKey = "store_mode"
 // All, Selected and None.
 const (
 	// StoreModeOpen ("All"): the whole catalog is browsable; servers not on the
-	// shelf can be requested. This is the default.
+	// shelf can be requested.
 	StoreModeOpen = "open"
-	// StoreModeCurated ("Selected"): only shelf (store.available) servers are shown.
+	// StoreModeCurated ("Selected"): only shelf (store.available) servers are
+	// shown. This is the default: a gateway nobody has governed yet holds
+	// everyone to what an admin has granted them, rather than opening the whole
+	// catalog to an org that has not decided anything.
 	StoreModeCurated = "curated"
 	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
 	// and self-service install is disabled. Per-group/per-user grants on a registry
@@ -73,20 +76,21 @@ const (
 )
 
 // StoreMode returns the gateway's Store curation mode as stamped by its admin,
-// defaulting to open. Governance is available on every plan: a fresh gateway
-// starts open with no policies (zero-friction default), and any tier may narrow
-// it to curated or none once its admin configures Access.
+// defaulting to curated. Governance is available on every plan, and the default
+// is the governed one: a fresh gateway grants nobody anything until an admin
+// says so, which is the only default that cannot leak. An admin widens it to
+// open (or narrows it to none) per principal from Access.
 func (g *Gateway) StoreMode() string {
 	if g == nil || g.Metadata == nil {
-		return StoreModeOpen
+		return StoreModeCurated
 	}
 	switch g.Metadata[MetadataStoreModeKey] {
-	case StoreModeCurated:
-		return StoreModeCurated
+	case StoreModeOpen:
+		return StoreModeOpen
 	case StoreModeNone:
 		return StoreModeNone
 	default:
-		return StoreModeOpen
+		return StoreModeCurated
 	}
 }
 
