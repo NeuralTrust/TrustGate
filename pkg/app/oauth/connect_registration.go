@@ -48,7 +48,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -78,7 +78,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
@@ -105,6 +105,11 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	return &out
 }
 
+// applyCatalogScopes lets the curated catalog correct the scopes persisted on a
+// registry. Both registration paths need it: scopes are copied onto the registry
+// when it is created, so a registry created against an older catalog keeps
+// asking for scopes the upstream may since have dropped, and nothing else ever
+// rewrites them.
 func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
