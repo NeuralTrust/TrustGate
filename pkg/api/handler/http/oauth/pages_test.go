@@ -577,8 +577,11 @@ func TestSingleConnectPage_ConnectedStateSaysWhatToDoNext(t *testing.T) {
 		}, "tk", "", mustMCPCatalog(t))
 	})
 	for _, want := range []string{
-		// With nowhere to send them, the page has to say the window is done with.
-		"You can close this window.",
+		// The task is over, and the panel says so before it says anything else.
+		`class="done"`,
+		"All set",
+		// With nowhere to send them, the window is what they close.
+		"you can close this window",
 		"the new tools appear on their own",
 		// A client that only reads tools/list at session start is why the badge
 		// alone is not enough, and the user can act on that.
@@ -604,8 +607,11 @@ func TestSingleConnectPage_ResumeLinkReplacesTheCloseInstruction(t *testing.T) {
 			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
 		}, "tk", "", mustMCPCatalog(t))
 	})
-	if strings.Contains(body, "You can close this window.") {
+	if strings.Contains(body, "you can close this window") {
 		t.Fatalf("a page offering a way back must not also say to close it, body:\n%s", body)
+	}
+	if !strings.Contains(body, "head back to your app") {
+		t.Fatalf("a page offering a way back must point at it, body:\n%s", body)
 	}
 	if !strings.Contains(body, "the new tools appear on their own") {
 		t.Fatalf("the tools guidance holds either way, body:\n%s", body)
@@ -627,5 +633,28 @@ func TestSingleConnectPage_UnconnectedStateDoesNotSendThemBack(t *testing.T) {
 	})
 	if strings.Contains(body, "the new tools appear on their own") {
 		t.Fatalf("an unconnected card must not talk about new tools, body:\n%s", body)
+	}
+}
+
+// Without an account to name, the old pill said only "Connected" — the same
+// thing the headline and the done panel already say, in the quietest of the
+// three. It is shown now only when it carries the account it connected as.
+func TestSingleConnectPage_NoEmptyConnectedPill(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+			}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if strings.Contains(body, `class="account"`) {
+		t.Fatalf("a pill with nothing but the word Connected is noise: %s", body)
+	}
+	// The done panel still says it, and says what to do next.
+	if !strings.Contains(body, `class="done"`) {
+		t.Fatalf("the connected card must still report success: %s", body)
 	}
 }
