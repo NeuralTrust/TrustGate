@@ -34,7 +34,7 @@ func TestCatalogCapabilities_PrefersSeed(t *testing.T) {
 	require.Equal(t, []string{
 		"Read published docs",
 		"Search the knowledge base",
-		"Search and read content",
+		"Search pages",
 	}, got)
 }
 
