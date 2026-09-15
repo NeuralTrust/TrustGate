@@ -560,3 +560,72 @@ func TestConfigurePage_OpenVariableStaysATextBox(t *testing.T) {
 		t.Fatalf("an open variable must stay typeable: %s", html)
 	}
 }
+
+// Connecting is the end of the page but not of the task: the tools the user
+// came for are somewhere else, and whether they show up depends on a client
+// this page cannot see. Saying nothing left people staring at a green badge,
+// unsure whether it had worked.
+func TestSingleConnectPage_ConnectedStateSaysWhatToDoNext(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+			}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	for _, want := range []string{
+		// With nowhere to send them, the page has to say the window is done with.
+		"You can close this window.",
+		"the new tools appear on their own",
+		// A client that only reads tools/list at session start is why the badge
+		// alone is not enough, and the user can act on that.
+		"start a new conversation",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the connected card must say %q, body:\n%s", want, body)
+		}
+	}
+}
+
+// With a resume link the button is the instruction; telling them to close the
+// window on top of it points two ways at once.
+func TestSingleConnectPage_ResumeLinkReplacesTheCloseInstruction(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp", Linked: true,
+			}},
+			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if strings.Contains(body, "You can close this window.") {
+		t.Fatalf("a page offering a way back must not also say to close it, body:\n%s", body)
+	}
+	if !strings.Contains(body, "the new tools appear on their own") {
+		t.Fatalf("the tools guidance holds either way, body:\n%s", body)
+	}
+}
+
+// Before connecting there is nothing to go back for, so the line must not
+// appear on the page that is still asking.
+func TestSingleConnectPage_UnconnectedStateDoesNotSendThemBack(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{{
+				Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp",
+			}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if strings.Contains(body, "the new tools appear on their own") {
+		t.Fatalf("an unconnected card must not talk about new tools, body:\n%s", body)
+	}
+}

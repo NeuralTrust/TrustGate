@@ -915,6 +915,19 @@ Three decisions worth keeping:
 - **The upstream's failure text stays in the log.** An `unavailable` entry says
   the gateway could not reach the server, not which host refused the connection.
   The caller cannot act on the latter, and it is not theirs to read.
+- **It also names what the user could add.** Asked what they have, someone is
+  asking what they can do here, and a server the Store entitles them to install
+  answers that as surely as one already bound — it was simply invisible unless
+  they thought to search. The `installable` list is the Store tool's own rule
+  (`StoreOffer`, `pkg/app/mcp/store_tool.go`) read through the same grants and
+  mode its search uses, narrowed twice: to servers that install outright (one
+  they would have to *request* is not theirs, and listing it as if it were is
+  how a client ends up promising a tool nobody can call), and to servers not
+  already on the surface. Under Open access every catalog entry qualifies, so
+  the offer is unbounded and the answer names `trustgate_store_search` instead
+  of handing back the catalog. The entries sit next to servers the user really
+  has, so the text says in words that they are not usable yet — a client that
+  blurs the two answers "yes, I can do that" for a server nobody has added.
 
 One more thing it has to do, found the first time someone asked a client "what
 do I have in TrustGate?": the client read `tools/list`, found the gateway's own
