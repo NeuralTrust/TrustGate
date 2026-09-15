@@ -150,6 +150,7 @@ const (
 )
 
 type Config struct {
+	ClientIP            ClientIPConfig
 	AppEnv              string
 	Server              ServerConfig
 	Database            DatabaseConfig
@@ -461,11 +462,16 @@ type MCPConnectRateLimitConfig struct {
 }
 
 func LoadConfig() (*Config, error) {
+	clientIP, err := getClientIPConfig()
+	if err != nil {
+		return nil, err
+	}
 	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &Config{
+		ClientIP:            clientIP,
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
 		Server:              getServerConfig(),
 		Database:            getDatabaseConfig(),
