@@ -126,10 +126,7 @@ func (m *AdminAuthzMiddleware) notFound(c *fiber.Ctx, identity AdminIdentity) er
 	m.logDenial(c, identity, "gateway belongs to another tenant")
 	// Same public shape as MapDomainError(not_found): do not reveal that the
 	// gateway exists under another tenant.
-	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{
-		Error:   "not_found",
-		Message: "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant.",
-	})
+	return c.Status(fiber.StatusNotFound).JSON(httpio.NotFoundBody())
 }
 
 func (m *AdminAuthzMiddleware) logDenial(c *fiber.Ctx, identity AdminIdentity, reason string) {
