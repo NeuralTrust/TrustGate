@@ -34,10 +34,11 @@ type RoutableConsumer struct {
 }
 
 type Data struct {
-	GatewayID    ids.GatewayID
-	Consumers    []RoutableConsumer
-	bySlug       map[string]*RoutableConsumer
-	registryByID map[ids.RegistryID]*registrydomain.Registry
+	GatewayID     ids.GatewayID
+	Consumers     []RoutableConsumer
+	StoreConsumer *RoutableConsumer
+	bySlug        map[string]*RoutableConsumer
+	registryByID  map[ids.RegistryID]*registrydomain.Registry
 }
 
 func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
