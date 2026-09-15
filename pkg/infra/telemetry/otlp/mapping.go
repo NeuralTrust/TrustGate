@@ -227,7 +227,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		attribute.Bool(attrIsFlagged, evt.IsFlagged),
 	)
 	if len(evt.Security) > 0 {
-		attrs = append(attrs, attribute.StringSlice(attrSecurity, evt.Security))
+		attrs = append(attrs, attribute.String(attrSecurity, jsonString(evt.Security)))
 	}
 	if len(evt.PolicyChain) > 0 {
 		if encoded := jsonString(evt.PolicyChain); encoded != "" {
