@@ -230,7 +230,10 @@ func configGuide(s rawServer) *domain.MCPConfigGuide {
 			summary = "Create machine-to-machine OAuth credentials in " + s.Vendor + "."
 			steps = append(steps, "Enter the OAuth client ID and client secret.")
 		case s.OAuth.Registration == registrationAuto || s.OAuth.Registration == "":
-			steps = append(steps, "Select Connect and complete the "+s.Vendor+" sign-in.")
+			// Named for the button the install panel actually shows. "Connect"
+			// was the old label and sent people looking for a control that is
+			// not there.
+			steps = append(steps, "Select Install and complete the "+s.Vendor+" sign-in.")
 		default:
 			summary = "Register TrustGate as an OAuth app in " + s.Vendor + "."
 			steps = append(steps, "Add TrustGate's OAuth callback URL, then enter the client ID.")
