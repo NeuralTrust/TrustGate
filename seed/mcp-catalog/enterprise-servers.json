@@ -16543,7 +16543,7 @@
       "name": "com.vanta/mcp",
       "vendor": "Vanta",
       "category": "Security & Compliance",
-      "description": "Compliance posture, tests, and remediation (US; EU mcp.eu.vanta.com, AUS mcp.aus.vanta.com).",
+      "description": "Compliance posture, tests, and remediation (US region; other regions use com.vanta/mcp (US), com.vanta/mcp-eu (EU), com.vanta/mcp-aus (AUS)).",
       "capabilities": [
         "Work with compliance posture",
         "Work with tests",
@@ -16567,6 +16567,182 @@
           "mcp-api.all:write"
         ],
         "resource": "https://mcp.vanta.com"
+      },
+      "relevance": 65,
+      "tools": [
+        {
+          "name": "tests",
+          "description": "Retrieve automated security/compliance tests"
+        },
+        {
+          "name": "list_test_entities",
+          "description": "Get resources monitored by a test"
+        },
+        {
+          "name": "controls",
+          "description": "List/get security controls"
+        },
+        {
+          "name": "list_control_tests",
+          "description": "List tests validating a control"
+        },
+        {
+          "name": "list_control_documents",
+          "description": "List documents mapped to a control"
+        },
+        {
+          "name": "documents",
+          "description": "List/get compliance documents"
+        },
+        {
+          "name": "document_resources",
+          "description": "Get resources linked to a document"
+        },
+        {
+          "name": "frameworks",
+          "description": "List compliance frameworks with progress"
+        },
+        {
+          "name": "list_framework_controls",
+          "description": "List controls for a framework"
+        },
+        {
+          "name": "integrations",
+          "description": "List/get connected integrations"
+        },
+        {
+          "name": "integration_resources",
+          "description": "Inspect integration resource kinds/resources"
+        },
+        {
+          "name": "people",
+          "description": "List/get people in the account"
+        },
+        {
+          "name": "risks",
+          "description": "List/get risk scenarios"
+        },
+        {
+          "name": "vulnerabilities",
+          "description": "List/get detected vulnerabilities"
+        }
+      ]
+    },
+    {
+      "name": "com.vanta/mcp-eu",
+      "vendor": "Vanta",
+      "category": "Security & Compliance",
+      "description": "Compliance posture, tests, and remediation (EU region; other regions use com.vanta/mcp (US), com.vanta/mcp-eu (EU), com.vanta/mcp-aus (AUS)).",
+      "capabilities": [
+        "Work with compliance posture",
+        "Work with tests",
+        "Work with remediation"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://mcp.eu.vanta.com/mcp",
+      "requires_auth": true,
+      "self_service": true,
+      "multi_instance": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.vanta.com/oauth/authorize",
+        "token_url": "https://api.vanta.com/oauth/token",
+        "scopes": [
+          "mcp-api.all:write"
+        ],
+        "resource": "https://mcp.eu.vanta.com"
+      },
+      "relevance": 65,
+      "tools": [
+        {
+          "name": "tests",
+          "description": "Retrieve automated security/compliance tests"
+        },
+        {
+          "name": "list_test_entities",
+          "description": "Get resources monitored by a test"
+        },
+        {
+          "name": "controls",
+          "description": "List/get security controls"
+        },
+        {
+          "name": "list_control_tests",
+          "description": "List tests validating a control"
+        },
+        {
+          "name": "list_control_documents",
+          "description": "List documents mapped to a control"
+        },
+        {
+          "name": "documents",
+          "description": "List/get compliance documents"
+        },
+        {
+          "name": "document_resources",
+          "description": "Get resources linked to a document"
+        },
+        {
+          "name": "frameworks",
+          "description": "List compliance frameworks with progress"
+        },
+        {
+          "name": "list_framework_controls",
+          "description": "List controls for a framework"
+        },
+        {
+          "name": "integrations",
+          "description": "List/get connected integrations"
+        },
+        {
+          "name": "integration_resources",
+          "description": "Inspect integration resource kinds/resources"
+        },
+        {
+          "name": "people",
+          "description": "List/get people in the account"
+        },
+        {
+          "name": "risks",
+          "description": "List/get risk scenarios"
+        },
+        {
+          "name": "vulnerabilities",
+          "description": "List/get detected vulnerabilities"
+        }
+      ]
+    },
+    {
+      "name": "com.vanta/mcp-aus",
+      "vendor": "Vanta",
+      "category": "Security & Compliance",
+      "description": "Compliance posture, tests, and remediation (AUS region; other regions use com.vanta/mcp (US), com.vanta/mcp-eu (EU), com.vanta/mcp-aus (AUS)).",
+      "capabilities": [
+        "Work with compliance posture",
+        "Work with tests",
+        "Work with remediation"
+      ],
+      "transport": "streamable-http",
+      "server_url": "https://mcp.aus.vanta.com/mcp",
+      "requires_auth": true,
+      "self_service": true,
+      "multi_instance": false,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.vanta.com/oauth/authorize",
+        "token_url": "https://api.vanta.com/oauth/token",
+        "scopes": [
+          "mcp-api.all:write"
+        ],
+        "resource": "https://mcp.aus.vanta.com"
       },
       "relevance": 65,
       "tools": [
