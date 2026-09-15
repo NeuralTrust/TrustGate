@@ -20,6 +20,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,7 +108,7 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	t.Parallel()
 	servers, err := loadCuratedMCPServers()
 	require.NoError(t, err)
-	require.Len(t, servers, 202, "the seed grew or shrank; re-audit the flags")
+	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
 
 	multi, self := 0, 0
 	for _, s := range servers {
@@ -150,8 +151,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 
 	// Canaries: a change in these counts means entries moved between the two
 	// answers, which is worth looking at deliberately.
-	require.Equal(t, 98, multi, "multi_instance count changed")
-	require.Equal(t, 117, self, "self_service count changed")
+	require.Equal(t, 99, multi, "multi_instance count changed")
+	require.Equal(t, 115, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth
@@ -189,4 +190,87 @@ func TestPlatformClientRaisesSelfServiceOnly(t *testing.T) {
 	require.True(t, untouched.SelfService)
 	require.True(t, untouched.MultiInstance)
 	require.False(t, untouched.PlatformClient)
+}
+
+// A closed URL variable lets one entry cover what would otherwise be a
+// near-duplicate per region. The values are substituted into the upstream URL,
+// so each one has to pass the same rules a typed value would, and a set with a
+// value nobody can pick — or two that collide — is an authoring slip the seed
+// should not carry.
+func TestCuratedCatalog_ClosedURLVariablesDeclareUsableOptions(t *testing.T) {
+	t.Parallel()
+	servers, err := loadCuratedMCPServers()
+	require.NoError(t, err)
+
+	for _, s := range servers {
+		for _, v := range s.URLVariables {
+			if !v.HasOptions() {
+				continue
+			}
+			seen := make(map[string]struct{}, len(v.Options))
+			for _, option := range v.Options {
+				require.NotEmpty(t, option.Value, "%s: variable %q has an empty option", s.Code, v.Name)
+				require.NotEmpty(t, option.Label, "%s: option %q has nothing to pick it by", s.Code, option.Value)
+				require.NoError(t, registrydomain.ValidateURLValue(asRegistryURLVariable(v), option.Value),
+					"%s: option %q would be refused at install", s.Code, option.Value)
+				_, dup := seen[option.Value]
+				require.False(t, dup, "%s: option %q is declared twice", s.Code, option.Value)
+				seen[option.Value] = struct{}{}
+			}
+		}
+	}
+}
+
+// Vanta publishes one MCP host per region and they do not share a shape: the US
+// host carries no region label at all, so no single template spells all three.
+// The region is the choice, and the entry that covers them is one.
+func TestCuratedCatalog_VantaIsOneEntryPerRegionChoice(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, gone := range []string{"com.vanta/mcp-eu", "com.vanta/mcp-aus"} {
+		_, ok := cat.GetByCode(gone)
+		require.False(t, ok, "%s: a region is an option on the entry, not an entry", gone)
+	}
+
+	entry, ok := cat.GetByCode("com.vanta/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://{host}/mcp", entry.URL)
+	require.Len(t, entry.URLVariables, 1)
+	require.Equal(t, []string{"mcp.vanta.com", "mcp.eu.vanta.com", "mcp.aus.vanta.com"},
+		optionValues(entry.URLVariables[0]))
+
+	// The audience has to follow the region. A literal would pin every region to
+	// whichever one the entry was written for; resource_metadata derives it from
+	// the URL the region resolves to.
+	require.NotNil(t, entry.OAuth)
+	require.Empty(t, entry.OAuth.Resource, "a literal resource cannot be regional")
+	require.True(t, entry.OAuth.ResourceMetadata)
+}
+
+func optionValues(v domain.MCPURLVariable) []string {
+	out := make([]string, 0, len(v.Options))
+	for _, option := range v.Options {
+		out = append(out, option.Value)
+	}
+	return out
+}
+
+// asRegistryURLVariable is the shape the install path validates against, so the
+// seed guard runs the real rules rather than a copy of them.
+func asRegistryURLVariable(v domain.MCPURLVariable) registrydomain.MCPURLVariable {
+	out := registrydomain.MCPURLVariable{
+		Name:     v.Name,
+		Required: v.Required,
+		Secret:   v.Secret,
+		In:       v.In,
+	}
+	for _, option := range v.Options {
+		out.Options = append(out.Options, registrydomain.MCPURLVariableOption{
+			Value: option.Value,
+			Label: option.Label,
+		})
+	}
+	return out
 }

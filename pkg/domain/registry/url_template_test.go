@@ -16,6 +16,7 @@ package registry
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -164,5 +165,64 @@ func TestValidateURLValues(t *testing.T) {
 	}
 	if err := ValidateURLValues(vars, map[string]string{"instance": "acme", "token": "x", "bogus": "y"}); !errors.Is(err, ErrURLTemplate) {
 		t.Fatal("unknown variable must error")
+	}
+}
+
+// A closed variable is the catalog saying the vendor publishes these values and
+// no others — a region, an edition. Without the check the set would be UI
+// decoration and an admin could still point the registry anywhere the charset
+// allows.
+func TestValidateURLValues_ClosedVariableRefusesAValueOutsideItsSet(t *testing.T) {
+	vars := []MCPURLVariable{{
+		Name:     "host",
+		Required: true,
+		Options: []MCPURLVariableOption{
+			{Value: "mcp.vanta.com", Label: "United States"},
+			{Value: "mcp.eu.vanta.com", Label: "Europe"},
+		},
+	}}
+
+	if err := ValidateURLValues(vars, map[string]string{"host": "mcp.eu.vanta.com"}); err != nil {
+		t.Fatalf("a declared option was refused: %v", err)
+	}
+
+	err := ValidateURLValues(vars, map[string]string{"host": "mcp.attacker.com"})
+	if !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("got %v, want an ErrURLTemplate", err)
+	}
+	// The error names the set, so a caller can act on it without the catalog.
+	for _, want := range []string{"mcp.vanta.com", "mcp.eu.vanta.com"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not name %q", err, want)
+		}
+	}
+}
+
+// Resolution runs the same check: a value that never passed collection — an
+// install stored before the set narrowed — must not dial either.
+func TestResolveURL_ClosedVariableRefusesAValueOutsideItsSet(t *testing.T) {
+	vars := []MCPURLVariable{{
+		Name:    "host",
+		Options: []MCPURLVariableOption{{Value: "mcp.vanta.com"}},
+	}}
+
+	got, err := ResolveURL("https://{host}/mcp", vars, map[string]string{"host": "mcp.vanta.com"})
+	if err != nil || got != "https://mcp.vanta.com/mcp" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+
+	if _, err := ResolveURL("https://{host}/mcp", vars, map[string]string{"host": "mcp.eu.vanta.com"}); !errors.Is(err, ErrURLTemplate) {
+		t.Fatalf("got %v, want an ErrURLTemplate", err)
+	}
+}
+
+// An open variable is the norm; options are the exception, and their absence
+// must not start rejecting the values every other entry relies on.
+func TestValidateURLValues_OpenVariableStillTakesAnyWellFormedValue(t *testing.T) {
+	vars := []MCPURLVariable{{Name: "domain", Required: true}}
+	for _, val := range []string{"acme", "acme.example.com"} {
+		if err := ValidateURLValues(vars, map[string]string{"domain": val}); err != nil {
+			t.Fatalf("%q was refused: %v", val, err)
+		}
 	}
 }

@@ -58,7 +58,7 @@ func TestEnterpriseSeed_EveryServerDeclaresCapabilities(t *testing.T) {
 
 	var raw rawCatalog
 	require.NoError(t, json.Unmarshal(mcpcatalog.EnterpriseServersJSON, &raw))
-	require.Len(t, raw.Servers, 202)
+	require.Len(t, raw.Servers, 200)
 	for _, server := range raw.Servers {
 		require.Lenf(t, server.Capabilities, 3, server.Name)
 		for _, line := range server.Capabilities {
