@@ -293,6 +293,21 @@ p.lede{
   color:var(--fg-secondary);font-size:.8125rem;line-height:1.125rem;
 }
 .account svg{flex:none;color:var(--fg-success)}
+/* The connected state's own panel. "Connected" in a quiet pill next to a faint
+   line of guidance read as a status someone still had to act on; this says the
+   task is over and where to go, in the colour the rest of the product uses for
+   done. */
+.done{
+  display:flex;gap:11px;margin-top:20px;padding:14px 16px;
+  background:var(--badge-green-bg);border:1px solid rgb(0 178 17 / .28);
+  border-radius:var(--radius-md);
+}
+.done svg{flex:none;margin-top:1px;color:var(--badge-green)}
+.done .done-title{
+  display:block;margin:0 0 4px;color:var(--fg-default);
+  font-size:.9375rem;line-height:1.25rem;font-weight:600;
+}
+.done .done-body{color:var(--fg-secondary);font-size:.8125rem;line-height:1.25rem}
 .account.danger svg{color:var(--fg-danger)}
 .card-foot{
   position:relative;display:flex;flex-direction:column;gap:6px;align-items:stretch;
@@ -340,6 +355,9 @@ const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div
 const securedByFooter = `<div class="secured">` + brandGlyph + `Secured by NeuralTrust</div>`
 
 const lockGlyph = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+
+// doneGlyph heads the panel that says the connection is finished.
+const doneGlyph = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
 
 // returnGlyph marks the line that tells a just-connected user what to do next.
 const returnGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>`
@@ -470,8 +488,11 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     <div class="chips">{{range .Items}}<span class="chip">{{.}}</span>{{end}}{{if .ItemsMore}}<span class="chip more">+{{.ItemsMore}} more</span>{{end}}</div>
   </div>{{end}}
   {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
-  {{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>
-  <p class="note next">` + returnGlyph + `<span>{{if not .ResumeURL}}You can close this window. {{end}}Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span></p>{{end}}
+  {{else if .Linked}}{{if .AccountRef}}<div class="account">` + badgeCheck + `{{.AccountRef}}</div>{{end}}
+  <div class="done">` + doneGlyph + `<div>
+    <span class="done-title">{{if .ResumeURL}}All set — head back to your app{{else}}All set — you can close this window{{end}}</span>
+    <span class="done-body">Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span>
+  </div></div>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
 </div>
