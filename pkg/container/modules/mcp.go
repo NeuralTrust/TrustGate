@@ -305,8 +305,10 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
 
 	// The inventory meta-tool reads the composed surface, and the catalog fills
-	// in what a server that is not serving yet would offer.
-	inventory, err := appmcp.NewInventoryTool(p.Composer, catalog)
+	// in what a server that is not serving yet would offer. The Store tool
+	// answers the other half — the servers this principal may add and has not —
+	// off the same grants and mode its own search reads.
+	inventory, err := appmcp.NewInventoryTool(p.Composer, catalog, appmcp.WithInventoryStoreOffer(storeOfferReader(store)))
 	if err != nil {
 		return nil, err
 	}
@@ -491,4 +493,15 @@ func provideEndUserConnectionsService(
 	limiter appoauth.ConnectAttemptLimiter,
 ) appoauth.EndUserConnectionsService {
 	return appoauth.NewEndUserConnectionsService(apiKeys, consumers, connect, limiter)
+}
+
+// storeOfferReader exposes the Store tool's view of what a principal may
+// install, when the wired tool offers one. A StoreTool built without it leaves
+// the inventory reporting the surface alone.
+func storeOfferReader(store appmcp.StoreTool) appmcp.StoreOfferReader {
+	reader, ok := store.(appmcp.StoreOfferReader)
+	if !ok {
+		return nil
+	}
+	return reader
 }
