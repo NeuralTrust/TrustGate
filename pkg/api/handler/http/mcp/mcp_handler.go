@@ -438,6 +438,9 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
 	}
 	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
+		if data.StoreConsumer != nil {
+			return data.StoreConsumer, nil
+		}
 		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 		if !ok {
 			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")

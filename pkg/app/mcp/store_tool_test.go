@@ -810,3 +810,72 @@ func TestStoreInstallWithoutAReasonHandsBackTheRequestForm(t *testing.T) {
 		t.Fatalf("the text must name the server, not its code: %s", text)
 	}
 }
+
+// The inventory asks the Store what this principal may add, and the answer has
+// to be the same rule search already applies: granted installs outright, the
+// rest would be a request and is not theirs to claim.
+func TestStoreOfferIsWhatThisPrincipalCanInstallOutright(t *testing.T) {
+	gitlab := shelfReg("gitlab")
+	tool := storeToolWithGrants(t,
+		[]*storeaccessdomain.Grant{
+			grantFor("github", ids.RegistryID{}, nil, []string{"ana"}),
+			grantFor("gitlab", gitlab.ID, []string{"sre"}, nil),
+		},
+		shelfReg("github"), gitlab,
+	)
+	reader, ok := tool.(StoreOfferReader)
+	if !ok {
+		t.Fatal("the Store tool must be able to report what it offers")
+	}
+	ctx := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{
+			Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"eng"}},
+		}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated))
+
+	offer, err := reader.StoreOffer(ctx, storeRC())
+	if err != nil {
+		t.Fatalf("StoreOffer: %v", err)
+	}
+	if !offer.Bounded || offer.Mode != gatewaydomain.StoreModeCurated {
+		t.Fatalf("Selected access is a bounded offer, got %+v", offer)
+	}
+	if len(offer.Servers) != 1 || offer.Servers[0].Code != "github" {
+		t.Fatalf("only the granted code is on offer, got %+v", offer.Servers)
+	}
+}
+
+// Open access offers the whole catalog, so enumerating it would be handing back
+// the catalog. The offer says so instead of listing it.
+func TestStoreOfferIsUnboundedWhenTheStoreIsOpen(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	reader, ok := tool.(StoreOfferReader)
+	if !ok {
+		t.Fatal("the Store tool must be able to report what it offers")
+	}
+	offer, err := reader.StoreOffer(selfServiceCtx(), storeRC())
+	if err != nil {
+		t.Fatalf("StoreOffer: %v", err)
+	}
+	if offer.Bounded || len(offer.Servers) != 0 {
+		t.Fatalf("an open Store must not enumerate the catalog, got %+v", offer)
+	}
+	if offer.Mode != gatewaydomain.StoreModeOpen {
+		t.Fatalf("got mode %q, want open", offer.Mode)
+	}
+}
+
+// A closed Store offers nothing, and must not fall through to "everything".
+func TestStoreOfferIsEmptyWhenTheStoreIsClosed(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	reader := tool.(StoreOfferReader)
+	ctx := appgateway.WithGateway(context.Background(), enterpriseGateway(gatewaydomain.StoreModeNone))
+
+	offer, err := reader.StoreOffer(ctx, storeRC())
+	if err != nil {
+		t.Fatalf("StoreOffer: %v", err)
+	}
+	if offer.Bounded || len(offer.Servers) != 0 || offer.Mode != gatewaydomain.StoreModeNone {
+		t.Fatalf("a closed Store offers nothing, got %+v", offer)
+	}
+}

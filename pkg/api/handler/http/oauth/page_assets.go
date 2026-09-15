@@ -286,6 +286,7 @@ p.lede{
   color:var(--fg-disabled);font-size:.75rem;line-height:1.125rem;
 }
 .note svg{flex:none;margin-top:1px}
+.note.next{color:var(--fg-secondary)}
 .account{
   display:inline-flex;align-items:center;gap:7px;margin-top:18px;padding:6px 12px;
   background:var(--bg-surface-hover);border-radius:var(--radius-full);
@@ -339,6 +340,9 @@ const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div
 const securedByFooter = `<div class="secured">` + brandGlyph + `Secured by NeuralTrust</div>`
 
 const lockGlyph = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+
+// returnGlyph marks the line that tells a just-connected user what to do next.
+const returnGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>`
 
 const alertGlyph = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`
 
@@ -466,7 +470,8 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
     <div class="chips">{{range .Items}}<span class="chip">{{.}}</span>{{end}}{{if .ItemsMore}}<span class="chip more">+{{.ItemsMore}} more</span>{{end}}</div>
   </div>{{end}}
   {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
-  {{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>{{end}}
+  {{else if .Linked}}<div class="account">` + badgeCheck + `{{if .AccountRef}}{{.AccountRef}}{{else}}Connected{{end}}</div>
+  <p class="note next">` + returnGlyph + `<span>{{if not .ResumeURL}}You can close this window. {{end}}Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span></p>{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
 </div>

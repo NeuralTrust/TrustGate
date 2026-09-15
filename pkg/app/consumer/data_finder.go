@@ -134,6 +134,11 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	}
 
 	data := NewData(gatewayID, routable)
+	data.StoreConsumer = &RoutableConsumer{
+		Consumer:   domain.BuildStoreConsumer(gatewayID),
+		Policies:   globalPolicies,
+		PolicyPlan: f.buildPolicyPlan(globalPolicies),
+	}
 	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
 	return data, nil
