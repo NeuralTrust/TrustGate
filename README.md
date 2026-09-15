@@ -269,11 +269,13 @@ Plugins run in ordered **policy stages** (sequential or parallel):
 
 | Plugin | Description |
 |--------|-------------|
-| `ratelimit` | Per-consumer/gateway request rate limiting |
-| `tokenratelimit` | Token-based rate limiting for cost control |
-| `requestsize` | Reject requests above a body size |
-| `semanticcache` | Embedding-based response caching |
-| `cors` | Cross-origin resource sharing |
+| [`ratelimit`](docs/plugins/ratelimit.md) | Per-consumer/gateway request rate limiting |
+| [`tokenratelimit`](docs/plugins/tokenratelimit.md) | Token-based rate limiting for cost control |
+| [`requestsize`](docs/plugins/requestsize.md) | Reject requests above a body size |
+| [`semanticcache`](docs/plugins/semanticcache.md) | Embedding-based response caching |
+| [`cors`](docs/plugins/cors.md) | Cross-origin resource sharing |
+
+Full configuration reference (fields, types, defaults, example JSON) for each plugin lives under `docs/plugins/`.
 
 ---
 
