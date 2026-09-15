@@ -16,6 +16,7 @@ package httpio
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -34,7 +35,7 @@ var ErrInvalidUUIDParam = errors.New("path id must be a valid UUID (8-4-4-4-12 h
 var ErrInvalidPage = errors.New("query parameter 'page' must be an integer >= 1")
 var ErrInvalidSize = errors.New("query parameter 'size' must be an integer >= 1 (values above 200 are capped at 200)")
 var ErrInvalidSort = errors.New("query parameter 'sort' must be an allowed field and 'order' must be asc or desc")
-var ErrInvalidFilter = errors.New("query filter value is invalid; use true or false for boolean filters")
+var ErrInvalidFilter = errors.New("query filter value is invalid")
 var ErrInvalidQuery = errors.New("one or more query parameters are invalid; check names and values against the Admin API docs")
 
 func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
@@ -165,7 +166,7 @@ func ParseOptionalBool(c *fiber.Ctx, name string) (*bool, error) {
 	}
 	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return nil, ErrInvalidFilter
+		return nil, fmt.Errorf("%w: %s", ErrInvalidFilter, name)
 	}
 	return &v, nil
 }

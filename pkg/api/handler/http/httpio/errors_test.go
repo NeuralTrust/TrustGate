@@ -28,12 +28,13 @@ func TestMapDomainError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		err         error
-		wantStatus  int
-		wantCode    string
-		wantMsgPart string // substring that must appear in Message (empty = no check)
-		wantMsgEmpty bool
+		name          string
+		err           error
+		wantStatus    int
+		wantCode      string
+		wantMsgPart   string // substring that must appear in Message (empty = no check)
+		wantMsgEmpty  bool
+		wantMsgAbsent string
 	}{
 		{name: "nil error → 200 empty", err: nil, wantStatus: fiber.StatusOK, wantCode: "", wantMsgEmpty: true},
 		{name: "invalid uuid → 400", err: ErrInvalidUUIDParam, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_uuid", wantMsgPart: "UUID"},
@@ -43,7 +44,7 @@ func TestMapDomainError(t *testing.T) {
 		{name: "invalid sort → 422", err: ErrInvalidSort, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_sort", wantMsgPart: "sort"},
 		{name: "invalid filter → 422", err: ErrInvalidFilter, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_filter", wantMsgPart: "filter"},
 		{name: "not found → 404 with guidance", err: commonerrors.ErrNotFound, wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "Check the id"},
-		{name: "wrapped not found → 404", err: fmt.Errorf("repo: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "Check the id"},
+		{name: "wrapped not found → 404 does not leak", err: fmt.Errorf("repo secret=hunter2: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "Check the id", wantMsgAbsent: "hunter2"},
 		{name: "entity not found → 404 names entity", err: fmt.Errorf("gateway: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found", wantMsgPart: "gateway"},
 		{name: "already exists → 409", err: commonerrors.ErrAlreadyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "unique"},
 		{name: "has dependents → 409", err: commonerrors.ErrHasDependents, wantStatus: fiber.StatusConflict, wantCode: "has_dependents", wantMsgPart: "dependent"},
@@ -74,6 +75,9 @@ func TestMapDomainError(t *testing.T) {
 			}
 			if tc.wantMsgPart != "" && !strings.Contains(body.Message, tc.wantMsgPart) {
 				t.Fatalf("message = %q, want substring %q", body.Message, tc.wantMsgPart)
+			}
+			if tc.wantMsgAbsent != "" && strings.Contains(body.Message, tc.wantMsgAbsent) {
+				t.Fatalf("message = %q, must not contain %q", body.Message, tc.wantMsgAbsent)
 			}
 			// 500 must never echo the underlying error string.
 			if status == fiber.StatusInternalServerError && strings.Contains(body.Message, "hunter2") {

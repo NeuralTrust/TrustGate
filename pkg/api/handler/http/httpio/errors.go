@@ -32,14 +32,19 @@ type ErrorBody struct {
 	Message string `json:"message,omitempty"`
 }
 
+// NotFoundBody returns the canonical client-safe not-found response body.
+func NotFoundBody() ErrorBody {
+	return ErrorBody{Error: "not_found", Message: msgNotFound}
+}
+
 const (
-	msgNotFound = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
-	msgInternal = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
-	msgValidationHint = "Check the request body fields against the Admin API schema and retry."
-	msgConflictHint = "Fetch the current resource, resolve the conflict, and retry."
-	msgAlreadyExistsHint = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
-	msgHasDependentsHint = "Remove or reassign dependent resources first, then retry the delete."
-	msgInvalidConfigHint = "Check the configuration fields and types against the Admin API docs and retry."
+	msgNotFound           = "No resource matched this request. Check the id in the URL and that it exists for this gateway or tenant."
+	msgInternal           = "An unexpected error occurred. Retry the request; if it keeps failing, contact support and include the X-Request-ID response header."
+	msgValidationHint     = "Check the request body fields against the Admin API schema and retry."
+	msgConflictHint       = "Fetch the current resource, resolve the conflict, and retry."
+	msgAlreadyExistsHint  = "Use a different unique name or slug, or update the existing resource instead of creating a new one."
+	msgHasDependentsHint  = "Remove or reassign dependent resources first, then retry the delete."
+	msgInvalidConfigHint  = "Check the configuration fields and types against the Admin API docs and retry."
 	msgResultTooLargeHint = "Narrow the query with filters or pagination (smaller page size) and retry."
 )
 
@@ -64,7 +69,9 @@ func MapDomainError(err error) (int, ErrorBody) {
 	case errors.Is(err, ErrInvalidFilter):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "invalid_filter", Message: publicMessage(err, "")}
 	case errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, ErrorBody{Error: "not_found", Message: notFoundMessage(err)}
+		body := NotFoundBody()
+		body.Message = notFoundMessage(err)
+		return fiber.StatusNotFound, body
 	case errors.Is(err, commonerrors.ErrAlreadyExists):
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: publicMessage(err, msgAlreadyExistsHint)}
 	case errors.Is(err, commonerrors.ErrHasDependents):
@@ -117,17 +124,21 @@ func isBareSentinel(msg string) bool {
 
 func notFoundMessage(err error) string {
 	msg := strings.TrimSpace(err.Error())
-	if msg == "" || msg == commonerrors.ErrNotFound.Error() {
+	suffix := ": " + commonerrors.ErrNotFound.Error()
+	entity, ok := strings.CutSuffix(msg, suffix)
+	if !ok || !isPublicNotFoundEntity(entity) {
 		return msgNotFound
 	}
-	const suffix = ": " + "resource not found"
-	if entity, ok := strings.CutSuffix(msg, suffix); ok && entity != "" && !strings.Contains(entity, " ") {
-		return fmt.Sprintf("No %s matched this request. Check the id in the URL and that it exists for this gateway or tenant.", entity)
+	return fmt.Sprintf("No %s matched this request. Check the id in the URL and that it exists for this gateway or tenant.", entity)
+}
+
+func isPublicNotFoundEntity(entity string) bool {
+	switch entity {
+	case "auth", "consumer", "gateway", "policy", "registry", "role":
+		return true
+	default:
+		return false
 	}
-	if strings.Contains(msg, commonerrors.ErrNotFound.Error()) && msg != commonerrors.ErrNotFound.Error() {
-		return msg + ". Check the id in the URL and that it exists for this gateway or tenant."
-	}
-	return msgNotFound
 }
 
 // WriteError is a convenience wrapper around MapDomainError + JSON write.
