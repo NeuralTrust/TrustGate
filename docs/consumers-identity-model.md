@@ -915,6 +915,19 @@ Three decisions worth keeping:
 - **The upstream's failure text stays in the log.** An `unavailable` entry says
   the gateway could not reach the server, not which host refused the connection.
   The caller cannot act on the latter, and it is not theirs to read.
+- **It also names what the user could add.** Asked what they have, someone is
+  asking what they can do here, and a server the Store entitles them to install
+  answers that as surely as one already bound — it was simply invisible unless
+  they thought to search. The `installable` list is the Store tool's own rule
+  (`StoreOffer`, `pkg/app/mcp/store_tool.go`) read through the same grants and
+  mode its search uses, narrowed twice: to servers that install outright (one
+  they would have to *request* is not theirs, and listing it as if it were is
+  how a client ends up promising a tool nobody can call), and to servers not
+  already on the surface. Under Open access every catalog entry qualifies, so
+  the offer is unbounded and the answer names `trustgate_store_search` instead
+  of handing back the catalog. The entries sit next to servers the user really
+  has, so the text says in words that they are not usable yet — a client that
+  blurs the two answers "yes, I can do that" for a server nobody has added.
 
 One more thing it has to do, found the first time someone asked a client "what
 do I have in TrustGate?": the client read `tools/list`, found the gateway's own
@@ -928,9 +941,15 @@ tool's description says what its answer excludes, and the answer itself ends by
 saying it is the whole list. The text body carries it, not only
 `structuredContent`, because the text is the part many clients hand the model.
 
-It is offered to every consumer with an MCP server bound, and withheld from a
-deny-all toolkit — a consumer meant to expose nothing gets no gateway tools
-either, the rule the connect tool already followed (`metaToolsPermitted`).
+It is offered to every consumer the gateway may add its own tools to, and
+withheld from a deny-all toolkit — a consumer meant to expose nothing gets no
+gateway tools either, the rule the connect tool already followed
+(`metaToolsPermitted`). An empty surface is not an exception: it once withheld
+the tool, on the reasoning that one which can only answer "nothing" is noise,
+but since the answer carries what the Store lets the user add, "nothing yet,
+and here is what you may add" is the whole of what someone with nothing bound
+needs — and withholding it left exactly that person looking at a tool list
+holding only the Store's own tools.
 Descriptions are truncated per entry: a caller wanting a tool's full schema gets
 it from `tools/list` once the tool is callable.
 

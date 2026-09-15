@@ -255,23 +255,44 @@ func TestInventoryTool_SaysSoWhenNothingMatches(t *testing.T) {
 	}
 }
 
-// A consumer with no MCP server bound has nothing to inventory, and a tool that
-// can only ever answer "nothing" is noise in every client's tool list.
-func TestInventoryTool_OffersItselfOnlyWhereThereIsAServerToList(t *testing.T) {
+// An empty surface used to withhold the tool, on the reasoning that a tool
+// which can only answer "nothing" is noise. It no longer can: the answer now
+// carries what the Store lets the user add, which is the whole of what someone
+// with nothing bound needs to hear. Withholding it left exactly that person
+// looking at a tool list holding only the Store's own tools, with no way to ask.
+func TestInventoryTool_OffersItselfEvenOnAnEmptySurface(t *testing.T) {
 	t.Parallel()
-	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil)
+	tool, err := NewInventoryTool(&fakeSurfaceInventory{inventory: &ToolInventory{}}, nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: vantaOffer()}))
 	if err != nil {
 		t.Fatalf("new inventory tool: %v", err)
 	}
 	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP}
 
-	if defs := tool.Definitions(context.Background(), routable(consumer)); len(defs) != 0 {
-		t.Fatalf("definitions = %v, want none for a consumer with no MCP server", defs)
+	defs := tool.Definitions(context.Background(), routable(consumer))
+	if len(defs) != 1 || defs[0].Name != InventoryToolName {
+		t.Fatalf("definitions = %v, want just %s", defs, InventoryToolName)
+	}
+
+	// And it has to answer, not error, for the surface that is not there.
+	result := callInventory(t, tool, "")
+	if servers := structuredServers(t, result); len(servers) != 0 {
+		t.Fatalf("servers = %v, want none", servers)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "no MCP servers") {
+		t.Fatalf("an empty surface must say so: %s", text)
+	}
+	if !strings.Contains(text, "Vanta") {
+		t.Fatalf("an empty surface is exactly where the Store offer matters: %s", text)
+	}
+	// "also" would be following nothing.
+	if strings.Contains(text, "can also add") {
+		t.Fatalf("with nothing on the surface the offer is not an afterthought: %s", text)
 	}
 
 	reg := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
-	defs := tool.Definitions(context.Background(), routable(consumer, reg))
-	if len(defs) != 1 || defs[0].Name != InventoryToolName {
+	if defs := tool.Definitions(context.Background(), routable(consumer, reg)); len(defs) != 1 {
 		t.Fatalf("definitions = %v, want just %s", defs, InventoryToolName)
 	}
 }
@@ -396,5 +417,179 @@ func TestInventoryTool_DefinitionSaysWhatIsNotIncluded(t *testing.T) {
 	description := toolDescription(t, defs[0])
 	if !strings.Contains(description, "not tools the user has") {
 		t.Fatalf("the description must disown the gateway's own tools:\n%s", description)
+	}
+}
+
+// fakeStoreOffer stands in for the Store tool's view of what a principal may add.
+type fakeStoreOffer struct {
+	offer StoreOffer
+	err   error
+}
+
+func (f fakeStoreOffer) StoreOffer(context.Context, *appconsumer.RoutableConsumer) (StoreOffer, error) {
+	return f.offer, f.err
+}
+
+func structuredInstallable(t *testing.T, result map[string]any) []map[string]any {
+	t.Helper()
+	structured, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("result has no structuredContent: %v", result)
+	}
+	raw, ok := structured["installable"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		server, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("installable entry is not an object: %v", entry)
+		}
+		out = append(out, server)
+	}
+	return out
+}
+
+func vantaOffer() StoreOffer {
+	return StoreOffer{
+		Mode:    "curated",
+		Bounded: true,
+		Servers: []catalogdomain.MCPServer{
+			{Code: "com.vanta/mcp", DisplayName: "Vanta", Description: "Compliance posture.", RequiresAuth: true},
+			// Already bound below, so it must not be offered a second time.
+			{Code: "app.linear/mcp", DisplayName: "Linear"},
+		},
+	}
+}
+
+// Asked what they have, a user is asking what they can do here. A server they
+// are entitled to install answers that too, and nothing listed it next to the
+// surface before — so it stayed invisible until someone thought to search.
+func TestInventoryTool_ListsWhatTheUserMayStillAdd(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(
+		&fakeSurfaceInventory{inventory: twoServerInventory()},
+		nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: vantaOffer()}),
+	)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	result := callInventory(t, tool, "")
+
+	installable := structuredInstallable(t, result)
+	if len(installable) != 1 {
+		t.Fatalf("expected one addable server, got %v", installable)
+	}
+	entry := installable[0]
+	if entry["code"] != "com.vanta/mcp" || entry["name"] != "Vanta" {
+		t.Fatalf("unexpected entry: %v", entry)
+	}
+	// The answer says how to act on it, not just that it exists.
+	if entry["install_tool"] != StoreInstallToolName {
+		t.Fatalf("entry must name the install tool: %v", entry)
+	}
+
+	// Many clients read only the text, so the offer has to be in the body too.
+	text := resultText(t, result)
+	if !strings.Contains(text, "Vanta") || !strings.Contains(text, StoreInstallToolName) {
+		t.Fatalf("the summary must offer the server: %s", text)
+	}
+	// A server already on the surface is not something to add.
+	if strings.Contains(text, "add 2 server") {
+		t.Fatalf("a bound server must not be offered again: %s", text)
+	}
+}
+
+// Open access makes the whole catalog installable. Listing all of it is not an
+// answer, so the summary says so and names the tool that narrows it.
+func TestInventoryTool_OpenStoreNamesSearchInsteadOfListingTheCatalog(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(
+		&fakeSurfaceInventory{inventory: twoServerInventory()},
+		nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: StoreOffer{Mode: "open"}}),
+	)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	result := callInventory(t, tool, "")
+
+	if got := structuredInstallable(t, result); len(got) != 0 {
+		t.Fatalf("an open Store must not enumerate the catalog: %v", got)
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, StoreSearchToolName) {
+		t.Fatalf("an open Store must point at search: %s", text)
+	}
+}
+
+// The Store's answer is an extra, not the point of the call: if it cannot be
+// read, the surface still has to come back.
+func TestInventoryTool_StoreFailureDoesNotSinkTheInventory(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(
+		&fakeSurfaceInventory{inventory: twoServerInventory()},
+		nil,
+		WithInventoryStoreOffer(fakeStoreOffer{err: ErrStoreToolUnavailable}),
+	)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	result := callInventory(t, tool, "")
+
+	if servers := structuredServers(t, result); len(servers) != 2 {
+		t.Fatalf("the surface must still be listed, got %v", servers)
+	}
+	if got := structuredInstallable(t, result); len(got) != 0 {
+		t.Fatalf("a failed Store read must offer nothing, got %v", got)
+	}
+}
+
+// The server filter narrows both halves of the answer: a caller asking about
+// Vanta means the one they could add as much as the ones they have.
+func TestInventoryTool_FilterNarrowsWhatMayBeAdded(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(
+		&fakeSurfaceInventory{inventory: twoServerInventory()},
+		nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: vantaOffer()}),
+	)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+
+	result := callInventory(t, tool, `{"server":"vanta"}`)
+	if got := structuredInstallable(t, result); len(got) != 1 || got[0]["code"] != "com.vanta/mcp" {
+		t.Fatalf("the filter must keep the matching server, got %v", got)
+	}
+	// No bound server matches, and the empty-surface answer must still carry it.
+	if text := resultText(t, result); !strings.Contains(text, "Vanta") {
+		t.Fatalf("an empty surface must still say what can be added: %s", text)
+	}
+
+	result = callInventory(t, tool, `{"server":"notion"}`)
+	if got := structuredInstallable(t, result); len(got) != 0 {
+		t.Fatalf("the filter must drop what does not match, got %v", got)
+	}
+}
+
+// The offer sits next to servers the user really has. A client that blurs the
+// two answers "yes, I can do that" for a server nobody has added, so the line
+// between them is stated rather than implied by the heading.
+func TestInventoryTool_SaysAnOfferedServerIsNotUsableYet(t *testing.T) {
+	t.Parallel()
+	tool, err := NewInventoryTool(
+		&fakeSurfaceInventory{inventory: twoServerInventory()},
+		nil,
+		WithInventoryStoreOffer(fakeStoreOffer{offer: vantaOffer()}),
+	)
+	if err != nil {
+		t.Fatalf("new inventory tool: %v", err)
+	}
+	text := resultText(t, callInventory(t, tool, ""))
+	if !strings.Contains(text, "not on their surface yet") {
+		t.Fatalf("the offer must not read as capability the user has: %s", text)
 	}
 }
