@@ -15,6 +15,7 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -259,7 +261,10 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+	composer.EXPECT().ListTools(mock.MatchedBy(func(ctx context.Context) bool {
+		original := requestmeta.FromContext(ctx)
+		return original != nil && original.IP != "" && len(original.Headers["Content-Type"]) == 1
+	}), mock.Anything).
 		Return([]appmcp.Tool{{Name: "gh_search"}}, nil).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 

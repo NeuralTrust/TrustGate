@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -135,6 +136,7 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), c.IP(), c.GetReqHeaders()))
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)
@@ -298,7 +300,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
-			"cause": consentErr.Cause,
+			"cause":       consentErr.Cause,
 		})
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",

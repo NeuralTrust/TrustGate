@@ -32,6 +32,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -133,6 +134,32 @@ func newProxyRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodPost, proxyPath, strings.NewReader(`{"model":"gpt"}`))
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func TestHandleCapturesOriginalRequestWithoutTelemetry(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, in appproxy.ForwardInput) {
+			original := requestmeta.FromContext(ctx)
+			if original == nil || original.IP == "192.0.2.99" || original.IP != in.Request.IP || original.Headers["User-Agent"][0] != "client/1.0" {
+				t.Fatalf("incorrect HTTP provenance: %+v", original)
+			}
+			if _, ok := original.Headers["Authorization"]; ok {
+				t.Fatal("credential forwarded")
+			}
+		}).Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{}`)}, nil).Once()
+	req := newProxyRequest()
+	req.Header.Set("User-Agent", "client/1.0")
+	req.Header.Set("X-Forwarded-For", "192.0.2.99")
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
 }
 
 func decodeError(t *testing.T, body io.Reader) httpio.ErrorBody {
