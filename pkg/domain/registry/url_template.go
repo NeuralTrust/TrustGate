@@ -268,6 +268,12 @@ func ValidateURLValue(v MCPURLVariable, val string) error {
 // substitution); host/path values must pass the structure-safe charset and carry
 // no ".." path-traversal sequence.
 func validateValue(v MCPURLVariable, val string) error {
+	// A closed variable is checked against its own set first: the charset rules
+	// would accept any well-formed host, and the point of the set is that only
+	// these hosts are the vendor's.
+	if !v.AllowsValue(val) {
+		return fmt.Errorf("%w: variable %q must be one of %s", ErrURLTemplate, v.Name, strings.Join(optionValues(v), ", "))
+	}
 	if len(val) > maxURLValueLen {
 		return fmt.Errorf("%w: variable %q is too long (max %d characters)", ErrURLTemplate, v.Name, maxURLValueLen)
 	}
@@ -284,4 +290,14 @@ func validateValue(v MCPURLVariable, val string) error {
 		return fmt.Errorf("%w: variable %q has an unsafe value; only letters, digits, '.', '-' and '_' are allowed", ErrURLTemplate, v.Name)
 	}
 	return nil
+}
+
+// optionValues lists a closed variable's allowed values, for an error a caller
+// can act on without reading the catalog.
+func optionValues(v MCPURLVariable) []string {
+	out := make([]string, 0, len(v.Options))
+	for _, option := range v.Options {
+		out = append(out, option.Value)
+	}
+	return out
 }

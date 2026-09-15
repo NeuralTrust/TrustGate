@@ -276,6 +276,14 @@ type configureVarView struct {
 	Required    bool
 	Secret      bool
 	Set         bool
+	// Options renders the variable as a picker instead of a text box: the set is
+	// what the submit accepts, so a typed value could only be refused.
+	Options []configureVarOptionView
+}
+
+type configureVarOptionView struct {
+	Value string
+	Label string
 }
 
 type configurePageView struct {
@@ -294,12 +302,17 @@ type configurePageView struct {
 func renderConfigurePage(c *fiber.Ctx, page *appoauth.ConfigurePage) error {
 	vars := make([]configureVarView, 0, len(page.Variables))
 	for _, v := range page.Variables {
+		options := make([]configureVarOptionView, 0, len(v.Options))
+		for _, option := range v.Options {
+			options = append(options, configureVarOptionView{Value: option.Value, Label: option.Label})
+		}
 		vars = append(vars, configureVarView{
 			Name:        v.Name,
 			Description: v.Description,
 			Required:    v.Required,
 			Secret:      v.Secret,
 			Set:         v.Set,
+			Options:     options,
 		})
 	}
 	return renderHTML(c, configurePageTmpl, configurePageView{

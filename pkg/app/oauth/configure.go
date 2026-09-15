@@ -77,6 +77,16 @@ type ConfigureVariable struct {
 	// the installation config, secret in the vault), so the form can show it as
 	// already provided without ever echoing the value.
 	Set bool
+	// Options is the published set a closed variable accepts — a region, an
+	// edition. The submit refuses anything outside it, so the form offers these
+	// and nothing else rather than letting a typed value fail on save.
+	Options []ConfigureVariableOption
+}
+
+// ConfigureVariableOption is one choice of a closed URL variable.
+type ConfigureVariableOption struct {
+	Value string
+	Label string
 }
 
 // ConfigurePage is the state the hosted "configure" form renders.
@@ -351,6 +361,7 @@ func (s *configureService) page(
 			Required:    v.Required,
 			Secret:      v.Secret,
 			Set:         s.isSet(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, v, config),
+			Options:     configureOptions(v.Options),
 		})
 	}
 	return &ConfigurePage{
@@ -565,13 +576,22 @@ func trimReason(reason string) string {
 }
 
 func toRegistryURLVar(v catalogdomain.MCPURLVariable) registrydomain.MCPURLVariable {
-	return registrydomain.MCPURLVariable{
+	out := registrydomain.MCPURLVariable{
 		Name:        strings.TrimSpace(v.Name),
 		Description: v.Description,
 		Required:    v.Required,
 		Secret:      v.Secret,
 		In:          strings.TrimSpace(v.In),
 	}
+	// A closed variable's set travels with it: the configure form offers these
+	// and the install path refuses anything else.
+	for _, option := range v.Options {
+		out.Options = append(out.Options, registrydomain.MCPURLVariableOption{
+			Value: strings.TrimSpace(option.Value),
+			Label: option.Label,
+		})
+	}
+	return out
 }
 
 func serverName(entry catalogdomain.MCPServer) string {
@@ -609,4 +629,23 @@ func (t StoreConfigureTickets) CreateConfigureTicket(
 		InstanceID:   instanceID,
 		Groups:       groups,
 	})
+}
+
+// configureOptions carries a closed variable's set onto the form. An option
+// with no label is shown by its value: the set is still the choice, and a blank
+// entry would be unpickable.
+func configureOptions(options []catalogdomain.MCPURLVariableOption) []ConfigureVariableOption {
+	if len(options) == 0 {
+		return nil
+	}
+	out := make([]ConfigureVariableOption, 0, len(options))
+	for _, option := range options {
+		value := strings.TrimSpace(option.Value)
+		label := strings.TrimSpace(option.Label)
+		if label == "" {
+			label = value
+		}
+		out = append(out, ConfigureVariableOption{Value: value, Label: label})
+	}
+	return out
 }

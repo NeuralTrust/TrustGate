@@ -161,6 +161,18 @@ func configureCatalog() fakeConfigCatalog {
 		// No per-user variables: the only thing its form can ask for is why the
 		// requester wants it.
 		"com.ahrefs/mcp": {Code: "com.ahrefs/mcp", DisplayName: "Ahrefs"},
+		// One entry covering every region the vendor publishes: the region is a
+		// closed variable, so the form picks from the set and the submit holds it.
+		"com.vanta/mcp": {
+			Code: "com.vanta/mcp", DisplayName: "Vanta",
+			URLVariables: []catalogdomain.MCPURLVariable{{
+				Name: "host", Required: true,
+				Options: []catalogdomain.MCPURLVariableOption{
+					{Value: "mcp.vanta.com", Label: "United States"},
+					{Value: "mcp.eu.vanta.com", Label: "Europe"},
+				},
+			}},
+		},
 		"com.brightdata/mcp": {
 			Code: "com.brightdata/mcp", DisplayName: "Bright Data",
 			URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
@@ -730,5 +742,58 @@ func TestConfigure_TheOpenModeDecisionIsMadeForTheRequester(t *testing.T) {
 
 	if seenOpenModeSubject != "ana" {
 		t.Fatalf("the mode was decided for %q, want the ticket's principal", seenOpenModeSubject)
+	}
+}
+
+// A closed variable's set reaches the form: without it the page would render a
+// text box for a value only three strings can take, and every typo would come
+// back as a rejected save.
+func TestConfigure_PageOffersAClosedVariablesSet(t *testing.T) {
+	f := configureFixtureGranted(t, true, nil, shelf("com.vanta/mcp"))
+	id := f.ticket(t, "com.vanta/mcp", "")
+
+	page, err := f.svc.Page(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if len(page.Variables) != 1 {
+		t.Fatalf("expected one variable, got %+v", page.Variables)
+	}
+	got := page.Variables[0].Options
+	want := []oauth.ConfigureVariableOption{
+		{Value: "mcp.vanta.com", Label: "United States"},
+		{Value: "mcp.eu.vanta.com", Label: "Europe"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	}
+}
+
+// The set is the rule, not a hint: a region nobody publishes must not be stored,
+// however it reached the submit.
+func TestConfigure_SubmitRefusesAValueOutsideTheSet(t *testing.T) {
+	f := configureFixtureGranted(t, true, nil, shelf("com.vanta/mcp"))
+	id := f.ticket(t, "com.vanta/mcp", "")
+
+	if _, err := f.svc.Submit(context.Background(), id, map[string]string{
+		"host": "mcp.attacker.com",
+	}); !errors.Is(err, oauth.ErrConfigureInvalid) {
+		t.Fatalf("got %v, want ErrConfigureInvalid", err)
+	}
+	if rows := f.rows(t, "com.vanta/mcp"); len(rows) != 0 {
+		t.Fatalf("a refused value must store nothing, got %+v", rows)
+	}
+
+	page, err := f.svc.Submit(context.Background(), id, map[string]string{"host": "mcp.eu.vanta.com"})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if !page.Saved {
+		t.Fatalf("a declared option must save, got %+v", page)
 	}
 }

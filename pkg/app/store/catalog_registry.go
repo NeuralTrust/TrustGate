@@ -90,6 +90,25 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 			Required:    v.Required,
 			Secret:      v.Secret,
 			In:          strings.TrimSpace(v.In),
+			Options:     registryURLVarOptions(v.Options),
+		})
+	}
+	return out
+}
+
+// registryURLVarOptions carries a closed variable's set onto the materialized
+// registry. The set is what the install path validates a supplied value
+// against, so dropping it here would leave the choice enforceable only by the
+// UI that offered it.
+func registryURLVarOptions(options []catalogdomain.MCPURLVariableOption) []registrydomain.MCPURLVariableOption {
+	if len(options) == 0 {
+		return nil
+	}
+	out := make([]registrydomain.MCPURLVariableOption, 0, len(options))
+	for _, option := range options {
+		out = append(out, registrydomain.MCPURLVariableOption{
+			Value: strings.TrimSpace(option.Value),
+			Label: option.Label,
 		})
 	}
 	return out
