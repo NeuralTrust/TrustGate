@@ -32,6 +32,7 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -112,6 +113,7 @@ func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHa
 // @Failure      502                {object}  httpio.ErrorBody
 // @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), c.IP(), c.GetReqHeaders()))
 	route, err := proxyRoute(c)
 	if err != nil {
 		return writeProxyError(c, err)
