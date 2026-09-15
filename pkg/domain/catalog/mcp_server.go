@@ -112,7 +112,22 @@ type MCPURLVariable struct {
 	Secret bool `json:"secret,omitempty"`
 	// In is where the variable is substituted: "path" (default) or "query".
 	In string `json:"in,omitempty"`
+	// Options closes the value to a fixed set the vendor publishes — a region,
+	// an edition. One entry then covers what would otherwise be a near-duplicate
+	// entry per value. Empty means free text.
+	Options []MCPURLVariableOption `json:"options,omitempty"`
 }
+
+// MCPURLVariableOption is one allowed value of a closed URL variable.
+type MCPURLVariableOption struct {
+	// Value is substituted into the template.
+	Value string `json:"value"`
+	// Label is what the operator picks by — "Europe", not "mcp.eu.vanta.com".
+	Label string `json:"label,omitempty"`
+}
+
+// HasOptions reports whether this variable is closed to a fixed set of values.
+func (v MCPURLVariable) HasOptions() bool { return len(v.Options) > 0 }
 
 // MCPAuthHeader describes a header the upstream MCP server expects for
 // authentication (API key / bearer token / custom header).
