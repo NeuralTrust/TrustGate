@@ -47,12 +47,15 @@ func policy(gw ids.GatewayID, typ storeaccessdomain.PrincipalType, id, mode stri
 	return p
 }
 
-// openGatewayCtx is a principal (with groups) on a gateway whose default is All.
+// openGatewayCtx is a principal (with groups) on a gateway whose admin has set
+// the default to All. It has to be stamped: an unstamped gateway is Selected.
 func openGatewayCtx(sub string, groups ...string) context.Context {
 	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{
 		Subject: sub, Claims: map[string]any{identity.ClaimGroups: groups},
 	})
-	return appgateway.WithGateway(ctx, &gatewaydomain.Gateway{})
+	return appgateway.WithGateway(ctx, &gatewaydomain.Gateway{
+		Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen),
+	})
 }
 
 // TestModeResolverLivePolicyOverridesDefaultAndClaim: the admin's policy is read
@@ -76,14 +79,14 @@ func TestModeResolverLivePolicyOverridesDefaultAndClaim(t *testing.T) {
 	// A stale claim from an earlier login loses to the live policy…
 	stale := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{
 		Subject: "ana", Claims: map[string]any{identity.ClaimStoreAccess: gatewaydomain.StoreModeOpen},
-	}), &gatewaydomain.Gateway{})
+	}), &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen)})
 	if got := r.Mode(stale, gw); got != gatewaydomain.StoreModeCurated {
 		t.Fatalf("live policy must beat a stale claim, got %q", got)
 	}
 	// …but still applies to a principal with no policy (legacy fallback).
 	legacy := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{
 		Subject: "dave", Claims: map[string]any{identity.ClaimStoreAccess: gatewaydomain.StoreModeNone},
-	}), &gatewaydomain.Gateway{})
+	}), &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen)})
 	if got := r.Mode(legacy, gw); got != gatewaydomain.StoreModeNone {
 		t.Fatalf("claim must remain the fallback without a policy, got %q", got)
 	}

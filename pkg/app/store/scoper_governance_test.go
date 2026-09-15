@@ -202,7 +202,8 @@ func TestScoperInstanceGrantExposesOnlyThatInstance(t *testing.T) {
 		t.Fatalf("only the granted instance may be exposed, got %+v", names(scoped.Registries))
 	}
 	// Under All both are exposed, each as its own instance clone.
-	open, _ := sc.Scope(appgateway.WithGateway(withPrincipalGroups("ana", "finance"), &gatewaydomain.Gateway{}), rc)
+	open, _ := sc.Scope(appgateway.WithGateway(withPrincipalGroups("ana", "finance"),
+		&gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeOpen)}), rc)
 	if len(open.Registries) != 2 {
 		t.Fatalf("All must expose both bound instances, got %d", len(open.Registries))
 	}
