@@ -690,6 +690,15 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 	return grant.Token, nil
 }
 
+// gatewayNamed reports whether a stored gateway id addresses a gateway. Only
+// absence disqualifies: empty, or the zero uuid a pre-binding authorization
+// parked, which is a well-formed id and so has to be excluded by value. Any
+// other value is left to the lookup that follows, which is where a gateway
+// that does not exist belongs.
+func gatewayNamed(raw string) bool {
+	return raw != "" && raw != ids.GatewayID{}.String()
+}
+
 func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	claims := jwt.MapClaims{
 		"sub":       grant.Subject,
@@ -812,6 +821,15 @@ func (p *authProxy) sessionLifetime(authID string) time.Duration {
 }
 
 func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
+	// A default-IdP session that names no gateway is one the MCP plane will
+	// always refuse. Refreshing re-mints the record as it stands, so such a
+	// session — every one issued before the authorize path started requiring a
+	// gateway — would keep coming back broken for as long as the client holds
+	// the refresh token, never re-running the authorization that would fix it.
+	// Refusing here sends the client back through the login once.
+	if rec.AuthID == appauth.DefaultIdPAuthID().String() && !gatewayNamed(rec.GatewayID) {
+		return nil, oauthErr("invalid_grant", "session predates gateway binding; sign in again")
+	}
 	resp, err := p.mintSession(CodeGrant{
 		Subject:     rec.Subject,
 		Email:       rec.Email,
