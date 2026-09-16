@@ -22,6 +22,8 @@ exporters:
       type: postgres
       settings:
         dsn_env: SENSIBLE_PG_DSN
+    # Refused at boot on a hybrid data plane unless
+    # TELEMETRY_RAW_REMOTE_EXPERIMENTAL=true (RUN-1237).
     # - name: raw-otlp
     #   type: otlp
     #   settings:

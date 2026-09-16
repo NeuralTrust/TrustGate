@@ -24,6 +24,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -140,7 +141,7 @@ func TestNewDefaultExporters(t *testing.T) {
 			tt.setup(factory)
 
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			configs, err := newDefaultExporters(logger, factory, path, tt.metadataEnv, tt.rawEnv)
+			configs, err := newDefaultExporters(logger, factory, path, tt.metadataEnv, tt.rawEnv, false, false)
 			tt.assert(t, configs, err)
 		})
 	}
@@ -152,8 +153,32 @@ func TestNewDefaultExporters_EmptyPathUsesOtlpTokens(t *testing.T) {
 	factory.EXPECT().Validate(mock.Anything).Return(nil)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	configs, err := newDefaultExporters(logger, factory, "", "otlp", "otlp")
+	configs, err := newDefaultExporters(logger, factory, "", "otlp", "otlp", false, false)
 	require.NoError(t, err)
 	require.Len(t, configs, 2)
 	assert.Equal(t, []string{"metadata-otlp", "raw-otlp"}, []string{configs[0].Name, configs[1].Name})
+}
+
+func TestNewDefaultExporters_HybridRejectsRemoteRawFromFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "telemetry.yaml")
+	content := `exporters:
+  metadata:
+    - name: metadata-otlp
+      type: otlp
+  raw:
+    - name: raw-otlp
+      type: otlp
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	_, err := newDefaultExporters(logger, mocks.NewExporterFactory(t), path, "", "", true, false)
+	require.ErrorIs(t, err, infratelemetry.ErrRawResidency)
+
+	factory := mocks.NewExporterFactory(t)
+	factory.EXPECT().Validate(mock.Anything).Return(nil)
+	configs, err := newDefaultExporters(logger, factory, path, "", "", true, true)
+	require.NoError(t, err)
+	assert.Len(t, configs, 2)
 }

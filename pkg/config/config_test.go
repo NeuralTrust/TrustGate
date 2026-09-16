@@ -198,6 +198,17 @@ func TestGetTelemetryConfig_ExportersEnv(t *testing.T) {
 	}
 }
 
+func TestGetTelemetryConfig_RawRemoteExperimental(t *testing.T) {
+	cfg := getTelemetryConfig()
+	if cfg.RawRemoteExperimental {
+		t.Error("RawRemoteExperimental defaults to true, want false so hybrid raw stays on-box")
+	}
+	t.Setenv("TELEMETRY_RAW_REMOTE_EXPERIMENTAL", "true")
+	if !getTelemetryConfig().RawRemoteExperimental {
+		t.Error("RawRemoteExperimental = false with the env var set, want true")
+	}
+}
+
 func TestGetTelemetryConfig_EmptyExportersFileDisablesDefault(t *testing.T) {
 	t.Setenv("TELEMETRY_EXPORTERS_FILE", "")
 	cfg := getTelemetryConfig()

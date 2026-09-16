@@ -97,6 +97,8 @@ func buildPipeline(
 		cfg.Telemetry.ExportersFile,
 		cfg.Telemetry.ExportersMetadata,
 		cfg.Telemetry.ExportersRaw,
+		cfg.ConfigSync.DataPlaneEnabled,
+		cfg.Telemetry.RawRemoteExperimental,
 	)
 	if err != nil {
 		return nil, err
@@ -108,6 +110,7 @@ func newDefaultExporters(
 	logger *slog.Logger,
 	factory appmetrics.ExporterFactory,
 	path, metadataYAML, rawYAML string,
+	hybrid, rawRemoteExperimental bool,
 ) ([]telemetrydomain.ExporterConfig, error) {
 	configs, err := exportersfile.LoadDefaults(path, metadataYAML, rawYAML)
 	if err != nil {
@@ -117,6 +120,13 @@ func newDefaultExporters(
 		logger.Warn("no default telemetry exporters configured; starting with none",
 			slog.String("path", path))
 		return nil, nil
+	}
+	if err := infratelemetry.CheckRawResidency(configs, hybrid, rawRemoteExperimental); err != nil {
+		return nil, err
+	}
+	if hybrid && rawRemoteExperimental {
+		logger.Warn("hybrid data plane allows remote raw telemetry; request and response bodies leave the customer boundary",
+			slog.String("override", "TELEMETRY_RAW_REMOTE_EXPERIMENTAL"))
 	}
 	for _, cfg := range configs {
 		if err := factory.Validate(cfg); err != nil {
