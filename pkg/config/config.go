@@ -78,16 +78,15 @@ const (
 
 	defaultKafkaBrokers = "localhost:9092"
 
-	defaultTelemetryEnabled               = true
-	defaultTelemetryKafkaTopic            = "trustgate.requests"
-	defaultTelemetryEnableRequestTraces   = true
-	defaultTelemetryEnablePluginTraces    = true
-	defaultTelemetryExportersFile         = "config/telemetry.yaml"
-	defaultTelemetryRawRemoteExperimental = false
-	defaultOpsMetricsEnabled              = false
-	defaultOpsTracesEnabled               = false
-	defaultOpsTracesSamplingRatio         = 1.0
-	defaultOpsTracesProbeSamplingRatio    = 0.01
+	defaultTelemetryEnabled             = true
+	defaultTelemetryKafkaTopic          = "trustgate.requests"
+	defaultTelemetryEnableRequestTraces = true
+	defaultTelemetryEnablePluginTraces  = true
+	defaultTelemetryExportersFile       = "config/telemetry.yaml"
+	defaultOpsMetricsEnabled            = false
+	defaultOpsTracesEnabled             = false
+	defaultOpsTracesSamplingRatio       = 1.0
+	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -352,15 +351,11 @@ type KafkaConfig struct {
 }
 
 type TelemetryConfig struct {
-	Enabled           bool
-	KafkaTopic        string
-	ExportersFile     string
-	ExportersMetadata string
-	ExportersRaw      string
-	// RawRemoteExperimental lets a hybrid data plane keep a remote raw exporter.
-	// Mirrors global.telemetry.rawRemoteExperimental in the neuraltrust-platform
-	// chart, so a non-Helm deployment has the same escape hatch (RUN-1237).
-	RawRemoteExperimental  bool
+	Enabled                bool
+	KafkaTopic             string
+	ExportersFile          string
+	ExportersMetadata      string
+	ExportersRaw           string
 	EnableRequestTraces    bool
 	EnablePluginTraces     bool
 	OpsMetricsEnabled      bool
@@ -640,14 +635,11 @@ func getKafkaConfig() KafkaConfig {
 
 func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
-		Enabled:           getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
-		KafkaTopic:        getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		ExportersFile:     getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
-		ExportersMetadata: getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
-		ExportersRaw:      getEnv("TELEMETRY_EXPORTERS_RAW", ""),
-		RawRemoteExperimental: getEnvBool(
-			"TELEMETRY_RAW_REMOTE_EXPERIMENTAL", defaultTelemetryRawRemoteExperimental,
-		),
+		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
+		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
+		ExportersFile:       getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
+		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
+		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),
