@@ -147,14 +147,27 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	// synthetic MCP Store and any consumer with no oauth2 of its own — carries no
 	// gateway of its own, so it arrives with a nil GatewayID. Bind it to the
 	// addressed gateway (resolved from the request host) so the session minted at
-	// callback stamps that gateway into its gwid claim; otherwise gwid is the zero
-	// id and the MCP plane rejects the token (401), which the client retries
-	// forever. Clone to avoid mutating the shared singleton auth record.
+	// callback stamps that gateway into its gwid claim. Clone to avoid mutating
+	// the shared singleton auth record.
+	//
+	// Without a gateway there is nothing to bind to, and this used to carry on
+	// regardless: the login succeeded, the token came back 200, and the session
+	// went out stamped with the zero gateway id — which the MCP plane then
+	// refused with an opaque 401 the client retried forever. Refusing here costs
+	// the same login and says why, on the screen the user is already looking at.
 	if auth.GatewayID.IsNil() {
-		if gw, ok := appgateway.FromContext(ctx); ok {
+		gw, ok := appgateway.FromContext(ctx)
+		switch {
+		case ok:
 			bound := *auth
 			bound.GatewayID = gw.ID
 			auth = &bound
+		case appauth.IsDefaultIdP(auth):
+			// Only the default IdP is unusable without this: the MCP plane reads
+			// its session's gwid to decide which gateway the caller reached, and
+			// a gateway's own oauth2 auth answers that from its own record.
+			return authorizeFailure(req, oauthErr("invalid_request",
+				"this host does not address a gateway; check the MCP server URL"))
 		}
 	}
 	cfg := auth.Config.OAuth2
