@@ -386,10 +386,6 @@ func writeRPCResult(c *fiber.Ctx, id json.RawMessage, result any) error {
 	return writeJSON(c, rpcResponse{JSONRPC: "2.0", ID: normalizeID(id), Result: result})
 }
 
-func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage) error {
-	return writeJSON(c, rawRPCResponse(id, result))
-}
-
 // rawRPCResponse wraps an already-encoded result, which rpcResponse cannot: its
 // Result is `any` with omitempty, and a json.RawMessage there would be re-encoded.
 func rawRPCResponse(id json.RawMessage, result json.RawMessage) any {
