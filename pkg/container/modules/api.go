@@ -298,7 +298,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -307,7 +307,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 		return oauthhttp.NewTokenHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -344,7 +344,7 @@ func provideAPIKeyConnectHandler(
 	connect appoauth.APIKeyConnectService,
 	limiter appoauth.ConnectAttemptLimiter,
 ) *oauthhttp.APIKeyConnectHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 	resolveSource := func(peer, forwardedFor string) string {
 		return ratelimit.ResolveConnectSource(
 			peer,
@@ -361,7 +361,7 @@ func provideEndUserConnectionsHandler(
 	connections appoauth.EndUserConnectionsService,
 	limiter appoauth.ConnectAttemptLimiter,
 ) *oauthhttp.EndUserConnectionsHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 	resolveSource := func(peer, forwardedFor string) string {
 		return ratelimit.ResolveConnectSource(
 			peer,
