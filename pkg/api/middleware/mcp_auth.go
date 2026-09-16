@@ -15,6 +15,8 @@
 package middleware
 
 import (
+	"log/slog"
+
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -67,6 +69,14 @@ func (m *MCPAuthMiddleware) Middleware() fiber.Handler {
 		}
 		gw, err := m.gateways.FindByID(c.UserContext(), identity.GatewayID)
 		if err != nil {
+			// The credential verified and then the gateway it names could not be
+			// read — a different failure from "the token is no good", and one the
+			// shared 401 hides. Worth a line: it is either a deleted gateway or a
+			// session minted against another deployment's database.
+			slog.LogAttrs(c.UserContext(), slog.LevelWarn, "mcp auth: token verified but its gateway is unreadable",
+				slog.String("gateway_id", identity.GatewayID.String()),
+				slog.String("auth_id", identity.AuthID.String()),
+				slog.String("error", err.Error()))
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
 		}
 		if err := enforceDefaultIdPTenant(identity, gw); err != nil {

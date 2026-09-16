@@ -24,6 +24,8 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -311,9 +313,10 @@ func TestForward_PostResponseRunsAfterSyncInvoke(t *testing.T) {
 // capturePlugin records the ExecInput it observed for a given stage so tests can
 // assert what PostResponse saw (accumulated body, usage metadata).
 type capturePlugin struct {
-	name   string
-	stages []policy.Stage
-	seen   chan appplugins.ExecInput
+	name    string
+	stages  []policy.Stage
+	seen    chan appplugins.ExecInput
+	observe func(context.Context)
 }
 
 func (c *capturePlugin) Name() string                    { return c.name }
@@ -327,8 +330,11 @@ func (c *capturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (c *capturePlugin) MutatesRequestBody() bool            { return false }
 func (c *capturePlugin) MutatesResponseBody() bool           { return false }
 func (c *capturePlugin) MutatesMetadata() bool               { return false }
-func (c *capturePlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
+func (c *capturePlugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if in.Stage == policy.StagePostResponse && c.seen != nil {
+		if c.observe != nil {
+			c.observe(ctx)
+		}
 		c.seen <- in
 	}
 	return &appplugins.Result{StatusCode: 200}, nil
@@ -361,16 +367,27 @@ func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
 		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream}, nil).
 		Once()
 
+	ctx := requestmeta.NewContext(context.Background(), "203.0.113.42", map[string][]string{"User-Agent": {"client/1.0"}})
+	principal := &identity.Principal{Subject: "end-user", Claims: map[string]any{"email": "user@example.test"}}
+	ctx, cancel := context.WithCancel(identity.WithPrincipal(ctx, principal))
+	defer cancel()
 	seen := make(chan appplugins.ExecInput, 1)
 	p := &capturePlugin{
 		name:   "token_rate_limiter",
 		stages: []policy.Stage{policy.StagePreRequest, policy.StagePostResponse},
 		seen:   seen,
+		observe: func(postCtx context.Context) {
+			assert.NoError(t, postCtx.Err())
+			_, bounded := postCtx.Deadline()
+			assert.True(t, bounded)
+			assert.Equal(t, principal, identity.PrincipalFromContext(postCtx))
+			assert.Equal(t, requestmeta.FromContext(ctx), requestmeta.FromContext(postCtx))
+		},
 	}
 	fwd := forwarderWithPlugin(t, invoker, p)
 
 	req := &infracontext.RequestContext{Body: []byte(`{"stream":true}`)}
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+	res, err := fwd.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request:   req,
@@ -385,6 +402,7 @@ func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
+	cancel()
 	var relayed []string
 	for line, lineErr := range res.Stream {
 		require.NoError(t, lineErr)
