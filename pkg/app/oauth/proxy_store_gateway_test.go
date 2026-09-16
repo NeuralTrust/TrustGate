@@ -113,9 +113,14 @@ func TestAuthorizeDefaultIdPPassesGatewayTenantAsOrgHint(t *testing.T) {
 		"authorize must pass the gateway id so the app resolves this gateway's Store access policy")
 }
 
-// Without a routed gateway in context there is nothing to bind, so the parked
-// authorization keeps the default IdP's zero gateway (unchanged behaviour).
-func TestAuthorizeDefaultIdPNoContextGatewayKeepsZero(t *testing.T) {
+// Without a routed gateway in context there is nothing to bind the default IdP
+// to. This used to park the authorization with the zero gateway anyway: the
+// user completed the login, the token endpoint answered 200, and the session
+// came back stamped gwid=00000000-…, which the MCP plane refused with an
+// opaque 401 the client retried forever. A host that addresses no gateway —
+// one served under a suffix the router does not recognise, say — now fails at
+// authorize, where the reason can still reach the person reading the screen.
+func TestAuthorizeDefaultIdPWithoutGatewayIsRefused(t *testing.T) {
 	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
 		Issuer: "https://idp.example.com", ClientID: "trustgate",
 	})
@@ -139,8 +144,12 @@ func TestAuthorizeDefaultIdPNoContextGatewayKeepsZero(t *testing.T) {
 
 	parsed, err := url.Parse(loc)
 	require.NoError(t, err)
-	pending, err := store.TakePending(context.Background(), parsed.Query().Get("state"))
+	require.Equal(t, "invalid_request", parsed.Query().Get("error"))
+	require.Contains(t, parsed.Query().Get("error_description"), "does not address a gateway")
+	// The state echoed back is the client's own; nothing was parked under it, so
+	// no login can complete into a useless session.
+	require.Equal(t, "client-state", parsed.Query().Get("state"))
+	pending, err := store.TakePending(context.Background(), "client-state")
 	require.NoError(t, err)
-	require.NotNil(t, pending)
-	require.Equal(t, ids.GatewayID{}.String(), pending.GatewayID)
+	require.Nil(t, pending)
 }

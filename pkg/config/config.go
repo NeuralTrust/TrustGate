@@ -255,6 +255,11 @@ type ServerConfig struct {
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
+	// MCPExtraBaseDomains lists further host suffixes this deployment answers
+	// on, beyond MCPBaseDomain. A gateway keeps publishing its URL under
+	// MCPBaseDomain; these only widen what the request router recognises, for
+	// when the same cluster is also reachable under a second domain.
+	MCPExtraBaseDomains []string
 	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
 	// redirect_uri base for upstream MCP connect (authorize + code exchange +
 	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
@@ -518,6 +523,7 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
+		MCPExtraBaseDomains:   splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
 		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
 		MCPOAuthClientName:    strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
 		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
