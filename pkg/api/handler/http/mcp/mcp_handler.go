@@ -82,6 +82,7 @@ type Handler struct {
 	surface   appmcp.SurfaceWatcher
 	consumers appconsumer.DataFinder
 	timings   streamTimings
+	memory    *surfaceMemory
 }
 
 type HandlerOption func(*Handler)
@@ -102,6 +103,7 @@ func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...Hand
 		gateway: gateway,
 		surface: surface,
 		timings: defaultStreamTimings,
+		memory:  newSurfaceMemory(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -183,10 +185,17 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeAppError(c, req.ID, err)
 	}
+	// An install or a connect made since this caller's last request leaves their
+	// client serving the tool list it cached at handshake. tools/list_changed is
+	// what fixes that, and the GET stream is not always there to carry it, so a
+	// response the client is already waiting for carries it instead. tools/list
+	// is the one method to leave alone: it is the answer to the notification,
+	// and announcing a change on it asks for another list of what was just sent.
+	listChanged := req.Method != "tools/list" && h.surfaceMoved(c, rc)
 	if raw, ok := result.(json.RawMessage); ok {
-		return writeRawRPCResult(c, req.ID, raw)
+		return writeRPCBody(c, rawRPCResponse(req.ID, raw), listChanged)
 	}
-	return writeRPCResult(c, req.ID, result)
+	return writeRPCBody(c, rpcResponse{JSONRPC: "2.0", ID: normalizeID(req.ID), Result: result}, listChanged)
 }
 
 func skipMetrics(c *fiber.Ctx) {
@@ -366,11 +375,17 @@ func writeRPCResult(c *fiber.Ctx, id json.RawMessage, result any) error {
 }
 
 func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage) error {
-	return writeJSON(c, struct {
+	return writeJSON(c, rawRPCResponse(id, result))
+}
+
+// rawRPCResponse wraps an already-encoded result, which rpcResponse cannot: its
+// Result is `any` with omitempty, and a json.RawMessage there would be re-encoded.
+func rawRPCResponse(id json.RawMessage, result json.RawMessage) any {
+	return struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
-	}{JSONRPC: "2.0", ID: normalizeID(id), Result: result})
+	}{JSONRPC: "2.0", ID: normalizeID(id), Result: result}
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
