@@ -113,6 +113,24 @@ func TestMCPOutputText(t *testing.T) {
 			want: "keep",
 		},
 		{
+			// An embedded resource carries its payload in resource.text. Ignoring
+			// it meant a tool could return PII that no detector ever saw.
+			name: "embedded resource text is inspected",
+			body: `{"content":[{"type":"resource","resource":{"uri":"file:///notes.md","mimeType":"text/markdown","text":"jane@acme.io"}}]}`,
+			want: "jane@acme.io",
+		},
+		{
+			// A binary resource has no text to inspect and nothing to mask.
+			name: "embedded resource without text ignored",
+			body: `{"content":[{"type":"resource","resource":{"uri":"file:///x.bin","mimeType":"application/octet-stream","blob":"AAECAw=="}}]}`,
+			want: "",
+		},
+		{
+			name: "text block and embedded resource keep content order",
+			body: `{"content":[{"type":"text","text":"intro"},{"type":"resource","resource":{"uri":"file:///notes.md","text":"jane@acme.io"}}]}`,
+			want: "intro\njane@acme.io",
+		},
+		{
 			name: "empty content",
 			body: `{"content":[],"isError":false}`,
 			want: "",
@@ -131,6 +149,20 @@ func TestMCPOutputText(t *testing.T) {
 			name: "structuredContent numbers and bools skipped",
 			body: `{"content":[],"structuredContent":{"count":3,"ok":true,"name":"Jane"}}`,
 			want: "Jane",
+		},
+		{
+			// A resource field of the wrong shape must cost only its own block.
+			// Decoding it as part of a typed mcpToolResult would fail the whole
+			// body and let the sibling text block escape inspection with it —
+			// a one-field switch for turning the guard off.
+			name: "malformed resource does not sink its siblings",
+			body: `{"content":[{"type":"text","text":"hi"},{"type":"resource","resource":"oops"}]}`,
+			want: "hi",
+		},
+		{
+			name: "resource block with no resource field ignored",
+			body: `{"content":[{"type":"resource"}]}`,
+			want: "",
 		},
 		{
 			name: "malformed json",
@@ -205,6 +237,77 @@ func TestRewriteMCPResponseMasksStructuredContent(t *testing.T) {
 		// ambiguous, so the rewrite must refuse rather than corrupt the body.
 		if _, ok := rewriteMCPResponse([]byte(body), "one\ntwo"); ok {
 			t.Fatal("expected rewriteMCPResponse to fail on a line-count mismatch")
+		}
+	})
+}
+
+// blockResource is a decode helper so these tests assert on the wire shape
+// rather than on the gateway's internal struct.
+func blockResource(t *testing.T, out []byte, i int) map[string]any {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal rewritten body: %v", err)
+	}
+	blocks, ok := got["content"].([]any)
+	if !ok || len(blocks) <= i {
+		t.Fatalf("content block %d missing: %s", i, out)
+	}
+	block, ok := blocks[i].(map[string]any)
+	if !ok {
+		t.Fatalf("content block %d is not an object: %s", i, out)
+	}
+	return block
+}
+
+// An MCP server may return its payload as an embedded resource instead of a
+// text block. Both halves must cover it: if mcpOutputInspectable says no the
+// guard is never called at all, and if rewriteMCPResponse cannot write the
+// masked text back the transform degrades to a block.
+func TestMCPEmbeddedResourceRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const body = `{"content":[{"type":"resource","resource":{"uri":"file:///notes.md","mimeType":"text/markdown","text":"jane@acme.io"}}],"isError":false}`
+
+	t.Run("result reaches the guard", func(t *testing.T) {
+		t.Parallel()
+		if !mcpOutputInspectable([]byte(body)) {
+			t.Fatal("embedded-resource result reported as not inspectable: the guard would never be called")
+		}
+	})
+
+	t.Run("masked text is written back into the resource", func(t *testing.T) {
+		t.Parallel()
+		out, ok := rewriteMCPResponse([]byte(body), "[MASKED_EMAIL]")
+		if !ok {
+			t.Fatal("rewriteMCPResponse returned false")
+		}
+		res, ok := blockResource(t, out, 0)["resource"].(map[string]any)
+		if !ok {
+			t.Fatalf("embedded resource lost in rewrite: %s", out)
+		}
+		if res["text"] != "[MASKED_EMAIL]" {
+			t.Fatalf("resource text not masked: %v", res["text"])
+		}
+		// Fields the gateway does not model must survive the rewrite.
+		if res["uri"] != "file:///notes.md" || res["mimeType"] != "text/markdown" {
+			t.Fatalf("resource metadata lost: %v", res)
+		}
+	})
+
+	t.Run("text block and embedded resource masked in content order", func(t *testing.T) {
+		t.Parallel()
+		mixed := `{"content":[{"type":"text","text":"intro"},{"type":"resource","resource":{"uri":"file:///notes.md","text":"jane@acme.io"}}]}`
+		out, ok := rewriteMCPResponse([]byte(mixed), "INTRO\n[MASKED_EMAIL]")
+		if !ok {
+			t.Fatal("rewriteMCPResponse returned false")
+		}
+		if got := blockResource(t, out, 0)["text"]; got != "INTRO" {
+			t.Fatalf("text block not masked: %v", got)
+		}
+		res, ok := blockResource(t, out, 1)["resource"].(map[string]any)
+		if !ok || res["text"] != "[MASKED_EMAIL]" {
+			t.Fatalf("embedded resource not masked: %s", out)
 		}
 	})
 }
