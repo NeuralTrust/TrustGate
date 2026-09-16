@@ -429,14 +429,22 @@ func newAuthTestAppWithResolver(
 		authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 		require.True(t, ok)
 		require.Equal(t, data.GatewayID, authCtx.GatewayID)
-		if authCtx.Method == appauth.MethodOAuth2 {
+		switch authCtx.Method {
+		case appauth.MethodOAuth2:
 			p := identity.PrincipalFromContext(c.UserContext())
 			require.NotNil(t, p)
 			require.Equal(t, authCtx.Subject, p.Subject)
 			require.Same(t, oauthVerifier.claims, p)
 			require.Equal(t, oauthVerifier.claims.Method, p.Method)
 			require.Equal(t, oauthVerifier.claims.Email(), p.Email())
-		} else {
+		case appauth.MethodAPIKey:
+			// An API key's name is the identity it carries; the telemetry
+			// contract publishes it as principal.subject/api_key.
+			p := identity.PrincipalFromContext(c.UserContext())
+			require.NotNil(t, p)
+			require.Equal(t, "batch-runner", p.Subject)
+			require.Equal(t, identity.MethodAPIKey, p.Method)
+		default:
 			require.Nil(t, identity.PrincipalFromContext(c.UserContext()))
 		}
 		_, ok = appconsumer.ConsumerFromContext(c.UserContext())
@@ -462,6 +470,7 @@ func inlineConsumerWithAPIKey(t *testing.T) (*gatewaydomain.Gateway, appconsumer
 		Auths: []*authdomain.Auth{{
 			ID:        authID,
 			GatewayID: gw.ID,
+			Name:      "batch-runner",
 			Type:      authdomain.TypeAPIKey,
 			Enabled:   true,
 			KeyHash:   authdomain.HashAPIKey(rawKey),
