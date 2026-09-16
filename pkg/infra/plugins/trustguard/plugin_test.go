@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -99,6 +100,44 @@ func requestContext() *infracontext.RequestContext {
 		ConsumerID:     "consumer-9",
 		RequestedModel: "gpt-4o-mini",
 		Body:           openAIRequestBody(),
+	}
+}
+
+func TestExecuteForwardsOriginalRequestMetadata(t *testing.T) {
+	for _, mcp := range []bool{false, true} {
+		for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse} {
+			t.Run(string(stage)+map[bool]string{false: "-llm", true: "-mcp"}[mcp], func(t *testing.T) {
+				f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+				p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+				headers := map[string][]string{"user-agent": {"client/1.0"}, "Authorization": {"Bearer private"}, "X-Forwarded-For": {"192.0.2.99"}, "X-Prompt": {"private prompt"}, "Accept": {strings.Repeat("x", 513)}, "Content-Type": {"text/plain\r\nInjected: value"}}
+				ctx := requestmeta.NewContext(context.Background(), "203.0.113.42", headers)
+				headers["user-agent"][0] = "changed"
+				req := requestContext()
+				req.IP = "10.0.0.1"
+				req.Headers = headers
+				resp := &infracontext.ResponseContext{Body: openAIResponseBody(), Streaming: stage == policy.StagePostResponse}
+				if stage == policy.StagePostResponse {
+					resp.Body = []byte("data: " + `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"}}]}` + "\ndata: [DONE]\n")
+				}
+				if mcp {
+					req.MCP = true
+					req.Body = []byte(`{"name":"search","arguments":{"query":"hello"}}`)
+					resp.Body = []byte(`{"content":[{"type":"text","text":"hello"}]}`)
+				}
+				_, err := p.Execute(ctx, execInput(stage, policy.ModeEnforce, settings("request_response"), req, resp))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := f.captured().OriginalRequest
+				if got == nil || got.IP != "203.0.113.42" || len(got.Headers) != 1 || got.Headers["User-Agent"][0] != "client/1.0" {
+					t.Fatalf("unexpected original request: %+v", got)
+				}
+				got.Headers["User-Agent"][0] = "changed again"
+				if requestmeta.FromContext(ctx).Headers["User-Agent"][0] != "client/1.0" {
+					t.Fatal("snapshot was mutated")
+				}
+			})
+		}
 	}
 }
 

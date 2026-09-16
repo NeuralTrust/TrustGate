@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -204,12 +205,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		protocol = protocolMCP
 	}
 	body := GuardRequest{
-		Payload:    payload,
-		Direction:  direction,
-		Protocol:   protocol,
-		GatewayID:  in.Request.GatewayID,
-		SessionID:  in.Request.SessionID,
-		ConsumerID: in.Request.ConsumerID,
+		OriginalRequest: requestmeta.FromContext(ctx),
+		Payload:         payload,
+		Direction:       direction,
+		Protocol:        protocol,
+		GatewayID:       in.Request.GatewayID,
+		SessionID:       in.Request.SessionID,
+		ConsumerID:      in.Request.ConsumerID,
 		Attributes: GuardAttributes{
 			ContentType: contentTypeJSON,
 			Model: GuardModel{
