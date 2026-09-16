@@ -180,7 +180,7 @@ func TestComposer_ToolInventory_NamesWhatThePolicyTurnedAway(t *testing.T) {
 	if server == nil {
 		t.Fatal("github missing from the inventory")
 	}
-	if names := inventoryToolNames(server); len(names) != 1 || names[0] != "create_issue" {
+	if names := inventoryToolNames(server); len(names) != 1 || names[0] != namedFor(reg, "create_issue") {
 		t.Fatalf("tools = %v, want only the allowed one", names)
 	}
 	if len(server.Denied) != 1 || server.Denied[0] != "delete_repo" {

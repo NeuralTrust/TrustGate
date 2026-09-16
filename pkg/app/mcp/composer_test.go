@@ -186,7 +186,7 @@ func TestComposer_ListTools_EmptyToolkitExposesAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"create_issue", "list_repos"}
+	want := []string{namedFor(regA, "create_issue"), namedFor(regA, "list_repos")}
 	if names := toolNames(got); len(names) != 2 || names[0] != want[0] || names[1] != want[1] {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -233,8 +233,9 @@ func TestComposer_ListTools_ToolkitSelectAndRename(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	names := toolNames(got)
-	if len(names) != 2 || names[0] != "gh_create_issue" || names[1] != "list_repos" {
-		t.Fatalf("tools = %v, want [gh_create_issue list_repos]", names)
+	want := []string{namedFor(regA, "gh_create_issue"), namedFor(regA, "list_repos")}
+	if len(names) != 2 || names[0] != want[0] || names[1] != want[1] {
+		t.Fatalf("tools = %v, want %v", names, want)
 	}
 }
 
@@ -591,10 +592,10 @@ func TestComposer_ListPrompts_WildcardDoesNotShadowExposeAs(t *testing.T) {
 	for _, p := range got {
 		names[p.Name] = struct{}{}
 	}
-	if _, ok := names["gh_summarize"]; !ok {
+	if _, ok := names[namedFor(regA, "gh_summarize")]; !ok {
 		t.Fatalf("prompts = %v, want the expose_as alias gh_summarize to win over the wildcard", names)
 	}
-	if _, ok := names["summarize"]; ok {
+	if _, ok := names[namedFor(regA, "summarize")]; ok {
 		t.Fatalf("prompts = %v, raw summarize must not leak when an alias is configured", names)
 	}
 }
@@ -674,7 +675,7 @@ func TestComposer_Toolkit_GovernsAllSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(gotTools) != 1 || gotTools[0].Name != "create_issue" {
+	if len(gotTools) != 1 || gotTools[0].Name != namedFor(regA, "create_issue") {
 		t.Fatalf("tools = %v, want only create_issue", toolNames(gotTools))
 	}
 
@@ -682,10 +683,10 @@ func TestComposer_Toolkit_GovernsAllSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list prompts: %v", err)
 	}
-	if len(gotPrompts) != 1 || gotPrompts[0].Name != "gh_summarize" {
+	if len(gotPrompts) != 1 || gotPrompts[0].Name != namedFor(regA, "gh_summarize") {
 		t.Fatalf("prompts = %+v, want only gh_summarize", gotPrompts)
 	}
-	if _, err := c.GetPrompt(context.Background(), rc, "gh_summarize", nil); err != nil {
+	if _, err := c.GetPrompt(context.Background(), rc, namedFor(regA, "gh_summarize"), nil); err != nil {
 		t.Fatalf("get renamed prompt: %v", err)
 	}
 	if upA.lastPrompt != "summarize" {
