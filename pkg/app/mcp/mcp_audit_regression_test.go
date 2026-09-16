@@ -73,11 +73,11 @@ func TestDiscoveryReloadsAfterInstallationURLChanges(t *testing.T) {
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
 	first, err := comp.ListTools(subCtx("alice"), rc)
 	require.NoError(t, err)
-	require.Equal(t, []string{"first"}, toolNames(first))
+	require.Equal(t, []string{namedFor(reg, "first")}, toolNames(first))
 	values["database"] = "SECOND"
 	second, err := comp.ListTools(subCtx("alice"), rc)
 	require.NoError(t, err)
-	require.Equal(t, []string{"second"}, toolNames(second))
+	require.Equal(t, []string{namedFor(reg, "second")}, toolNames(second))
 }
 
 type blockedPromptUpstream struct {

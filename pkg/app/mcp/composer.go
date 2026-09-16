@@ -265,8 +265,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		candidates = append(candidates, surface.bindings...)
 		for _, name := range surface.denied {
 			denied[name] = struct{}{}
-			names := resolveExposedNames([]exposedName{exposedNameFor(name, reg)}, len(registries) > 1)
-			denied[names[0]] = struct{}{}
+			denied[exposedNameFor(name, reg).String()] = struct{}{}
 		}
 	}
 	if reachable == 0 {
