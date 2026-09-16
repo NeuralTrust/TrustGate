@@ -121,12 +121,8 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		}
 		return nil, nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedNameFor(b.exposed, b.registry)
-	}
-	for i, name := range resolveExposedNames(items, len(registries) > 1) {
-		candidates[i].exposed = name
+		candidates[i].exposed = exposedNameFor(b.exposed, b.registry).String()
 	}
 	return candidates, pendingConsent, nil
 }
