@@ -242,7 +242,7 @@ func TestDiscovery_CancelledLeaderDoesNotCancelOrPoisonFollower(t *testing.T) {
 		got, err := c.ListTools(context.Background(), rc)
 		if err == nil {
 			names := toolNames(got)
-			if len(names) != 1 || names[0] != "weather" {
+			if len(names) != 1 || names[0] != namedFor(reg, "weather") {
 				err = fmt.Errorf("tools = %v, want weather", names)
 			}
 		}
@@ -335,7 +335,7 @@ func TestDiscovery_ARememberedFailureIsForgottenWhenItExpires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a stale failure must not outlive its window: %v", err)
 	}
-	if names := toolNames(got); len(names) != 1 || names[0] != "weather" {
+	if names := toolNames(got); len(names) != 1 || names[0] != namedFor(reg, "weather") {
 		t.Fatalf("tools = %v, want the recovered upstream's", names)
 	}
 }

@@ -16,32 +16,131 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// namedFor is the name a tool is exposed under: its server, then itself.
 func namedFor(reg *registrydomain.Registry, name string) string {
-	return resolveExposedNames([]exposedName{exposedNameFor(name, reg)}, true)[0]
+	return exposedNameFor(name, reg).String()
 }
 
-func TestResolveExposedNames_PerInstanceIsAlwaysPrefixed(t *testing.T) {
+func TestSlugFromCatalogCode(t *testing.T) {
 	t.Parallel()
-	got := resolveExposedNames([]exposedName{
-		{name: "query", registryID: "11111111-1111-1111-1111-111111111111", perInstance: true},
-		{name: "query", registryID: "22222222-2222-2222-2222-222222222222"},
-	}, true)
-	want := []string{"mcp_bafde89c041e1756_query_a8b771920b8319e4", "mcp_05d17100b346c29d_query_a8b771920b8319e4"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("names = %v, want %v", got, want)
+	cases := map[string]string{
+		"com.notion/mcp":                      "notion",
+		"io.aha/mcp":                          "aha",
+		"ai.airbyte/agents":                   "airbyte_agents",
+		"com.google_cloud/developerknowledge": "google_cloud_developerknowledge",
+		"com.cloudflare/observability":        "cloudflare_observability",
+		// A code with nothing in front of the name keeps all of it.
+		"snowflake": "snowflake",
+		"":          "",
+		"///":       "",
 	}
-	solo := resolveExposedNames([]exposedName{
-		{name: "query", registryID: "1", perInstance: true},
-		{name: "search", registryID: "2"},
-	}, false)
-	if solo[0] != "mcp_6b86b273ff34fce1_query_a8b771920b8319e4" || solo[1] != "search" {
-		t.Fatalf("names = %v, want isolated instance query and raw search", solo)
+	for code, want := range cases {
+		if got := slugFromCatalogCode(code); got != want {
+			t.Fatalf("slug(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+// A tool's name is the client's handle on it, so it must depend on the tool and
+// nothing else. It used to depend on how many servers the caller had —
+// installing a second one renamed every tool of the first, leaving an open
+// conversation calling tools that no longer existed — and qualifying only on a
+// collision would have made it depend on whether the colliding server was
+// reachable. Spelling the server out every time is what removes the dependency.
+func TestExposedName_CarriesItsServerWhateverElseIsBound(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	notion.MCPTarget.Code = "com.notion/mcp"
+
+	if got := exposedNameFor("notion-search", notion).String(); got != "notion_notion-search" {
+		t.Fatalf("name = %q, want notion_notion-search", got)
+	}
+	// Nothing about the name can change when the estate around it does, because
+	// nothing about the estate went into it.
+	linear := mcpRegistry(t, "Linear", "https://linear.example/mcp")
+	linear.MCPTarget.Code = "com.linear/mcp"
+	if got := exposedNameFor("notion-search", notion).String(); got != "notion_notion-search" {
+		t.Fatalf("name = %q after binding Linear, want it unchanged", got)
+	}
+	if got := exposedNameFor("list_issues", linear).String(); got != "linear_list_issues" {
+		t.Fatalf("name = %q, want linear_list_issues", got)
+	}
+}
+
+// An admin renames an instance; the tools keep their names. The catalog code is
+// what identifies a server, and that is not the admin's to edit.
+func TestExposedName_SurvivesARename(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "Notion", "https://notion.example/mcp")
+	reg.MCPTarget.Code = "com.notion/mcp"
+	before := exposedNameFor("search", reg).String()
+	reg.Name = "Notion (marketing workspace)"
+	if after := exposedNameFor("search", reg).String(); after != before {
+		t.Fatalf("rename changed the tool name: %q -> %q", before, after)
+	}
+}
+
+// Several instances of one code share their catalog name, so each takes a
+// digest of its own registry to stay apart from its siblings.
+func TestExposedName_InstancesOfOneCodeStayApart(t *testing.T) {
+	t.Parallel()
+	finance := perInstanceRegistry(t, "Snowflake (FINANCE)", "https://a.example.com/mcp", map[string]string{"schema": "FINANCE"})
+	analytics := perInstanceRegistry(t, "Snowflake (ANALYTICS)", "https://b.example.com/mcp", map[string]string{"schema": "ANALYTICS"})
+
+	a := exposedNameFor("query", finance).String()
+	b := exposedNameFor("query", analytics).String()
+	if a == b {
+		t.Fatalf("two instances share the name %q", a)
+	}
+	for _, name := range []string{a, b} {
+		if !strings.HasPrefix(name, "snowflake_") || !strings.HasSuffix(name, "_query") {
+			t.Fatalf("name = %q, want snowflake_<instance>_query", name)
+		}
+	}
+}
+
+// A registry wired by hand has no catalog code, so there is nothing readable to
+// build on — but the name still has to be stable and its own.
+func TestExposedName_UncataloguedServerFallsBackToItsRegistry(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "Internal", "https://internal.example/mcp")
+	reg.MCPTarget.Code = ""
+	got := exposedNameFor("search", reg).String()
+	if !strings.HasPrefix(got, "s") || !strings.HasSuffix(got, "_search") {
+		t.Fatalf("name = %q, want s<digest>_search", got)
+	}
+	if got != exposedNameFor("search", reg).String() {
+		t.Fatal("the fallback name is not stable")
+	}
+}
+
+// A client will not accept a name past 64 characters, and a truncated stem must
+// still tell two tools apart.
+func TestExposedName_TooLongIsCutButStaysDistinct(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "Google Cloud", "https://gcp.example/mcp")
+	reg.MCPTarget.Code = "com.google_cloud/developerknowledge"
+	long := strings.Repeat("a", 40)
+	one := exposedNameFor(long+"_one", reg).String()
+	two := exposedNameFor(long+"_two", reg).String()
+
+	for _, name := range []string{one, two} {
+		if len(name) > 64 {
+			t.Fatalf("name %q is %d characters, want at most 64", name, len(name))
+		}
+		if !strings.HasPrefix(name, "google_cloud_developerknowledge_") {
+			t.Fatalf("name = %q, want the server kept whole", name)
+		}
+	}
+	if one == two {
+		t.Fatalf("two tools truncated to the same name %q", one)
 	}
 }
 
