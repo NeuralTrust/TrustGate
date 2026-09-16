@@ -203,7 +203,11 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// response the client is already waiting for carries it instead. tools/list
 	// is the one method to leave alone: it is the answer to the notification,
 	// and announcing a change on it asks for another list of what was just sent.
-	listChanged := req.Method != "tools/list" && h.surfaceMoved(c, rc)
+	// The surface is re-read either way, so the announcement is recorded against
+	// the snapshot the next request will compare with.
+	moved := h.surfaceMoved(c, rc)
+	listChanged := req.Method != "tools/list" &&
+		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
 	if raw, ok := result.(json.RawMessage); ok {
 		return writeRPCBody(c, rawRPCResponse(req.ID, raw), listChanged)
 	}
