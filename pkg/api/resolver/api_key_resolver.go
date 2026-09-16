@@ -19,6 +19,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -45,12 +46,23 @@ func (r *APIKeyIdentityResolver) Resolve(
 		if a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey || a.KeyHash != hash {
 			continue
 		}
+		// The key's name is the only identity an API key carries, and the
+		// telemetry contract publishes it as principal.subject with method
+		// api_key. Without a principal here nothing downstream stamps the
+		// trace, so principal_subject/principal_method reach the SIEM empty
+		// and TrustGuard's attributes.user is omitted with them. The MCP
+		// plane builds the same principal for the same credential.
 		return &appauth.AuthContext{
+			Principal: &identity.Principal{
+				Subject: a.Name,
+				Method:  identity.MethodAPIKey,
+			},
 			Method:      appauth.MethodAPIKey,
 			GatewayID:   gw.ID,
 			GatewaySlug: gw.Slug,
 			ConsumerID:  rc.Consumer.ID,
 			AuthID:      a.ID,
+			Subject:     a.Name,
 		}, nil
 	}
 	if hasAttachedAuthType(rc, authdomain.TypeAPIKey) {
