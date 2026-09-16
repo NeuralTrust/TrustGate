@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -78,13 +79,22 @@ const (
 )
 
 type Handler struct {
-	gateway   *RPCGateway
-	surface   appmcp.SurfaceWatcher
-	consumers appconsumer.DataFinder
-	timings   streamTimings
+	resolveClientIP func(string, string) string
+	gateway         *RPCGateway
+	surface         appmcp.SurfaceWatcher
+	consumers       appconsumer.DataFinder
+	timings         streamTimings
 }
 
 type HandlerOption func(*Handler)
+
+func WithClientIPResolver(resolve func(string, string) string) HandlerOption {
+	return func(h *Handler) {
+		if resolve != nil {
+			h.resolveClientIP = resolve
+		}
+	}
+}
 
 // WithConsumerFinder lets the notification stream re-read the consumer on
 // each poll so an admin attach or detach is visible. Without it the stream
@@ -99,9 +109,10 @@ func WithConsumerFinder(finder appconsumer.DataFinder) HandlerOption {
 
 func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
 	h := &Handler{
-		gateway: gateway,
-		surface: surface,
-		timings: defaultStreamTimings,
+		resolveClientIP: requestmeta.NewIPResolver("peer", nil),
+		gateway:         gateway,
+		surface:         surface,
+		timings:         defaultStreamTimings,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -135,6 +146,7 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)

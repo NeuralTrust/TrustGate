@@ -22,6 +22,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -31,6 +32,7 @@ import (
 )
 
 type MetricsMiddleware struct {
+	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
 	enableRequestTraces bool
@@ -39,6 +41,7 @@ type MetricsMiddleware struct {
 
 func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MetricsMiddleware {
 	return &MetricsMiddleware{
+		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
@@ -130,7 +133,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 		TenantID:  gw.TenantID(),
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
-		IP:        strings.Clone(c.IP()),
+		IP:        metricsClientIP(c, m.resolveClientIP),
 	}
 	if window, ok := gw.RetentionWindow(); ok {
 		meta.RetentionWindow = window
@@ -161,7 +164,7 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		Path:      strings.Clone(c.Path()),
 		Query:     query,
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        strings.Clone(c.IP()),
+		IP:        metricsClientIP(c, m.resolveClientIP),
 	}
 	stampRequestTarget(c, req)
 	return req
@@ -214,4 +217,11 @@ func cloneStreamHeaders(headers map[string][]string) map[string][]string {
 		}
 	}
 	return owned
+}
+
+func metricsClientIP(c *fiber.Ctx, resolve func(string, string) string) string {
+	if resolve == nil {
+		resolve = requestmeta.NewIPResolver("peer", nil)
+	}
+	return resolve(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
 }
