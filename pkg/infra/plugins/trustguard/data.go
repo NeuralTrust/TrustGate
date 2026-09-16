@@ -113,6 +113,12 @@ type guardData struct {
 	FailureReason  string         `json:"failure_reason,omitempty"`
 	Degraded       bool           `json:"degraded,omitempty"`
 	DegradedReason string         `json:"degraded_reason,omitempty"`
+	// Skipped marks a leg the plugin decided not to inspect at all. Without
+	// it, "inspected and clean" and "never looked" produce an identical
+	// event, which is what let response coverage lapse unnoticed. Both fields
+	// are omitempty, so events that did inspect are unchanged.
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data guardData) {

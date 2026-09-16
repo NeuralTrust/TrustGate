@@ -47,6 +47,18 @@ const (
 	protocolA2A = "a2a"
 )
 
+// Stable identifiers for why a leg was not inspected. They go on the event as
+// skip_reason so skips can be counted and alerted on, not just read in a log.
+const (
+	skipReasonNoInspectableInput  = "no_inspectable_input"
+	skipReasonNoInspectableOutput = "no_inspectable_output"
+	skipReasonEmptyResponseBody   = "empty_response_body"
+	skipReasonStreamingMismatch   = "streaming_stage_mismatch"
+	skipReasonUnsupportedFormat   = "unsupported_agent_format"
+	skipReasonUndecodableResponse = "undecodable_response"
+	skipReasonObserveMode         = "observe_mode"
+)
+
 const (
 	decisionBlocked      = "blocked"
 	decisionReported     = "reported"
@@ -244,7 +256,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if resp.Status == statusTransform {
-		return p.applyTransform(in, data, resp, tgt)
+		return p.applyTransform(ctx, in, data, resp, tgt)
 	}
 
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
@@ -276,7 +288,7 @@ func (p *Plugin) mcpInspectionPayload(
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	if direction == directionInput {
 		if len(in.Request.Body) == 0 || strings.TrimSpace(mcpInputText(in.Request.Body)) == "" {
-			return nil, tgt, true
+			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		reqBody := in.Request.Body
 		toolName := mcpToolName(reqBody)
@@ -291,8 +303,13 @@ func (p *Plugin) mcpInspectionPayload(
 		}
 		return payload, tgt, false
 	}
-	if skipOutputInspect(in.Stage, in.Response) || !mcpOutputInspectable(in.Response.Body) {
-		return nil, tgt, true
+	if reason := outputInspectSkipReason(in.Stage, in.Response); reason != "" {
+		return p.skipInspection(ctx, in, tgt, direction, reason)
+	}
+	if !mcpOutputInspectable(in.Response.Body) {
+		// A result with no text anywhere: no text blocks, no embedded resource
+		// text, no structuredContent leaves, no tools/list metadata.
+		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
 	respBody := in.Response.Body
 	tgt.applyPayload = mcpTransformedResult
@@ -313,16 +330,16 @@ func (p *Plugin) llmInspectionPayload(
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return nil, tgt, true
+		return p.skipInspection(ctx, in, tgt, direction, skipReasonUnsupportedFormat)
 	}
 	if direction == directionInput {
 		if len(in.Request.Body) == 0 {
-			return nil, tgt, true
+			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
 		attachments := extractPayloadAttachments(in.Request.Body)
 		if decodeErr != nil || request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
-			return nil, tgt, true
+			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteRequest(p.registry, format, request, masked) }
 		payload, payloadErr := llmRequestPayloadWithAttachments(request, attachments)
@@ -332,12 +349,17 @@ func (p *Plugin) llmInspectionPayload(
 		}
 		return payload, tgt, false
 	}
-	if skipOutputInspect(in.Stage, in.Response) {
-		return nil, tgt, true
+	if reason := outputInspectSkipReason(in.Stage, in.Response); reason != "" {
+		return p.skipInspection(ctx, in, tgt, direction, reason)
 	}
 	response, tools := p.canonicalResponse(in, format)
-	if response == nil || (!responseHasInspectableContent(response) && len(tools) == 0) {
-		return nil, tgt, true
+	if response == nil {
+		// canonicalResponse swallows the decode error; without this the gateway
+		// cannot tell an undecodable response from an empty one.
+		return p.skipInspection(ctx, in, tgt, direction, skipReasonUndecodableResponse)
+	}
+	if !responseHasInspectableContent(response) && len(tools) == 0 {
+		return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableOutput)
 	}
 	if strings.TrimSpace(response.Content) != "" {
 		tgt.apply = func(masked string) ([]byte, bool) { return rewriteResponse(p.registry, format, response, masked) }
@@ -365,13 +387,54 @@ func (p *Plugin) canonicalResponse(in appplugins.ExecInput, format adapter.Forma
 	return response, tools
 }
 
+// skipInspection records a leg the plugin decided not to inspect, and returns
+// the triple the inspection-payload builders use to say "nothing to send".
+//
+// Every early return in those builders funnels through here on purpose. A skip
+// that reports nothing is indistinguishable from an inspection that found
+// nothing: same empty findings, same absent event, nothing in Activity or in
+// the gateway trace. That is the property that let response-side coverage lapse
+// without anyone noticing, so the fix is to make every skip say so.
+func (p *Plugin) skipInspection(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	tgt transformTarget,
+	direction, reason string,
+) (json.RawMessage, transformTarget, bool) {
+	p.debug(ctx, "trustguard leg not inspected, skipping",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.String("direction", direction),
+		slog.String("reason", reason),
+	)
+	setExtras(in.Event, guardData{Direction: direction, Skipped: true, SkipReason: reason})
+	return nil, tgt, true
+}
+
 func (p *Plugin) payloadFailure(ctx context.Context, in appplugins.ExecInput, direction, message string, err error) {
 	p.warn(ctx, message, slog.String("plugin", PluginName), slog.Any("error", err))
 	setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
 }
 
-func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *GuardResponse, tgt transformTarget) (*appplugins.Result, error) {
+func (p *Plugin) applyTransform(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	data guardData,
+	resp *GuardResponse,
+	tgt transformTarget,
+) (*appplugins.Result, error) {
 	if !appplugins.Blocks(in.Mode) {
+		if tgt.apply != nil || tgt.applyPayload != nil {
+			// The guard asked for a transform and the mode will not apply it,
+			// so the content the detector flagged reaches the caller as it
+			// was. The event already says "reported"; this says what that cost.
+			p.debug(ctx, "trustguard transform not applied in observe mode, forwarding unmasked",
+				slog.String("plugin", PluginName),
+				slog.String("stage", string(in.Stage)),
+				slog.String("direction", data.Direction),
+				slog.String("reason", skipReasonObserveMode),
+			)
+		}
 		data.Decision = decisionReported
 		recordGuardOutcome(in.Event, data)
 		return passThrough(), nil
@@ -606,18 +669,28 @@ func protocolFor(consumerType string) string {
 	}
 }
 
-func skipOutputInspect(stage policy.Stage, resp *infracontext.ResponseContext) bool {
+// outputInspectSkipReason returns why this response leg is not inspected, or ""
+// when it is. It replaces a bool so the two very different causes — there was no
+// body at all, versus this stage does not handle this streaming mode — stop
+// being reported as the same thing. Behaviour is unchanged; only the caller's
+// ability to say why is new.
+func outputInspectSkipReason(stage policy.Stage, resp *infracontext.ResponseContext) string {
 	if resp == nil || len(resp.Body) == 0 {
-		return true
+		return skipReasonEmptyResponseBody
 	}
 	switch stage {
 	case policy.StagePreResponse:
-		return resp.Streaming
+		if resp.Streaming {
+			return skipReasonStreamingMismatch
+		}
 	case policy.StagePostResponse:
-		return !resp.Streaming
+		if !resp.Streaming {
+			return skipReasonStreamingMismatch
+		}
 	default:
-		return true
+		return skipReasonStreamingMismatch
 	}
+	return ""
 }
 
 func passThrough() *appplugins.Result {
