@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -99,6 +100,44 @@ func requestContext() *infracontext.RequestContext {
 		ConsumerID:     "consumer-9",
 		RequestedModel: "gpt-4o-mini",
 		Body:           openAIRequestBody(),
+	}
+}
+
+func TestExecuteForwardsOriginalRequestMetadata(t *testing.T) {
+	for _, mcp := range []bool{false, true} {
+		for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse} {
+			t.Run(string(stage)+map[bool]string{false: "-llm", true: "-mcp"}[mcp], func(t *testing.T) {
+				f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+				p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+				headers := map[string][]string{"user-agent": {"client/1.0"}, "Authorization": {"Bearer private"}, "X-Forwarded-For": {"192.0.2.99"}, "X-Prompt": {"private prompt"}, "Accept": {strings.Repeat("x", 513)}, "Content-Type": {"text/plain\r\nInjected: value"}}
+				ctx := requestmeta.NewContext(context.Background(), "203.0.113.42", headers)
+				headers["user-agent"][0] = "changed"
+				req := requestContext()
+				req.IP = "10.0.0.1"
+				req.Headers = headers
+				resp := &infracontext.ResponseContext{Body: openAIResponseBody(), Streaming: stage == policy.StagePostResponse}
+				if stage == policy.StagePostResponse {
+					resp.Body = []byte("data: " + `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"}}]}` + "\ndata: [DONE]\n")
+				}
+				if mcp {
+					req.MCP = true
+					req.Body = []byte(`{"name":"search","arguments":{"query":"hello"}}`)
+					resp.Body = []byte(`{"content":[{"type":"text","text":"hello"}]}`)
+				}
+				_, err := p.Execute(ctx, execInput(stage, policy.ModeEnforce, settings("request_response"), req, resp))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := f.captured().OriginalRequest
+				if got == nil || got.IP != "203.0.113.42" || len(got.Headers) != 1 || got.Headers["User-Agent"][0] != "client/1.0" {
+					t.Fatalf("unexpected original request: %+v", got)
+				}
+				got.Headers["User-Agent"][0] = "changed again"
+				if requestmeta.FromContext(ctx).Headers["User-Agent"][0] != "client/1.0" {
+					t.Fatal("snapshot was mutated")
+				}
+			})
+		}
 	}
 }
 
@@ -1818,5 +1857,140 @@ func TestExecuteMCPTransformUsesEnvelopePayload(t *testing.T) {
 	}
 	if extras.Degraded || extras.Decision != decisionTransformed {
 		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
+	}
+}
+
+func TestOutputInspectSkipReason(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"ok":true}`)
+	cases := []struct {
+		name  string
+		stage policy.Stage
+		resp  *infracontext.ResponseContext
+		want  string
+	}{
+		{"nil response", policy.StagePreResponse, nil, skipReasonEmptyResponseBody},
+		{"empty body", policy.StagePreResponse, &infracontext.ResponseContext{}, skipReasonEmptyResponseBody},
+		{
+			"pre-response handles the non-streaming leg",
+			policy.StagePreResponse,
+			&infracontext.ResponseContext{Body: body},
+			"",
+		},
+		{
+			"pre-response does not handle a stream",
+			policy.StagePreResponse,
+			&infracontext.ResponseContext{Body: body, Streaming: true},
+			skipReasonStreamingMismatch,
+		},
+		{
+			"post-response handles the stream",
+			policy.StagePostResponse,
+			&infracontext.ResponseContext{Body: body, Streaming: true},
+			"",
+		},
+		{
+			"post-response does not handle the non-streaming leg",
+			policy.StagePostResponse,
+			&infracontext.ResponseContext{Body: body},
+			skipReasonStreamingMismatch,
+		},
+		{
+			"a request stage never inspects output",
+			policy.StagePreRequest,
+			&infracontext.ResponseContext{Body: body},
+			skipReasonStreamingMismatch,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := outputInspectSkipReason(tc.stage, tc.resp); got != tc.want {
+				t.Fatalf("outputInspectSkipReason() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A leg the plugin declines to inspect must say so on the event. Without this
+// the absence of findings means either "clean" or "never looked", and the two
+// are indistinguishable to an operator or an auditor.
+func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		mcp       bool
+		direction string
+		stage     policy.Stage
+		resp      *infracontext.ResponseContext
+		want      string
+	}{
+		{
+			name:      "mcp output with no body",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{},
+			want:      skipReasonEmptyResponseBody,
+		},
+		{
+			name:      "mcp output a stream cannot be read at this stage",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"text","text":"hi"}]}`), Streaming: true},
+			want:      skipReasonStreamingMismatch,
+		},
+		{
+			name:      "mcp result carries nothing inspectable",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"image"}]}`)},
+			want:      skipReasonNoInspectableOutput,
+		},
+		{
+			name:      "llm output with no body",
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{},
+			want:      skipReasonEmptyResponseBody,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPlugin(t, adapter.NewRegistry(), "")
+			event, span := newEvent()
+			in := execInputWithEvent(tc.stage, policy.ModeEnforce, settings(""), requestContext(), tc.resp, event)
+
+			var skipped bool
+			if tc.mcp {
+				_, _, skipped = p.mcpInspectionPayload(context.Background(), in, tc.direction)
+			} else {
+				_, _, skipped = p.llmInspectionPayload(context.Background(), in, tc.direction)
+			}
+			if !skipped {
+				t.Fatal("expected the leg to be skipped")
+			}
+
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			if !ok {
+				t.Fatalf("extras type = %T, want guardData: the skip recorded nothing", span.PluginAttrsCopy().Extras)
+			}
+			if !extras.Skipped {
+				t.Fatalf("extras.Skipped = false, want true: %+v", extras)
+			}
+			if extras.SkipReason != tc.want {
+				t.Fatalf("extras.SkipReason = %q, want %q", extras.SkipReason, tc.want)
+			}
+			if extras.Direction != tc.direction {
+				t.Fatalf("extras.Direction = %q, want %q", extras.Direction, tc.direction)
+			}
+		})
 	}
 }

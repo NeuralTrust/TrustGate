@@ -20,6 +20,8 @@ import (
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -55,7 +57,7 @@ func Proxy(c *container.Container) error {
 	if err := c.Provide(appproxy.NewModelsLister); err != nil {
 		return err
 	}
-	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister) *proxyhttp.ForwardedHandler {
-		return proxyhttp.NewForwardedHandler(fwd).WithModels(models)
+	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister, cfg *config.Config) *proxyhttp.ForwardedHandler {
+		return proxyhttp.NewForwardedHandler(fwd).WithModels(models).WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs))
 	})
 }

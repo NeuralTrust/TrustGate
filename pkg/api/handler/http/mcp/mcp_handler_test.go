@@ -15,6 +15,7 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -28,13 +29,18 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	vaultmocks "github.com/NeuralTrust/TrustGate/pkg/domain/vault/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
@@ -213,6 +219,70 @@ func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
 	}
 }
 
+func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
+	t.Parallel()
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	globalPolicy := &policydomain.Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: gwID,
+		Slug:      "per_tool_rate_limiter",
+		Enabled:   true,
+		Global:    true,
+		Stages:    []policydomain.Stage{policydomain.StagePreRequest},
+	}
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	data := appconsumer.NewData(gwID, nil)
+	data.StoreConsumer = &appconsumer.RoutableConsumer{
+		Consumer:   consumerdomain.BuildStoreConsumer(gwID),
+		Policies:   []*policydomain.Policy{globalPolicy},
+		PolicyPlan: appplugins.NewStagePlan(pluginRegistry, []*policydomain.Policy{globalPolicy}, discardLogger()),
+	}
+
+	executor := pluginmocks.NewExecutor(t)
+	executor.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+		return in.Stage == policydomain.StagePreRequest &&
+			len(in.Policies) == 1 && in.Policies[0].ID == globalPolicy.ID &&
+			in.Plan != nil && in.Plan.Has(policydomain.StagePreRequest)
+	})).Return(nil, &appplugins.PluginError{StatusCode: 429, Message: "rate limit exceeded"}).Once()
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), appmcp.NewPluginRunner(executor, discardLogger()), nil),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notion-search","arguments":{}}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if !strings.Contains(string(raw), `"code":-32004`) {
+		t.Fatalf("response = %s, want rate-limit JSON-RPC error", raw)
+	}
+}
+
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
@@ -259,7 +329,10 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+	composer.EXPECT().ListTools(mock.MatchedBy(func(ctx context.Context) bool {
+		original := requestmeta.FromContext(ctx)
+		return original != nil && original.IP != "" && len(original.Headers["Content-Type"]) == 1
+	}), mock.Anything).
 		Return([]appmcp.Tool{{Name: "gh_search"}}, nil).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
