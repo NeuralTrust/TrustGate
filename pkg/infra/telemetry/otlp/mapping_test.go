@@ -148,6 +148,18 @@ func TestEventToRecord_OmitsBodies(t *testing.T) {
 	assert.False(t, hasRequestBody)
 }
 
+func TestEventToRecord_SecurityUsesJSONString(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Security = []string{"code_injection", "prompt_injection"}
+	security := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.Equal(t, attribute.STRING, security.Type())
+	assert.JSONEq(t, `["code_injection","prompt_injection"]`, security.AsString())
+	evt.Security = nil
+	_, exists := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.False(t, exists)
+}
+
 func TestEventToRecord_Severity(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

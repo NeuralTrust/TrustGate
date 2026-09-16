@@ -18,17 +18,19 @@ import (
 	"encoding/json"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 type GuardRequest struct {
-	Payload    json.RawMessage `json:"payload"`
-	Direction  string          `json:"direction"`
-	Protocol   string          `json:"protocol"`
-	GatewayID  string          `json:"gateway_id"`
-	SessionID  string          `json:"session_id"`
-	ConsumerID string          `json:"consumer_id"`
-	Attributes GuardAttributes `json:"attributes"`
+	OriginalRequest *requestmeta.OriginalRequest `json:"original_request,omitempty"`
+	Payload         json.RawMessage              `json:"payload"`
+	Direction       string                       `json:"direction"`
+	Protocol        string                       `json:"protocol"`
+	GatewayID       string                       `json:"gateway_id"`
+	SessionID       string                       `json:"session_id"`
+	ConsumerID      string                       `json:"consumer_id"`
+	Attributes      GuardAttributes              `json:"attributes"`
 }
 
 type GuardUser struct {
