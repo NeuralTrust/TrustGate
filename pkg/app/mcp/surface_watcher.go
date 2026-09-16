@@ -224,6 +224,25 @@ func consumerBindings(rc *appconsumer.RoutableConsumer) []string {
 	return parts
 }
 
+// FingerprintSnapshot shortens a watch snapshot into the same shape
+// SurfaceFingerprint produces, so the two can stand in for each other in a
+// serverInfo version.
+func FingerprintSnapshot(snapshot string) string {
+	if snapshot == "" {
+		return "0"
+	}
+	sum := sha256.Sum256([]byte(snapshot))
+	return hex.EncodeToString(sum[:6])
+}
+
+// SurfaceFingerprint hashes the surface a consumer carries in its own record:
+// its bound MCP registries, its toolkit, and whatever the caller passes as
+// dynamic.
+//
+// It sees nothing of the MCP Store, whose consumer is synthetic and carries no
+// registries — its servers are resolved per caller at dispatch. For that
+// surface use FingerprintSnapshot over a SurfaceWatcher snapshot instead;
+// this one would return the same value for every caller and every install.
 func SurfaceFingerprint(rc *appconsumer.RoutableConsumer, dynamic []string) string {
 	if rc == nil || rc.Consumer == nil {
 		return "0"

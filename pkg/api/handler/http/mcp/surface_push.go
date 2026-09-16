@@ -22,6 +22,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/gofiber/fiber/v2"
 )
@@ -101,6 +102,35 @@ func (h *Handler) surfaceMoved(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) b
 	snapshot := h.surface.WatchSnapshot(ctx, rc, principal)
 	key := rc.Consumer.GatewayID.String() + "|" + rc.Consumer.ID.String() + "|" + principal.Subject
 	return h.memory.moved(key, snapshot)
+}
+
+// surfaceVersion is the value a client keys its cached tool list on, in
+// server/discover's serverInfo and in initialize's.
+//
+// It has to move whenever the caller's tools do. SurfaceFingerprint reads the
+// consumer's own record — bound registries and toolkit — which describes a
+// custom MCP consumer exactly and the MCP Store not at all: the Store's
+// consumer is synthetic, carries no registries, and resolves its servers per
+// caller at dispatch. So on the Store that fingerprint was the same string for
+// everyone, forever, and a client that trusts it (Claude Code probes with
+// server/discover before anything else) had no reason to ever re-list. The
+// watch snapshot is the same surface the notification stream watches, so the
+// version now moves with an install, a connect, or a revoked grant.
+func (h *Handler) surfaceVersion(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) string {
+	principal := identity.PrincipalFromContext(c.UserContext())
+	if h.surface == nil || principal == nil {
+		return appmcp.SurfaceFingerprint(rc, nil)
+	}
+	ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
+	defer cancel()
+	snapshot := h.surface.WatchSnapshot(ctx, rc, principal)
+	if snapshot == "" {
+		// A caller the watcher cannot read — no principal it recognises — still
+		// gets a version off the record. Asking it a second question here would
+		// only add a credential read to every handshake.
+		return appmcp.SurfaceFingerprint(rc, nil)
+	}
+	return appmcp.FingerprintSnapshot(snapshot)
 }
 
 // writeRPCBody sends one JSON-RPC response, as a lone JSON document or — when

@@ -187,7 +187,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return h.handleInitialize(c, req, rc)
 	case "server/discover":
 		recordServerDiscovery(c)
-		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.connectedProviders(c, rc)))
+		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.surfaceVersion(c, rc)))
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
@@ -264,7 +264,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion + "+" + appmcp.SurfaceFingerprint(rc, h.connectedProviders(c, rc)),
+			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
 		"instructions": serverInstructions(rc),
 	})
@@ -279,14 +279,6 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 		return baseServerInstructions + storeServerInstructions
 	}
 	return baseServerInstructions
-}
-
-func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
-	ctx := c.UserContext()
-	if h.surface == nil {
-		return nil
-	}
-	return h.surface.Connections(ctx, rc, identity.PrincipalFromContext(ctx), false)
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
