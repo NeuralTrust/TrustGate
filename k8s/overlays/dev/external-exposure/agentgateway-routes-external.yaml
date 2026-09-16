@@ -58,6 +58,7 @@ spec:
   hostnames:
   - "agentgateway-mcp.sandbox.neuraltrust.ai"
   - "gateway-mcp.sandbox.neuraltrust.ai"
+  - "*.mcp.sandbox.neuraltrust.ai"
   rules:
   - matches:
     - path:

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -47,18 +48,8 @@ var (
 	AdminToken string
 )
 
-const (
-	dbUser     = "postgres"
-	dbPassword = "postgres"
-	dbHost     = "localhost"
-	dbPort     = "5432"
-	dbName     = "trustgate_functional"
-	redisAddr  = "localhost:6379"
-	redisDBIdx = 9
-
-	// serverConfigSyncGRPCPort is the loopback port the harness control plane
-	// binds its config-sync gRPC listener on so the DB-less data plane can dial
-	// it over plaintext (see dblessOverrides).
+var (
+	dbName                   = "trustgate_functional"
 	serverConfigSyncGRPCPort = 8083
 )
 
@@ -91,8 +82,8 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
-	env = append(env, "TRUSTGUARD_CLIENT_ID="+trustGuardFunctionalClientID)
-	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+trustGuardFunctionalClientSecret)
+	env = append(env, "TRUSTGUARD_CLIENT_ID="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_ID", trustGuardFunctionalClientID))
+	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_SECRET", trustGuardFunctionalClientSecret))
 	if trustGuardBaseURL != "" {
 		env = append(env, "TRUSTGUARD_BASE_URL="+trustGuardBaseURL)
 	}
@@ -113,6 +104,14 @@ func setupTestEnvironment() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 	GlobalConfig = cfg
+	dbName = getEnv("FUNCTIONAL_DB_NAME", "trustgate_functional")
+	if cfg.Database.Name != dbName {
+		log.Fatalf("DB_NAME must match the disposable FUNCTIONAL_DB_NAME %q", dbName)
+	}
+	serverConfigSyncGRPCPort, err = strconv.Atoi(getEnv("FUNCTIONAL_CONFIG_SYNC_GRPC_PORT", "8083"))
+	if err != nil || serverConfigSyncGRPCPort < 1 || serverConfigSyncGRPCPort > 65535 {
+		log.Fatal("invalid FUNCTIONAL_CONFIG_SYNC_GRPC_PORT")
+	}
 
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
 	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
@@ -125,19 +124,22 @@ func setupTestEnvironment() {
 	}
 	AdminToken = token
 
-	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort, serverConfigSyncGRPCPort})
+	requireFreePorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort, serverConfigSyncGRPCPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
 
-	redisDB = redis.NewClient(&redis.Options{Addr: redisAddr, DB: redisDBIdx})
+	redisDB = redis.NewClient(&redis.Options{Addr: net.JoinHostPort(cfg.Redis.Host, strconv.Itoa(cfg.Redis.Port)), DB: cfg.Redis.DB, Username: cfg.Redis.Username, Password: cfg.Redis.Password})
 	_ = redisDB.FlushDB(context.Background()).Err()
 
 	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
 	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
 	_ = os.Setenv("CONFIG_SYNC_GRPC_LISTEN_ADDR", fmt.Sprintf(":%d", serverConfigSyncGRPCPort))
 
-	trustGuardStubURL := StartTrustGuardFunctionalStub()
+	trustGuardStubURL := getEnv("FUNCTIONAL_TRUSTGUARD_BASE_URL", "")
+	if trustGuardStubURL == "" {
+		trustGuardStubURL = StartTrustGuardFunctionalStub()
+	}
 	firewallComplexityStubURL := StartFirewallComplexityStub()
 	cmdEnv := buildCmdEnv(trustGuardStubURL, firewallComplexityStubURL)
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
@@ -176,7 +178,7 @@ func teardownTestEnvironment() {
 			log.Printf("error killing admin server: %v", err)
 		}
 	}
-	if gatewayBinaryPath != "" {
+	if gatewayBinaryPath != "" && os.Getenv("FUNCTIONAL_SERVER_BINARY") == "" {
 		_ = os.RemoveAll(filepath.Dir(gatewayBinaryPath))
 	}
 	if redisDB != nil {
@@ -188,6 +190,16 @@ func teardownTestEnvironment() {
 }
 
 func buildGatewayBinary(env []string) string {
+	if path := os.Getenv("FUNCTIONAL_SERVER_BINARY"); path != "" {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			log.Fatalf("invalid FUNCTIONAL_SERVER_BINARY: %v", err)
+		}
+		if info, err := os.Stat(absolute); err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+			log.Fatal("FUNCTIONAL_SERVER_BINARY must be an existing executable")
+		}
+		return absolute
+	}
 	tmpDir, err := os.MkdirTemp("", "trustgate-test-*")
 	if err != nil {
 		log.Fatalf("failed to create temp dir for gateway binary: %v", err)
@@ -291,7 +303,7 @@ func waitForServerReady(url, name string, port int) {
 // are currently connected to.
 func pgxAdminConn(ctx context.Context) (*pgx.Conn, error) {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable",
-		dbUser, dbPassword, dbHost, dbPort)
+		GlobalConfig.Database.User, GlobalConfig.Database.Password, GlobalConfig.Database.Host, strconv.Itoa(GlobalConfig.Database.Port))
 	return pgx.Connect(ctx, dsn)
 }
 
@@ -304,7 +316,7 @@ func createTestDB(name string) {
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
-	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s;", name)); err != nil {
+	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s;", pgx.Identifier{name}.Sanitize())); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return
 		}
@@ -323,7 +335,7 @@ func dropTestDB(name string) {
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
-	if _, err := conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", name)); err != nil {
+	if _, err := conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", pgx.Identifier{name}.Sanitize())); err != nil {
 		log.Printf("error dropping database %s: %v", name, err)
 		return
 	}
@@ -342,26 +354,14 @@ func checkPortListening(port int, name string) {
 	}
 }
 
-func killProcessesOnPorts(ports []int) {
+func requireFreePorts(ports []int) {
 	for _, port := range ports {
-		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // hardcoded callsite
-		out, err := cmd.Output()
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
-			continue
+			log.Fatalf("functional server port %d is unavailable: %v", port, err)
 		}
-		for _, pidStr := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			pidStr = strings.TrimSpace(pidStr)
-			if pidStr == "" {
-				continue
-			}
-			pid, err := strconv.Atoi(pidStr)
-			if err != nil {
-				continue
-			}
-			fmt.Printf("Killing pid=%d on port %d\n", pid, port)
-			if p, err := os.FindProcess(pid); err == nil {
-				_ = p.Kill()
-			}
+		if err := listener.Close(); err != nil {
+			log.Fatal(err)
 		}
 	}
 }
