@@ -1859,3 +1859,138 @@ func TestExecuteMCPTransformUsesEnvelopePayload(t *testing.T) {
 		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
 	}
 }
+
+func TestOutputInspectSkipReason(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"ok":true}`)
+	cases := []struct {
+		name  string
+		stage policy.Stage
+		resp  *infracontext.ResponseContext
+		want  string
+	}{
+		{"nil response", policy.StagePreResponse, nil, skipReasonEmptyResponseBody},
+		{"empty body", policy.StagePreResponse, &infracontext.ResponseContext{}, skipReasonEmptyResponseBody},
+		{
+			"pre-response handles the non-streaming leg",
+			policy.StagePreResponse,
+			&infracontext.ResponseContext{Body: body},
+			"",
+		},
+		{
+			"pre-response does not handle a stream",
+			policy.StagePreResponse,
+			&infracontext.ResponseContext{Body: body, Streaming: true},
+			skipReasonStreamingMismatch,
+		},
+		{
+			"post-response handles the stream",
+			policy.StagePostResponse,
+			&infracontext.ResponseContext{Body: body, Streaming: true},
+			"",
+		},
+		{
+			"post-response does not handle the non-streaming leg",
+			policy.StagePostResponse,
+			&infracontext.ResponseContext{Body: body},
+			skipReasonStreamingMismatch,
+		},
+		{
+			"a request stage never inspects output",
+			policy.StagePreRequest,
+			&infracontext.ResponseContext{Body: body},
+			skipReasonStreamingMismatch,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := outputInspectSkipReason(tc.stage, tc.resp); got != tc.want {
+				t.Fatalf("outputInspectSkipReason() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A leg the plugin declines to inspect must say so on the event. Without this
+// the absence of findings means either "clean" or "never looked", and the two
+// are indistinguishable to an operator or an auditor.
+func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		mcp       bool
+		direction string
+		stage     policy.Stage
+		resp      *infracontext.ResponseContext
+		want      string
+	}{
+		{
+			name:      "mcp output with no body",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{},
+			want:      skipReasonEmptyResponseBody,
+		},
+		{
+			name:      "mcp output a stream cannot be read at this stage",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"text","text":"hi"}]}`), Streaming: true},
+			want:      skipReasonStreamingMismatch,
+		},
+		{
+			name:      "mcp result carries nothing inspectable",
+			mcp:       true,
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{Body: []byte(`{"content":[{"type":"image"}]}`)},
+			want:      skipReasonNoInspectableOutput,
+		},
+		{
+			name:      "llm output with no body",
+			direction: directionOutput,
+			stage:     policy.StagePreResponse,
+			resp:      &infracontext.ResponseContext{},
+			want:      skipReasonEmptyResponseBody,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPlugin(t, adapter.NewRegistry(), "")
+			event, span := newEvent()
+			in := execInputWithEvent(tc.stage, policy.ModeEnforce, settings(""), requestContext(), tc.resp, event)
+
+			var skipped bool
+			if tc.mcp {
+				_, _, skipped = p.mcpInspectionPayload(context.Background(), in, tc.direction)
+			} else {
+				_, _, skipped = p.llmInspectionPayload(context.Background(), in, tc.direction)
+			}
+			if !skipped {
+				t.Fatal("expected the leg to be skipped")
+			}
+
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			if !ok {
+				t.Fatalf("extras type = %T, want guardData: the skip recorded nothing", span.PluginAttrsCopy().Extras)
+			}
+			if !extras.Skipped {
+				t.Fatalf("extras.Skipped = false, want true: %+v", extras)
+			}
+			if extras.SkipReason != tc.want {
+				t.Fatalf("extras.SkipReason = %q, want %q", extras.SkipReason, tc.want)
+			}
+			if extras.Direction != tc.direction {
+				t.Fatalf("extras.Direction = %q, want %q", extras.Direction, tc.direction)
+			}
+		})
+	}
+}
