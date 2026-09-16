@@ -32,6 +32,7 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -79,12 +80,20 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 type ForwardedHandler struct {
-	forwarder appproxy.Forwarder
-	models    appproxy.ModelsLister
+	resolveClientIP func(string, string) string
+	forwarder       appproxy.Forwarder
+	models          appproxy.ModelsLister
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
-	return &ForwardedHandler{forwarder: forwarder}
+	return &ForwardedHandler{forwarder: forwarder, resolveClientIP: requestmeta.NewIPResolver("peer", nil)}
+}
+
+func (h *ForwardedHandler) WithClientIPResolver(resolve func(string, string) string) *ForwardedHandler {
+	if resolve != nil {
+		h.resolveClientIP = resolve
+	}
+	return h
 }
 
 func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHandler {
@@ -112,6 +121,7 @@ func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHa
 // @Failure      502                {object}  httpio.ErrorBody
 // @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
 	route, err := proxyRoute(c)
 	if err != nil {
 		return writeProxyError(c, err)

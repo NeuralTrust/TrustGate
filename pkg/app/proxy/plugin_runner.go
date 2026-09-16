@@ -167,7 +167,7 @@ func (f *forwarder) firePostResponse(
 		rt.AddAsync()
 	}
 	go func() { // #nosec G118 -- post-response must outlive the request context, which is cancelled once the response is sent; the goroutine owns its own timeout
-		ctx, cancel := context.WithTimeout(context.Background(), postResponseTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postResponseTimeout)
 		defer cancel()
 		if rt != nil {
 			defer rt.Done()
