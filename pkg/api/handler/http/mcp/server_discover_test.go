@@ -19,6 +19,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -83,7 +84,7 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			rc := &appconsumer.RoutableConsumer{
 				Consumer: &consumerdomain.Consumer{MCP: tc.policy},
 			}
-			result := serverDiscoveryResult(rc, nil)
+			result := serverDiscoveryResult(rc, appmcp.SurfaceFingerprint(rc, nil))
 			require.Equal(t, advertisedProtocolVersions, result["supportedVersions"])
 			require.Equal(t, "complete", result["resultType"])
 			require.Equal(t, "private", result["cacheScope"])
@@ -116,14 +117,16 @@ func TestServerDiscoveryResultChangesAfterRegistryAttachment(t *testing.T) {
 	}
 	consumer := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind]()}
 	notion := registry("notion")
-	one := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+	oneRC := &appconsumer.RoutableConsumer{
 		Consumer:   consumer,
 		Registries: []*registrydomain.Registry{notion},
-	}, nil)
-	two := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+	}
+	twoRC := &appconsumer.RoutableConsumer{
 		Consumer:   consumer,
 		Registries: []*registrydomain.Registry{notion, registry("linear")},
-	}, nil)
+	}
+	one := serverDiscoveryResult(oneRC, appmcp.SurfaceFingerprint(oneRC, nil))
+	two := serverDiscoveryResult(twoRC, appmcp.SurfaceFingerprint(twoRC, nil))
 
 	require.Zero(t, one["ttlMs"])
 	require.Zero(t, two["ttlMs"])
@@ -160,9 +163,11 @@ func TestServerDiscoveryResultChangesAfterConnectingAnAccount(t *testing.T) {
 	}
 	linkedAt := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 
-	pending := serverDiscoveryResult(rc, nil)
-	linked := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Format(time.RFC3339Nano)})
-	reconnected := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Add(time.Hour).Format(time.RFC3339Nano)})
+	pending := serverDiscoveryResult(rc, appmcp.SurfaceFingerprint(rc, nil))
+	linked := serverDiscoveryResult(rc, appmcp.SurfaceFingerprint(rc,
+		[]string{"cx:linear@" + linkedAt.Format(time.RFC3339Nano)}))
+	reconnected := serverDiscoveryResult(rc, appmcp.SurfaceFingerprint(rc,
+		[]string{"cx:linear@" + linkedAt.Add(time.Hour).Format(time.RFC3339Nano)}))
 
 	versionOf := func(result map[string]any) string {
 		return result["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)["version"].(string)

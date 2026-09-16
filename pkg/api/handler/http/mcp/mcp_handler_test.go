@@ -507,8 +507,15 @@ func TestHandler_Initialize_VersionTracksConnectedAccounts(t *testing.T) {
 	if reconnected == linked {
 		t.Fatalf("version %q did not change after reconnecting the provider", reconnected)
 	}
-	if unrelated != pending {
-		t.Fatalf("version changed for a provider this consumer does not federate: %q vs %q", unrelated, pending)
+	// A provider this consumer does not federate moves the version too, and
+	// that is the trade taken deliberately. The version is now the same surface
+	// the notification stream watches — every credential, install and grant of
+	// this caller — because narrowing it to the consumer's own registries is
+	// what left the MCP Store, whose consumer holds none, reporting one
+	// unchanging version to every client forever. A spurious re-list costs one
+	// tools/list; a missed one costs a person finding a menu item.
+	if unrelated == pending {
+		t.Fatalf("version %q did not move when the caller connected an account", unrelated)
 	}
 }
 
@@ -740,10 +747,11 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	vault := vaultmocks.NewRepository(t)
 	// The credential's name is what called; the account it reaches belongs to
 	// the application, so the vault is read under the consumer's subject.
+	// Read twice per handshake: once for the trace's email, once for the surface
+	// version. The watcher caches, so the second is usually free.
 	vault.EXPECT().
 		ListByPrincipal(mock.Anything, gwID, consumerdomain.AppSubject(cons.ID)).
-		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil).
-		Once()
+		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil)
 
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
