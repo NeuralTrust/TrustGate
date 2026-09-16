@@ -15,17 +15,21 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
@@ -194,4 +198,87 @@ func TestSurfaceMemoryForgetsTheOldestWhenFull(t *testing.T) {
 	// "a" was the oldest, so it was dropped: its next call starts over rather
 	// than announcing a change against a snapshot nobody kept.
 	require.False(t, memory.moved("a", "three"))
+}
+
+// storeInstallations serves one caller's Store installs, growing when the user
+// installs a server from the catalog.
+type storeInstallations struct {
+	mu      sync.Mutex
+	servers []string
+}
+
+func (s *storeInstallations) add(code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.servers = append(s.servers, code)
+}
+
+func (s *storeInstallations) ListByPrincipal(
+	context.Context,
+	ids.GatewayID,
+	string,
+) ([]*installationdomain.Installation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*installationdomain.Installation, 0, len(s.servers))
+	for i, code := range s.servers {
+		out = append(out, &installationdomain.Installation{
+			CatalogCode: code,
+			Status:      installationdomain.StatusInstalled,
+			UpdatedAt:   time.Date(2026, 9, 16, 12, i, 0, 0, time.UTC),
+		})
+	}
+	return out, nil
+}
+
+// The MCP Store's consumer is synthetic: it holds no registries, because its
+// servers are resolved per caller at dispatch. The version reported in
+// server/discover and initialize was hashed from the consumer's own record, so
+// on the Store it was one unchanging string — for every caller, and for every
+// install they ever made. A client that keys its cached tool list on it, which
+// is what a server/discover probe is for, had no reason to ever re-list.
+func TestStoreSurfaceVersionMovesWithAnInstall(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	installs := &storeInstallations{}
+
+	version := func() string {
+		// A fresh watcher per read: the snapshot is cached for a few seconds and
+		// what is under test is what the version is derived from, not that cache.
+		handler := NewHandler(nil, appmcp.NewSurfaceWatcher(&streamVault{}, installs))
+		store := consumerdomain.BuildStoreConsumer(gwID)
+		data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: store}})
+
+		app := fiber.New(fiber.Config{DisableStartupMessage: true})
+		app.Use(func(c *fiber.Ctx) error {
+			ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+			ctx = appconsumer.WithData(ctx, data)
+			ctx = appconsumer.WithGatewayID(ctx, gwID)
+			ctx = identity.WithPrincipal(ctx, &identity.Principal{Subject: "alice", Method: identity.MethodJWT})
+			c.SetUserContext(ctx)
+			return c.Next()
+		})
+		var out string
+		app.Post("/*", func(c *fiber.Ctx) error {
+			rc, err := resolveMCPConsumer(c)
+			if err != nil {
+				return err
+			}
+			out = handler.surfaceVersion(c, rc)
+			return c.SendStatus(fiber.StatusOK)
+		})
+		response, err := app.Test(httptest.NewRequest(http.MethodPost, "/store/mcp", nil))
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		return out
+	}
+
+	empty := version()
+	installs.add("com.notion/mcp")
+	withNotion := version()
+	installs.add("com.linear/mcp")
+	withLinear := version()
+
+	require.NotEqual(t, empty, withNotion, "installing a server must move the version")
+	require.NotEqual(t, withNotion, withLinear, "installing a second server must move it again")
 }
