@@ -12,6 +12,10 @@
 #   - raw: NOT sent to OTLP. Sensitive request/response payloads are persisted
 #     in a customer-side Postgres that never leaves the customer boundary. The
 #     postgres exporter runs its migrations (advisory-locked) on first use.
+#     A raw exporter of type otlp is refused at boot on a hybrid data plane
+#     (CONFIG_SYNC_DATA_PLANE_ENABLED=true); TELEMETRY_RAW_REMOTE_EXPERIMENTAL=true
+#     overrides it, as global.telemetry.rawRemoteExperimental does in the chart
+#     (RUN-1237).
 #
 # Secrets stay out of this file: dsn_env names the env var that holds the DSN;
 # the release injects SENSIBLE_PG_DSN per customer.
