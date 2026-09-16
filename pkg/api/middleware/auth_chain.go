@@ -215,49 +215,72 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 	return r.resolveOpaque(ctx, token, candidates, scope)
 }
 
+// sessionRejected turns a refusal into the one opaque error the caller gets,
+// and writes down which check failed.
+//
+// Every exit below returns the same 401 — right for a client, useless for the
+// operator reading a pod log, where a brokered login that dies here leaves
+// nothing but `"error":"unauthenticated"` and no way to tell an expired token
+// from an audience mismatch from a session minted for another gateway. The
+// reason is a fixed string and the attrs are claims, never the token.
+func sessionRejected(ctx context.Context, reason string, attrs ...slog.Attr) (Identity, error) {
+	slog.LogAttrs(ctx, slog.LevelWarn, "mcp auth: session token rejected",
+		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
+	return Identity{}, resolver.ErrUnauthenticated
+}
+
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "path matches no consumer")
 	}
 	principal, err := r.session.Verify(ctx, token)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token does not verify", slog.String("error", err.Error()))
 	}
 	if principal.Subject == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token has no subject")
 	}
 	if use, _ := principal.Claims["token_use"].(string); use != "mcp_session" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token is not an mcp session", slog.String("token_use", use))
 	}
 	authID, _ := principal.Claims["authid"].(string)
 	if authID == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token carries no authid")
 	}
 	for _, a := range candidates {
-		if a.ID.String() != authID || !scope.allows(a.ID) {
+		if a.ID.String() != authID {
 			continue
+		}
+		if !scope.allows(a.ID) {
+			return sessionRejected(ctx, "authid is not in the path's scope", slog.String("authid", authID))
 		}
 		cfg := a.Config.OAuth2
 		if cfg == nil {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "matched auth has no oauth2 config", slog.String("authid", authID))
 		}
-		if !identity.AudienceMatches(identity.AudiencesFromClaim(principal.Claims["aud"]), cfg.Audiences) {
-			return Identity{}, resolver.ErrUnauthenticated
+		have := identity.AudiencesFromClaim(principal.Claims["aud"])
+		if !identity.AudienceMatches(have, cfg.Audiences) {
+			return sessionRejected(ctx, "audience mismatch",
+				slog.String("authid", authID),
+				slog.String("token_aud", strings.Join(have, ",")),
+				slog.String("want_aud", strings.Join(cfg.Audiences, ",")))
 		}
 		if !principal.HasScopes(cfg.RequiredScopes) {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "token is missing a required scope",
+				slog.String("authid", authID),
+				slog.String("want_scopes", strings.Join(cfg.RequiredScopes, " ")))
 		}
 		gatewayID := a.GatewayID
 		if appauth.IsDefaultIdP(a) {
 			gw, err := gatewayFromClaim(principal.Claims["gwid"])
 			if err != nil {
-				return Identity{}, resolver.ErrUnauthenticated
+				return sessionRejected(ctx, "default-idp session carries no usable gwid")
 			}
 			gatewayID = gw
 		}
 		return Identity{GatewayID: gatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	return sessionRejected(ctx, "authid matches no enabled oauth2 auth", slog.String("authid", authID))
 }
 
 func gatewayFromClaim(v any) (ids.GatewayID, error) {
