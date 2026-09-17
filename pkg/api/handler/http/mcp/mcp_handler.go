@@ -147,6 +147,17 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
 }
 
+// NotServedHere answers a request on a catch-all route: 405 for an MCP endpoint
+// reached with the wrong verb, 404 for a path this gateway does not serve at
+// all. Only the first is a resource the caller could have reached another way,
+// and only for it does "Allow: POST" say anything true.
+func (h *Handler) NotServedHere(c *fiber.Ctx) error {
+	if appconsumer.SlugFromMCPPath(c.Path()) != "" {
+		return h.MethodNotAllowed(c)
+	}
+	return c.SendStatus(fiber.StatusNotFound)
+}
+
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
 	rc, err := resolveMCPConsumer(c)

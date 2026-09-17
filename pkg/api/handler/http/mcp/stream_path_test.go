@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"io"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -89,5 +90,59 @@ func TestStreamKeepsPathAfterFiberBufferReuse(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("stream did not stop")
+	}
+}
+
+// The notification stream sits on a catch-all GET, so whatever it answers is
+// also what the gateway says about every path it does not serve. 405 with
+// "Allow: POST" claims the resource is there and was asked for with the wrong
+// verb: true of an MCP endpoint, a lie about anything else. A client walking
+// the OAuth discovery chain asks for /.well-known/openid-configuration after
+// the authorization-server document, and that lie reads as a server
+// misbehaving rather than one with no OpenID metadata.
+func TestCatchAllTellsAWrongVerbFromAnUnknownPath(t *testing.T) {
+	t.Parallel()
+	handler := NewHandler(nil, nil)
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Get("/*", handler.StreamRoute(nil)...)
+	app.Delete("/*", handler.NotServedHere)
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		want   int
+		allow  string
+	}{
+		{
+			name:   "an MCP endpoint asked for with a plain GET",
+			method: fiber.MethodGet, path: "/store/mcp",
+			want: fiber.StatusMethodNotAllowed, allow: fiber.MethodPost,
+		},
+		{
+			name:   "the session-termination DELETE a sessionless gateway does not take",
+			method: fiber.MethodDelete, path: "/store/mcp",
+			want: fiber.StatusMethodNotAllowed, allow: fiber.MethodPost,
+		},
+		{
+			name:   "OpenID metadata this gateway does not publish",
+			method: fiber.MethodGet, path: "/.well-known/openid-configuration",
+			want: fiber.StatusNotFound,
+		},
+		{
+			name:   "anything else at all",
+			method: fiber.MethodGet, path: "/favicon.ico",
+			want: fiber.StatusNotFound,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response, err := app.Test(httptest.NewRequest(tc.method, tc.path, nil))
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, tc.want, response.StatusCode)
+			require.Equal(t, tc.allow, response.Header.Get(fiber.HeaderAllow))
+		})
 	}
 }
