@@ -26,9 +26,9 @@ func (u *scopedUpstream) listCount() int64 { return atomic.LoadInt64(&u.lists) }
 func (u *scopedUpstream) callCount() int64 { return atomic.LoadInt64(&u.calls) }
 
 // exposed is the name the consumer's surface gives one of this upstream's
-// tools. A consumer bound to more than one registry hashes every name, so a
-// policy written against the native name must still find it.
-func (u *scopedUpstream) exposed(tool string) string { return federatedRPCName(u.registryID, tool) }
+// tools: server-prefixed, so a policy written against the native name must
+// still find it.
+func (u *scopedUpstream) exposed(tool string) string { return exposedToolName(u.registryID, tool) }
 
 func countListTools(lists *int64) sdk.Middleware {
 	return func(next sdk.MethodHandler) sdk.MethodHandler {
@@ -131,9 +131,10 @@ func TestMCPPolicyScope_FederatedSurfaceKeepsNativeNamesForScopes(t *testing.T) 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
 
-	require.NotContains(t, names, "echo", "two registries must federate every tool name")
+	require.NotContains(t, names, "echo", "every tool carries its server prefix")
 	require.Contains(t, names, x.exposed("echo"))
 	require.Contains(t, names, y.exposed("echo"))
+	require.NotEqual(t, x.exposed("echo"), y.exposed("echo"), "the same native tool on two registries must expose two names")
 }
 
 func TestMCPPolicyScope_ToolScopedTrustGuardGuardsOnlyThatTool(t *testing.T) {

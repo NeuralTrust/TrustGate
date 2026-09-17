@@ -67,14 +67,14 @@ func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, direction, m
 	AttachPolicy(t, gatewayID, consumerID, policyID)
 }
 
-func setupMCPPluginChain(t *testing.T, configure func(*sdk.Server), direction, mode string) (string, string, map[string]string) {
+func setupMCPPluginChain(t *testing.T, configure func(*sdk.Server), direction, mode string) (gatewayID, consumerID, registryID string, headers map[string]string) {
 	t.Helper()
 	upstream := startMCPUpstream(t, configure)
-	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
-	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	gatewayID = CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID = CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 	attachTrustGuardMCPPolicy(t, gatewayID, consumerID, direction, mode)
-	return gatewayID, consumerID, apiKeyHeaders(key)
+	return gatewayID, consumerID, registryID, apiKeyHeaders(key)
 }
 
 func TestMCPPluginChain_PreRequestEnforceBlockSkipsUpstream(t *testing.T) {
@@ -82,12 +82,12 @@ func TestMCPPluginChain_PreRequestEnforceBlockSkipsUpstream(t *testing.T) {
 	TrustGuardFunctionalStub.Reset()
 
 	var calls int64
-	gatewayID, consumerID, headers := setupMCPPluginChain(t,
+	gatewayID, consumerID, registryID, headers := setupMCPPluginChain(t,
 		func(s *sdk.Server) { addCountingEchoTool(s, "echo", &calls) },
 		"request", "")
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "echo", "arguments": map[string]any{"message": "please run " + trustGuardBlockWord}})
+		map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "please run " + trustGuardBlockWord}})
 
 	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body))
 	require.Equal(t, http.StatusOK, status, "policy-blocked tools/call must stay on HTTP 200 with JSON-RPC error (non-2xx drops MCP sessions): %v", body)
@@ -99,12 +99,12 @@ func TestMCPPluginChain_PreResponseEnforceBlockDiscardsResult(t *testing.T) {
 	TrustGuardFunctionalStub.Reset()
 
 	var calls int64
-	gatewayID, consumerID, headers := setupMCPPluginChain(t,
+	gatewayID, consumerID, registryID, headers := setupMCPPluginChain(t,
 		func(s *sdk.Server) { addCountingFixedTool(s, "leak", "leaked "+trustGuardBlockWord+" content", &calls) },
 		"response", "")
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "leak", "arguments": map[string]any{"message": "benign"}})
+		map[string]any{"name": exposedToolName(registryID, "leak"), "arguments": map[string]any{"message": "benign"}})
 
 	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body))
 	require.Equal(t, http.StatusOK, status, "policy-blocked tools/call must stay on HTTP 200 with JSON-RPC error (non-2xx drops MCP sessions): %v", body)
@@ -145,12 +145,12 @@ func TestMCPPluginChain_ObserveModeNeverBlocks(t *testing.T) {
 			TrustGuardFunctionalStub.Reset()
 
 			var calls int64
-			gatewayID, consumerID, headers := setupMCPPluginChain(t,
+			gatewayID, consumerID, registryID, headers := setupMCPPluginChain(t,
 				func(s *sdk.Server) { tc.configure(s, &calls) },
 				tc.direction, "observe")
 
 			status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-				map[string]any{"name": tc.toolName, "arguments": tc.arguments})
+				map[string]any{"name": exposedToolName(registryID, tc.toolName), "arguments": tc.arguments})
 
 			result := rpcResult(t, status, body)
 			raw, err := json.Marshal(result)
@@ -167,12 +167,12 @@ func TestMCPPluginChain_GuardErrorFailsOpen(t *testing.T) {
 	TrustGuardFunctionalStub.Reset()
 
 	var calls int64
-	gatewayID, consumerID, headers := setupMCPPluginChain(t,
+	gatewayID, consumerID, registryID, headers := setupMCPPluginChain(t,
 		func(s *sdk.Server) { addCountingEchoTool(s, "echo", &calls) },
 		"request", "")
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "echo", "arguments": map[string]any{"message": "trigger " + trustGuardErrorWord}})
+		map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "trigger " + trustGuardErrorWord}})
 
 	result := rpcResult(t, status, body)
 	raw, err := json.Marshal(result)

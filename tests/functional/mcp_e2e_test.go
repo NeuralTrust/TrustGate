@@ -5,8 +5,8 @@ package functional_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -236,10 +236,10 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"echo", "search", appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "echo"), exposedToolName(registryID, "search"), appmcp.InventoryToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
-		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
+		map[string]any{"name": exposedToolName(registryID, "echo"), "arguments": map[string]any{"message": "hola"}})
 	result := rpcResult(t, status, body)
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
@@ -258,9 +258,9 @@ func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Contains(t, names, federatedRPCName(liveID, "echo"))
+	require.Contains(t, names, exposedToolName(liveID, "echo"))
 	require.Contains(t, names, appmcp.ConnectToolName("linear"))
-	require.NotContains(t, names, federatedRPCName(pendingID, "list_issues"))
+	require.NotContains(t, names, exposedToolName(pendingID, "list_issues"))
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": appmcp.ConnectToolName("linear"), "arguments": map[string]any{}})
@@ -282,17 +282,17 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"alias-echo", appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(registryID, "alias-echo"), appmcp.InventoryToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
-		map[string]any{"name": "alias-echo", "arguments": map[string]any{"message": "hola"}})
+		map[string]any{"name": exposedToolName(registryID, "alias-echo"), "arguments": map[string]any{"message": "hola"}})
 	result := rpcResult(t, status, body)
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "echo:hola")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
-		map[string]any{"name": "secret"})
+		map[string]any{"name": exposedToolName(registryID, "secret")})
 	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
 }
 
@@ -313,10 +313,10 @@ func TestMCPServer_PromptsAndResources(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "prompts/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "prompts")
-	require.Equal(t, []string{"greet"}, names)
+	require.Equal(t, []string{exposedToolName(registryID, "greet")}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "prompts/get",
-		map[string]any{"name": "greet", "arguments": map[string]any{"name": "ana"}})
+		map[string]any{"name": exposedToolName(registryID, "greet"), "arguments": map[string]any{"name": "ana"}})
 	result := rpcResult(t, status, body)
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
@@ -360,9 +360,9 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{federatedRPCName(liveRegistry, "echo"), appmcp.InventoryToolName}, names)
+	require.ElementsMatch(t, []string{exposedToolName(liveRegistry, "echo"), appmcp.InventoryToolName}, names)
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
-		map[string]any{"name": federatedRPCName(liveRegistry, "echo"), "arguments": map[string]any{"message": "hola"}})
+		map[string]any{"name": exposedToolName(liveRegistry, "echo"), "arguments": map[string]any{"message": "hola"}})
 	result := rpcResult(t, status, body)
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
@@ -394,12 +394,9 @@ func TestMCPServer_UnknownMethodAndMalformedBody(t *testing.T) {
 	require.Equal(t, float64(-32600), rpcErrorCode(t, status, body))
 }
 
-func federatedRPCName(registryID, name string) string {
-	registryHash := sha256.Sum256([]byte(registryID))
-	nameHash := sha256.Sum256([]byte(name))
-	readable := name
-	if len(readable) > 26 {
-		readable = readable[:26]
-	}
-	return fmt.Sprintf("mcp_%x_%s_%x", registryHash[:8], readable, nameHash[:8])
+// exposedToolName mirrors serverSlug for a registry without a catalog code,
+// which is every registry this suite creates: "s" + 8 hex of the registry id.
+func exposedToolName(registryID, tool string) string {
+	sum := sha256.Sum256([]byte(registryID))
+	return "s" + hex.EncodeToString(sum[:])[:8] + "_" + tool
 }

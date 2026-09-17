@@ -37,17 +37,17 @@ func attachTrustGuardMCPPolicyWithSettings(t *testing.T, gatewayID, consumerID s
 	AttachPolicy(t, gatewayID, consumerID, policyID)
 }
 
-func setupNotionFetchChain(t *testing.T, settings map[string]any) (string, string, map[string]string, *int64) {
+func setupNotionFetchChain(t *testing.T, settings map[string]any) (gatewayID, consumerID, fetchTool string, headers map[string]string, calls *int64) {
 	t.Helper()
-	var calls int64
+	calls = new(int64)
 	upstream := startMCPUpstream(t, func(s *sdk.Server) {
-		addCountingFixedTool(s, "notion-fetch", notionShapedResult, &calls)
+		addCountingFixedTool(s, "notion-fetch", notionShapedResult, calls)
 	})
-	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	gatewayID = CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 	attachTrustGuardMCPPolicyWithSettings(t, gatewayID, consumerID, settings)
-	return gatewayID, consumerID, apiKeyHeaders(key), &calls
+	return gatewayID, consumerID, exposedToolName(registryID, "notion-fetch"), apiKeyHeaders(key), calls
 }
 
 // TestMCPPluginChain_ToolsCallEvaluatesBothLegs pins the contract that broke in
@@ -60,12 +60,12 @@ func TestMCPPluginChain_ToolsCallEvaluatesBothLegs(t *testing.T) {
 	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
 	TrustGuardFunctionalStub.Reset()
 
-	gatewayID, consumerID, headers, calls := setupNotionFetchChain(t,
+	gatewayID, consumerID, fetchTool, headers, calls := setupNotionFetchChain(t,
 		map[string]any{"direction": "request_response"})
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
 		map[string]any{
-			"name":      "notion-fetch",
+			"name":      fetchTool,
 			"arguments": map[string]any{"id": "https://app.notion.com/p/3cda09705f7a819c8ba4cada28b24f6d"},
 		})
 
@@ -89,13 +89,13 @@ func TestMCPPluginChain_StoredLegacyInspectKeyIsIgnored(t *testing.T) {
 	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
 	TrustGuardFunctionalStub.Reset()
 
-	gatewayID, consumerID, headers, _ := setupNotionFetchChain(t, map[string]any{
+	gatewayID, consumerID, fetchTool, headers, _ := setupNotionFetchChain(t, map[string]any{
 		"direction": "request_response",
 		"inspect":   "request",
 	})
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "notion-fetch", "arguments": map[string]any{"id": "page-id"}})
+		map[string]any{"name": fetchTool, "arguments": map[string]any{"id": "page-id"}})
 
 	require.Equal(t, http.StatusOK, status, "tools/call must succeed: %v", body)
 	require.Equal(t, 2, TrustGuardFunctionalStub.GuardHits(),
@@ -111,10 +111,10 @@ func TestMCPPluginChain_DirectionRequestSkipsResponseLeg(t *testing.T) {
 	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
 	TrustGuardFunctionalStub.Reset()
 
-	gatewayID, consumerID, headers, _ := setupNotionFetchChain(t, map[string]any{"direction": "request"})
+	gatewayID, consumerID, fetchTool, headers, _ := setupNotionFetchChain(t, map[string]any{"direction": "request"})
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "notion-fetch", "arguments": map[string]any{"id": "page-id"}})
+		map[string]any{"name": fetchTool, "arguments": map[string]any{"id": "page-id"}})
 
 	require.Equal(t, http.StatusOK, status, "tools/call must succeed: %v", body)
 	require.Equal(t, 1, TrustGuardFunctionalStub.GuardHits(),
