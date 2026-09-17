@@ -379,3 +379,94 @@ func TestConsumerUpstreamAccounts_LinkFallsBackWithoutACatalogCode(t *testing.T)
 	require.Empty(t, page.Code)
 	require.Len(t, page.Providers, 1)
 }
+
+// A list has to say which applications cannot yet call the servers they are
+// bound to: without it a row reads Active while every call to that server is
+// refused, and the only way to find out is to open each one.
+func TestPendingUpstreamAuth_CountsWhatIsStillUnauthorized(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{
+			mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp")),
+			mcpRegistry(t, gw, "linear", forwardedAuthCfg("app.linear/mcp")),
+			mcpRegistry(t, gw, "internal", &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer shared",
+			}),
+		})
+	ctx := context.Background()
+
+	pending, err := f.accounts.PendingUpstreamAuth(ctx, f.gatewayID, f.consumerID)
+	require.NoError(t, err)
+	require.Equal(t, 2, pending, "neither forwarded server has been signed into; the static one asks for nothing")
+
+	cred, err := vaultdomain.NewCredential(
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID),
+		vaultKey(t, "com.notion/mcp", "https://notion.example.com/mcp"), "ops@corp.com",
+		"access", "refresh", []string{"read"}, time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	require.NoError(t, f.vault.Upsert(ctx, cred))
+
+	pending, err = f.accounts.PendingUpstreamAuth(ctx, f.gatewayID, f.consumerID)
+	require.NoError(t, err)
+	require.Equal(t, 1, pending, "signing into Notion leaves Linear")
+}
+
+// An account that has expired with no refresh token is as unusable as one that
+// was never linked, and it is the case an admin never notices: the application
+// worked yesterday.
+func TestPendingUpstreamAuth_CountsAnExpiredAccount(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{mcpRegistry(t, gw, "notion", forwardedAuthCfg("com.notion/mcp"))})
+	ctx := context.Background()
+	cred, err := vaultdomain.NewCredential(
+		f.gatewayID, consumerdomain.AppSubject(f.consumerID),
+		vaultKey(t, "com.notion/mcp", "https://notion.example.com/mcp"), "ops@corp.com",
+		"access", "", []string{"read"}, time.Now().Add(-time.Hour),
+	)
+	require.NoError(t, err)
+	require.NoError(t, f.vault.Upsert(ctx, cred))
+
+	pending, err := f.accounts.PendingUpstreamAuth(ctx, f.gatewayID, f.consumerID)
+	require.NoError(t, err)
+	require.Equal(t, 1, pending)
+}
+
+// The listing calls this once per application, so an application that owes
+// nothing must not cost a vault read: what its servers need is already in the
+// consumer data the finder handed over.
+func TestPendingUpstreamAuth_ReadsNoVaultWithoutAForwardedServer(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	f := newUpstreamFixture(t, gw, machineIdentity,
+		[]*authdomain.Auth{apiKeyAuth("prod")},
+		[]*registrydomain.Registry{
+			mcpRegistry(t, gw, "internal", &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer shared",
+			}),
+		})
+	ctx := context.Background()
+
+	pending, err := f.accounts.PendingUpstreamAuth(ctx, f.gatewayID, f.consumerID)
+	require.NoError(t, err)
+	require.Equal(t, 0, pending)
+	require.Empty(t, f.vault.findProviders, "nothing to link must not cost a credential lookup")
+}
+
+// Applications whose users sign in for themselves hold no accounts of their
+// own, so there is nothing for a listing to count — and a zero would read as
+// "fully authorized" rather than "not this kind of application".
+func TestPendingUpstreamAuth_RefusesConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
+	t.Parallel()
+	f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
+		consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
+		[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
+
+	_, err := f.accounts.PendingUpstreamAuth(context.Background(), f.gatewayID, f.consumerID)
+	require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
+}

@@ -41,9 +41,15 @@ type ConsumerResponse struct {
 	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
 	FailMode        string                   `json:"fail_mode,omitempty"`
 	Identity        IdentityResponse         `json:"identity"`
-	AuthBinding     AuthBindingResponse      `json:"auth_binding"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	// PendingUpstreamAuth counts the upstream accounts this application still
+	// owes before it can call every server it is bound to: never signed in, or
+	// signed in and since expired or revoked.
+	// Absent when nothing is owed, and on a plane that cannot read the accounts
+	// at all — a list must not claim everything is fine when it did not look.
+	PendingUpstreamAuth *int                `json:"pending_upstream_auth,omitempty"`
+	AuthBinding         AuthBindingResponse `json:"auth_binding"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
 }
 
 type RegistryWeightResponse struct {

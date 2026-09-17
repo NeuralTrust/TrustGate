@@ -653,6 +653,14 @@ definitions:
         type: array
       name:
         type: string
+      pending_upstream_auth:
+        description: |-
+          PendingUpstreamAuth counts the upstream accounts this application still
+          owes before it can call every server it is bound to: never signed in, or
+          signed in and since expired or revoked.
+          Absent when nothing is owed, and on a plane that cannot read the accounts
+          at all — a list must not claim everything is fine when it did not look.
+        type: integer
       registry_ids:
         items:
           type: string
