@@ -29,7 +29,7 @@ import (
 // setupRepo opens a pgx pool against PG_TEST_URL, applies all
 // registered migrations, and registers a cleanup that truncates the
 // gateways table between tests. When PG_TEST_URL is not set the test
-// is skipped — see AGENT.md §9.
+// is skipped — see AGENTS.md (Testing).
 func setupRepo(t *testing.T) (*repo.Repository, *database.Connection) {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
