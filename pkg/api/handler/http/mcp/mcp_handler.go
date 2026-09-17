@@ -411,7 +411,14 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.Is(err, registrydomain.ErrURLTemplate):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
-		return writeRPCError(c, id, codeInternalError, err.Error())
+		// Everything above is an error the gateway classified, and its text was
+		// written to be read by a caller. What reaches here was not: it carries
+		// whatever the layer that raised it put in it — a driver message, a
+		// resolved upstream URL with a token in its query, a file path. The
+		// caller gets the fact, the operator gets the error.
+		slog.Default().Error("mcp handler: unclassified internal error",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "internal error")
 	}
 }
 
