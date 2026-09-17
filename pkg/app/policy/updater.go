@@ -141,12 +141,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	); err != nil {
 		return nil, err
 	}
-	if in.MCPScope.Set {
-		if err := validateMCPScope(ctx, u.registryRepo, u.registry, existing.GatewayID, existing.Slug, existing.MCPScope); err != nil {
-			return nil, err
-		}
+	if err := u.validateScopeAfterPatch(ctx, in, existing); err != nil {
+		return nil, err
 	}
-	if err := u.repo.Update(ctx, existing); err != nil {
+	// Only an update that carried mcp_scope writes the column: echoing back the
+	// value read at the top of Update would resurrect a registry that a prune
+	// removed in between.
+	if err := u.repo.Update(ctx, existing, in.MCPScope.Set); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
@@ -155,4 +156,19 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		u.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+// validateScopeAfterPatch revalidates the stored scope when the update can
+// invalidate it. A new scope is validated in full. A slug change alone keeps
+// the stored scope but points it at another plugin, so only the protocol rule
+// is rechecked: the full check would refuse to rename a policy a registry
+// delete had already pruned to {}.
+func (u *updater) validateScopeAfterPatch(ctx context.Context, in UpdateInput, existing *domain.Policy) error {
+	if in.MCPScope.Set {
+		return validateMCPScope(ctx, u.registryRepo, u.registry, existing.GatewayID, existing.Slug, existing.MCPScope)
+	}
+	if in.Slug == nil || existing.MCPScope == nil {
+		return nil
+	}
+	return validateMCPScopePlugin(u.registry, existing.Slug)
 }

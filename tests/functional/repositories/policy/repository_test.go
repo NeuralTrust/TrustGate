@@ -278,7 +278,7 @@ func TestRepository_Update(t *testing.T) {
 	p.Enabled = false
 	p.Stages = []domain.Stage{domain.StagePostResponse}
 	p.UpdatedAt = time.Now().UTC()
-	if err := r.Update(ctx, p); err != nil {
+	if err := r.Update(ctx, p, true); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -301,7 +301,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	gwID := seedGateway(t, gw, "pgw-upd2")
 	p := validPolicy(t, gwID, "ghost")
-	err := r.Update(context.Background(), p)
+	err := r.Update(context.Background(), p, true)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -627,7 +627,7 @@ func TestRepository_MCPScope_UpdateTransitions(t *testing.T) {
 
 	p.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}
 	p.UpdatedAt = time.Now().UTC()
-	if err := r.Update(ctx, p); err != nil {
+	if err := r.Update(ctx, p, true); err != nil {
 		t.Fatalf("Update nil -> scope: %v", err)
 	}
 	got, err := r.FindByID(ctx, p.ID)
@@ -639,7 +639,7 @@ func TestRepository_MCPScope_UpdateTransitions(t *testing.T) {
 	}
 
 	p.MCPScope = &domain.MCPScope{}
-	if err := r.Update(ctx, p); err != nil {
+	if err := r.Update(ctx, p, true); err != nil {
 		t.Fatalf("Update scope -> {}: %v", err)
 	}
 	if isNull, text := rawMCPScope(t, conn, p.ID); isNull || text != "{}" {
@@ -647,7 +647,7 @@ func TestRepository_MCPScope_UpdateTransitions(t *testing.T) {
 	}
 
 	p.MCPScope = nil
-	if err := r.Update(ctx, p); err != nil {
+	if err := r.Update(ctx, p, true); err != nil {
 		t.Fatalf("Update {} -> nil: %v", err)
 	}
 	if isNull, _ := rawMCPScope(t, conn, p.ID); !isNull {
@@ -659,6 +659,48 @@ func TestRepository_MCPScope_UpdateTransitions(t *testing.T) {
 	}
 	if got.MCPScope != nil {
 		t.Fatalf("cleared scope came back as %+v, want nil", got.MCPScope)
+	}
+}
+
+// An update that did not carry an mcp_scope must leave the column alone. The
+// caller read the policy before a registry delete pruned it; writing the value
+// it read back would resurrect a registry that no longer exists, and the prune
+// cannot defend itself because the caller never took its row lock.
+func TestRepository_Update_WithoutScopeWriteKeepsTheStoredScope(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-scope-nowrite")
+	snowflake := seedMCPRegistry(t, conn, gwID, "nowrite-snowflake")
+
+	p := scopedPolicy(t, gwID, "no-write", &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}})
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Somebody else prunes the scope to {} while this caller holds a stale read.
+	stale := *p
+	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET mcp_scope = '{}' WHERE id = $1`, p.ID); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	stale.Name = "renamed"
+	stale.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, &stale, false); err != nil {
+		t.Fatalf("Update without scope write: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Name != "renamed" {
+		t.Fatalf("Name = %q, want the update to have landed", got.Name)
+	}
+	if got.MCPScope == nil || !got.MCPScope.IsEmpty() {
+		t.Fatalf("MCPScope = %+v, want the pruned {} to have survived", got.MCPScope)
+	}
+	if isNull, text := rawMCPScope(t, conn, p.ID); isNull || text != "{}" {
+		t.Fatalf("stored scope = (null=%v, %q), want '{}'", isNull, text)
 	}
 }
 

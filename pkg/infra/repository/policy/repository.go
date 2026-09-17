@@ -102,7 +102,10 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
+// Update writes every column of p. writeMCPScope false leaves mcp_scope as
+// stored, so an update that did not ask to change the scope cannot overwrite a
+// prune that ran between the caller's read and this write.
+func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope bool) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
@@ -131,12 +134,13 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 		       updated_at  = $10,
 		       description = $11,
 		       mode        = $12,
-		       mcp_scope   = $14
+		       mcp_scope   = CASE WHEN $15::boolean THEN $14::jsonb ELSE mcp_scope END
 		 WHERE id = $1 AND gateway_id = $13`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID, scopeBytes,
+			writeMCPScope,
 		)
 		if err != nil {
 			return mapPgError(err)

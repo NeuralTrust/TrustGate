@@ -59,7 +59,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.ID == existing.ID && p.Name == "new" && p.Description == "new description"
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -87,7 +87,7 @@ func TestUpdater_Update_Partial(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.Name == "renamed" && p.Slug == "rate_limiter" && p.Description == "old description"
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -122,7 +122,7 @@ func TestUpdater_Update_PreservesModeWhenOmitted(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.Mode == domain.ModeObserve
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -147,7 +147,7 @@ func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.Mode == domain.ModeThrottle
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -199,6 +199,71 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
+// Changing the slug of a scoped policy points its mcp_scope at another plugin.
+// The associator only checks the protocol when a policy is attached, and
+// nothing filters by protocol at request time, so the slug change is the last
+// chance to refuse a scope on a plugin that does not serve MCP.
+func TestUpdater_Update_SlugChangeRevalidatesTheStoredScope(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	updater := apppolicy.NewUpdater(
+		repo, registrymocks.NewRepository(t),
+		newScopedRegistryMock(t, appplugins.ProtocolLLM),
+		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
+	)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr("semantic_cache"),
+	})
+	if !errors.Is(err, domain.ErrInvalidMCPScope) {
+		t.Fatalf("err = %v, want ErrInvalidMCPScope", err)
+	}
+}
+
+// The same change on a plugin that does serve MCP goes through, and it must not
+// rewrite mcp_scope: the update never carried one.
+func TestUpdater_Update_SlugChangeKeepsAScopeItDoesNotWrite(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
+		return p.Slug == "trustguard"
+	}), false).Return(nil).Once()
+
+	updater := newScopeUpdater(t, repo, registrymocks.NewRepository(t), expectInvalidation(t, existing.GatewayID))
+	if _, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr("trustguard"),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+// A slug change on a policy pruned to {} must still go through: the scope is
+// empty because a registry was deleted, not because the operator sent one.
+func TestUpdater_Update_SlugChangeOnPrunedScopeIsAllowed(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.MCPScope = &domain.MCPScope{}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+
+	updater := newScopeUpdater(t, repo, registrymocks.NewRepository(t), expectInvalidation(t, existing.GatewayID))
+	if _, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr("trustguard"),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
 func newScopeUpdater(t *testing.T, repo *repomocks.Repository, registryRepo *registrymocks.Repository, publisher *cachemocks.EventPublisher) apppolicy.Updater {
 	t.Helper()
 	return apppolicy.NewUpdater(repo, registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), publisher, newTestLogger(), nil)
@@ -224,7 +289,7 @@ func TestUpdater_Update_OmittedScopeKeepsPrunedScope(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.Name == "renamed" && p.MCPScope != nil && p.MCPScope.IsEmpty()
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	updater := newScopeUpdater(t, repo, registrymocks.NewRepository(t), expectInvalidation(t, existing.GatewayID))
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")})
@@ -245,7 +310,7 @@ func TestUpdater_Update_OmittedScopeKeepsExistingScope(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.MCPScope != nil && len(p.MCPScope.RegistryIDs) == 1 && p.MCPScope.RegistryIDs[0] == snowflake
-	})).Return(nil).Once()
+	}), false).Return(nil).Once()
 
 	updater := newScopeUpdater(t, repo, registrymocks.NewRepository(t), expectInvalidation(t, existing.GatewayID))
 	if _, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")}); err != nil {
@@ -261,7 +326,7 @@ func TestUpdater_Update_NullScopeClearsIt(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.MCPScope == nil
-	})).Return(nil).Once()
+	}), true).Return(nil).Once()
 
 	updater := newScopeUpdater(t, repo, registrymocks.NewRepository(t), expectInvalidation(t, existing.GatewayID))
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
@@ -288,7 +353,7 @@ func TestUpdater_Update_ScopeValueReplacesAfterValidation(t *testing.T) {
 		return p.MCPScope != nil && len(p.MCPScope.RegistryIDs) == 0 &&
 			len(p.MCPScope.Tools) == 1 && p.MCPScope.Tools[0].RegistryID == jira && p.MCPScope.Tools[0].Tool == "create_issue" &&
 			len(p.MCPScope.ExceptGroups) == 1 && p.MCPScope.ExceptGroups[0] == "Finanzas"
-	})).Return(nil).Once()
+	}), true).Return(nil).Once()
 
 	registryRepo := registrymocks.NewRepository(t)
 	registryRepo.EXPECT().
