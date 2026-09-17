@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"testing"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
@@ -94,19 +96,38 @@ const (
 	orphanWarning = "policy has no consumers and is not global: it runs nowhere"
 )
 
+// inertSafePlugin is the plugin mock plus the opt-in the registry mock cannot
+// express: IsInertSafe asks for it by type assertion, and a plugin that does
+// not implement it is denied.
+type inertSafePlugin struct {
+	*pluginmocks.Plugin
+	safe bool
+}
+
+func (p inertSafePlugin) ScopeInertSafe() bool { return p.safe }
+
+// inertSafeRegistry resolves every slug to a plugin that has, or has not,
+// opted into running where the scope does not gate.
+func inertSafeRegistry(t *testing.T, safe bool) appplugins.Registry {
+	t.Helper()
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().Get(mock.Anything).Return(inertSafePlugin{Plugin: pluginmocks.NewPlugin(t), safe: safe}, true).Maybe()
+	return reg
+}
+
 func warnerOver(t *testing.T, gwID ids.GatewayID, consumers []*consumerdomain.Consumer, policies []*domain.Policy) apppolicy.Warner {
 	t.Helper()
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(consumers, nil).Maybe()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(policies, nil).Maybe()
-	return apppolicy.NewWarner(repo, consumerRepo)
+	return apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
 }
 
 func TestWarner_Overlaps_UnscopedPolicyNeverWarns(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
 
 	warnings, err := w.Overlaps(context.Background(), unscopedPolicy(gwID, "trustguard", ids.New[ids.ConsumerKind]()))
 	require.NoError(t, err)
@@ -132,7 +153,7 @@ func TestWarner_Overlaps_DormantScopeRunsNowhere(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	p := policyWith(gwID, "trustguard", &domain.MCPScope{}, ids.New[ids.ConsumerKind]())
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, []string{dormantWarning}, warnings)
@@ -145,7 +166,7 @@ func TestWarner_Overlaps_PolicyWithoutConsumersRunsNowhere(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	p := unscopedPolicy(gwID, "trustguard")
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, []string{orphanWarning}, warnings)
@@ -157,7 +178,7 @@ func TestWarner_Overlaps_GlobalPolicyWithoutConsumersDoesNotWarn(t *testing.T) {
 	p := unscopedPolicy(gwID, "trustguard")
 	p.Global = true
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
@@ -215,7 +236,7 @@ func TestWarner_Overlaps_DisabledPolicyDoesNotWarnAboutCollisions(t *testing.T) 
 	p := scopedPolicy(gwID, "trustguard", consumerID)
 	p.Enabled = false
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
@@ -378,7 +399,7 @@ func TestWarner_Overlaps_RepositoryErrorSurfaces(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, boom).Once()
 
-	w := apppolicy.NewWarner(repo, consumerRepo)
+	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
 	_, err := w.Overlaps(context.Background(), p)
 	assert.ErrorIs(t, err, boom)
 }
@@ -392,7 +413,7 @@ func TestWarner_Overlaps_ConsumerRepositoryErrorSurfaces(t *testing.T) {
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, boom).Once()
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo)
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo, inertSafeRegistry(t, true))
 	_, err := w.Overlaps(context.Background(), p)
 	assert.ErrorIs(t, err, boom)
 }
@@ -476,10 +497,68 @@ func TestWarner_OverlapsOnAttach(t *testing.T) {
 			consumerRepo.EXPECT().FindByID(mock.Anything, consumerID).
 				Return(&consumerdomain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Maybe()
 
-			w := apppolicy.NewWarner(repo, consumerRepo)
+			w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
 			warnings, err := w.OverlapsOnAttach(context.Background(), tt.gatewayID, consumerID, tt.policy.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, warnings)
 		})
 	}
+}
+
+// The promotion of a group-scoped policy on a plugin that gates by name is
+// saved and then runs nowhere but MCP: it skips the attach, which is where the
+// same case is a 422, so the warning is the only thing that says so
+// (RUN-1621, task 5.7).
+func TestWarner_Overlaps_GlobalGroupScopeOnANameGatingPluginWarns(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	p := groupScopedPolicy(gwID, "tool_allowlist", "Finanzas")
+	p.Global = true
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Maybe()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Maybe()
+
+	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, false))
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{inertUnsafeGlobalWarning("tool_allowlist")}, warnings)
+}
+
+func TestWarner_Overlaps_GlobalGroupScopeOnAnInertSafePluginDoesNotWarn(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas")
+	p.Global = true
+
+	w := warnerOver(t, gwID, []*consumerdomain.Consumer{mcpConsumer(gwID, consumerID)}, []*domain.Policy{p})
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+// A group scope that is not global still goes through the attach, which
+// refuses it on a non-MCP consumer, so the warning would be noise.
+func TestWarner_Overlaps_NonGlobalGroupScopeOnANameGatingPluginDoesNotWarn(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	p := groupScopedPolicy(gwID, "tool_allowlist", "Finanzas", consumerID)
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*consumerdomain.Consumer{mcpConsumer(gwID, consumerID)}, nil).Maybe()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Maybe()
+
+	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, false))
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+func inertUnsafeGlobalWarning(slug string) string {
+	return fmt.Sprintf("policy is global and its scope narrows by group alone, but plugin %s has not opted into "+
+		"running where the scope is inert: it runs on MCP traffic only, never on the LLM or A2A plane", slug)
 }

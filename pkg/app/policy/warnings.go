@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -31,6 +32,17 @@ const (
 		"it runs on MCP traffic only, never on the LLM or A2A plane"
 	orphanWarning = "policy has no consumers and is not global: it runs nowhere"
 )
+
+// inertUnsafeGlobalWarning names the one promotion that is saved and then runs
+// nowhere but MCP. A global policy skips the attach, which is where the same
+// refusal is a 422, so without this the operator hears nothing at all
+// (RUN-1621, task 5.7). It stays a warning: rule 7 decides on purpose not to
+// refuse the promotion, because global with a scope is legitimate
+// configuration that the config load already filters.
+func inertUnsafeGlobalWarning(slug string) string {
+	return fmt.Sprintf("policy is global and its scope narrows by group alone, but plugin %s has not opted into "+
+		"running where the scope is inert: it runs on MCP traffic only, never on the LLM or A2A plane", slug)
+}
 
 func overlapWarning(consumerID ids.ConsumerID, slug string) string {
 	return fmt.Sprintf("consumer %s already runs plugin %s without scope", consumerID, slug)
@@ -77,18 +89,21 @@ var _ Warner = (*warner)(nil)
 type warner struct {
 	policies  domain.Repository
 	consumers consumerdomain.Reader
+	plugins   appplugins.Registry
 }
 
-// NewWarner builds a Warner over the policy and consumer read models.
-func NewWarner(policies domain.Repository, consumers consumerdomain.Reader) Warner {
-	return &warner{policies: policies, consumers: consumers}
+// NewWarner builds a Warner over the policy and consumer read models and the
+// plugin registry, which is what says whether a plugin still runs where the
+// scope does not gate.
+func NewWarner(policies domain.Repository, consumers consumerdomain.Reader, plugins appplugins.Registry) Warner {
+	return &warner{policies: policies, consumers: consumers, plugins: plugins}
 }
 
 func (w *warner) Overlaps(ctx context.Context, p *domain.Policy) ([]string, error) {
 	if p == nil {
 		return nil, nil
 	}
-	warnings := reachWarnings(p)
+	warnings := w.reachWarnings(p)
 	if p.MCPScope == nil || p.Dormant() || !p.Enabled {
 		return warnings, nil
 	}
@@ -120,13 +135,15 @@ func (w *warner) OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, 
 
 // reachWarnings describes where p runs from p alone, without asking what else
 // the gateway holds.
-func reachWarnings(p *domain.Policy) []string {
+func (w *warner) reachWarnings(p *domain.Policy) []string {
 	var out []string
 	switch {
 	case p.Dormant():
 		out = append(out, dormantWarning)
 	case p.MCPScope.HasDestination():
 		out = append(out, scopeBoundWarning)
+	case p.Global && p.Enabled && p.MCPScope.CrossesPlanes() && !appplugins.IsInertSafe(w.plugins, p.Slug):
+		out = append(out, inertUnsafeGlobalWarning(p.Slug))
 	}
 	if !p.Global && len(p.ConsumerIDs) == 0 {
 		out = append(out, orphanWarning)
