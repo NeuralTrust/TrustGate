@@ -122,8 +122,11 @@ func TestPolicyOpenAPIDocumentsMCPScopeAndWarnings(t *testing.T) {
 	createSchema := schemaByRef(t, document, createBody.Schema.Ref)
 	assert.Contains(t, createSchema.Properties, "mcp_scope")
 	scopeSchema := schemaByRef(t, document, refOf(t, createSchema.Properties["mcp_scope"]))
-	for _, field := range []string{"registry_ids", "tools", "users", "groups", "except_users", "except_groups"} {
+	for _, field := range []string{"registry_ids", "tools", "groups", "except_groups"} {
 		assert.Contains(t, scopeSchema.Properties, field)
+	}
+	for _, field := range []string{"users", "except_users"} {
+		assert.NotContains(t, scopeSchema.Properties, field, "the user dimension is retired and must stay out of the contract")
 	}
 
 	updateBody, ok := item.Put.RequestBody.Content["application/json"]

@@ -153,7 +153,6 @@ func TestCreatePolicy_WithMCPScope_EchoesStoredScope(t *testing.T) {
 		"registry_ids":  []string{byRegistry},
 		"tools":         []map[string]any{{"registry_id": byTool, "tool": "run_query"}},
 		"groups":        []string{"Finanzas"},
-		"except_users":  []string{"Ana@Acme.com"},
 		"except_groups": []string{"Contractors"},
 	}))
 	require.Equal(t, http.StatusCreated, status, "body=%v", body)
@@ -164,9 +163,7 @@ func TestCreatePolicy_WithMCPScope_EchoesStoredScope(t *testing.T) {
 	assert.Equal(t, []any{byRegistry}, scope["registry_ids"])
 	assert.Equal(t, []any{map[string]any{"registry_id": byTool, "tool": "run_query"}}, scope["tools"])
 	assert.Equal(t, []any{"Finanzas"}, scope["groups"])
-	assert.Equal(t, []any{"ana@acme.com"}, scope["except_users"], "emails are normalised to lower case")
 	assert.Equal(t, []any{"Contractors"}, scope["except_groups"])
-	assert.Nil(t, scope["users"])
 
 	id, _ := body["id"].(string)
 	got := getPolicy(t, gwID, id)
@@ -207,7 +204,12 @@ func TestCreatePolicy_MCPScopeRejections(t *testing.T) {
 		}},
 		{name: "tool without name", scope: map[string]any{"tools": []map[string]any{{"registry_id": ownMCP, "tool": ""}}}},
 		{name: "duplicate group", scope: map[string]any{"groups": []string{"Finanzas", "Finanzas"}}},
-		{name: "empty user", scope: map[string]any{"users": []string{""}}},
+		{name: "empty group", scope: map[string]any{"groups": []string{""}}},
+		{name: "retired users dimension", scope: map[string]any{"users": []string{"ana@acme.com"}}},
+		{name: "retired except_users dimension", scope: map[string]any{
+			"groups":       []string{"Finanzas"},
+			"except_users": []string{"ana@acme.com"},
+		}},
 	}
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
 	for _, tt := range tests {

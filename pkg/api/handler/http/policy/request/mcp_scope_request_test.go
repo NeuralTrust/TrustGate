@@ -38,18 +38,37 @@ func TestCreatePolicyRequest_ToMCPScope(t *testing.T) {
 			"registry_ids": ["`+registryID.String()+`"],
 			"tools": [{"registry_id": "`+toolRegistryID.String()+`", "tool": "run_query"}],
 			"groups": ["Finanzas"],
-			"except_users": ["ana@acme.com"]
+			"except_groups": ["Interns"]
 		}
 	}`), &req))
 
 	scope, err := req.ToMCPScope()
 	require.NoError(t, err)
 	assert.Equal(t, &domain.MCPScope{
-		RegistryIDs: []ids.RegistryID{registryID},
-		Tools:       []domain.MCPToolRef{{RegistryID: toolRegistryID, Tool: "run_query"}},
-		Groups:      []string{"Finanzas"},
-		ExceptUsers: []string{"ana@acme.com"},
+		RegistryIDs:  []ids.RegistryID{registryID},
+		Tools:        []domain.MCPToolRef{{RegistryID: toolRegistryID, Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Interns"},
 	}, scope)
+}
+
+func TestCreatePolicyRequest_ToMCPScope_RejectsRetiredUserDimension(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"users", "except_users"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			var req request.CreatePolicyRequest
+			require.NoError(t, json.Unmarshal([]byte(`{
+				"name": "dlp", "slug": "trustguard",
+				"mcp_scope": {"groups": ["Finanzas"], "`+field+`": ["ana@acme.com"]}
+			}`), &req))
+
+			scope, err := req.ToMCPScope()
+			assert.Nil(t, scope)
+			require.ErrorIs(t, err, commonerrors.ErrValidation)
+			assert.Contains(t, err.Error(), field+" is no longer supported")
+		})
+	}
 }
 
 func TestCreatePolicyRequest_ToMCPScope_OmittedIsNil(t *testing.T) {
@@ -113,6 +132,8 @@ func TestUpdatePolicyRequest_ToMCPScope_TriState(t *testing.T) {
 		{name: "empty object is an empty scope", body: `{"mcp_scope": {}}`, wantSet: true, wantScope: &domain.MCPScope{}},
 		{name: "non-object is rejected", body: `{"mcp_scope": "all"}`, wantErr: commonerrors.ErrValidation},
 		{name: "invalid registry id is rejected", body: `{"mcp_scope": {"registry_ids": ["x"]}}`, wantErr: commonerrors.ErrValidation},
+		{name: "users is rejected", body: `{"mcp_scope": {"users": ["ana@acme.com"]}}`, wantErr: commonerrors.ErrValidation},
+		{name: "except_users is rejected", body: `{"mcp_scope": {"groups": ["Finanzas"], "except_users": ["ana@acme.com"]}}`, wantErr: commonerrors.ErrValidation},
 	}
 	for _, tt := range tests {
 		tt := tt
