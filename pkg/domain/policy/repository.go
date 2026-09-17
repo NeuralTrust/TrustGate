@@ -34,6 +34,7 @@ type ListFilter struct {
 	// RestrictToSlugs with empty Slugs means match nothing (ENG-1242).
 	RestrictToSlugs bool
 	Slugs           []string
+	RegistryID      *ids.RegistryID
 	Page            listing.Page
 	Sort            listing.Sort
 }

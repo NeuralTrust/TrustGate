@@ -12,22 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package request
+package response
 
-import (
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-)
-
-type ListPolicyRequest struct {
-	Search     string
-	Enabled    *bool
-	Global     *bool
-	Mode       domain.Mode
-	Categories []string
-	Types      []string
-	RegistryID *ids.RegistryID
-	Page       listing.Page
-	Sort       listing.Sort
+// AttachPolicyResponse is the body of a policy attach that succeeded with
+// non-blocking warnings; an attach without warnings answers 204 instead.
+type AttachPolicyResponse struct {
+	Warnings []string `json:"warnings"`
 }

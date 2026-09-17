@@ -43,4 +43,5 @@ var (
 	ErrInvalidFailMode    = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
 
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)
+	ErrPolicyScopeRequiresMCP = fmt.Errorf("consumer: a policy with mcp_scope can only be attached to an MCP consumer: %w", ErrPolicyProtocolMismatch)
 )

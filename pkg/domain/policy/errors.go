@@ -31,4 +31,5 @@ var (
 	ErrInvalidStage      = fmt.Errorf("policy: invalid stage: %w", commonerrors.ErrValidation)
 	ErrInvalidMode       = fmt.Errorf("policy: invalid mode: %w", commonerrors.ErrValidation)
 	ErrInvalidPriority   = fmt.Errorf("policy: invalid priority: %w", commonerrors.ErrValidation)
+	ErrInvalidMCPScope   = fmt.Errorf("policy: invalid mcp_scope: %w", commonerrors.ErrValidation)
 )
