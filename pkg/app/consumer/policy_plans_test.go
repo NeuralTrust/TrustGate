@@ -227,17 +227,20 @@ func TestPolicyPlans_PrincipalScopedPoliciesAreFilteredByTheCaller(t *testing.T)
 	byGroup := preRequestPolicy("P", "p_guard", &policydomain.MCPScope{
 		RegistryIDs: []ids.RegistryID{xID}, Groups: []string{"Finanzas"},
 	})
-	bySubject := preRequestPolicy("S", "s_guard", &policydomain.MCPScope{
-		Tools: []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}}, Users: []string{"usr_123"},
+	byToolGroup := preRequestPolicy("S", "s_guard", &policydomain.MCPScope{
+		Tools: []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}}, Groups: []string{"Finanzas"},
 	})
-	byEmail := preRequestPolicy("U", "u_guard", &policydomain.MCPScope{
-		Tools: []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}}, Users: []string{"ana@acme.com"},
+	byOtherToolGroup := preRequestPolicy("U", "u_guard", &policydomain.MCPScope{
+		Tools: []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}}, Groups: []string{"Marketing"},
 	})
 	c := preRequestPolicy("C", "c_audit", nil)
-	plans := h.build([]*policydomain.Policy{c}, []*policydomain.Policy{byGroup, bySubject, byEmail})
+	plans := h.build([]*policydomain.Policy{c}, []*policydomain.Policy{byGroup, byToolGroup, byOtherToolGroup})
 
-	emailOnly := &identity.Principal{Method: identity.MethodExternalJWT, Claims: map[string]any{"email": "Ana@Acme.com"}}
-	subjectOnly := &identity.Principal{Subject: "usr_123", Method: identity.MethodExternalJWT}
+	bothGroups := &identity.Principal{
+		Method: identity.MethodExternalJWT,
+		Claims: map[string]any{"groups": []string{"Finanzas", "Marketing"}},
+	}
+	claimlessJWT := &identity.Principal{Subject: "usr_123", Method: identity.MethodExternalJWT}
 
 	tests := []struct {
 		name      string
@@ -249,9 +252,10 @@ func TestPolicyPlans_PrincipalScopedPoliciesAreFilteredByTheCaller(t *testing.T)
 		{"group on the registry", x, "other", groupPrincipal("Finanzas"), []string{"P", "C"}},
 		{"other group is filtered out", x, "other", groupPrincipal("Marketing"), []string{"C"}},
 		{"nil principal never matches groups", x, "other", nil, []string{"C"}},
-		{"email matches case-insensitively", x, "run_query", emailOnly, []string{"U", "C"}},
-		{"subject matches without email", x, "run_query", subjectOnly, []string{"S", "C"}},
-		{"everything matches ordered by specificity", x, "run_query", financePrincipal(), []string{"S", "U", "P", "C"}},
+		{"a subject without a groups claim matches nothing", x, "run_query", claimlessJWT, []string{"C"}},
+		{"group on the tool", x, "run_query", groupPrincipal("Marketing"), []string{"U", "C"}},
+		{"tool before registry at equal priority", x, "run_query", financePrincipal(), []string{"S", "P", "C"}},
+		{"several groups match ordered by specificity then slug", x, "run_query", bothGroups, []string{"S", "U", "P", "C"}},
 		{"no principal-scoped policies for the registry", y, "run_query", financePrincipal(), []string{"C"}},
 	}
 	for _, tc := range tests {
@@ -273,7 +277,6 @@ func TestPolicyPlans_ExceptionsExcludeTheCallerAndSpareIdentitylessCallers(t *te
 	everyoneButFinance := preRequestPolicy("E", "e_deny", &policydomain.MCPScope{
 		Tools:        []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}},
 		ExceptGroups: []string{"Finanzas"},
-		ExceptUsers:  []string{"bob@acme.com"},
 	})
 	plans := h.build(
 		[]*policydomain.Policy{preRequestPolicy("C", "c_audit", nil)},
@@ -286,10 +289,10 @@ func TestPolicyPlans_ExceptionsExcludeTheCallerAndSpareIdentitylessCallers(t *te
 	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", groupPrincipal("Marketing"))))
 	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(x, "run_query", groupPrincipal("Finanzas"))),
 		"except_groups removes the excluded group")
-	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(x, "run_query", bob)),
-		"except_users compares the lowercased email")
+	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", bob)),
+		"a caller outside the excepted group keeps the policy whatever its subject or email")
 	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", nil)),
-		"an identity-less caller never falls in an exception")
+		"a caller without groups never falls in an exception")
 	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", apiKey)))
 	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(x, "other", groupPrincipal("Marketing"))),
 		"the destination still has to match")

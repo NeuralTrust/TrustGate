@@ -31,13 +31,9 @@ var (
 
 func runQuery() MCPTarget { return MCPTarget{RegistryID: snowflake, Tool: "run_query"} }
 
-func finance() MCPCaller {
-	return MCPCaller{Subject: "usr_fin", Email: "ana@acme.com", Groups: []string{"Finanzas"}}
-}
+func finance() MCPCaller { return MCPCaller{Groups: []string{"Finanzas"}} }
 
-func marketing() MCPCaller {
-	return MCPCaller{Subject: "usr_mkt", Email: "bob@acme.com", Groups: []string{"Marketing"}}
-}
+func marketing() MCPCaller { return MCPCaller{Groups: []string{"Marketing"}} }
 
 func TestMCPScope_Specificity(t *testing.T) {
 	t.Parallel()
@@ -51,7 +47,7 @@ func TestMCPScope_Specificity(t *testing.T) {
 		{name: "principal only", scope: &MCPScope{Groups: []string{"Finanzas"}}, want: 1},
 		{name: "except only counts as principal", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, want: 1},
 		{name: "registry", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, want: 2},
-		{name: "registry and principal", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}, Users: []string{"ana@acme.com"}}, want: 3},
+		{name: "registry and principal", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}, Groups: []string{"Finanzas"}}, want: 3},
 		{name: "tool", scope: &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}}, want: 4},
 		{name: "tool beats registry", scope: &MCPScope{RegistryIDs: []ids.RegistryID{jira}, Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}}, want: 4},
 		{name: "tool and principal", scope: &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}, Groups: []string{"Finanzas"}}, want: 5},
@@ -80,9 +76,9 @@ func TestMCPScope_Predicates(t *testing.T) {
 	if dest.IsEmpty() || !dest.HasDestination() || dest.HasPrincipal() {
 		t.Fatal("registry scope must have destination only")
 	}
-	principal := &MCPScope{ExceptUsers: []string{"ana@acme.com"}}
+	principal := &MCPScope{ExceptGroups: []string{"Finanzas"}}
 	if principal.IsEmpty() || principal.HasDestination() || !principal.HasPrincipal() {
-		t.Fatal("except_users scope must have principal only")
+		t.Fatal("except_groups scope must have principal only")
 	}
 }
 
@@ -126,23 +122,18 @@ func TestMCPScope_MatchesCaller(t *testing.T) {
 		wantWhy SkipReason
 	}{
 		{name: "no principal accepts anyone", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, caller: apiKey, want: true},
-		{name: "email with different case", scope: &MCPScope{Users: []string{"ana@acme.com"}}, caller: MCPCaller{Email: "Ana@Acme.com"}, want: true},
-		{name: "subject without email", scope: &MCPScope{Users: []string{"usr_123"}}, caller: MCPCaller{Subject: "usr_123"}, want: true},
-		{name: "subject is case sensitive", scope: &MCPScope{Users: []string{"usr_123"}}, caller: MCPCaller{Subject: "USR_123"}, want: false, wantWhy: SkipPrincipal},
-		{name: "unknown user", scope: &MCPScope{Users: []string{"ana@acme.com"}}, caller: marketing(), want: false, wantWhy: SkipPrincipal},
+		{name: "group is case sensitive", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{"finanzas"}}, want: false, wantWhy: SkipPrincipal},
+		{name: "one of several caller groups", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{"Marketing", "Finanzas"}}, want: true},
 		{name: "group match", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: finance(), want: true},
 		{name: "group with surrounding spaces in token", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{" Finanzas "}}, want: true},
 		{name: "group mismatch", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: marketing(), want: false, wantWhy: SkipPrincipal},
 		{name: "api key never matches groups", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: apiKey, want: false, wantWhy: SkipPrincipal},
-		{name: "api key never matches users", scope: &MCPScope{Users: []string{"ana@acme.com"}}, caller: apiKey, want: false, wantWhy: SkipPrincipal},
-		{name: "user or group", scope: &MCPScope{Users: []string{"bob@acme.com"}, Groups: []string{"Finanzas"}}, caller: marketing(), want: true},
+		{name: "any of the scoped groups", scope: &MCPScope{Groups: []string{"Finanzas", "Marketing"}}, caller: marketing(), want: true},
 		{name: "everyone but Finanzas: Marketing", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: marketing(), want: true},
 		{name: "everyone but Finanzas: Finanzas", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: finance(), want: false, wantWhy: SkipExcept},
 		{name: "everyone but Finanzas: api key", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: apiKey, want: true},
-		{name: "except user by email case insensitive", scope: &MCPScope{ExceptUsers: []string{"ana@acme.com"}}, caller: MCPCaller{Email: "ANA@acme.com"}, want: false, wantWhy: SkipExcept},
-		{name: "except user by subject", scope: &MCPScope{ExceptUsers: []string{"usr_fin"}}, caller: finance(), want: false, wantWhy: SkipExcept},
-		{name: "positive match then excluded", scope: &MCPScope{Groups: []string{"Finanzas"}, ExceptUsers: []string{"ana@acme.com"}}, caller: finance(), want: false, wantWhy: SkipExcept},
-		{name: "positive match not excluded", scope: &MCPScope{Groups: []string{"Finanzas"}, ExceptUsers: []string{"carol@acme.com"}}, caller: finance(), want: true},
+		{name: "positive match then excluded", scope: &MCPScope{Groups: []string{"Finanzas", "Marketing"}, ExceptGroups: []string{"Marketing"}}, caller: marketing(), want: false, wantWhy: SkipExcept},
+		{name: "positive match not excluded", scope: &MCPScope{Groups: []string{"Finanzas"}, ExceptGroups: []string{"Marketing"}}, caller: finance(), want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -203,9 +194,7 @@ func TestMCPScope_Validate_Accepts(t *testing.T) {
 	full := &MCPScope{
 		RegistryIDs:  []ids.RegistryID{jira},
 		Tools:        []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}, {RegistryID: snowflake, Tool: "list_tables"}},
-		Users:        []string{"ana@acme.com", "usr_123"},
 		Groups:       []string{"Finanzas"},
-		ExceptUsers:  []string{"bob@acme.com"},
 		ExceptGroups: []string{"Interns"},
 	}
 	if err := full.Validate(); err != nil {
@@ -227,11 +216,9 @@ func TestMCPScope_Validate_Rejects(t *testing.T) {
 		{name: "blank tool", scope: &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "   "}}}, want: "empty tool"},
 		{name: "duplicate tool", scope: &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}, {RegistryID: snowflake, Tool: " run_query "}}}, want: "duplicate tool"},
 		{name: "registry in both lists", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}, Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}}, want: "both registry_ids and tools"},
-		{name: "empty user", scope: &MCPScope{Users: []string{""}}, want: "empty entry in users"},
-		{name: "duplicate user", scope: &MCPScope{Users: []string{"ana@acme.com", "ana@acme.com"}}, want: "duplicate entry \"ana@acme.com\" in users"},
 		{name: "blank group", scope: &MCPScope{Groups: []string{" "}}, want: "empty entry in groups"},
 		{name: "duplicate group", scope: &MCPScope{Groups: []string{"Finanzas", "Finanzas"}}, want: "duplicate entry \"Finanzas\" in groups"},
-		{name: "empty except user", scope: &MCPScope{ExceptUsers: []string{""}}, want: "empty entry in except_users"},
+		{name: "empty except group", scope: &MCPScope{ExceptGroups: []string{""}}, want: "empty entry in except_groups"},
 		{name: "duplicate except group", scope: &MCPScope{ExceptGroups: []string{"a", "a"}}, want: "in except_groups"},
 	}
 	for _, tc := range tests {
@@ -260,23 +247,15 @@ func TestMCPScope_Normalize(t *testing.T) {
 	nilScope.Normalize()
 	s := &MCPScope{
 		Tools:        []MCPToolRef{{RegistryID: snowflake, Tool: " run_query "}},
-		Users:        []string{" Ana@Acme.com ", " Usr_123 "},
 		Groups:       []string{" Finanzas "},
-		ExceptUsers:  []string{"BOB@acme.com"},
 		ExceptGroups: []string{" Interns"},
 	}
 	s.Normalize()
 	if s.Tools[0].Tool != "run_query" {
 		t.Fatalf("Tool = %q, want run_query", s.Tools[0].Tool)
 	}
-	if s.Users[0] != "ana@acme.com" || s.Users[1] != "Usr_123" {
-		t.Fatalf("Users = %v, want email lowercased and subject case kept", s.Users)
-	}
 	if s.Groups[0] != "Finanzas" || s.ExceptGroups[0] != "Interns" {
 		t.Fatalf("groups not trimmed: %v %v", s.Groups, s.ExceptGroups)
-	}
-	if s.ExceptUsers[0] != "bob@acme.com" {
-		t.Fatalf("ExceptUsers = %v, want lowercased email", s.ExceptUsers)
 	}
 	if err := s.Validate(); err != nil {
 		t.Fatalf("normalized scope must validate: %v", err)
@@ -410,18 +389,21 @@ func TestPolicy_MCPScope_JSON(t *testing.T) {
 	full := &MCPScope{
 		RegistryIDs:  []ids.RegistryID{jira},
 		Tools:        []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}},
-		Users:        []string{"ana@acme.com"},
 		Groups:       []string{"Finanzas"},
-		ExceptUsers:  []string{"bob@acme.com"},
 		ExceptGroups: []string{"Interns"},
 	}
 	raw, err := json.Marshal(full)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"registry_ids"`, `"tools"`, `"registry_id"`, `"tool"`, `"users"`, `"groups"`, `"except_users"`, `"except_groups"`} {
+	for _, key := range []string{`"registry_ids"`, `"tools"`, `"registry_id"`, `"tool"`, `"groups"`, `"except_groups"`} {
 		if !strings.Contains(string(raw), key) {
 			t.Fatalf("json %s lacks %s", raw, key)
+		}
+	}
+	for _, key := range []string{`"users"`, `"except_users"`} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("json %s still carries the retired %s", raw, key)
 		}
 	}
 	var back MCPScope
@@ -430,5 +412,33 @@ func TestPolicy_MCPScope_JSON(t *testing.T) {
 	}
 	if ok, _ := back.Matches(runQuery(), finance()); !ok {
 		t.Fatal("round-tripped scope must still match")
+	}
+}
+
+// TestMCPScopeUnmarshalDropsRetiredUsers pins what a row written before the
+// user dimension was removed decodes to. Dropping the keys here is what makes
+// migration 20260917120000 necessary: a scope that named only users decodes to
+// {} and goes dormant, but one that also named a destination would otherwise
+// keep it and widen to every caller of it.
+func TestMCPScopeUnmarshalDropsRetiredUsers(t *testing.T) {
+	t.Parallel()
+	var usersOnly MCPScope
+	if err := json.Unmarshal([]byte(`{"users":["ana@acme.com"],"except_users":["bob@acme.com"]}`), &usersOnly); err != nil {
+		t.Fatal(err)
+	}
+	if !usersOnly.IsEmpty() {
+		t.Fatalf("scope = %+v, want the empty scope that matches nothing", usersOnly)
+	}
+	var withDestination MCPScope
+	if err := json.Unmarshal(
+		[]byte(`{"registry_ids":["`+snowflake.String()+`"],"users":["ana@acme.com"]}`), &withDestination,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if withDestination.HasPrincipal() {
+		t.Fatal("the user dimension must not survive the decode")
+	}
+	if ok, _ := withDestination.Matches(runQuery(), MCPCaller{}); !ok {
+		t.Fatal("a destination-only scope applies to every caller, which is why the rows are migrated")
 	}
 }

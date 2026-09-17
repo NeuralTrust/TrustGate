@@ -30,13 +30,12 @@ type MCPToolRef struct {
 // MCPScope narrows a policy to MCP destinations and principals. A nil scope
 // applies to every tools/call of the consumer; a present scope with no entries
 // matches nothing. Destination and principal combine with AND inside one
-// scope; an empty dimension accepts any value.
+// scope; an empty dimension accepts any value. The principal is always a
+// group: individual users are not a dimension of the scope.
 type MCPScope struct {
 	RegistryIDs  []ids.RegistryID `json:"registry_ids,omitempty"`
 	Tools        []MCPToolRef     `json:"tools,omitempty"`
-	Users        []string         `json:"users,omitempty"`
 	Groups       []string         `json:"groups,omitempty"`
-	ExceptUsers  []string         `json:"except_users,omitempty"`
 	ExceptGroups []string         `json:"except_groups,omitempty"`
 }
 
@@ -47,13 +46,10 @@ type MCPTarget struct {
 	Tool       string
 }
 
-// MCPCaller is the principal view the scope matcher reads. Email is expected
-// in lowercase; a caller with no Subject, Email or Groups has no identity and
-// never matches users or groups nor falls in an exception.
+// MCPCaller is the principal view the scope matcher reads. A caller with no
+// Groups never matches Groups nor falls in ExceptGroups.
 type MCPCaller struct {
-	Subject string
-	Email   string
-	Groups  []string
+	Groups []string
 }
 
 // SkipReason says which dimension of a scope rejected a call.
@@ -62,9 +58,9 @@ type SkipReason string
 const (
 	// SkipDestination reports that the registry or tool is outside the scope.
 	SkipDestination SkipReason = "destination"
-	// SkipPrincipal reports that the caller is not in users or groups.
+	// SkipPrincipal reports that the caller is not in groups.
 	SkipPrincipal SkipReason = "principal"
-	// SkipExcept reports that the caller is excluded by except_users or except_groups.
+	// SkipExcept reports that the caller is excluded by except_groups.
 	SkipExcept SkipReason = "except"
 )
 
@@ -78,11 +74,10 @@ func (s *MCPScope) HasDestination() bool {
 	return s != nil && (len(s.RegistryIDs) > 0 || len(s.Tools) > 0)
 }
 
-// HasPrincipal reports whether the scope narrows by user or group, including
+// HasPrincipal reports whether the scope narrows by group, including
 // exceptions.
 func (s *MCPScope) HasPrincipal() bool {
-	return s != nil && (len(s.Users) > 0 || len(s.Groups) > 0 ||
-		len(s.ExceptUsers) > 0 || len(s.ExceptGroups) > 0)
+	return s != nil && (len(s.Groups) > 0 || len(s.ExceptGroups) > 0)
 }
 
 // Specificity ranks the scope for tie-breaks at equal priority: destination
@@ -126,26 +121,17 @@ func (s *MCPScope) MatchesTarget(t MCPTarget) bool {
 	return false
 }
 
-// MatchesCaller reports whether the caller is selected by Users or Groups and
-// not excluded by ExceptUsers or ExceptGroups. A scope without principal
-// accepts any caller; a caller without identity is never selected by Users or
-// Groups and never excluded.
+// MatchesCaller reports whether the caller is selected by Groups and not
+// excluded by ExceptGroups. A scope without principal accepts any caller; a
+// caller without groups is never selected by Groups and never excluded.
 func (s *MCPScope) MatchesCaller(c MCPCaller) (bool, SkipReason) {
 	if !s.HasPrincipal() {
 		return true, ""
 	}
-	subject := strings.TrimSpace(c.Subject)
-	email := strings.ToLower(strings.TrimSpace(c.Email))
-	hasIdentity := subject != "" || email != "" || len(c.Groups) > 0
-	if len(s.Users) > 0 || len(s.Groups) > 0 {
-		if !hasIdentity {
-			return false, SkipPrincipal
-		}
-		if !containsUser(s.Users, subject, email) && !intersectsGroups(s.Groups, c.Groups) {
-			return false, SkipPrincipal
-		}
+	if len(s.Groups) > 0 && !intersectsGroups(s.Groups, c.Groups) {
+		return false, SkipPrincipal
 	}
-	if hasIdentity && (containsUser(s.ExceptUsers, subject, email) || intersectsGroups(s.ExceptGroups, c.Groups)) {
+	if intersectsGroups(s.ExceptGroups, c.Groups) {
 		return false, SkipExcept
 	}
 	return true, ""
@@ -165,8 +151,8 @@ func (s *MCPScope) Matches(t MCPTarget, c MCPCaller) (bool, SkipReason) {
 }
 
 // Validate checks the scope's structure and wraps every failure in
-// ErrInvalidMCPScope: nil registry ids, blank tools, users or groups,
-// duplicates, and a registry named both in RegistryIDs and in Tools. An empty
+// ErrInvalidMCPScope: nil registry ids, blank tools or groups, duplicates,
+// and a registry named both in RegistryIDs and in Tools. An empty
 // scope is valid, so a policy pruned to {} can still be saved.
 func (s *MCPScope) Validate() error {
 	if s == nil {
@@ -204,20 +190,17 @@ func (s *MCPScope) Validate() error {
 		field  string
 		values []string
 	}{
-		{"users", s.Users},
 		{"groups", s.Groups},
-		{"except_users", s.ExceptUsers},
 		{"except_groups", s.ExceptGroups},
 	} {
-		if err := validateSubjects(list.field, list.values); err != nil {
+		if err := validateGroups(list.field, list.values); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Normalize trims every tool, user and group entry and lowercases the entries
-// of Users and ExceptUsers that look like emails. Subjects keep their case.
+// Normalize trims every tool and group entry. Group keys keep their case.
 func (s *MCPScope) Normalize() {
 	if s == nil {
 		return
@@ -225,8 +208,6 @@ func (s *MCPScope) Normalize() {
 	for i := range s.Tools {
 		s.Tools[i].Tool = strings.TrimSpace(s.Tools[i].Tool)
 	}
-	normalizeUsers(s.Users)
-	normalizeUsers(s.ExceptUsers)
 	trimAll(s.Groups)
 	trimAll(s.ExceptGroups)
 }
@@ -264,15 +245,6 @@ func (p *Policy) PruneRegistry(registryID ids.RegistryID) bool {
 	return true
 }
 
-func containsUser(users []string, subject, email string) bool {
-	for _, u := range users {
-		if (subject != "" && u == subject) || (email != "" && u == email) {
-			return true
-		}
-	}
-	return false
-}
-
 func intersectsGroups(scoped, caller []string) bool {
 	if len(scoped) == 0 || len(caller) == 0 {
 		return false
@@ -291,7 +263,7 @@ func intersectsGroups(scoped, caller []string) bool {
 	return false
 }
 
-func validateSubjects(field string, values []string) error {
+func validateGroups(field string, values []string) error {
 	seen := make(map[string]struct{}, len(values))
 	for _, v := range values {
 		v = strings.TrimSpace(v)
@@ -304,16 +276,6 @@ func validateSubjects(field string, values []string) error {
 		seen[v] = struct{}{}
 	}
 	return nil
-}
-
-func normalizeUsers(users []string) {
-	for i, u := range users {
-		u = strings.TrimSpace(u)
-		if strings.Contains(u, "@") {
-			u = strings.ToLower(u)
-		}
-		users[i] = u
-	}
 }
 
 func trimAll(values []string) {

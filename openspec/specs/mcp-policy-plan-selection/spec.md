@@ -94,7 +94,7 @@ Orden: `Priority` ascendente; a igual prioridad, especificidad descendente (tool
 
 ### Requirement: Filtro por principal opt-in
 
-`users`/`groups`/`except_*` MUST evaluarse solo si existen policies con dimensión principal para ese destino; si no, el camino MUST ser O(1) sin asignaciones.
+`groups`/`except_groups` MUST evaluarse solo si existen policies con dimensión principal para ese destino; si no, el camino MUST ser O(1) sin asignaciones.
 
 #### Scenario: Solo destino
 
