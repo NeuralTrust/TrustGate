@@ -46,7 +46,18 @@ func lessEntry(a, b chainEntry) bool {
 	return a.config.ID < b.config.ID
 }
 
-func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
+// entrySpecificity flattens the scope tie-break to zero on an inert plane. The
+// only scope that reaches such a plane narrows by group alone and scores 1,
+// which sorted descending would place it ahead of the unscoped policies of its
+// priority and change the first writer of the batch (RUN-1621, rule 4).
+func entrySpecificity(scope *policy.MCPScope, flatSpecificity bool) uint8 {
+	if flatSpecificity {
+		return 0
+	}
+	return scope.Specificity()
+}
+
+func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage, flatSpecificity bool) []chainEntry {
 	entries := make([]chainEntry, 0, len(policies))
 	seen := make(map[string]struct{}, len(policies))
 
@@ -76,7 +87,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			},
 			mode:        pol.Mode.Normalize(),
 			priority:    pol.Priority,
-			specificity: pol.MCPScope.Specificity(),
+			specificity: entrySpecificity(pol.MCPScope, flatSpecificity),
 			parallel:    pol.Parallel,
 			global:      pol.IsGlobal(),
 			mutatesReq:  plugin.MutatesRequestBody(),

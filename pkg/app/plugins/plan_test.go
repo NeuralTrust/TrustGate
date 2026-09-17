@@ -209,7 +209,7 @@ func TestStagePlan_EqualPriorityOrdersBySpecificityDesc(t *testing.T) {
 		"at equal priority the most specific scope must run first, ahead of slug order")
 	assert.Equal(t, [][]string{{"d_tool_principal"}, {"c_tool"}, {"b_registry"}, {"a_consumer"}},
 		batchSlugs(plan.batchesFor(policy.StagePreRequest)))
-	assert.Equal(t, want, entrySlugs(buildStageChain(reg, pols, policy.StagePreRequest)),
+	assert.Equal(t, want, entrySlugs(buildStageChain(reg, pols, policy.StagePreRequest, false)),
 		"the executor's ad-hoc chain must apply the same order as the precompiled plan")
 }
 
@@ -320,4 +320,64 @@ func TestStagePlan_UnionDedupsAndHandlesNil(t *testing.T) {
 
 	empty := plan.Union(nilPlan, NewStagePlan(nil, nil, nil))
 	assert.Equal(t, []string{"only"}, entrySlugs(empty.entriesFor(policy.StagePreRequest)))
+}
+
+// inertSafePlugin is a fakePlugin that implements ScopeInertSafe, so the tests
+// can cover both sides of the opt-in without touching a real plugin.
+type inertSafePlugin struct {
+	fakePlugin
+	safe bool
+}
+
+func (p *inertSafePlugin) ScopeInertSafe() bool { return p.safe }
+
+func TestInertSafe_DefaultsToDenyWithoutTheInterface(t *testing.T) {
+	plain := &fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreRequest}, result: &Result{}}
+	assert.False(t, inertSafe(plain), "a descriptor that does not implement ScopeInertSafe must be denied")
+
+	optedOut := &inertSafePlugin{fakePlugin: fakePlugin{name: "opted_out"}, safe: false}
+	assert.False(t, inertSafe(optedOut))
+
+	optedIn := &inertSafePlugin{fakePlugin: fakePlugin{name: "opted_in"}, safe: true}
+	assert.True(t, inertSafe(optedIn))
+}
+
+func TestEntrySpecificity_FlattensGroupOnlyScopeToZero(t *testing.T) {
+	groupOnly := &policy.MCPScope{Groups: []string{"Finanzas"}}
+	assert.Equal(t, uint8(1), entrySpecificity(groupOnly, false), "a group-only scope scores 1 on the MCP plane")
+	assert.Equal(t, uint8(0), entrySpecificity(groupOnly, true), "the same scope scores 0 on an inert plane")
+	assert.Equal(t, uint8(0), entrySpecificity(nil, false))
+	assert.Equal(t, uint8(0), entrySpecificity(nil, true))
+}
+
+func TestInertStagePlan_GroupScopeNeverReordersTheChain(t *testing.T) {
+	reg := preRequestPlugins(t, "a_plain", "z_grouped")
+	pre := []policy.Stage{policy.StagePreRequest}
+	newPolicies := func() []*policy.Policy {
+		return policies(t,
+			polSpec{slug: "a_plain", enabled: true, priority: 10, stages: pre},
+			polSpec{slug: "z_grouped", enabled: true, priority: 10, stages: pre},
+		)
+	}
+
+	unflattened := newPolicies()
+	scoped(unflattened[1], &policy.MCPScope{Groups: []string{"Finanzas"}})
+	assert.Equal(t,
+		[]string{"z_grouped", "a_plain"},
+		entrySlugs(NewStagePlan(reg, unflattened, nil).entriesFor(policy.StagePreRequest)),
+		"without flattening the group-only scope jumps ahead of the unscoped policy of its priority")
+
+	inert := newPolicies()
+	scoped(inert[1], &policy.MCPScope{Groups: []string{"Finanzas"}})
+	inertSlugs := entrySlugs(NewInertStagePlan(reg, inert, nil).entriesFor(policy.StagePreRequest))
+
+	unscopedSlugs := entrySlugs(NewInertStagePlan(reg, newPolicies(), nil).entriesFor(policy.StagePreRequest))
+	assert.Equal(t, []string{"a_plain", "z_grouped"}, inertSlugs,
+		"an inert plan orders by priority, slug and id alone")
+	assert.Equal(t, unscopedSlugs, inertSlugs,
+		"the inert plan must order the scoped policies exactly as if their mcp_scope were nil")
+
+	for _, entry := range NewInertStagePlan(reg, inert, nil).entriesFor(policy.StagePreRequest) {
+		assert.Equal(t, uint8(0), entry.specificity, "every entry of an inert plan scores zero specificity")
+	}
 }

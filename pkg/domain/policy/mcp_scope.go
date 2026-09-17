@@ -69,6 +69,24 @@ func (s *MCPScope) IsEmpty() bool {
 	return s != nil && !s.HasDestination() && !s.HasPrincipal()
 }
 
+// Dormant reports whether the scope is a tombstone: present and naming
+// nothing, so the policy runs in no plane. PruneRegistry writes such a scope
+// when the last registry it named is deleted, and the distinction from a nil
+// scope is what keeps that policy asleep instead of widening it to the whole
+// consumer.
+func (s *MCPScope) Dormant() bool {
+	return s.IsEmpty()
+}
+
+// CrossesPlanes reports whether the scope can reach a non-MCP consumer. Only a
+// scope that narrows exclusively by principal does: a destination names a
+// registry or a native tool, and neither exists outside MCP, so approximating
+// the binding by name would match the wrong thing. A tombstone crosses
+// nothing.
+func (s *MCPScope) CrossesPlanes() bool {
+	return s != nil && !s.IsEmpty() && !s.HasDestination()
+}
+
 // HasDestination reports whether the scope narrows by registry or tool.
 func (s *MCPScope) HasDestination() bool {
 	return s != nil && (len(s.RegistryIDs) > 0 || len(s.Tools) > 0)

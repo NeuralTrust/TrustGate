@@ -208,3 +208,45 @@ func TestPolicy_Rehydrate_KeepsMCPScope(t *testing.T) {
 		t.Fatalf("MCPScope = %+v, want the scope passed in", p.MCPScope)
 	}
 }
+
+func TestPolicy_Dormant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		policy *Policy
+		want   bool
+	}{
+		{name: "nil policy", policy: nil, want: false},
+		{name: "no scope", policy: &Policy{}, want: false},
+		{name: "tombstone scope", policy: &Policy{MCPScope: &MCPScope{}}, want: true},
+		{name: "scope with entries", policy: &Policy{MCPScope: &MCPScope{Groups: []string{"Finanzas"}}}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.policy.Dormant(); got != tc.want {
+				t.Fatalf("Dormant() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPolicy_IsGlobal_ReadsOnlyTheGlobalFlag(t *testing.T) {
+	t.Parallel()
+	attached := &Policy{Global: false, ConsumerIDs: []ids.ConsumerID{ids.New[ids.ConsumerKind]()}}
+	if attached.IsGlobal() {
+		t.Fatal("a policy attached to consumers must not become global")
+	}
+	global := &Policy{Global: true, ConsumerIDs: []ids.ConsumerID{ids.New[ids.ConsumerKind]()}}
+	if !global.IsGlobal() {
+		t.Fatal("IsGlobal must report the Global flag, not the absence of consumers")
+	}
+	bare := &Policy{Global: true}
+	if !bare.IsGlobal() {
+		t.Fatal("IsGlobal must report the Global flag for a policy with no consumers")
+	}
+	dormant := &Policy{Global: true, MCPScope: &MCPScope{}}
+	if !dormant.IsGlobal() {
+		t.Fatal("a tombstone scope must not change what IsGlobal reports")
+	}
+}
