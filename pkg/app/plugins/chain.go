@@ -25,11 +25,25 @@ type chainEntry struct {
 	config      policy.PluginConfig
 	mode        policy.Mode
 	priority    int
+	specificity uint8
 	parallel    bool
 	global      bool
 	mutatesReq  bool
 	mutatesResp bool
 	mutatesMeta bool
+}
+
+func lessEntry(a, b chainEntry) bool {
+	if a.priority != b.priority {
+		return a.priority < b.priority
+	}
+	if a.specificity != b.specificity {
+		return a.specificity > b.specificity
+	}
+	if a.config.Slug != b.config.Slug {
+		return a.config.Slug < b.config.Slug
+	}
+	return a.config.ID < b.config.ID
 }
 
 func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
@@ -62,6 +76,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			},
 			mode:        pol.Mode.Normalize(),
 			priority:    pol.Priority,
+			specificity: pol.MCPScope.Specificity(),
 			parallel:    pol.Parallel,
 			global:      pol.IsGlobal(),
 			mutatesReq:  plugin.MutatesRequestBody(),
@@ -71,7 +86,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].priority < entries[j].priority
+		return lessEntry(entries[i], entries[j])
 	})
 	return entries
 }

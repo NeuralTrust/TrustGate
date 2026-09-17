@@ -1283,7 +1283,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
-                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.",
+                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. A policy with mcp_scope can only be attached to an MCP consumer. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -1318,6 +1318,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Attached with non-blocking warnings",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse"
+                        }
+                    },
                     "204": {
                         "description": "No Content"
                     },
@@ -1335,6 +1341,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1756,6 +1768,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "format": "uuid",
+                        "description": "Only policies whose mcp_scope names this registry (in registry_ids or tools)",
+                        "name": "registry_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Sort field (name, created_at, updated_at, priority)",
                         "name": "sort",
                         "in": "query"
@@ -1812,7 +1831,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Creates a new policy in a gateway.",
+                "description": "Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1942,7 +1961,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing policy.",
+                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. The response may carry non-blocking warnings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2150,7 +2169,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
-                "description": "Promotes a policy to gateway-wide scope (applies to every consumer).",
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -3793,7 +3812,7 @@ const docTemplate = `{
         },
         "/v1/models-catalog": {
             "get": {
-                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -5099,6 +5118,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse": {
+            "type": "object",
+            "properties": {
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse": {
             "type": "object",
             "properties": {
@@ -5694,6 +5724,14 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "mcp_scope": {
+                    "description": "MCPScope narrows the policy to MCP destinations and principals. Omitted\n(or null) keeps the policy consumer-wide; {} is rejected as it would\nnever match.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest"
+                        }
+                    ]
+                },
                 "mode": {
                     "type": "string"
                 },
@@ -5721,6 +5759,59 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "except_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest"
+                    }
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -5729,6 +5820,10 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope is tri-state: omitted leaves the stored scope untouched, null\nclears it and an object replaces it. A pointer field could not tell\nomitted from null, so the raw JSON is kept until ToMCPScope reads it.",
+                    "type": "object"
                 },
                 "mode": {
                     "type": "string"
@@ -5777,6 +5872,58 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "except_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse"
+                    }
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
@@ -5803,6 +5950,14 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope is echoed as stored: absent when the policy is consumer-wide,\n{} when a registry delete pruned every destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse"
+                        }
+                    ]
                 },
                 "mode": {
                     "type": "string"
@@ -5831,6 +5986,13 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings are non-blocking notes about the write that just succeeded,\nsuch as a consumer that already runs the same plugin without scope.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -6935,26 +7097,15 @@ const docTemplate = `{
                     "description": "Reason is why the requester asked for the server, in their own words.\nOmitted when they gave none.",
                     "type": "string"
                 },
+                "requested_at": {
+                    "type": "string"
+                },
                 "requester_groups": {
                     "description": "RequesterGroups are the groups the requester carried when they filed, and\nthe only ones an approval may grant instead of the person.",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequests": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequest"
-                    }
-                },
-                "requested_at": {
-                    "type": "string"
                 }
             }
         },
@@ -7535,6 +7686,13 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "capabilities": {
+                    "description": "Capabilities are the three “What you can do” lines the Employee Portal\nshows. Seeded when curated; otherwise derived from Tools at catalog load.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "category": {
                     "type": "string"
                 },
@@ -7636,12 +7794,32 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "options": {
+                    "description": "Options closes the value to a fixed set the vendor publishes — a region,\nan edition. One entry then covers what would otherwise be a near-duplicate\nentry per value. Empty means free text.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption"
+                    }
+                },
                 "required": {
                     "type": "boolean"
                 },
                 "secret": {
                     "description": "Secret marks a variable that carries a credential (e.g. a token passed in\nthe query string) so the UI/secret store treats it as sensitive.",
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "description": "Label is what the operator picks by — \"Europe\", not \"mcp.eu.vanta.com\".",
+                    "type": "string"
+                },
+                "value": {
+                    "description": "Value is substituted into the template.",
+                    "type": "string"
                 }
             }
         },

@@ -183,3 +183,95 @@ func TestBuilder_LLMKindDefault(t *testing.T) {
 	assert.Equal(t, events.KindLLM, evt.Kind)
 	assert.Nil(t, evt.MCP)
 }
+
+func mcpRequest() (*infracontext.RequestContext, *infracontext.ResponseContext, time.Time, time.Time) {
+	start := time.UnixMilli(3_000_000)
+	return &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"},
+		&infracontext.ResponseContext{StatusCode: 200},
+		start, start.Add(20 * time.Millisecond)
+}
+
+// A policy the scope left out is visible in mcp.policy_scope and nowhere else:
+// policies[] keeps listing only the plugins that ran.
+func TestBuilder_MCPCopiesPolicyScopeAndKeepsSkippedOutOfTheChain(t *testing.T) {
+	rt := trace.New("trace-mcp-scope", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 5*time.Millisecond, ""))
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:         "tools/call",
+		Operation:      "tool",
+		Tool:           "run_query",
+		ServerName:     "snowflake",
+		UpstreamStatus: http.StatusOK,
+		PolicyScope: &trace.MCPPolicyScope{
+			Evaluated: 2,
+			Matched:   []string{"pol-a"},
+			Skipped:   []trace.MCPSkippedPolicy{{ID: "pol-d", Name: "finance-dlp", Reason: "principal"}},
+		},
+	}, 10*time.Millisecond))
+	req, resp, start, end := mcpRequest()
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	require.NotNil(t, evt.MCP)
+	require.NotNil(t, evt.MCP.PolicyScope)
+	assert.Equal(t, 2, evt.MCP.PolicyScope.Evaluated)
+	assert.Equal(t, []string{"pol-a"}, evt.MCP.PolicyScope.Matched)
+	assert.Equal(t, []events.MCPSkippedPolicy{{ID: "pol-d", Name: "finance-dlp", Reason: "principal"}},
+		evt.MCP.PolicyScope.Skipped)
+	assert.Equal(t, "snowflake", evt.MCP.ServerName, "the upstream still travels next to the decision")
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "trustguard", evt.PolicyChain[0].Name)
+	for _, entry := range evt.PolicyChain {
+		assert.NotEqual(t, "finance-dlp", entry.Name, "a skipped policy never enters policies[]")
+	}
+	assert.Equal(t, int64(5), evt.Latency.PoliciesMs, "policies_ms only counts what ran")
+}
+
+// G3: the consumer's unscoped trustguard and a global scoped trustguard both
+// run. policies[] shows both executions; policy_scope says the scoped one was
+// there by a match, which is how a reader tells the two apart.
+func TestBuilder_MCPDoubleTrustGuardListsBothAndTheGlobalInMatched(t *testing.T) {
+	rt := trace.New("trace-mcp-double-tg", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 4*time.Millisecond, ""))
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 6*time.Millisecond, ""))
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:         "tools/call",
+		Operation:      "tool",
+		Tool:           "run_query",
+		UpstreamStatus: http.StatusOK,
+		PolicyScope:    &trace.MCPPolicyScope{Evaluated: 1, Matched: []string{"pol-global-tg"}},
+	}, 3*time.Millisecond))
+	req, resp, start, end := mcpRequest()
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	require.Len(t, evt.PolicyChain, 2)
+	assert.Equal(t, "trustguard", evt.PolicyChain[0].Name)
+	assert.Equal(t, "trustguard", evt.PolicyChain[1].Name)
+	require.NotNil(t, evt.MCP.PolicyScope)
+	assert.Equal(t, []string{"pol-global-tg"}, evt.MCP.PolicyScope.Matched)
+	assert.Empty(t, evt.MCP.PolicyScope.Skipped)
+	assert.Equal(t, int64(10), evt.Latency.PoliciesMs)
+}
+
+func TestBuilder_MCPDiscoveryCarriesNoPolicyScope(t *testing.T) {
+	rt := trace.New("trace-mcp-discovery", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(mcpSpan("tools/list", &trace.MCPAttrs{
+		Method:         "tools/list",
+		Operation:      "discovery",
+		Targets:        2,
+		UpstreamStatus: http.StatusOK,
+	}, 8*time.Millisecond))
+	req, resp, start, end := mcpRequest()
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, "discovery", evt.MCP.Operation)
+	assert.Nil(t, evt.MCP.PolicyScope)
+	assert.Empty(t, evt.PolicyChain)
+}

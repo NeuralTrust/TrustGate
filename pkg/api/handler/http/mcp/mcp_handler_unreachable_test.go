@@ -33,16 +33,31 @@ import (
 func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 	t.Parallel()
 	const secretURL = "https://mcp.brightdata.com/mcp?token=supersecret123"
-	cases := map[string]error{
-		"unreachable": fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL),
-		"unavailable (fail-closed)": fmt.Errorf("%w: registry %q: %w", appmcp.ErrUpstreamUnavailable, "brightdata",
-			fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL)),
+	cases := []struct {
+		name        string
+		fromResolve bool
+		err         error
+	}{
+		{
+			name: "unreachable",
+			err:  fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL),
+		},
+		{
+			name:        "unavailable (fail-closed)",
+			fromResolve: true,
+			err: fmt.Errorf("%w: registry %q: %w", appmcp.ErrUpstreamUnavailable, "brightdata",
+				fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL)),
+		},
 	}
-	for name, upstreamErr := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			composer := mocks.NewComposer(t)
-			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "scrape", mock.Anything).Return(nil, upstreamErr).Once()
+			if tc.fromResolve {
+				composer.EXPECT().Resolve(mock.Anything, mock.Anything, "scrape").Return(nil, tc.err).Once()
+			} else {
+				expectToolCall(composer, "scrape", nil, tc.err)
+			}
 			app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 			status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scrape"}}`)
@@ -71,8 +86,8 @@ func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "query", mock.Anything).
-		Return(nil, fmt.Errorf("%w: missing required variable %q", registrydomain.ErrURLTemplate, "account_url")).Once()
+	expectToolCall(composer, "query", nil,
+		fmt.Errorf("%w: missing required variable %q", registrydomain.ErrURLTemplate, "account_url"))
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"query"}}`)

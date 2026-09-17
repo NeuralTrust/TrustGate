@@ -21,9 +21,12 @@ import (
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
@@ -188,24 +191,38 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
-	pre, err := d.plugins.PreRequest(ctx, req.consumer, params.Name, params.Arguments)
+	// The binding is fixed before any plugin sees the request, so the plan is
+	// chosen for the real destination and a body rewrite cannot reroute the call.
+	// A name nobody serves, a toolkit denial or a pending consent answers here,
+	// before any stage runs.
+	target, err := d.composer.Resolve(ctx, req.consumer, params.Name)
 	if err != nil {
 		return nil, err
 	}
-	arguments := params.Arguments
+	call := ToolCall{
+		Exposed:    target.Exposed,
+		Registry:   target.Registry,
+		NativeTool: target.Tool.Name,
+		Arguments:  params.Arguments,
+		Plan:       planFor(ctx, req.consumer, target),
+	}
+	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
+	if err != nil {
+		return nil, err
+	}
 	if pre != nil {
 		if pre.Result != nil {
 			return pre.Result, nil
 		}
 		if pre.Arguments != nil {
-			arguments = pre.Arguments
+			call.Arguments = pre.Arguments
 		}
 	}
-	result, err := d.composer.CallTool(ctx, req.consumer, params.Name, arguments)
+	result, err := d.composer.Invoke(ctx, req.consumer, target, call.Arguments)
 	if err != nil {
 		return nil, err
 	}
-	post, err := d.plugins.PreResponse(ctx, req.consumer, params.Name, arguments, result)
+	post, err := d.plugins.PreResponse(ctx, req.consumer, call, result)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +230,45 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		result = post.Result
 	}
 	return result, nil
+}
+
+// planFor picks the stage plan for a resolved destination. Consumers without
+// precompiled MCP plans get nil, which makes the runner fall back to the
+// consumer-wide plan exactly as before scopes existed. With a span recording,
+// the same plan comes from Explain and the scope decision is stamped on the
+// span next to the upstream; without one, PlanFor runs and nothing is
+// allocated for a decision nobody would read.
+func planFor(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool) *appplugins.StagePlan {
+	if rc == nil || rc.MCPPlans == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	span := trace.SpanFromContext(ctx)
+	if span == nil {
+		return rc.MCPPlans.PlanFor(target.Registry, target.Tool.Name, principal)
+	}
+	plan, decision := rc.MCPPlans.Explain(target.Registry, target.Tool.Name, principal)
+	span.SetMCPPolicyScope(policyScopeAttrs(decision))
+	return plan
+}
+
+func policyScopeAttrs(decision appconsumer.ScopeDecision) trace.MCPPolicyScope {
+	scope := trace.MCPPolicyScope{Evaluated: decision.Evaluated}
+	if len(decision.Matched) > 0 {
+		scope.Matched = make([]string, 0, len(decision.Matched))
+		for _, ref := range decision.Matched {
+			scope.Matched = append(scope.Matched, ref.ID)
+		}
+	}
+	if len(decision.Skipped) > 0 {
+		scope.Skipped = make([]trace.MCPSkippedPolicy, 0, len(decision.Skipped))
+		for _, skipped := range decision.Skipped {
+			scope.Skipped = append(scope.Skipped, trace.MCPSkippedPolicy{
+				ID: skipped.ID, Name: skipped.Name, Reason: string(skipped.Reason),
+			})
+		}
+	}
+	return scope
 }
 
 func (d *RPCDispatcher) listResources(ctx context.Context, req dispatchRequest) (any, error) {

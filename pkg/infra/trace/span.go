@@ -89,6 +89,25 @@ type MCPAttrs struct {
 	UpstreamStatus int
 	RPCErrorCode   int
 	AccountRef     string
+	PolicyScope    *MCPPolicyScope
+}
+
+// MCPPolicyScope records how the scoped policies of a consumer applied to one
+// tools/call: how many were evaluated, the ids of those that entered the plan
+// and those left out with the dimension that rejected them. Unscoped policies
+// are never listed.
+type MCPPolicyScope struct {
+	Evaluated int
+	Matched   []string
+	Skipped   []MCPSkippedPolicy
+}
+
+// MCPSkippedPolicy names a scoped policy that did not run and why:
+// destination, principal or except.
+type MCPSkippedPolicy struct {
+	ID     string
+	Name   string
+	Reason string
 }
 
 type Span struct {
@@ -334,6 +353,23 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
+}
+
+// SetMCPPolicyScope stamps the scope decision of a tools/call next to the
+// upstream. The span takes its own copy of the slices, so the caller may reuse
+// them once this returns.
+func (s *Span) SetMCPPolicyScope(scope MCPPolicyScope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	stored := MCPPolicyScope{Evaluated: scope.Evaluated}
+	if len(scope.Matched) > 0 {
+		stored.Matched = append([]string(nil), scope.Matched...)
+	}
+	if len(scope.Skipped) > 0 {
+		stored.Skipped = append([]MCPSkippedPolicy(nil), scope.Skipped...)
+	}
+	s.MCP.PolicyScope = &stored
 }
 
 func (s *Span) SetMCPAccountRef(accountRef string) {

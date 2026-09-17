@@ -153,6 +153,9 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
+	if err := validatePolicyScope(cons, pol); err != nil {
+		return err
+	}
 	if err := a.validatePolicyProtocol(cons, pol); err != nil {
 		return err
 	}
@@ -162,6 +165,16 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	a.invalidate(ctx, cons)
 	a.policyCache.Delete(policyID.String())
 	return nil
+}
+
+// validatePolicyScope refuses a scoped policy on a non-MCP consumer: the scope
+// would never match there and the policy would silently do nothing. A pruned
+// {} scope is still a scope.
+func validatePolicyScope(cons *domain.Consumer, pol *policydomain.Policy) error {
+	if pol.MCPScope == nil || cons.Type == domain.TypeMCP {
+		return nil
+	}
+	return fmt.Errorf("%w: consumer %s is of type %s", domain.ErrPolicyScopeRequiresMCP, cons.ID, cons.Type)
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {

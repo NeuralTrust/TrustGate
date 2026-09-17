@@ -28,15 +28,16 @@ import (
 
 type UpdatePolicyHandler struct {
 	updater apppolicy.Updater
+	warner  apppolicy.Warner
 }
 
-func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
-	return &UpdatePolicyHandler{updater: updater}
+func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) *UpdatePolicyHandler {
+	return &UpdatePolicyHandler{updater: updater, warner: warner}
 }
 
 // Handle godoc
 // @Summary      Update a policy
-// @Description  Updates an existing policy.
+// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -63,6 +64,10 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err := req.Validate(); err != nil {
 		return httpio.WriteError(c, err)
 	}
+	scopeSet, scope, err := req.ToMCPScope()
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 
 	p, err := h.updater.Update(c.UserContext(), apppolicy.UpdateInput{
 		ID:          id,
@@ -76,9 +81,10 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Settings:    req.Settings,
 		Stages:      req.ToStages(),
 		Mode:        req.ToMode(),
+		MCPScope:    apppolicy.MCPScopePatch{Set: scopeSet, Value: scope},
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
 }

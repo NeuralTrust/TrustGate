@@ -31,6 +31,15 @@ type RoutableConsumer struct {
 	Policies         []*policydomain.Policy
 	Auths            []*authdomain.Auth
 	PolicyPlan       *appplugins.StagePlan
+
+	// ScopedPolicies are the policies carrying an MCPScope, kept apart from
+	// Policies and PolicyPlan so the LLM plane, discovery and meta-tools never
+	// run them; the MCP tools/call path selects among them per destination.
+	ScopedPolicies []*policydomain.Policy
+
+	// MCPPlans are the precompiled per-destination plans the MCP tools/call
+	// path selects from; nil for consumers that are not MCP.
+	MCPPlans *PolicyPlans
 }
 
 type Data struct {

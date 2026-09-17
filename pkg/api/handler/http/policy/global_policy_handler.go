@@ -24,15 +24,16 @@ import (
 
 type GlobalPolicyHandler struct {
 	scoper apppolicy.Scoper
+	warner apppolicy.Warner
 }
 
-func NewGlobalPolicyHandler(scoper apppolicy.Scoper) *GlobalPolicyHandler {
-	return &GlobalPolicyHandler{scoper: scoper}
+func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *GlobalPolicyHandler {
+	return &GlobalPolicyHandler{scoper: scoper, warner: warner}
 }
 
 // SetGlobal godoc
 // @Summary      Mark a policy as global
-// @Description  Promotes a policy to gateway-wide scope (applies to every consumer).
+// @Description  Promotes a policy to gateway-wide scope (applies to every consumer). For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -52,7 +53,7 @@ func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
 }
 
 // UnsetGlobal godoc

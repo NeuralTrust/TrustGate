@@ -257,8 +257,10 @@ func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
+	composer := mocks.NewComposer(t)
+	expectResolve(composer, "notion-search")
 	handler := mcphttp.NewHandler(
-		mcphttp.NewRPCGateway(mocks.NewComposer(t), appmcp.NewPluginRunner(executor, discardLogger()), nil),
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), nil),
 		nil,
 	)
 	app.Post(storePath, handler.Handle)
@@ -281,6 +283,7 @@ func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
 	if !strings.Contains(string(raw), `"code":-32004`) {
 		t.Fatalf("response = %s, want rate-limit JSON-RPC error", raw)
 	}
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
@@ -349,8 +352,7 @@ func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
-		Return(nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"}).Once()
+	expectToolCall(composer, "boom", nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"})
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom"}}`)
@@ -370,7 +372,7 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
 			Cause: appmcp.ConsentCauseRegisteredClientLost,
@@ -407,7 +409,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 

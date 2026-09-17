@@ -514,3 +514,88 @@ func TestAssociator_DetachPolicy_Success(t *testing.T) {
 		t.Fatalf("DetachPolicy error: %v", err)
 	}
 }
+
+// mcp_scope selects MCP destinations and principals, so a scoped policy on a
+// consumer of any other protocol would never match and silently do nothing.
+// A pruned {} scope is still a scope.
+func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		consumerType domain.Type
+		scope        *policydomain.MCPScope
+		wantAttach   bool
+	}{
+		{
+			name:         "reject scoped policy on llm consumer",
+			consumerType: domain.TypeLLM,
+			scope:        &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+		},
+		{
+			name:         "reject pruned scope on llm consumer",
+			consumerType: domain.TypeLLM,
+			scope:        &policydomain.MCPScope{},
+		},
+		{
+			name:         "reject scoped policy on a2a consumer",
+			consumerType: domain.TypeA2A,
+			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+		},
+		{
+			name:         "allow scoped policy on mcp consumer",
+			consumerType: domain.TypeMCP,
+			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+			wantAttach:   true,
+		},
+		{
+			name:         "allow unscoped policy on llm consumer",
+			consumerType: domain.TypeLLM,
+			wantAttach:   true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			consumerID := ids.New[ids.ConsumerKind]()
+			policyID := ids.New[ids.PolicyKind]()
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, consumerID).
+				Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Once()
+			policyRepo := policymocks.NewRepository(t)
+			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "trustguard", MCPScope: tt.scope}, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tt.wantAttach {
+				repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+				publisher.EXPECT().
+					Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+					Return(nil).
+					Once()
+			}
+			resolver := &fakeProtocolResolver{protocols: map[string][]string{"trustguard": {"LLM", "MCP"}}}
+			a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, publisher, resolver)
+
+			err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+			if tt.wantAttach {
+				if err != nil {
+					t.Fatalf("AttachPolicy error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, domain.ErrPolicyScopeRequiresMCP) {
+				t.Fatalf("err = %v, want ErrPolicyScopeRequiresMCP", err)
+			}
+			if !errors.Is(err, domain.ErrPolicyProtocolMismatch) || !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want it to read as a protocol mismatch and a validation error", err)
+			}
+			if !strings.Contains(err.Error(), string(tt.consumerType)) {
+				t.Fatalf("err = %v, want it to name the consumer type", err)
+			}
+			repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
+	}
+}

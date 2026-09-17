@@ -238,3 +238,53 @@ func TestPolicyGlobalScope_CrossGatewayRejected(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
 	assert.Equal(t, "not_found", body["error"])
 }
+
+func TestAttachPolicy_ScopedPolicyOnLLMConsumerRejected(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-scope-llm-gw")})
+	registryID := createMCPRegistry(t, gwID)
+	policyID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-scope-pol"), map[string]any{
+		"registry_ids": []string{registryID},
+	}))
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-scope-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+	assert.Empty(t, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"), "rejected attach leaves no link")
+}
+
+// Attaching a scoped policy answers 204 unless the consumer already runs the
+// same plugin without scope, in which case the link is still made and the
+// overlap is reported as a 200 with warnings.
+func TestAttachPolicy_ScopedPolicyWarnsOnUnscopedOverlap(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-scope-warn-gw")})
+	registryID := createMCPRegistry(t, gwID)
+	withUnscoped, _ := createMCPConsumer(t, gwID, []string{registryID}, nil, "")
+	clean, _ := createMCPConsumer(t, gwID, []string{registryID}, nil, "")
+	unscopedID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-scope-unscoped")))
+	AttachPolicy(t, gwID, withUnscoped, unscopedID)
+	scopedID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-scope-scoped"), map[string]any{
+		"registry_ids": []string{registryID},
+	}))
+
+	AttachPolicy(t, gwID, clean, scopedID)
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, withUnscoped, scopedID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	warnings, _ := body["warnings"].([]any)
+	require.Len(t, warnings, 1, "body=%v", body)
+	assert.Contains(t, warnings[0], withUnscoped)
+	assert.Contains(t, warnings[0], "rate_limiter")
+
+	got := idSet(t, getPolicy(t, gwID, scopedID), "consumer_ids")
+	assert.Contains(t, got, withUnscoped, "the warned attach is still made")
+	assert.Contains(t, got, clean)
+}

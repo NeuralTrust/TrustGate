@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -211,4 +212,51 @@ func TestListPolicies_FilterByCategory(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, float64(0), body["total"])
+}
+
+func TestListPolicies_FilterByRegistryID(t *testing.T) {
+	defer Track(t, "ListPolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw-reg")})
+	byRegistry := createMCPRegistry(t, gwID)
+	byTool := createMCPRegistry(t, gwID)
+
+	inRegistryIDs := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("poll-reg-ids"), map[string]any{
+		"registry_ids": []string{byRegistry},
+	}))
+	inTools := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("poll-reg-tools"), map[string]any{
+		"tools": []map[string]any{{"registry_id": byTool, "tool": "run_query"}},
+	}))
+	_ = CreatePolicy(t, gwID, validPolicyPayload(uniqueName("poll-reg-none")))
+
+	list := func(registryID string) (int, map[string]any) {
+		return sendRequest(t, http.MethodGet,
+			fmt.Sprintf("%s/v1/gateways/%s/policies?registry_id=%s", AdminURL, gwID, url.QueryEscape(registryID)),
+			nil, nil)
+	}
+	onlyID := func(body map[string]any) string {
+		items, _ := body["items"].([]any)
+		require.Len(t, items, 1, "body=%v", body)
+		item, _ := items[0].(map[string]any)
+		id, _ := item["id"].(string)
+		return id
+	}
+
+	status, body := list(byRegistry)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+	assert.Equal(t, inRegistryIDs, onlyID(body), "registry named in registry_ids")
+
+	status, body = list(byTool)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, inTools, onlyID(body), "registry named through tools")
+
+	status, body = list(uuid.NewString())
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(0), body["total"], "unknown registry matches nothing")
+	items, _ := body["items"].([]any)
+	assert.Empty(t, items)
+
+	status, body = list("not-a-uuid")
+	require.Equal(t, http.StatusBadRequest, status, "body=%v", body)
+	assert.Equal(t, "invalid_query", body["error"])
 }

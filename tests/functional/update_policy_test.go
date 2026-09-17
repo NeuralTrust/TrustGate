@@ -94,3 +94,45 @@ func TestUpdatePolicy_NameConflict(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status, "body=%v", body)
 	assert.Equal(t, "already_exists", body["error"])
 }
+
+// mcp_scope on PUT is tri-state: omitted keeps the stored scope, an object
+// replaces it and null clears it.
+func TestUpdatePolicy_MCPScopeTriState(t *testing.T) {
+	defer Track(t, "UpdatePolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-scope-gw")})
+	first := createMCPRegistry(t, gwID)
+	second := createMCPRegistry(t, gwID)
+	id := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("polu-scope"), map[string]any{
+		"registry_ids": []string{first},
+	}))
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
+
+	renamed := uniqueName("polu-scope-renamed")
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": renamed})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, renamed, body["name"])
+	scope, _ := body["mcp_scope"].(map[string]any)
+	assert.Equal(t, []any{first}, scope["registry_ids"], "omitted mcp_scope keeps the stored scope")
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{
+		"mcp_scope": map[string]any{"tools": []map[string]any{{"registry_id": second, "tool": "run_query"}}},
+	})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	scope, _ = body["mcp_scope"].(map[string]any)
+	assert.Nil(t, scope["registry_ids"], "an object replaces the whole scope")
+	assert.Equal(t, []any{map[string]any{"registry_id": second, "tool": "run_query"}}, scope["tools"])
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"mcp_scope": map[string]any{}})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"mcp_scope": nil})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	_, present := body["mcp_scope"]
+	assert.False(t, present, "null clears the scope")
+
+	got := getPolicy(t, gwID, id)
+	_, present = got["mcp_scope"]
+	assert.False(t, present, "the cleared scope is persisted")
+	assert.Equal(t, renamed, got["name"])
+}

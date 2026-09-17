@@ -31,10 +31,27 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// ResolvedTool is a tools/call target bound to the upstream that serves it:
+// the registry to dial, the tool as the upstream names it, and the name the
+// caller used. Resolving before the plugin chain runs fixes the destination, so
+// a plugin that rewrites the request body can never reroute the call.
+type ResolvedTool struct {
+	Registry *registrydomain.Registry
+	Tool     Tool
+	Exposed  string
+}
+
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
 type Composer interface {
 	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error)
-	CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error)
+	// Resolve binds an exposed tool name to its upstream with a single
+	// composition pass. A name nobody serves answers ErrToolNotFound, one the
+	// toolkit turned away *ToolNotPermittedError, and one that may live behind an
+	// unconnected upstream *ConsentRequiredError, in that order of precedence.
+	Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error)
+	// Invoke calls a resolved tool on its owning upstream with the given
+	// arguments.
+	Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool, arguments json.RawMessage) (json.RawMessage, error)
 	ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error)
 	ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error)
 	ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error)
@@ -104,20 +121,15 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	return out, nil
 }
 
-func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error) {
+func (c *composer) Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, name string) (*ResolvedTool, error) {
 	comp, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
 	for _, b := range comp.bindings {
-		if b.exposed != name {
-			continue
+		if b.exposed == name {
+			return &ResolvedTool{Registry: b.registry, Tool: b.tool, Exposed: b.exposed}, nil
 		}
-		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
-		defer stop()
-		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
-			return up.CallTool(ctx, b.tool.Name, arguments)
-		})
 	}
 	if _, forbidden := comp.denied[name]; forbidden {
 		return nil, &ToolNotPermittedError{Tool: name}
@@ -126,6 +138,17 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		return nil, comp.consent
 	}
 	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
+}
+
+func (c *composer) Invoke(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool, arguments json.RawMessage) (json.RawMessage, error) {
+	if target == nil || target.Registry == nil {
+		return nil, fmt.Errorf("%w: unresolved tool", ErrToolNotFound)
+	}
+	stop := annotateUpstream(ctx, target.Registry, target.Tool.Name)
+	defer stop()
+	return invokeUpstream(c, ctx, rc, target.Registry, func(up Upstream) (json.RawMessage, error) {
+		return up.CallTool(ctx, target.Tool.Name, arguments)
+	})
 }
 
 // annotateUpstream records the resolved upstream registry on the active MCP

@@ -27,7 +27,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	p, err := NewPolicy(gwID, "default", "rate_limiter", true, 10, false,
-		map[string]any{"limit": 100}, []Stage{StagePreRequest}, "my description", ModeEnforce)
+		map[string]any{"limit": 100}, []Stage{StagePreRequest}, "my description", ModeEnforce, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 
 func TestPolicy_New_AllowsEmptyStages(t *testing.T) {
 	t.Parallel()
-	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil, "", "")
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	p := Rehydrate(id, gwID, nil, "x", "rehydrated description", "cors", true, true, 5, true,
-		map[string]any{"k": "v"}, []Stage{StagePreRequest}, ModeEnforce, now, now)
+		map[string]any{"k": "v"}, []Stage{StagePreRequest}, ModeEnforce, nil, now, now)
 	if p.ID != id || p.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
@@ -160,5 +160,51 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	}
 	if !p.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
+	}
+}
+
+func TestPolicy_New_WithMCPScope(t *testing.T) {
+	t.Parallel()
+	scope := &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}, Groups: []string{"Finanzas"}}
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "dlp", "trustguard", true, 0, false, nil, nil, "", ModeEnforce, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.MCPScope != scope {
+		t.Fatalf("MCPScope = %+v, want the scope passed in", p.MCPScope)
+	}
+	invalid := &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}, Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}}
+	if _, err := NewPolicy(ids.New[ids.GatewayKind](), "dlp", "trustguard", true, 0, false, nil, nil, "", ModeEnforce, invalid); !errors.Is(err, ErrInvalidMCPScope) {
+		t.Fatalf("err = %v, want wrap of ErrInvalidMCPScope", err)
+	}
+}
+
+func TestPolicy_Validate_DelegatesToMCPScope(t *testing.T) {
+	t.Parallel()
+	p := &Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "x",
+		Slug:      "trustguard",
+		MCPScope:  &MCPScope{Users: []string{""}},
+	}
+	err := p.Validate()
+	if !errors.Is(err, ErrInvalidMCPScope) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want wrap of ErrInvalidMCPScope and ErrValidation", err)
+	}
+	p.MCPScope = &MCPScope{}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a pruned {} scope must validate: %v", err)
+	}
+}
+
+func TestPolicy_Rehydrate_KeepsMCPScope(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	scope := &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}}
+	p := Rehydrate(ids.New[ids.PolicyKind](), ids.New[ids.GatewayKind](), nil, "x", "", "cors", true, false, 0, false,
+		nil, nil, ModeEnforce, scope, now, now)
+	if p.MCPScope != scope {
+		t.Fatalf("MCPScope = %+v, want the scope passed in", p.MCPScope)
 	}
 }

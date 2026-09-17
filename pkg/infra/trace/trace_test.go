@@ -296,3 +296,41 @@ func TestObserveUsage_OutputOnlyEventCannotZeroThePrompt(t *testing.T) {
 	assert.Equal(t, 15, got.OutputTokens)
 	assert.Equal(t, 8431, got.TotalTokens)
 }
+
+func TestSpan_SetMCPPolicyScopeRoundTripsACopy(t *testing.T) {
+	rt := trace.New("trace-scope", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanMCP, "tools/call")
+	span.SetMCPUpstream("asana", "reg-7", "mcp.asana.com", "com.asana/mcp", "streamable-http", "search")
+
+	matched := []string{"pol-a"}
+	skipped := []trace.MCPSkippedPolicy{{ID: "pol-b", Name: "B", Reason: "destination"}}
+	span.SetMCPPolicyScope(trace.MCPPolicyScope{Evaluated: 2, Matched: matched, Skipped: skipped})
+	matched[0] = "mutated"
+	skipped[0].Reason = "mutated"
+
+	attrs, ok := span.MCPAttrsCopy()
+	require.True(t, ok)
+	require.NotNil(t, attrs.PolicyScope)
+	assert.Equal(t, 2, attrs.PolicyScope.Evaluated)
+	assert.Equal(t, []string{"pol-a"}, attrs.PolicyScope.Matched, "the span owns its copy of Matched")
+	assert.Equal(t, []trace.MCPSkippedPolicy{{ID: "pol-b", Name: "B", Reason: "destination"}}, attrs.PolicyScope.Skipped,
+		"the span owns its copy of Skipped")
+	assert.Equal(t, "asana", attrs.ServerName, "stamping the scope keeps the upstream")
+	assert.Equal(t, "search", attrs.UpstreamTool)
+}
+
+func TestSpan_MCPPolicyScopeAbsentUntilStamped(t *testing.T) {
+	rt := trace.New("trace-scope-absent", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanMCP, "tools/list")
+	span.SetMCPTargets(2)
+
+	attrs, ok := span.MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Nil(t, attrs.PolicyScope)
+
+	span.SetMCPPolicyScope(trace.MCPPolicyScope{})
+	attrs, _ = span.MCPAttrsCopy()
+	require.NotNil(t, attrs.PolicyScope)
+	assert.Equal(t, trace.MCPPolicyScope{}, *attrs.PolicyScope,
+		"an empty decision is still a decision: zero scoped policies were evaluated")
+}

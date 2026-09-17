@@ -15,6 +15,7 @@
 package request
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -32,6 +33,10 @@ type UpdatePolicyRequest struct {
 	Settings    *map[string]any `json:"settings,omitempty"`
 	Stages      *[]string       `json:"stages,omitempty"`
 	Mode        *string         `json:"mode,omitempty"`
+	// MCPScope is tri-state: omitted leaves the stored scope untouched, null
+	// clears it and an object replaces it. A pointer field could not tell
+	// omitted from null, so the raw JSON is kept until ToMCPScope reads it.
+	MCPScope json.RawMessage `json:"mcp_scope,omitempty" swaggertype:"object"`
 }
 
 func (r UpdatePolicyRequest) Validate() error {
@@ -61,6 +66,12 @@ func (r UpdatePolicyRequest) ToStages() *[]domain.Stage {
 	}
 	stages := toStages(*r.Stages)
 	return &stages
+}
+
+// ToMCPScope reports whether mcp_scope was present in the body and, when it
+// was, the parsed scope: nil for an explicit null, a value otherwise.
+func (r UpdatePolicyRequest) ToMCPScope() (set bool, scope *domain.MCPScope, err error) {
+	return parseMCPScopePatch(r.MCPScope)
 }
 
 func (r UpdatePolicyRequest) ToMode() *domain.Mode {

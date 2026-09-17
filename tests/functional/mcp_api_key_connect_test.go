@@ -335,14 +335,14 @@ func requireConnectPageReachable(t *testing.T, path, host string) {
 	}, 5*time.Second, 100*time.Millisecond, "the api-key connect page must become reachable once the consumer propagates")
 }
 
-func echoToolCall() map[string]any {
-	return map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}}
-}
-
 type forwardedFixture struct {
 	idp                             *oauthProviderStub
 	capture                         *upstreamCapture
 	gatewayID, provider, registryID string
+}
+
+func (fx forwardedFixture) echoToolCall() map[string]any {
+	return map[string]any{"name": exposedToolName(fx.registryID, "echo"), "arguments": map[string]any{"message": "hola"}}
 }
 
 func newForwardedFixture(t *testing.T) forwardedFixture {
@@ -382,7 +382,7 @@ func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
 	})
 
 	t.Run("stored credential is injected into the upstream call", func(t *testing.T) {
-		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", echoToolCall())
+		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
 		raw, err := json.Marshal(requireRPCSucceeded(t, status, body))
 		require.NoError(t, err)
 		require.Contains(t, string(raw), "echo:hola")
@@ -416,11 +416,11 @@ func TestMCPAPIKeyConnect_GrantBelongsToTheApplicationNotTheKey(t *testing.T) {
 	ticket := connectTicketFrom(t, mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {keyA}}), slugA)
 	driveProviderConsent(t, fx.idp, fx.provider, ticket)
 
-	status, body := mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", echoToolCall())
+	status, body := mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", fx.echoToolCall())
 	requireRPCSucceeded(t, status, body)
 
 	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", echoToolCall())
+	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", fx.echoToolCall())
 	requireRPCSucceeded(t, status, body)
 	sharedBearer, seen := fx.capture.observed()
 	require.GreaterOrEqual(t, seen, 1, "a second client sharing the api key must reach the upstream")
@@ -430,7 +430,7 @@ func TestMCPAPIKeyConnect_GrantBelongsToTheApplicationNotTheKey(t *testing.T) {
 	// A different key of the same application — what a rotation leaves behind —
 	// reaches the same account without a second consent.
 	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(secondKeyOfA), "tools/call", echoToolCall())
+	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(secondKeyOfA), "tools/call", fx.echoToolCall())
 	requireRPCSucceeded(t, status, body)
 	rotatedBearer, seenRotated := fx.capture.observed()
 	require.GreaterOrEqual(t, seenRotated, 1, "another credential of the same application must reach the upstream")
@@ -440,7 +440,7 @@ func TestMCPAPIKeyConnect_GrantBelongsToTheApplicationNotTheKey(t *testing.T) {
 	// Another application bound to the same server has its own account, and has
 	// not linked one, so it is asked to connect instead of borrowing this grant.
 	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerB, apiKeyHeaders(keyB), "tools/call", echoToolCall())
+	status, body = mcpRPC(t, fx.gatewayID, consumerB, apiKeyHeaders(keyB), "tools/call", fx.echoToolCall())
 	requireConsentRequired(t, status, body)
 	_, seenB := fx.capture.observed()
 	require.Zero(t, seenB, "a second application must not reach the upstream on the first one's grant")
