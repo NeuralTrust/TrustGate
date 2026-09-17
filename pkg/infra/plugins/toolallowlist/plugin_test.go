@@ -26,6 +26,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -136,7 +137,261 @@ func TestPlugin_StagesModesName(t *testing.T) {
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, p.MandatoryStages())
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, p.SupportedStages())
 	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, p.SupportedModes())
+	assert.ElementsMatch(t, []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}, p.SupportedProtocols())
 	var _ appplugins.Plugin = p
+}
+
+func mcpReq(native, exposed string) *infracontext.RequestContext {
+	req := &infracontext.RequestContext{
+		MCP:        true,
+		RegistryID: "reg-1",
+		Body:       []byte(fmt.Sprintf(`{"name":%q,"arguments":{"q":"x"}}`, exposed)),
+		Metadata: map[string]interface{}{
+			infracontext.MetadataMCPRegistryID:  "reg-1",
+			infracontext.MetadataMCPExposedTool: exposed,
+		},
+	}
+	if native != "" {
+		req.Metadata[infracontext.MetadataMCPTool] = native
+	}
+	return req
+}
+
+func spanEvent() (*metrics.EventContext, *trace.Span) {
+	span := trace.New("", trace.Metadata{}).StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
+
+func runMCP(p *Plugin, stage policy.Stage, mode policy.Mode, settings map[string]any, req *infracontext.RequestContext) (*appplugins.Result, *trace.Span, error) {
+	event, span := spanEvent()
+	res, err := p.Execute(context.Background(), appplugins.ExecInput{
+		Stage:   stage,
+		Mode:    mode,
+		Config:  policy.PluginConfig{ID: "ta-1", Slug: PluginName, Name: PluginName, Settings: settings},
+		Request: req,
+		Event:   event,
+	})
+	return res, span, err
+}
+
+func extrasOf(t *testing.T, span *trace.Span) ToolAllowlistData {
+	t.Helper()
+	data, ok := span.PluginAttrsCopy().Extras.(ToolAllowlistData)
+	require.True(t, ok, "extras = %#v, want ToolAllowlistData", span.PluginAttrsCopy().Extras)
+	return data
+}
+
+func requireDenied(t *testing.T, res *appplugins.Result, err error, tool string) {
+	t.Helper()
+	require.NoError(t, err)
+	assert.True(t, res.StopUpstream)
+	assert.Equal(t, 403, res.StatusCode)
+	assert.Nil(t, res.RequestBody)
+	assert.JSONEq(t,
+		fmt.Sprintf(`{"error":{"type":"tool_denied","requested":[%q],"allowed_after_filter":[]}}`, tool),
+		string(res.Body))
+}
+
+func requireAllowed(t *testing.T, res *appplugins.Result, err error) {
+	t.Helper()
+	require.NoError(t, err)
+	assert.False(t, res.StopUpstream)
+	assert.Equal(t, 200, res.StatusCode)
+	assert.Nil(t, res.RequestBody)
+	assert.Nil(t, res.Body)
+}
+
+func TestPlugin_ExecuteMCP(t *testing.T) {
+	const federated = "mcp_ab12cd34_run_query_9f8e7d6c"
+	tests := []struct {
+		name     string
+		stage    policy.Stage
+		mode     policy.Mode
+		settings map[string]any
+		req      *infracontext.RequestContext
+		check    func(t *testing.T, res *appplugins.Result, span *trace.Span, err error)
+	}{
+		{
+			name:     "deny everything refuses the call",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "run_query")
+				data := extrasOf(t, span)
+				assert.Equal(t, actionRejected, data.Action)
+				assert.Equal(t, []string{"run_query"}, data.ToolsRequested)
+				assert.Equal(t, []string{"run_query"}, data.ToolsRemoved)
+				assert.Equal(t, []string{}, data.ToolsAllowed)
+				assert.Empty(t, data.OnEmpty)
+				assert.Equal(t, "block", data.Decision)
+			},
+		},
+		{
+			name:     "allow by prefix permits a match",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"run_*"}},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				data := extrasOf(t, span)
+				assert.Equal(t, actionAllowed, data.Action)
+				assert.Equal(t, []string{"run_query"}, data.ToolsAllowed)
+				assert.Equal(t, []string{}, data.ToolsRemoved)
+				assert.Empty(t, span.PluginAttrsCopy().Decision)
+			},
+		},
+		{
+			name:     "allow by prefix refuses a non-match",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"run_*"}},
+			req:      mcpReq("delete_table", "delete_table"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "delete_table")
+			},
+		},
+		{
+			name:     "deny wins over allow",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"run_query"}, "deny_tools": []string{"run_query"}},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "run_query")
+			},
+		},
+		{
+			name:     "character-class and single-char globs",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"admin_?", "db_[rw]*"}},
+			req:      mcpReq("db_read", "db_read"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "db_read")
+			},
+		},
+		{
+			name:     "slash in the tool name matches literally",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"fs/*"}},
+			req:      mcpReq("fs/delete", "fs/delete"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "fs/delete")
+			},
+		},
+		{
+			name:     "federated consumer is judged on the native name",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"run_query"}},
+			req:      mcpReq("run_query", federated),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "run_query")
+			},
+		},
+		{
+			name:     "the exposed name in the body is never matched",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{federated}},
+			req:      mcpReq("run_query", federated),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+			},
+		},
+		{
+			name:     "missing native tool metadata is a no-op",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req:      mcpReq("", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				assert.Nil(t, span.PluginAttrsCopy().Extras)
+				assert.Empty(t, span.PluginAttrsCopy().Decision)
+			},
+		},
+		{
+			name:     "no metadata map at all is a no-op",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req:      &infracontext.RequestContext{MCP: true, Body: []byte(`{"name":"run_query"}`)},
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				assert.Nil(t, span.PluginAttrsCopy().Extras)
+			},
+		},
+		{
+			name:     "observe records the denial without blocking",
+			mode:     policy.ModeObserve,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				data := extrasOf(t, span)
+				assert.Equal(t, actionRejected, data.Action)
+				assert.Equal(t, []string{"run_query"}, data.ToolsRemoved)
+				assert.Equal(t, "observe", data.Decision)
+				assert.Equal(t, "observe", span.PluginAttrsCopy().Decision)
+			},
+		},
+		{
+			name:     "on_empty_after_filter has no effect on MCP",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}, "on_empty_after_filter": "pass_through_empty"},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "run_query")
+				assert.Empty(t, extrasOf(t, span).OnEmpty)
+			},
+		},
+		{
+			name:     "stages other than PreRequest pass through",
+			stage:    policy.StagePreResponse,
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				assert.Nil(t, span.PluginAttrsCopy().Extras)
+			},
+		},
+		{
+			name:     "bad config returns error",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{},
+			req:      mcpReq("run_query", "run_query"),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				require.Error(t, err)
+				assert.Nil(t, res)
+			},
+		},
+	}
+
+	p := New(adapter.NewRegistry())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stage := tt.stage
+			if stage == "" {
+				stage = policy.StagePreRequest
+			}
+			res, span, err := runMCP(p, stage, tt.mode, tt.settings, tt.req)
+			tt.check(t, res, span, err)
+		})
+	}
+}
+
+func TestPlugin_ExecuteMCP_WithoutAdapterRegistry(t *testing.T) {
+	res, _, err := runMCP(New(nil), policy.StagePreRequest, policy.ModeEnforce,
+		map[string]any{"deny_tools": []string{"*"}}, mcpReq("run_query", "run_query"))
+	requireDenied(t, res, err, "run_query")
+}
+
+func TestPlugin_ExecuteMCP_WithoutEvent(t *testing.T) {
+	p := New(adapter.NewRegistry())
+	res, err := p.Execute(context.Background(), appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Mode:    policy.ModeEnforce,
+		Config:  policy.PluginConfig{ID: "ta-1", Slug: PluginName, Name: PluginName, Settings: map[string]any{"deny_tools": []string{"*"}}},
+		Request: mcpReq("run_query", "run_query"),
+	})
+	requireDenied(t, res, err, "run_query")
 }
 
 func TestPlugin_ValidateConfig(t *testing.T) {

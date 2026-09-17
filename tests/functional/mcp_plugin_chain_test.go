@@ -44,8 +44,7 @@ func addCountingFixedTool(server *sdk.Server, name, text string, calls *int64) {
 	)
 }
 
-func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, direction, mode string) {
-	t.Helper()
+func trustGuardMCPPolicyPayload(direction, mode string) map[string]any {
 	payload := map[string]any{
 		"name":     uniqueName("mcp-tg-pol"),
 		"slug":     "trustguard",
@@ -59,7 +58,12 @@ func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, direction, m
 	if mode != "" {
 		payload["mode"] = mode
 	}
-	policyID := CreatePolicy(t, gatewayID, payload)
+	return payload
+}
+
+func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, direction, mode string) {
+	t.Helper()
+	policyID := CreatePolicy(t, gatewayID, trustGuardMCPPolicyPayload(direction, mode))
 	AttachPolicy(t, gatewayID, consumerID, policyID)
 }
 
