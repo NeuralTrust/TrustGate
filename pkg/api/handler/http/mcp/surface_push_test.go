@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -181,6 +182,29 @@ func TestPostKeepsJSONForAClientThatOnlyAsksForJSON(t *testing.T) {
 	// changed underneath it.
 	require.Contains(t, second.Header.Get("Content-Type"), fiber.MIMEApplicationJSON)
 	require.NotContains(t, string(body), "list_changed")
+}
+
+// A client reads a POST stream until it has the answer to its own request, and
+// may stop there. Anything written after the response can go unread, so the
+// notification has to come first.
+func TestPostPutsTheNotificationBeforeTheResponse(t *testing.T) {
+	t.Parallel()
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Post("/*", func(c *fiber.Ctx) error {
+		return writeRPCBody(c, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: fiber.Map{}}, true)
+	})
+	response, err := app.Test(httptest.NewRequest(http.MethodPost, "/store/mcp", nil))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	raw, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+
+	body := string(raw)
+	notification := strings.Index(body, "notifications/tools/list_changed")
+	result := strings.Index(body, `"result"`)
+	require.NotEqual(t, -1, notification, "the stream carries no notification: %s", body)
+	require.NotEqual(t, -1, result, "the stream carries no response: %s", body)
+	require.Less(t, notification, result, "the response came first, so the notification can go unread")
 }
 
 func TestSurfaceMemoryForgetsTheOldestWhenFull(t *testing.T) {
