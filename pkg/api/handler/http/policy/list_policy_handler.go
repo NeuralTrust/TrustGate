@@ -15,6 +15,8 @@
 package policy
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
@@ -79,7 +81,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 	if raw := c.Query("mode"); raw != "" {
 		mode = domain.Mode(raw)
 		if !mode.IsValid() {
-			return httpio.WriteError(c, httpio.ErrInvalidFilter)
+			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "mode"))
 		}
 	}
 	req := request.ListPolicyRequest{
