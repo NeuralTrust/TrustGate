@@ -66,6 +66,21 @@ func inertSafe(d PluginDescriptor) bool {
 	return ok && s.ScopeInertSafe()
 }
 
+// IsInertSafe reports whether the plugin registered under slug opted into
+// running on a plane where the scope does not gate. It is the same predicate
+// inertSafe applies, reachable from the config load path so the decision has a
+// single implementation. An absent registry or an unknown slug is denied.
+func IsInertSafe(reg Registry, slug string) bool {
+	if reg == nil {
+		return false
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return false
+	}
+	return inertSafe(p)
+}
+
 // Plugin is a single unit of request/response processing. Each plugin declares
 // the fixed stages it runs on via Stages; the executor drives it only at those
 // stages and ignores the stage recorded in the policy configuration.
