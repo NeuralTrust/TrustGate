@@ -73,6 +73,11 @@ type PolicyPlans struct {
 	byRegistry map[ids.RegistryID]*destPlans
 	byTool     map[policydomain.MCPTarget]*destPlans
 	scoped     []scopedEntry
+	// hasPrincipal is true when at least one scoped policy narrows by user or
+	// group. Without one, no matcher ever reads the caller, so the principal
+	// never has to be projected — and projecting it means rebuilding the
+	// deduplicated group list out of the token claims on every call.
+	hasPrincipal bool
 }
 
 var planStages = [...]policydomain.Stage{
@@ -118,6 +123,7 @@ func BuildPolicyPlans(
 			continue
 		}
 		plans.scoped = append(plans.scoped, entry)
+		plans.hasPrincipal = plans.hasPrincipal || scope.HasPrincipal()
 		switch {
 		case scope.IsEmpty():
 		case !scope.HasPrincipal():
@@ -198,14 +204,21 @@ func (p *PolicyPlans) PlanFor(
 	if p == nil {
 		return nil
 	}
-	return p.planFor(targetOf(reg, nativeTool), principal)
+	target := targetOf(reg, nativeTool)
+	static, lists := p.destFor(target)
+	if emptyLists(lists) {
+		return static
+	}
+	return p.planWith(target, lists, static, p.callerFor(principal))
 }
 
 // Explain returns the very plan PlanFor returns for the same arguments, plus
 // the ScopeDecision that says which scoped policies of the consumer matched
-// the destination and caller and which were skipped, with the reason. It
-// allocates for the decision, so the dispatcher only calls it when a span is
-// recording. A nil receiver returns nil and an empty decision.
+// the destination and caller and which were skipped, with the reason. Unlike
+// PlanFor it walks every scoped policy of the consumer and allocates for the
+// decision, so the dispatcher only calls it when there is a span to stamp. The
+// caller is projected once and shared by both halves. A nil receiver returns
+// nil and an empty decision.
 func (p *PolicyPlans) Explain(
 	reg *registrydomain.Registry,
 	nativeTool string,
@@ -215,15 +228,19 @@ func (p *PolicyPlans) Explain(
 		return nil, ScopeDecision{}
 	}
 	target := targetOf(reg, nativeTool)
-	return p.planFor(target, principal), p.explain(target, principal)
+	caller := p.callerFor(principal)
+	static, lists := p.destFor(target)
+	return p.planWith(target, lists, static, caller), p.explain(target, caller)
 }
 
-func (p *PolicyPlans) explain(target policydomain.MCPTarget, principal *identity.Principal) ScopeDecision {
+func (p *PolicyPlans) explain(target policydomain.MCPTarget, caller policydomain.MCPCaller) ScopeDecision {
 	decision := ScopeDecision{Evaluated: len(p.scoped)}
 	if len(p.scoped) == 0 {
 		return decision
 	}
-	caller := callerOf(principal)
+	// Most destinations reject most scoped policies, so the skipped list is
+	// sized for all of them once instead of growing entry by entry.
+	decision.Skipped = make([]SkippedPolicy, 0, len(p.scoped))
 	for i := range p.scoped {
 		entry := &p.scoped[i]
 		ok, reason := entry.scope.Matches(target, caller)
@@ -244,23 +261,39 @@ func targetOf(reg *registrydomain.Registry, nativeTool string) policydomain.MCPT
 	return target
 }
 
-func (p *PolicyPlans) planFor(target policydomain.MCPTarget, principal *identity.Principal) *appplugins.StagePlan {
+// destFor resolves the most specific precompiled static plan for a destination
+// — tool over registry over base — together with the principal-scoped entries
+// that still have to be filtered against the caller. The entries stay in three
+// separate lists so nothing is allocated to join them.
+func (p *PolicyPlans) destFor(target policydomain.MCPTarget) (*appplugins.StagePlan, [3][]scopedEntry) {
 	static := p.base
-	var registryPrincipal, toolPrincipal []scopedEntry
+	lists := [3][]scopedEntry{p.anyDest, nil, nil}
 	if dest, ok := p.byRegistry[target.RegistryID]; ok {
 		static = dest.static
-		registryPrincipal = dest.principal
+		lists[1] = dest.principal
 	}
 	if dest, ok := p.byTool[target]; ok {
 		static = dest.static
-		toolPrincipal = dest.principal
+		lists[2] = dest.principal
 	}
-	if len(p.anyDest) == 0 && len(registryPrincipal) == 0 && len(toolPrincipal) == 0 {
-		return static
-	}
-	caller := callerOf(principal)
+	return static, lists
+}
+
+func emptyLists(lists [3][]scopedEntry) bool {
+	return len(lists[0])+len(lists[1])+len(lists[2]) == 0
+}
+
+// planWith unions into static the principal-scoped plans the caller matches.
+// The statically scoped policies of the destination are already folded into
+// static, so only these lists are walked.
+func (p *PolicyPlans) planWith(
+	target policydomain.MCPTarget,
+	lists [3][]scopedEntry,
+	static *appplugins.StagePlan,
+	caller policydomain.MCPCaller,
+) *appplugins.StagePlan {
 	var matched []*appplugins.StagePlan
-	for _, list := range [3][]scopedEntry{p.anyDest, registryPrincipal, toolPrincipal} {
+	for _, list := range lists {
 		for i := range list {
 			if ok, _ := list[i].scope.Matches(target, caller); ok {
 				matched = append(matched, list[i].plan)
@@ -271,6 +304,15 @@ func (p *PolicyPlans) planFor(target policydomain.MCPTarget, principal *identity
 		return static
 	}
 	return static.Union(matched...)
+}
+
+// callerFor projects the principal only when some scoped policy can read it.
+// A consumer scoped purely by destination never pays for the group list.
+func (p *PolicyPlans) callerFor(principal *identity.Principal) policydomain.MCPCaller {
+	if !p.hasPrincipal {
+		return policydomain.MCPCaller{}
+	}
+	return callerOf(principal)
 }
 
 func callerOf(principal *identity.Principal) policydomain.MCPCaller {

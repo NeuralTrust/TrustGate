@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -136,6 +137,10 @@ func benchRegistry(name string) *registrydomain.Registry {
 // adds a policy on (x, run_query) and one on y, both without principal;
 // principal_scoped adds a group-scoped policy on x that the caller matches, so
 // PlanFor pays the principal filter and the plan union on every call.
+//
+// Every variant but no_scope carries an authenticated principal, because a
+// real MCP caller has one. static_scope is the case that matters: a principal
+// is present but no scoped policy can read it, so nothing must project it.
 type benchFixture struct {
 	rc        *appconsumer.RoutableConsumer
 	target    *ResolvedTool
@@ -179,7 +184,7 @@ func newBenchFixture(tb testing.TB, variant string) benchFixture {
 		rc:     rc,
 		target: &ResolvedTool{Registry: x, Tool: Tool{Name: "run_query"}, Exposed: "run_query"},
 	}
-	if variant == benchPrincipalScope {
+	if variant != benchNoScope {
 		f.principal = &identity.Principal{
 			Subject: "usr_finance",
 			Method:  identity.MethodExternalJWT,
@@ -196,25 +201,46 @@ func (f benchFixture) ctx() context.Context {
 	return identity.WithPrincipal(context.Background(), f.principal)
 }
 
+// tracedCtx is f.ctx() with the RequestTrace and MCP span the HTTP layer
+// installs on every request that carries telemetry. It is the path production
+// takes: with a span present the dispatcher goes through Explain, which walks
+// every scoped policy of the consumer, and not through PlanFor. Benchmarking
+// only the untraced context would report the cheap half.
+func (f benchFixture) tracedCtx() context.Context {
+	ctx := f.ctx()
+	rt := trace.New("bench-trace", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanMCP, "tools/call")
+	return trace.NewSpanContext(trace.NewContext(ctx, rt), span)
+}
+
 func BenchmarkRPCDispatcher_CallTool(b *testing.B) {
 	params := json.RawMessage(`{"name":"run_query","arguments":{"q":"select 1"}}`)
 	result := json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)
 	for _, variant := range []string{benchNoScope, benchStaticScope, benchPrincipalScope} {
-		b.Run(variant, func(b *testing.B) {
-			f := newBenchFixture(b, variant)
-			d := NewRPCDispatcher(
-				&benchComposer{target: f.target, result: result},
-				NewPluginRunner(passExecutor{}, discardLogger()),
-				nil, nil, nil,
-			)
-			ctx := f.ctx()
-			b.ReportAllocs()
-			for b.Loop() {
-				if _, err := d.Dispatch(ctx, f.rc, "", "tools/call", params); err != nil {
-					b.Fatal(err)
-				}
+		for _, traced := range []bool{false, true} {
+			name := variant + "/untraced"
+			if traced {
+				name = variant + "/traced"
 			}
-		})
+			b.Run(name, func(b *testing.B) {
+				f := newBenchFixture(b, variant)
+				d := NewRPCDispatcher(
+					&benchComposer{target: f.target, result: result},
+					NewPluginRunner(passExecutor{}, discardLogger()),
+					nil, nil, nil,
+				)
+				ctx := f.ctx()
+				if traced {
+					ctx = f.tracedCtx()
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := d.Dispatch(ctx, f.rc, "", "tools/call", params); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -230,6 +256,22 @@ func TestPlanFor_WithoutPrincipalScopeAllocatesNothing(t *testing.T) {
 			assert.Zero(t, allocs, "planFor must not allocate on the %s path", variant)
 		})
 	}
+}
+
+// With a span in the context the dispatcher builds a scope decision, which is
+// where the allocations of a traced tools/call live. A consumer scoped purely
+// by destination must not pay for the caller projection on top: no scoped
+// policy of it can read the principal.
+func TestPlanFor_TracedStaticScopeDoesNotProjectTheCaller(t *testing.T) {
+	f := newBenchFixture(t, benchStaticScope)
+	ctx := f.tracedCtx()
+	allocs := testing.AllocsPerRun(1000, func() { planFor(ctx, f.rc, f.target) })
+	// The six are the decision's matched and skipped lists, the two the span's
+	// shape needs and the two the span copies for itself. The caller is not
+	// among them: no scoped policy of this consumer narrows by principal, so
+	// the group list is never rebuilt out of the token claims.
+	assert.LessOrEqual(t, allocs, float64(6),
+		"a traced static-scope call should only allocate the scope decision, got %v allocs", allocs)
 }
 
 func TestPlanFor_PrincipalScopeUnionsMatchingPolicy(t *testing.T) {
