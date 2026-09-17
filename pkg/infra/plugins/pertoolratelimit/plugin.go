@@ -64,6 +64,25 @@ end
 return totals
 `)
 
+// claimAndRecordScript counts an execution the MCP path observed and claims the
+// dedupe slot for it in the same round trip, so countOnceScript finds the slot
+// taken when the same execution comes back on the LLM path as a `role: tool`
+// message. Unlike countOnceScript it increments whether or not the claim
+// succeeds: this path is watching a call it knows really ran, so a caller that
+// repeats a tool_call_id must not buy itself an uncounted execution.
+var claimAndRecordScript = redis.NewScript(`
+redis.call('SET', KEYS[1], 1, 'NX', 'EX', tonumber(ARGV[1]))
+local totals = {}
+for i = 2, #KEYS do
+    local total = redis.call('INCRBY', KEYS[i], 1)
+    if redis.call('TTL', KEYS[i]) == -1 then
+        redis.call('EXPIRE', KEYS[i], tonumber(ARGV[i]))
+    end
+    totals[#totals + 1] = total
+end
+return totals
+`)
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
@@ -476,13 +495,23 @@ func (p *Plugin) mcpPreResponse(
 	if !ok {
 		return okResult(), nil
 	}
-	keys := make([]string, 0, len(rule.Windows))
-	args := make([]any, 0, len(rule.Windows))
+	toolCallID := in.Request.MCPToolCallID
+	keys := make([]string, 0, len(rule.Windows)+1)
+	args := make([]any, 0, len(rule.Windows)+1)
+	script := recordWindowsScript
+	if toolCallID != "" {
+		script = claimAndRecordScript
+		keys = append(keys, dedupeKey(in.Config.ID, dimension, subject, toolCallID))
+		args = append(args, int(largestWindow(rule)/time.Second))
+	}
+	counters := make([]string, 0, len(rule.Windows))
 	for i := range rule.Windows {
-		keys = append(keys, counterKey(in.Config.ID, dimension, subject, tool, i))
+		key := counterKey(in.Config.ID, dimension, subject, tool, i)
+		counters = append(counters, key)
+		keys = append(keys, key)
 		args = append(args, rule.Windows[i].windowSeconds())
 	}
-	res, err := recordWindowsScript.Run(ctx, p.redis, keys, args...).Result()
+	res, err := script.Run(ctx, p.redis, keys, args...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
 	}
@@ -497,8 +526,8 @@ func (p *Plugin) mcpPreResponse(
 		}
 		total, _ := totals[i].(int64)
 		w := rule.Windows[i]
-		ws := &windowState{key: keys[i], window: w, total: int(total)}
-		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, "", dimension, subject, behavior, int(total) >= w.Max))
+		ws := &windowState{key: counters[i], window: w, total: int(total)}
+		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, toolCallID, dimension, subject, behavior, int(total) >= w.Max))
 	}
 	return okResult(), nil
 }
