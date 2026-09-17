@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`groups`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry. El plano LLM no lee este campo.
+Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`groups`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry.
+
+El campo sigue gateando **solo** en el plano MCP. Fuera de él, la dimensión de destino no llega y la de principal llega y no gatea: eso lo define `policy-inert-scope`, que es la capability a la que hay que ir para saber qué pasa en LLM y A2A. Lo que esta spec ya no promete es que "el plano LLM nunca lee este campo": una policy con scope de **solo grupo** sí puede estar en el plan de un consumer no-MCP.
 
 ## Requirements
 
 ### Requirement: `nil` frente a scope vacío
 
 `MCPScope == nil` MUST aplicar a todo el tráfico MCP del consumer (comportamiento actual). Un scope presente sin entradas MUST NOT hacer match con nada.
+
+Un scope presente sin entradas es además una **lápida**: MUST dejar la policy fuera de todos los planes, no solo del MCP, y MUST ocupar cero niveles. Esa parte la define `policy-inert-scope`; aquí basta con que `{}` no case nunca.
 
 #### Scenario: Policy sin scope
 
@@ -96,6 +100,10 @@ Tras el match positivo, si `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST 
 
 Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool` o `groups` vacíos o duplicados; `users` o `except_users` presentes; scope sin entradas; un registry a la vez en `registry_ids` y `tools`. En update, `mcp_scope` omitido MUST conservar el valor y `null` MUST eliminarlo. El listado MUST aceptar `registry_id`. La respuesta MAY incluir `warnings` no bloqueantes.
 
+Create, update, attach y promoción a `global` MUST devolver además **409** cuando la escritura ocuparía un nivel que otra policy habilitada del mismo plugin ya ocupa (`policy-level-uniqueness`). 409 y 422 MUST NOT confundirse: el 422 dice que la petición está mal formada o que la dimensión no cruza de plano; el 409 dice que la petición está bien y el estado la rechaza.
+
+Los `warnings` MUST cubrir además: una policy dormida (`policy has an empty mcp_scope and runs nowhere; set mcp_scope to null to run it everywhere`), una policy sin consumers y sin `global` (`policy has no consumers and is not global: it runs nowhere`), y la coalescencia del plano inerte. Ningún warning MUST seguir afirmando que un scope no alcanza a un consumer no-MCP: eso ya solo es cierto para la dimensión de destino.
+
 #### Scenario: Registry de otro gateway
 
 - GIVEN un `registry_id` de otro gateway
@@ -120,9 +128,33 @@ Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool`
 - WHEN se crea una `trustguard` global con scope
 - THEN 2xx con `warnings` mencionando a X, y `GET ?registry_id=` la devuelve
 
-### Requirement: `global` con scope; consumers LLM
+#### Scenario: Nivel ya ocupado
 
-Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data.StoreConsumer`). Asociar una policy con scope a un consumer LLM MUST rechazarse.
+- GIVEN una `trustguard` habilitada con `registry_ids: [snowflake]` en el consumer X
+- WHEN se crea otra `trustguard` con `registry_ids: [snowflake, jira]` en el mismo consumer
+- THEN 409 `"error": "conflict"`, porque los dos niveles se solapan en `snowflake`
+
+#### Scenario: Policy dormida
+
+- GIVEN una policy cuyo scope quedó en `{}` tras un prune
+- WHEN se lee o se actualiza
+- THEN la respuesta lleva el warning de que no corre en ningún sitio y cómo revivirla
+
+### Requirement: `global` con scope; consumers no-MCP
+
+Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data.StoreConsumer`).
+
+Asociar una policy con scope a un consumer no-MCP MUST decidirse **por dimensión**, no por la presencia del campo:
+
+| Scope que se adjunta a un consumer no-MCP | Resultado |
+|---|---|
+| Con destino (`registry_ids` o `tools`), con o sin grupo | **422** — el destino no cruza de plano |
+| Solo principal (`groups` / `except_groups`), plugin **no** inert-safe | **422** — el plugin gatea por nombre de tool o de registry |
+| Solo principal, plugin inert-safe | **aceptado** — la policy corre y el grupo es inerte |
+
+Los dos motivos de 422 MUST dar mensajes distinguibles. `ErrPolicyScopeRequiresMCP` MUST dejar de prometer "requires MCP" para un scope de solo grupo.
+
+Una policy `global: true` con destino MUST seguir sin alcanzar los consumers no-MCP del gateway: la promoción no es una puerta de atrás. Con solo grupo, sí los alcanza. El predicado y los buckets de carga los define `policy-inert-scope`.
 
 #### Scenario: Global con scope
 
@@ -130,11 +162,23 @@ Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data
 - WHEN se crea
 - THEN se acepta y forma parte de `StoreConsumer`
 
-#### Scenario: Consumer LLM
+#### Scenario: Consumer LLM con destino
 
-- GIVEN una policy con scope
+- GIVEN una policy con `registry_ids` o `tools`
 - WHEN se asocia a un consumer LLM
-- THEN 4xx
+- THEN 422, con el mensaje que nombra la dimensión de destino
+
+#### Scenario: Consumer LLM con solo grupo
+
+- GIVEN una policy con `mcp_scope: {groups: [Finance]}` de un plugin inert-safe
+- WHEN se asocia a un consumer LLM
+- THEN se acepta y la policy corre en ese consumer con el grupo inerte
+
+#### Scenario: Consumer LLM con solo grupo y plugin que gatea por nombre
+
+- GIVEN la misma policy con `slug: tool_allowlist`
+- WHEN se asocia a un consumer LLM
+- THEN 422, con el mensaje que nombra al plugin, no a la dimensión
 
 ### Requirement: Prune al borrar un registry
 
