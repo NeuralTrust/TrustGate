@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -48,6 +49,7 @@ type associator struct {
 	registryRepo registrydomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
+	policyLevels apppolicy.LevelGuard
 	memoryCache  *cache.TTLMap
 	policyCache  *cache.TTLMap
 	publisher    cache.EventPublisher
@@ -61,6 +63,7 @@ func NewAssociator(
 	registryRepo registrydomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
+	policyLevels apppolicy.LevelGuard,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -72,6 +75,7 @@ func NewAssociator(
 		registryRepo: registryRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
+		policyLevels: policyLevels,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		policyCache:  manager.GetTTLMap(cache.PolicyTTLName),
 		publisher:    publisher,
@@ -159,7 +163,9 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err := a.validatePolicyProtocol(cons, pol); err != nil {
 		return err
 	}
-	if err := a.repo.AttachPolicy(ctx, consumerID, policyID); err != nil {
+	if err := a.policyLevels.Check(ctx, attachedTo(pol, consumerID), func(ctx context.Context) error {
+		return a.repo.AttachPolicy(ctx, consumerID, policyID)
+	}); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
@@ -193,6 +199,15 @@ func (a *associator) validatePolicyScope(cons *domain.Consumer, pol *policydomai
 			domain.ErrPolicyScopeDoesNotCross, pol.Slug, cons.ID, cons.Type)
 	}
 	return nil
+}
+
+// attachedTo is the policy as the attach would store it: the levels the write
+// takes are the ones this consumer adds, not the ones the policy already holds
+// through the consumers it is attached to.
+func attachedTo(pol *policydomain.Policy, consumerID ids.ConsumerID) *policydomain.Policy {
+	attached := *pol
+	attached.ConsumerIDs = []ids.ConsumerID{consumerID}
+	return &attached
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {

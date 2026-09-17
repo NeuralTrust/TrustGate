@@ -49,6 +49,7 @@ var _ Creator = (*creator)(nil)
 
 type creator struct {
 	repo         domain.Repository
+	levels       LevelGuard
 	registryRepo registrydomain.Repository
 	registry     appplugins.Registry
 	memoryCache  *cache.TTLMap
@@ -58,6 +59,7 @@ type creator struct {
 
 func NewCreator(
 	repo domain.Repository,
+	levels LevelGuard,
 	registryRepo registrydomain.Repository,
 	registry appplugins.Registry,
 	manager *cache.TTLMapManager,
@@ -66,6 +68,7 @@ func NewCreator(
 ) Creator {
 	return &creator{
 		repo:         repo,
+		levels:       levels,
 		registryRepo: registryRepo,
 		registry:     registry,
 		memoryCache:  manager.GetTTLMap(cache.PolicyTTLName),
@@ -85,7 +88,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	if err := validateMCPScope(ctx, c.registryRepo, c.registry, in.GatewayID, in.Slug, p.MCPScope); err != nil {
 		return nil, err
 	}
-	if err := c.repo.Save(ctx, p); err != nil {
+	if err := c.levels.Check(ctx, p, func(ctx context.Context) error {
+		return c.repo.Save(ctx, p)
+	}); err != nil {
 		return nil, err
 	}
 	c.memoryCache.Set(p.ID.String(), p)

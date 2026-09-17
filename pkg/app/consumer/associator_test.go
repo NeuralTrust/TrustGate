@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -44,14 +45,43 @@ func newAssociator(
 	publisher *cachemocks.EventPublisher,
 	resolver ...*fakeProtocolResolver,
 ) appconsumer.Associator {
+	return newAssociatorWithGuard(repo, registryRepo, authRepo, policyRepo, publisher, &stubLevelGuard{}, resolver...)
+}
+
+// newAssociatorWithGuard is newAssociator with a level guard the test drives,
+// which is how the attach path is observed without a database.
+func newAssociatorWithGuard(
+	repo *repomocks.Repository,
+	registryRepo *backendmocks.Repository,
+	authRepo *authmocks.Repository,
+	policyRepo *policymocks.Repository,
+	publisher *cachemocks.EventPublisher,
+	levels apppolicy.LevelGuard,
+	resolver ...*fakeProtocolResolver,
+) appconsumer.Associator {
 	res := &fakeProtocolResolver{}
 	if len(resolver) > 0 {
 		res = resolver[0]
 	}
 	return appconsumer.NewAssociator(
-		repo, registryRepo, authRepo, policyRepo,
+		repo, registryRepo, authRepo, policyRepo, levels,
 		newCacheManager(), publisher, newTestLogger(), nil, res,
 	)
+}
+
+// stubLevelGuard answers with err, and lets the write through when there is
+// none, recording the policy it was asked about.
+type stubLevelGuard struct {
+	err     error
+	checked *policydomain.Policy
+}
+
+func (g *stubLevelGuard) Check(ctx context.Context, p *policydomain.Policy, write func(context.Context) error) error {
+	g.checked = p
+	if g.err != nil {
+		return g.err
+	}
+	return write(ctx)
 }
 
 type fakeProtocolResolver struct {
@@ -641,5 +671,65 @@ func TestAssociator_AttachPolicy_ScopeMustCrossIntoTheConsumerPlane(t *testing.T
 			repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
 			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 		})
+	}
+}
+
+// Attaching a consumer takes the levels that consumer adds, so it goes through
+// the level guard and the junction row is never written when it is refused.
+func TestAssociator_AttachPolicy_RefusesAnOccupiedLevel(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "cors", Enabled: true}, nil).Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo,
+		cachemocks.NewEventPublisher(t), levels)
+
+	err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+	if !errors.Is(err, policydomain.ErrPolicyLevelConflict) {
+		t.Fatalf("err = %v, want ErrPolicyLevelConflict", err)
+	}
+	repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+	if len(levels.checked.ConsumerIDs) != 1 || levels.checked.ConsumerIDs[0] != consumerID {
+		t.Fatalf("guard saw consumers %v, want only %s", levels.checked.ConsumerIDs, consumerID)
+	}
+}
+
+// Detaching a consumer only releases levels, so it never asks the guard.
+func TestAssociator_DetachPolicy_IsNotGuarded(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+	repo.EXPECT().DetachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t),
+		policymocks.NewRepository(t), publisher, levels)
+
+	if err := a.DetachPolicy(context.Background(), gwID, consumerID, policyID); err != nil {
+		t.Fatalf("DetachPolicy error: %v", err)
+	}
+	if levels.checked != nil {
+		t.Fatal("detach must not consult the level guard")
 	}
 }
