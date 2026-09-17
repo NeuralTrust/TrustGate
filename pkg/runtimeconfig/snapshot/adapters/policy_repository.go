@@ -66,7 +66,7 @@ func (r *policyRepository) Save(_ context.Context, _ *domain.Policy) error {
 	return configsync.ErrReadOnly
 }
 
-func (r *policyRepository) Update(_ context.Context, _ *domain.Policy) error {
+func (r *policyRepository) Update(_ context.Context, _ *domain.Policy, _ bool) error {
 	return configsync.ErrReadOnly
 }
 

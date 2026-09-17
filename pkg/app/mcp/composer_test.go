@@ -158,6 +158,20 @@ func newTestComposer(dialer Dialer) Composer {
 	return NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
 }
 
+func resolveAndInvoke(
+	ctx context.Context,
+	c Composer,
+	rc *appconsumer.RoutableConsumer,
+	name string,
+	arguments json.RawMessage,
+) (json.RawMessage, error) {
+	target, err := c.Resolve(ctx, rc, name)
+	if err != nil {
+		return nil, err
+	}
+	return c.Invoke(ctx, rc, target, arguments)
+}
+
 func tools(names ...string) []Tool {
 	out := make([]Tool, 0, len(names))
 	for _, n := range names {
@@ -339,7 +353,7 @@ func TestComposer_PartialConsentServesLinkedUpstream(t *testing.T) {
 	}
 }
 
-func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
+func TestComposer_ResolveThenInvoke_RoutesToOwningUpstream(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
 	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
@@ -352,7 +366,7 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 	c := newTestComposer(dialer)
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
 
-	res, err := c.CallTool(context.Background(), rc, namedFor(regB, "search"), nil)
+	res, err := resolveAndInvoke(context.Background(), c, rc, namedFor(regB, "search"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -366,7 +380,7 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 		t.Fatalf("github upstream was called: %q", upA.lastCall)
 	}
 
-	if _, err := c.CallTool(context.Background(), rc, "missing_tool", nil); !errors.Is(err, ErrToolNotFound) {
+	if _, err := c.Resolve(context.Background(), rc, "missing_tool"); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("error = %v, want ErrToolNotFound", err)
 	}
 }
@@ -374,7 +388,7 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 // A tool served by a healthy upstream must still be callable while a different
 // upstream awaits user consent: an unconnected Notion must not break a call
 // routed to another MCP server.
-func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.T) {
+func TestComposer_Resolve_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.T) {
 	t.Parallel()
 	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
 	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
@@ -394,7 +408,7 @@ func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.
 		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
 	}, notion, graphite)
 
-	res, err := c.CallTool(context.Background(), rc, namedFor(graphite, "list_diffs"), nil)
+	res, err := resolveAndInvoke(context.Background(), c, rc, namedFor(graphite, "list_diffs"), nil)
 	if err != nil {
 		t.Fatalf("call routed to a healthy upstream must succeed, got %v", err)
 	}
@@ -406,42 +420,10 @@ func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.
 	}
 }
 
-// A tool that no reachable upstream exposes, while another upstream awaits
-// consent, still reports the consent requirement: the tool may well live behind
-// the unconnected provider.
-func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
-	t.Parallel()
-	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
-	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
-	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
-		"https://notion.example.com/mcp":   {tools: tools("search")},
-		"https://graphite.example.com/mcp": {tools: tools("list_diffs")},
-	}}
-	creds := &fakeCreds{errByURL: map[string]error{
-		"https://notion.example.com/mcp": &ConsentRequiredError{
-			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
-		},
-	}}
-	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
-	rc := routable(&consumerdomain.Consumer{
-		Type: consumerdomain.TypeMCP,
-		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
-	}, notion, graphite)
-
-	_, err := c.CallTool(context.Background(), rc, namedFor(notion, "search"), nil)
-	var consentErr *ConsentRequiredError
-	if !errors.As(err, &consentErr) {
-		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
-	}
-	if consentErr.Provider != "com.notion/mcp" {
-		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
-	}
-}
-
 // A tool the upstream offers but the toolkit excludes is a policy denial: it
 // must answer 403 rather than "not found", and never an authorization prompt —
 // connecting an account cannot grant a tool the consumer is not allowed to use.
-func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
+func TestComposer_Resolve_ToolkitDeniedIsForbidden(t *testing.T) {
 	t.Parallel()
 	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
 	up := &fakeUpstream{
@@ -457,7 +439,7 @@ func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
 		}},
 	}, notion)
 
-	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	target, err := c.Resolve(context.Background(), rc, "notion-search")
 	var denied *ToolNotPermittedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("error = %v, want ToolNotPermittedError", err)
@@ -465,14 +447,75 @@ func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
 	if denied.Tool != "notion-search" {
 		t.Fatalf("tool = %q, want notion-search", denied.Tool)
 	}
+	if target != nil {
+		t.Fatalf("target = %+v, want nil so nothing can be invoked", target)
+	}
 	if up.lastCall != "" {
 		t.Fatalf("upstream was invoked with %q for a denied tool", up.lastCall)
 	}
 }
 
-// The denial wins over a pending consent on another upstream: the tool is
-// forbidden regardless of whether the user connects anything.
-func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
+// Resolve binds the exposed name to the upstream that serves it and hands back
+// both names, without dialing the tool: the binding is fixed before any plugin
+// gets to see the request.
+func TestComposer_Resolve_RoutesToOwningUpstream(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	upA := &fakeUpstream{tools: tools("search")}
+	upB := &fakeUpstream{tools: tools("search")}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": upA,
+		"https://b.example.com/mcp": upB,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
+
+	exposed := namedFor(regB, "search")
+	target, err := c.Resolve(context.Background(), rc, exposed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if target.Registry != regB {
+		t.Fatalf("registry = %v, want slack", target.Registry)
+	}
+	if target.Tool.Name != "search" {
+		t.Fatalf("native tool = %q, want search", target.Tool.Name)
+	}
+	if target.Exposed != exposed {
+		t.Fatalf("exposed = %q, want %q", target.Exposed, exposed)
+	}
+	if upA.lastCall != "" || upB.lastCall != "" {
+		t.Fatalf("Resolve must not invoke any upstream: a=%q b=%q", upA.lastCall, upB.lastCall)
+	}
+}
+
+func TestComposer_Resolve_UnknownToolStaysNotFound(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {tools: tools("notion-create-pages")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "notion-create-pages"},
+		}},
+	}, notion)
+
+	target, err := c.Resolve(context.Background(), rc, "does-not-exist")
+	if !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want ErrToolNotFound", err)
+	}
+	if target != nil {
+		t.Fatalf("target = %+v, want nil on error", target)
+	}
+}
+
+// A toolkit denial outranks a pending consent elsewhere: the tool is forbidden
+// whether or not the user connects anything.
+func TestComposer_Resolve_DeniedBeatsPendingConsent(t *testing.T) {
 	t.Parallel()
 	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
 	linear := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
@@ -497,7 +540,7 @@ func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
 		},
 	}, notion, linear)
 
-	_, err := c.CallTool(context.Background(), rc, namedFor(notion, "notion-search"), nil)
+	_, err := c.Resolve(context.Background(), rc, namedFor(notion, "notion-search"))
 	var consent *ConsentRequiredError
 	if errors.As(err, &consent) {
 		t.Fatal("a forbidden tool must not send the user through a consent flow")
@@ -506,25 +549,74 @@ func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
 	if !errors.As(err, &denied) {
 		t.Fatalf("error = %v, want a policy denial", err)
 	}
+	if denied.Tool != namedFor(notion, "notion-search") {
+		t.Fatalf("denied tool = %q, want the exposed name", denied.Tool)
+	}
 }
 
-// A tool nobody offers is still a plain not-found, not a denial.
-func TestComposer_CallTool_UnknownToolStaysNotFound(t *testing.T) {
+// A tool no reachable upstream exposes, while another awaits consent, reports
+// the consent requirement: it may well live behind the unconnected provider.
+func TestComposer_Resolve_UnknownToolSurfacesPendingConsent(t *testing.T) {
 	t.Parallel()
 	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
-		"https://notion.example.com/mcp": {tools: tools("notion-create-pages")},
+		"https://notion.example.com/mcp":   {tools: tools("search")},
+		"https://graphite.example.com/mcp": {tools: tools("list_diffs")},
 	}}
-	c := newTestComposer(dialer)
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
 	rc := routable(&consumerdomain.Consumer{
 		Type: consumerdomain.TypeMCP,
-		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
-			{RegistryID: notion.ID, Tool: "notion-create-pages"},
-		}},
-	}, notion)
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, graphite)
 
-	if _, err := c.CallTool(context.Background(), rc, "does-not-exist", nil); !errors.Is(err, ErrToolNotFound) {
-		t.Fatalf("error = %v, want ErrToolNotFound", err)
+	_, err := c.Resolve(context.Background(), rc, namedFor(notion, "search"))
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
+	}
+	if consentErr.Provider != "com.notion/mcp" {
+		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
+// Invoke dials the registry the target names and calls the tool by its native
+// name, whatever the exposed name was: a rewritten name can never reroute.
+func TestComposer_Invoke_UsesResolvedTarget(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	upA := &fakeUpstream{tools: tools("search"), result: json.RawMessage(`{"content":["a"]}`)}
+	upB := &fakeUpstream{tools: tools("search"), result: json.RawMessage(`{"content":["b"]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": upA,
+		"https://b.example.com/mcp": upB,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
+
+	target := &ResolvedTool{Registry: regB, Tool: Tool{Name: "search"}, Exposed: "whatever_the_caller_said"}
+	res, err := c.Invoke(context.Background(), rc, target, json.RawMessage(`{"q":"x"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(res) != `{"content":["b"]}` {
+		t.Fatalf("result = %s, want the slack upstream's answer", res)
+	}
+	if upB.lastCall != "search" {
+		t.Fatalf("upstream call = %q, want search on slack upstream", upB.lastCall)
+	}
+	if upA.lastCall != "" {
+		t.Fatalf("github upstream was called: %q", upA.lastCall)
+	}
+
+	if _, err := c.Invoke(context.Background(), rc, nil, nil); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("nil target error = %v, want ErrToolNotFound", err)
 	}
 }
 

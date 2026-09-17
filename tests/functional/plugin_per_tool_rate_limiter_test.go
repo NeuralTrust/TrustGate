@@ -227,8 +227,9 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 	headers := apiKeyHeaders(key)
+	sendEmail := exposedToolName(registryID, "send_email")
 	attachPerToolMCPPolicy(t, gatewayID, consumerID, map[string]any{
-		"rules": []any{perToolRule("send_email", 1, "reject_response")},
+		"rules": []any{perToolRule(sendEmail, 1, "reject_response")},
 	})
 
 	statusList, bodyList := mcpRPC(t, gatewayID, consumerID, headers, "tools/list", map[string]any{})
@@ -236,12 +237,12 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	require.Zero(t, atomic.LoadInt64(&calls), "tools/list must not invoke the upstream tool")
 
 	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
 	_ = rpcResult(t, status, body)
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "first tools/call is under budget and reaches the upstream")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
-		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+		map[string]any{"name": sendEmail, "arguments": map[string]any{}})
 	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
 		"an exhausted budget is throttling, not a permanent denial: it must be -32004 so the client knows to retry")
 	require.Equal(t, http.StatusOK, status, "over-budget tools/call must stay on HTTP 200 with JSON-RPC error (non-2xx drops MCP sessions): %v", body)

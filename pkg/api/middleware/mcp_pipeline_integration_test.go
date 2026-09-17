@@ -78,8 +78,10 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
 
 	composer := mcpmocks.NewComposer(t)
+	target := &appmcp.ResolvedTool{Tool: appmcp.Tool{Name: "echo"}, Exposed: "echo"}
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "echo").Return(target, nil).Once()
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Invoke(mock.Anything, mock.Anything, target, mock.Anything).
 		Return(json.RawMessage(`{"content":[]}`), nil).
 		Once()
 	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil), nil)
