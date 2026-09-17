@@ -18,11 +18,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -37,10 +39,13 @@ func (r endUserGatewayResolver) Resolve(*fiber.Ctx) (*gatewaydomain.Gateway, err
 type stubEndUserConnections struct {
 	link        *appoauth.EndUserLink
 	connections []appoauth.EndUserConnection
+	appAccounts []appoauth.EndUserConnection
 	err         error
+	appErr      error
 	gotKey      string
 	gotEndUser  string
 	gotProvider string
+	askedForApp bool
 }
 
 func (s *stubEndUserConnections) Link(_ context.Context, _ ids.GatewayID, _, rawKey, endUser, provider string) (*appoauth.EndUserLink, error) {
@@ -51,6 +56,11 @@ func (s *stubEndUserConnections) Link(_ context.Context, _ ids.GatewayID, _, raw
 func (s *stubEndUserConnections) Connections(_ context.Context, _ ids.GatewayID, _, rawKey, endUser string) ([]appoauth.EndUserConnection, error) {
 	s.gotKey, s.gotEndUser = rawKey, endUser
 	return s.connections, s.err
+}
+
+func (s *stubEndUserConnections) AppConnections(_ context.Context, _ ids.GatewayID, _, rawKey string) ([]appoauth.EndUserConnection, error) {
+	s.gotKey, s.askedForApp = rawKey, true
+	return s.appAccounts, s.appErr
 }
 
 func newEndUserApp(svc appoauth.EndUserConnectionsService) *fiber.App {
@@ -145,4 +155,71 @@ func TestEndUserConnectionsHandler_ListReportsStates(t *testing.T) {
 	require.NotNil(t, body.Connections[0].ExpiresAt)
 	require.Equal(t, "not_connected", body.Connections[1].Status)
 	require.Nil(t, body.Connections[1].ExpiresAt)
+}
+
+// A batch has nobody to hand a connect link to once it is running, so it has to
+// be able to ask beforehand whether its own accounts are good. Leaving end_user
+// out is that question: the other actor, same endpoint.
+func TestEndUserConnectionsHandler_ListWithoutEndUserAnswersForTheApplication(t *testing.T) {
+	svc := &stubEndUserConnections{appAccounts: []appoauth.EndUserConnection{
+		{Provider: "com.notion/mcp", Registry: "notion", Status: appoauth.ConnectionConnected, AccountRef: "ops@corp.com"},
+		{Provider: "app.linear/mcp", Registry: "linear", Status: appoauth.ConnectionNotConnected},
+	}}
+	app := newEndUserApp(svc)
+
+	request := httptest.NewRequest(http.MethodGet, "/jobs/connections", nil)
+	request.Header.Set("Authorization", "Bearer key-1")
+	response, err := app.Test(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, fiber.StatusOK, response.StatusCode)
+
+	var body EndUserConnectionsResponse
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.True(t, svc.askedForApp, "no end user was named, so the application is the actor")
+	require.Equal(t, "application", body.Actor,
+		"an empty end_user must not read as an unnamed user")
+	require.Empty(t, body.EndUser)
+	require.Len(t, body.Connections, 2)
+	require.Equal(t, appoauth.ConnectionNotConnected, body.Connections[1].Status,
+		"the run has to see the server it cannot call yet")
+}
+
+// Naming a user still asks the question it always did.
+func TestEndUserConnectionsHandler_ListWithEndUserStillAnswersForTheUser(t *testing.T) {
+	svc := &stubEndUserConnections{connections: []appoauth.EndUserConnection{
+		{Provider: "com.notion/mcp", Status: appoauth.ConnectionConnected},
+	}}
+	app := newEndUserApp(svc)
+
+	request := httptest.NewRequest(http.MethodGet, "/jobs/connections?end_user=user_123", nil)
+	request.Header.Set("Authorization", "Bearer key-1")
+	response, err := app.Test(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+
+	var body EndUserConnectionsResponse
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.False(t, svc.askedForApp)
+	require.Equal(t, "user_123", svc.gotEndUser)
+	require.Equal(t, "end_user", body.Actor)
+	require.Equal(t, "user_123", body.EndUser)
+}
+
+// An application whose users sign in for themselves holds no accounts of its
+// own. Answering with an empty list would read as "connected to nothing"; the
+// conflict says the actor is wrong.
+func TestEndUserConnectionsHandler_ListRefusesTheAppActorForAUserFacingConsumer(t *testing.T) {
+	app := newEndUserApp(&stubEndUserConnections{appErr: appoauth.ErrAppConnectionsUnsupported})
+
+	request := httptest.NewRequest(http.MethodGet, "/assistant/connections", nil)
+	request.Header.Set("Authorization", "Bearer key-1")
+	response, err := app.Test(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+
+	require.Equal(t, fiber.StatusConflict, response.StatusCode)
+	var body httpio.ErrorBody
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, "consumer_acts_for_users", body.Error)
 }
