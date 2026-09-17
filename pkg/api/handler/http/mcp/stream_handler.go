@@ -21,7 +21,6 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -79,22 +78,7 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	principal := identity.PrincipalFromContext(c.UserContext())
-	streamCtx := c.UserContext()
-	path := strings.Clone(c.Path())
-	gatewayID, _ := appconsumer.GatewayIDFromContext(streamCtx)
-	snapshot := func() string {
-		ctx, cancel := context.WithTimeout(streamCtx, 5*time.Second)
-		defer cancel()
-		if h.surface == nil {
-			return ""
-		}
-		live := rc
-		if next := h.liveConsumer(ctx, gatewayID, path); next != nil {
-			live = next
-		}
-		return h.surface.WatchSnapshot(ctx, live, principal)
-	}
+	snapshot := h.surfaceSnapshotFunc(c, rc)
 
 	c.Set(fiber.HeaderContentType, eventStreamContentType)
 	c.Set(fiber.HeaderCacheControl, "no-cache, no-store")
@@ -113,20 +97,47 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	return nil
 }
 
-// streamToolChanges holds the stream open, pushing a notification whenever the
+// streamToolChanges is the GET stream's shape of the watch: no acknowledgement
+// to send and no graceful end to announce, because the revision it serves has
+// names for neither.
+func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTimings) {
+	streamSurfaceChanges(w, snapshot, timings, surfaceStreamFrames{
+		// The GET recycles every ~45s. If the surface changed while the
+		// previous stream was down, previous already equals current and a
+		// delta-only watch would stay quiet — the client keeps the tools/list
+		// from last time.
+		open:   []string{streamKeepAliveFrame, toolsListChangedFrame},
+		change: toolsListChangedFrame,
+	})
+}
+
+// surfaceStreamFrames is what a stream sends, and when. The two transports that
+// carry this watch — the 2025 GET stream and a 2026 subscriptions/listen
+// response — differ only in these frames, so the watch itself is written once.
+type surfaceStreamFrames struct {
+	// open is sent in order before the watch begins.
+	open []string
+	// change is sent each time the watched surface moves.
+	change string
+	// closing is sent once before a graceful end, if any.
+	closing string
+}
+
+// streamSurfaceChanges holds the stream open, pushing a frame whenever the
 // watched surface changes. It returns when the client goes away (a write to a
 // closed connection fails) or the lifetime cap expires, at which point the
 // client is free to open a new stream.
-func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTimings) {
+func streamSurfaceChanges(
+	w *bufio.Writer,
+	snapshot func() string,
+	timings streamTimings,
+	frames surfaceStreamFrames,
+) {
 	previous := snapshot()
-	if !flushFrame(w, streamKeepAliveFrame) {
-		return
-	}
-	// The GET recycles every ~45s. If the surface changed while the previous
-	// stream was down, previous already equals current and a delta-only watch
-	// would stay quiet — the client keeps the tools/list from last time.
-	if !flushFrame(w, toolsListChangedFrame) {
-		return
+	for _, frame := range frames.open {
+		if !flushFrame(w, frame) {
+			return
+		}
 	}
 	poll := time.NewTicker(timings.poll)
 	defer poll.Stop()
@@ -136,6 +147,9 @@ func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTi
 	for {
 		select {
 		case <-deadline:
+			if frames.closing != "" {
+				flushFrame(w, frames.closing)
+			}
 			return
 		case <-keepAlive.C:
 			if !flushFrame(w, streamKeepAliveFrame) {
@@ -147,7 +161,7 @@ func streamToolChanges(w *bufio.Writer, snapshot func() string, timings streamTi
 				continue
 			}
 			previous = current
-			if !flushFrame(w, toolsListChangedFrame) {
+			if !flushFrame(w, frames.change) {
 				return
 			}
 		}
