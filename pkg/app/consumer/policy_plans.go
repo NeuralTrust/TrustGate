@@ -16,7 +16,6 @@ package consumer
 
 import (
 	"log/slog"
-	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -73,9 +72,9 @@ type PolicyPlans struct {
 	byRegistry map[ids.RegistryID]*destPlans
 	byTool     map[policydomain.MCPTarget]*destPlans
 	scoped     []scopedEntry
-	// hasPrincipal is true when at least one scoped policy narrows by user or
-	// group. Without one, no matcher ever reads the caller, so the principal
-	// never has to be projected — and projecting it means rebuilding the
+	// hasPrincipal is true when at least one scoped policy narrows by group.
+	// Without one, no matcher ever reads the caller, so the principal never
+	// has to be projected — and projecting it means rebuilding the
 	// deduplicated group list out of the token claims on every call.
 	hasPrincipal bool
 }
@@ -319,11 +318,7 @@ func callerOf(principal *identity.Principal) policydomain.MCPCaller {
 	if principal == nil {
 		return policydomain.MCPCaller{}
 	}
-	return policydomain.MCPCaller{
-		Subject: principal.Subject,
-		Email:   strings.ToLower(principal.Email()),
-		Groups:  principal.Groups(),
-	}
+	return policydomain.MCPCaller{Groups: principal.Groups()}
 }
 
 func hasAnyStage(plan *appplugins.StagePlan) bool {

@@ -32,28 +32,32 @@ type MCPToolRefRequest struct {
 }
 
 // MCPScopeRequest narrows a policy to MCP destinations (registry_ids, tools)
-// and principals (users, groups, except_users, except_groups). Registry ids
-// are checked to be UUIDs here; existence, gateway ownership and the MCP type
-// are validated by the application layer.
+// and principals (groups, except_groups). Registry ids are checked to be UUIDs
+// here; existence, gateway ownership and the MCP type are validated by the
+// application layer. Users and ExceptUsers are kept out of the documented
+// contract and only exist to reject the retired dimension explicitly instead
+// of dropping it as an unknown key.
 type MCPScopeRequest struct {
 	RegistryIDs  []string            `json:"registry_ids,omitempty"`
 	Tools        []MCPToolRefRequest `json:"tools,omitempty"`
-	Users        []string            `json:"users,omitempty"`
 	Groups       []string            `json:"groups,omitempty"`
-	ExceptUsers  []string            `json:"except_users,omitempty"`
 	ExceptGroups []string            `json:"except_groups,omitempty"`
+	Users        []string            `json:"users,omitempty" swaggerignore:"true"`
+	ExceptUsers  []string            `json:"except_users,omitempty" swaggerignore:"true"`
 }
 
 // ToDomain converts the request into the domain scope. A nil receiver yields
-// a nil scope; a registry id that is not a UUID yields ErrValidation.
+// a nil scope; a registry id that is not a UUID, or any entry in the retired
+// users or except_users dimension, yields ErrValidation.
 func (r *MCPScopeRequest) ToDomain() (*domain.MCPScope, error) {
 	if r == nil {
 		return nil, nil
 	}
+	if err := r.rejectRetiredUsers(); err != nil {
+		return nil, err
+	}
 	scope := &domain.MCPScope{
-		Users:        r.Users,
 		Groups:       r.Groups,
-		ExceptUsers:  r.ExceptUsers,
 		ExceptGroups: r.ExceptGroups,
 	}
 	if len(r.RegistryIDs) > 0 {
@@ -77,6 +81,28 @@ func (r *MCPScopeRequest) ToDomain() (*domain.MCPScope, error) {
 		}
 	}
 	return scope, nil
+}
+
+// rejectRetiredUsers fails a scope that still names the user dimension. The
+// field is refused rather than ignored because a scope that only selected
+// users would otherwise stop narrowing by principal and silently widen to
+// every caller of the destination.
+func (r *MCPScopeRequest) rejectRetiredUsers() error {
+	for _, field := range []struct {
+		name   string
+		values []string
+	}{
+		{"users", r.Users},
+		{"except_users", r.ExceptUsers},
+	} {
+		if len(field.values) > 0 {
+			return fmt.Errorf(
+				"mcp_scope: %s is no longer supported, scope by groups instead: %w",
+				field.name, commonerrors.ErrValidation,
+			)
+		}
+	}
+	return nil
 }
 
 func parseScopeRegistryID(raw string) (ids.RegistryID, error) {

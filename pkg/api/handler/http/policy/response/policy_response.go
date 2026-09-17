@@ -55,9 +55,7 @@ type MCPToolRefResponse struct {
 type MCPScopeResponse struct {
 	RegistryIDs  []ids.RegistryID     `json:"registry_ids,omitempty"`
 	Tools        []MCPToolRefResponse `json:"tools,omitempty"`
-	Users        []string             `json:"users,omitempty"`
 	Groups       []string             `json:"groups,omitempty"`
-	ExceptUsers  []string             `json:"except_users,omitempty"`
 	ExceptGroups []string             `json:"except_groups,omitempty"`
 }
 
@@ -96,9 +94,7 @@ func fromMCPScope(scope *domain.MCPScope) *MCPScopeResponse {
 	}
 	out := &MCPScopeResponse{
 		RegistryIDs:  scope.RegistryIDs,
-		Users:        scope.Users,
 		Groups:       scope.Groups,
-		ExceptUsers:  scope.ExceptUsers,
 		ExceptGroups: scope.ExceptGroups,
 	}
 	if len(scope.Tools) > 0 {

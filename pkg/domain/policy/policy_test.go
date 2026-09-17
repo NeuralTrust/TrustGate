@@ -186,7 +186,7 @@ func TestPolicy_Validate_DelegatesToMCPScope(t *testing.T) {
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "x",
 		Slug:      "trustguard",
-		MCPScope:  &MCPScope{Users: []string{""}},
+		MCPScope:  &MCPScope{Groups: []string{""}},
 	}
 	err := p.Validate()
 	if !errors.Is(err, ErrInvalidMCPScope) || !errors.Is(err, commonerrors.ErrValidation) {

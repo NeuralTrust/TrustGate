@@ -209,9 +209,7 @@ func cloneMCPScope(in *domain.MCPScope) *domain.MCPScope {
 	return &domain.MCPScope{
 		RegistryIDs:  slices.Clone(in.RegistryIDs),
 		Tools:        slices.Clone(in.Tools),
-		Users:        slices.Clone(in.Users),
 		Groups:       slices.Clone(in.Groups),
-		ExceptUsers:  slices.Clone(in.ExceptUsers),
 		ExceptGroups: slices.Clone(in.ExceptGroups),
 	}
 }

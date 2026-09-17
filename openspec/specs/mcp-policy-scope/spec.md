@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`users`, `groups`, `except_users`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry. El plano LLM no lee este campo.
+Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`groups`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry. El plano LLM no lee este campo.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`regi
 
 ### Requirement: Destino AND principal; unión entre policies
 
-Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`users` ∪ `groups`) MUST combinarse con AND; una dimensión vacía acepta cualquier valor. Entre policies MUST aplicarse la unión.
+Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`groups`) MUST combinarse con AND; una dimensión vacía acepta cualquier valor. Entre policies MUST aplicarse la unión.
 
 #### Scenario: DLP para Finanzas en Snowflake
 
@@ -40,19 +40,19 @@ Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`users` 
 
 ### Requirement: Identificación del principal
 
-`users` MUST comparar contra `Principal.Subject` o `Principal.Email()` en minúsculas. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin identidad de usuario MUST NOT hacer match con `users` ni `groups`.
+El principal MUST ser siempre un grupo: `users` y `except_users` no existen como dimensión y una request que los traiga MUST ser rechazada con 422. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin grupos MUST NOT hacer match con `groups`.
 
-#### Scenario: Email con distinta capitalización
+#### Scenario: Grupo del token
 
-- GIVEN `users: ["ana@acme.com"]` y token con `email: "Ana@Acme.com"`
+- GIVEN `groups: ["Finanzas"]` y token con `groups: ["Finanzas"]`
 - WHEN se evalúa el principal
 - THEN hace match
 
-#### Scenario: IdP sin `email`
+#### Scenario: Dimensión de usuario retirada
 
-- GIVEN `users: ["usr_123"]` y token con `sub: "usr_123"` sin `email`
-- WHEN se evalúa el principal
-- THEN hace match por `Subject`
+- GIVEN un `mcp_scope` con `users` o `except_users`
+- WHEN se crea o actualiza la policy
+- THEN 422, para que un scope no pierda su principal y se ensanche
 
 #### Scenario: API key
 
@@ -62,7 +62,7 @@ Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`users` 
 
 ### Requirement: Excepciones
 
-Tras el match positivo, si `Subject`/`Email()` ∈ `except_users` o `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST devolver `false`. Un caller sin identidad MUST NOT caer nunca en una excepción.
+Tras el match positivo, si `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST devolver `false`. Un caller sin grupos MUST NOT caer nunca en una excepción.
 
 #### Scenario: Todos menos Finanzas
 
@@ -70,7 +70,7 @@ Tras el match positivo, si `Subject`/`Email()` ∈ `except_users` o `Groups() �
 - WHEN Marketing llama a `run_query`
 - THEN hace match; Finanzas no
 
-#### Scenario: Caller sin identidad
+#### Scenario: Caller sin grupos
 
 - GIVEN la misma policy y un caller con API key
 - WHEN llama a `run_query`
@@ -94,7 +94,7 @@ Tras el match positivo, si `Subject`/`Email()` ∈ `except_users` o `Groups() �
 
 ### Requirement: Validación en la Admin API
 
-Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool`, `users`, `groups` vacíos o duplicados; scope sin entradas; un registry a la vez en `registry_ids` y `tools`. En update, `mcp_scope` omitido MUST conservar el valor y `null` MUST eliminarlo. El listado MUST aceptar `registry_id`. La respuesta MAY incluir `warnings` no bloqueantes.
+Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool` o `groups` vacíos o duplicados; `users` o `except_users` presentes; scope sin entradas; un registry a la vez en `registry_ids` y `tools`. En update, `mcp_scope` omitido MUST conservar el valor y `null` MUST eliminarlo. El listado MUST aceptar `registry_id`. La respuesta MAY incluir `warnings` no bloqueantes.
 
 #### Scenario: Registry de otro gateway
 
