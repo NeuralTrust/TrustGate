@@ -15,6 +15,8 @@
 package consumer
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -74,14 +76,14 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 	if raw := c.Query("type"); raw != "" {
 		consumerType = domain.Type(raw)
 		if !domain.IsValidType(consumerType) {
-			return httpio.WriteError(c, httpio.ErrInvalidFilter)
+			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "type"))
 		}
 	}
 	var authID ids.AuthID
 	if raw := c.Query("auth_id"); raw != "" {
 		authID, err = ids.Parse[ids.AuthKind](raw)
 		if err != nil {
-			return httpio.WriteError(c, httpio.ErrInvalidFilter)
+			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "auth_id"))
 		}
 	}
 	req := request.ListConsumerRequest{

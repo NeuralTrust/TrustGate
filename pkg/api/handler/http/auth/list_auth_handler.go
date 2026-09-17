@@ -15,6 +15,8 @@
 package auth
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -72,7 +74,7 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 	if raw := c.Query("type"); raw != "" {
 		authType = domain.Type(raw)
 		if !domain.IsValidType(authType) {
-			return httpio.WriteError(c, httpio.ErrInvalidFilter)
+			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "type"))
 		}
 	}
 	req := request.ListAuthRequest{
