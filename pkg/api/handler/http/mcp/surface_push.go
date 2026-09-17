@@ -133,6 +133,27 @@ func (h *Handler) surfaceVersion(c *fiber.Ctx, rc *appconsumer.RoutableConsumer)
 	return appmcp.FingerprintSnapshot(snapshot)
 }
 
+// changesTheSurface reports whether this request is one that, having succeeded,
+// has certainly changed what the caller can reach.
+//
+// surfaceMoved reads a snapshot cached for a few seconds, so the call that made
+// the change is the one likeliest to be answered from a snapshot taken before
+// it — the announcement would then wait for the next request. On an install or
+// an uninstall there is nothing to detect: the tools changed because the caller
+// just asked for them to.
+func changesTheSurface(method string, params json.RawMessage) bool {
+	if method != "tools/call" {
+		return false
+	}
+	var call struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &call); err != nil {
+		return false
+	}
+	return call.Name == appmcp.StoreInstallToolName || call.Name == appmcp.StoreUninstallToolName
+}
+
 // writeRPCBody sends one JSON-RPC response, as a lone JSON document or — when
 // the caller's tools have changed under them — as a short stream carrying the
 // response and then notifications/tools/list_changed.
