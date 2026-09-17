@@ -22,6 +22,21 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// Metadata keys the MCP tools/call path sets on RequestContext once the tool
+// has been bound to its upstream. Body.name stays the exposed (possibly
+// federated) name; these carry the native binding so a plugin can decide on
+// the tool the upstream will actually run.
+const (
+	// MetadataMCPTool is the upstream-native tool name.
+	MetadataMCPTool = "mcp.tool"
+	// MetadataMCPRegistryID is the id of the registry that owns the tool.
+	MetadataMCPRegistryID = "mcp.registry_id"
+	// MetadataMCPRegistryName is the display name of the registry that owns the tool.
+	MetadataMCPRegistryName = "mcp.registry_name"
+	// MetadataMCPExposedTool is the name the caller used, as listed by tools/list.
+	MetadataMCPExposedTool = "mcp.exposed_tool"
+)
+
 type Attachment struct {
 	Filename    string
 	ContentType string

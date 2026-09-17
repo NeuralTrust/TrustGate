@@ -25,6 +25,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
@@ -100,7 +101,20 @@ func replacesPayload(outcome *appplugins.StageOutcome) bool {
 	return outcome.StatusCode == 0 || (outcome.StatusCode >= 200 && outcome.StatusCode < 300)
 }
 
-// PreRequest runs StagePreRequest over the tools/call params. The returned
+// ToolCall is one tools/call as the plugin chain sees it: the name the caller
+// used, the upstream binding Composer.Resolve fixed for it, the arguments, and
+// the plan PolicyPlans.PlanFor picked for that destination. Registry and Plan
+// are optional: without a Registry the request context carries no binding, and
+// without a Plan the stage falls back to the consumer's unscoped plan.
+type ToolCall struct {
+	Exposed    string
+	Registry   *registrydomain.Registry
+	NativeTool string
+	Arguments  json.RawMessage
+	Plan       *appplugins.StagePlan
+}
+
+// PreRequest runs StagePreRequest over a resolved tools/call. The returned
 // StageResult carries the effective tool input — a plugin may have rewritten it
 // — or a payload a plugin produced in place of calling the upstream at all. A
 // non-nil error is an *RPCError: a policy denied the call and the caller skips
@@ -109,23 +123,19 @@ func replacesPayload(outcome *appplugins.StageOutcome) bool {
 func (r *PluginRunner) PreRequest(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	name string,
-	arguments json.RawMessage,
+	call ToolCall,
 ) (*StageResult, error) {
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
+	reqCtx, err := r.buildRequestContext(rc, call)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
 	}
-	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:    policy.StagePreRequest,
-		Policies: rc.Policies,
-		Plan:     rc.PolicyPlan,
-		Request:  reqCtx,
-	})
+	in := r.stageInput(rc, call, policy.StagePreRequest)
+	in.Request = reqCtx
+	outcome, err := r.executor.RunStage(ctx, in)
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
@@ -148,7 +158,14 @@ func (r *PluginRunner) PreRequest(
 	// place. Read the arguments back out so the upstream receives the masked
 	// payload; forwarding the originals would leak exactly what the plugin was
 	// asked to redact.
-	return &StageResult{Arguments: r.rewrittenArguments(rc, name, arguments, reqCtx.Body)}, nil
+	return &StageResult{Arguments: r.rewrittenArguments(rc, call.Exposed, call.Arguments, reqCtx.Body)}, nil
+}
+
+func (r *PluginRunner) stageInput(rc *appconsumer.RoutableConsumer, call ToolCall, stage policy.Stage) appplugins.StageInput {
+	if call.Plan != nil {
+		return appplugins.StageInput{Stage: stage, Plan: call.Plan}
+	}
+	return appplugins.StageInput{Stage: stage, Policies: rc.Policies, Plan: rc.PolicyPlan}
 }
 
 // rewrittenArguments extracts the tool arguments a plugin left in the request
@@ -179,38 +196,35 @@ func (r *PluginRunner) rewrittenArguments(
 	return params.Arguments
 }
 
-// PreResponse runs StagePreResponse over the tool result. A StageResult with a
-// Result replaces the tool's output (TrustGuard data-masking); nil keeps the
-// original. A non-nil error is an *RPCError: the response was blocked and the
-// caller discards the result. Per RUN-832 the call fails open on any non-block
-// error in this direction too: it is logged and the original result is kept.
+// PreResponse runs StagePreResponse over the result of a resolved tools/call,
+// with the same ToolCall (and so the same plan) PreRequest ran. A StageResult
+// with a Result replaces the tool's output (TrustGuard data-masking); nil keeps
+// the original. A non-nil error is an *RPCError: the response was blocked and
+// the caller discards the result. Per RUN-832 the call fails open on any
+// non-block error in this direction too: it is logged and the original result
+// is kept.
 func (r *PluginRunner) PreResponse(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	name string,
-	arguments json.RawMessage,
+	call ToolCall,
 	result json.RawMessage,
 ) (*StageResult, error) {
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
+	reqCtx, err := r.buildRequestContext(rc, call)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
 	}
-	respCtx := &infracontext.ResponseContext{
+	in := r.stageInput(rc, call, policy.StagePreResponse)
+	in.Request = reqCtx
+	in.Response = &infracontext.ResponseContext{
 		GatewayID: rc.Consumer.GatewayID.String(),
 		Body:      result,
 		Streaming: false,
 	}
-	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:    policy.StagePreResponse,
-		Policies: rc.Policies,
-		Plan:     rc.PolicyPlan,
-		Request:  reqCtx,
-		Response: respCtx,
-	})
+	outcome, err := r.executor.RunStage(ctx, in)
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
@@ -312,17 +326,18 @@ func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage polic
 	)
 }
 
+// Body keeps the exposed name so plugins see exactly what the caller sent; the
+// native binding travels in RegistryID and the MetadataMCP* keys, where a body
+// rewrite cannot reach it.
 func (r *PluginRunner) buildRequestContext(
-	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	name string,
-	arguments json.RawMessage,
+	call ToolCall,
 ) (*infracontext.RequestContext, error) {
-	body, err := json.Marshal(mcpToolCallParams{Name: name, Arguments: arguments})
+	body, err := json.Marshal(mcpToolCallParams{Name: call.Exposed, Arguments: call.Arguments})
 	if err != nil {
 		return nil, fmt.Errorf("mcp: marshal tools/call params: %w", err)
 	}
-	return &infracontext.RequestContext{
+	reqCtx := &infracontext.RequestContext{
 		GatewayID:      rc.Consumer.GatewayID.String(),
 		ConsumerID:     rc.Consumer.ID.String(),
 		ConsumerType:   string(rc.Consumer.Type),
@@ -332,7 +347,17 @@ func (r *PluginRunner) buildRequestContext(
 		RequestedModel: "",
 		MCP:            true,
 		Body:           body,
-	}, nil
+	}
+	if call.Registry != nil {
+		reqCtx.RegistryID = call.Registry.ID.String()
+		reqCtx.Metadata = map[string]interface{}{
+			infracontext.MetadataMCPTool:         call.NativeTool,
+			infracontext.MetadataMCPRegistryID:   call.Registry.ID.String(),
+			infracontext.MetadataMCPRegistryName: call.Registry.Name,
+			infracontext.MetadataMCPExposedTool:  call.Exposed,
+		}
+	}
+	return reqCtx, nil
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
