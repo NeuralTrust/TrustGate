@@ -690,5 +690,7 @@ func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
 	require.Nil(t, body["error"], "masking must not fail the call: %v", body["error"])
 	got, err := json.Marshal(body["result"])
 	require.NoError(t, err)
-	assert.JSONEq(t, masked, string(got))
+	// The masked body reaches the client as the plugin wrote it, plus the
+	// envelope every result carries.
+	assert.JSONEq(t, `{"content":[{"type":"text","text":"[REDACTED]"}],"resultType":"complete"}`, string(got))
 }

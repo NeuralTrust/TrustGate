@@ -41,13 +41,38 @@ import (
 const (
 	serverName              = "trustgate"
 	serverVersion           = "1.0"
-	latestProtocolVersion   = "2025-06-18"
-	discoverCacheTTLMs      = 0
+	latestProtocolVersion   = "2026-07-28"
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
+// advertisedProtocolVersions is what server/discover offers and what
+// initialize will negotiate, newest first. They are the same list on purpose:
+// advertising a revision initialize then refuses downgrades a client silently,
+// and it keeps applying the newer rules to answers built under the older one.
+//
+// What 2026-07-28 costs this gateway, and what it is given:
+//   - server/discover, which servers must implement, and which is where a
+//     client on this revision starts.
+//   - the result envelope on every answer, the relayed ones included
+//     (stampResultEnvelope).
+//   - subscriptions/listen in place of the GET stream, carrying the tool-list
+//     changes a client opts in to.
+//   - statelessness, which cost nothing: this gateway has never minted a
+//     session id or required a handshake before serving a request.
+//
+// What it does not implement, and why nothing here claims otherwise: the
+// resource subscriptions and prompt-list changes of a listen stream (the
+// acknowledgement names only what it will send, and the capabilities claim
+// only tools.listChanged), and the multi-round-trip pattern, which a gateway
+// has no use for on its own — an upstream that returns an input_required
+// result has it relayed with its own resultType intact.
+//
+// initialize and ping are gone in this revision but still answered, because
+// every client below it needs them and answering a method nobody on the newer
+// revision calls costs nothing.
 var advertisedProtocolVersions = []string{
 	latestProtocolVersion,
+	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
@@ -202,7 +227,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.surfaceVersion(c, rc)))
 	case "ping":
 		skipMetrics(c)
-		return writeRPCResult(c, req.ID, struct{}{})
+		return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, struct{}{}))
+	case "subscriptions/listen":
+		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
 	result, err := h.gateway.DispatchWithBaseURL(c.UserContext(), rc, c.BaseURL(), req.Method, req.Params)
@@ -217,6 +244,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// and announcing a change on it asks for another list of what was just sent.
 	// The surface is re-read either way, so the announcement is recorded against
 	// the snapshot the next request will compare with.
+	result = stampResultEnvelope(req.Method, result)
 	moved := h.surfaceMoved(c, rc)
 	listChanged := req.Method != "tools/list" &&
 		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
@@ -271,7 +299,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	if supportedProtocolVersions[params.ProtocolVersion] {
 		version = params.ProtocolVersion
 	}
-	return writeRPCResult(c, req.ID, fiber.Map{
+	return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, fiber.Map{
 		"protocolVersion": version,
 		"capabilities": fiber.Map{
 			"tools":     fiber.Map{"listChanged": true},
@@ -283,7 +311,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
 		"instructions": serverInstructions(rc),
-	})
+	}))
 }
 
 const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."

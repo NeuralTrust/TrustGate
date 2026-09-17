@@ -22,14 +22,14 @@ import (
 
 func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, version string) map[string]any {
 	return map[string]any{
-		"resultType":        "complete",
+		"resultType":        resultTypeComplete,
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
 		"capabilities":      configuredCapabilities(rc),
 		// Nothing here may be cached past the moment it is read: the version
 		// below is the client's cache key, and a stale copy of it is exactly
 		// what keeps a freshly connected server out of the tool list.
-		"ttlMs":      discoverCacheTTLMs,
-		"cacheScope": "private",
+		"ttlMs":      surfaceCacheTTLMs,
+		"cacheScope": cacheScopePrivate,
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
@@ -65,6 +65,14 @@ func configuredCapabilities(rc *appconsumer.RoutableConsumer) map[string]any {
 }
 
 func addCapability(capabilities map[string]any, kind string) {
+	if kind == "tools" {
+		// The gateway watches the tool surface and announces a move on a
+		// subscriptions/listen stream, which is how a client on this revision
+		// learns that an install or a connect gave the user new tools. Nothing
+		// else it serves moves on its own, so nothing else claims to.
+		capabilities[kind] = map[string]any{"listChanged": true}
+		return
+	}
 	capabilities[kind] = map[string]any{}
 }
 
