@@ -145,6 +145,7 @@ func mcpReq(native, exposed string) *infracontext.RequestContext {
 	req := &infracontext.RequestContext{
 		MCP:        true,
 		RegistryID: "reg-1",
+		MCPTool:    native,
 		Body:       []byte(fmt.Sprintf(`{"name":%q,"arguments":{"q":"x"}}`, exposed)),
 		Metadata: map[string]interface{}{
 			infracontext.MetadataMCPRegistryID:  "reg-1",
@@ -304,6 +305,38 @@ func TestPlugin_ExecuteMCP(t *testing.T) {
 				requireAllowed(t, res, err)
 				assert.Nil(t, span.PluginAttrsCopy().Extras)
 				assert.Empty(t, span.PluginAttrsCopy().Decision)
+			},
+		},
+		{
+			// Metadata is merged back out of the isolated requests of a parallel
+			// batch and shared across a sequential one, so a plugin ordered ahead
+			// of this one can rewrite MetadataMCPTool. The decision must follow
+			// the binding the dispatcher fixed, or that plugin could wave through
+			// a tool the allowlist denies.
+			name:     "a rewritten mcp.tool metadata key never changes the decision",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"delete_table"}},
+			req: func() *infracontext.RequestContext {
+				req := mcpReq("delete_table", "delete_table")
+				req.Metadata[infracontext.MetadataMCPTool] = "run_query"
+				return req
+			}(),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireDenied(t, res, err, "delete_table")
+			},
+		},
+		{
+			name:     "metadata alone cannot gate a call the dispatcher never bound",
+			mode:     policy.ModeEnforce,
+			settings: map[string]any{"deny_tools": []string{"*"}},
+			req: func() *infracontext.RequestContext {
+				req := mcpReq("", "run_query")
+				req.Metadata[infracontext.MetadataMCPTool] = "run_query"
+				return req
+			}(),
+			check: func(t *testing.T, res *appplugins.Result, span *trace.Span, err error) {
+				requireAllowed(t, res, err)
+				assert.Nil(t, span.PluginAttrsCopy().Extras)
 			},
 		},
 		{

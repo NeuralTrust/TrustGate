@@ -186,12 +186,15 @@ func executeMCP(cfg *config, in appplugins.ExecInput) (*appplugins.Result, error
 	return newRejectResult(http.StatusForbidden, errToolDenied, []string{tool})
 }
 
+// mcpNativeTool reads the binding the dispatcher fixed before the chain ran.
+// It deliberately ignores MetadataMCPTool: Metadata is merged back out of the
+// isolated requests of a parallel batch and shared across a sequential one, so
+// a plugin ordered ahead of this one could name a tool the call never reaches.
 func mcpNativeTool(req *infracontext.RequestContext) string {
-	if req == nil || req.Metadata == nil {
+	if req == nil {
 		return ""
 	}
-	tool, _ := req.Metadata[infracontext.MetadataMCPTool].(string)
-	return strings.TrimSpace(tool)
+	return strings.TrimSpace(req.MCPTool)
 }
 
 type toolKeyScan struct {

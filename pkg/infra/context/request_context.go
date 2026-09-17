@@ -24,8 +24,10 @@ import (
 
 // Metadata keys the MCP tools/call path sets on RequestContext once the tool
 // has been bound to its upstream. Body.name stays the exposed (possibly
-// federated) name; these carry the native binding so a plugin can decide on
-// the tool the upstream will actually run.
+// federated) name; these describe the native binding for plugins that only
+// read metadata, and for telemetry. They are advisory: the executor merges
+// metadata back out of isolated requests, so a plugin can overwrite them. A
+// plugin that gates the call must read RequestContext.MCPTool instead.
 const (
 	// MetadataMCPTool is the upstream-native tool name.
 	MetadataMCPTool = "mcp.tool"
@@ -76,6 +78,14 @@ type RequestContext struct {
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
+	// MCPTool is the upstream-native tool name a resolved tools/call is bound
+	// to, "" on any other request. A plugin deciding whether to allow the call
+	// must read it here and not from MetadataMCPTool: Metadata is a channel
+	// plugins write to and the executor merges back, so an earlier plugin in
+	// the chain could name a different tool there. Scalar fields are never
+	// merged out of an isolated request, so this one is the binding the
+	// dispatcher fixed.
+	MCPTool string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

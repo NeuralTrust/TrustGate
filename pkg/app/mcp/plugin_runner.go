@@ -326,9 +326,12 @@ func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage polic
 	)
 }
 
-// Body keeps the exposed name so plugins see exactly what the caller sent; the
-// native binding travels in RegistryID and the MetadataMCP* keys, where a body
-// rewrite cannot reach it.
+// Body keeps the exposed name so plugins see exactly what the caller sent. The
+// native binding travels in the scalar fields RegistryID and MCPTool, which no
+// body rewrite reaches and which the executor never merges back out of an
+// isolated request; the MetadataMCP* keys mirror it for plugins that only read
+// metadata, but a plugin can overwrite those, so gating decisions read the
+// fields.
 func (r *PluginRunner) buildRequestContext(
 	rc *appconsumer.RoutableConsumer,
 	call ToolCall,
@@ -350,6 +353,7 @@ func (r *PluginRunner) buildRequestContext(
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
+		reqCtx.MCPTool = call.NativeTool
 		reqCtx.Metadata = map[string]interface{}{
 			infracontext.MetadataMCPTool:         call.NativeTool,
 			infracontext.MetadataMCPRegistryID:   call.Registry.ID.String(),
