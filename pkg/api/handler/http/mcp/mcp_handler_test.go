@@ -324,7 +324,7 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
 	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`)
 	result := body["result"].(map[string]any)
-	if result["protocolVersion"] != "2025-06-18" {
+	if result["protocolVersion"] != "2026-07-28" {
 		t.Fatalf("protocolVersion = %v, want latest", result["protocolVersion"])
 	}
 }
@@ -595,18 +595,16 @@ func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
 	if result["resultType"] != "complete" {
 		t.Fatalf("resultType = %v, want complete", result["resultType"])
 	}
-	// A client probing with 2026-07-28 must still get a discovery answer rather
-	// than a method-not-found, but it must be told only what the gateway can
-	// actually negotiate: advertising the probed revision downgraded the client
-	// silently and made it reject every tools/call result as malformed.
+	// A client probing with 2026-07-28 gets it back, and initialize will
+	// negotiate it: what discover advertises and what initialize accepts are
+	// one list, because a client told about a revision the handshake then
+	// refuses is downgraded silently and goes on applying the newer rules.
 	versions, _ := result["supportedVersions"].([]any)
-	if len(versions) == 0 || versions[0] != "2025-06-18" {
-		t.Fatalf("supportedVersions = %v, want the negotiable revision first", versions)
+	if len(versions) == 0 || versions[0] != "2026-07-28" {
+		t.Fatalf("supportedVersions = %v, want the newest revision first", versions)
 	}
-	for _, version := range versions {
-		if version == "2026-07-28" {
-			t.Fatalf("supportedVersions advertises a revision initialize refuses: %v", versions)
-		}
+	if result["cacheScope"] != "private" {
+		t.Fatalf("cacheScope = %v, want private", result["cacheScope"])
 	}
 	capabilities := result["capabilities"].(map[string]any)
 	for _, kind := range []string{"tools", "prompts", "resources"} {

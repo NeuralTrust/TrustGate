@@ -4140,14 +4140,14 @@
         },
         "/{slug}/connections": {
             "get": {
-                "description": "For an MCP consumer whose application identifies its end users (identity.source = app). Reports, per connectable server, whether the named end user is connected, needs to reconnect, or has not connected. Authenticated with the consumer's API key.",
+                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "connections"
                 ],
-                "summary": "Read an application's end-user connection states",
+                "summary": "Read connection states for an end user or for the application itself",
                 "parameters": [
                     {
                         "type": "string",
@@ -4158,10 +4158,9 @@
                     },
                     {
                         "type": "string",
-                        "description": "End-user id the application uses",
+                        "description": "End-user id the application uses; omit to ask about the application itself",
                         "name": "end_user",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8441,6 +8440,10 @@
         "pkg_api_handler_http_oauth.EndUserConnectionsResponse": {
             "type": "object",
             "properties": {
+                "actor": {
+                    "description": "Actor names whose connections these are: \"end_user\" or \"application\".\nWithout it an empty end_user would read as an unnamed user.",
+                    "type": "string"
+                },
                 "connections": {
                     "type": "array",
                     "items": {
@@ -8448,6 +8451,7 @@
                     }
                 },
                 "end_user": {
+                    "description": "EndUser is empty when the states are the application's own.",
                     "type": "string"
                 }
             }

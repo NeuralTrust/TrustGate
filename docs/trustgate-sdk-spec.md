@@ -194,6 +194,27 @@ Calling `asApp()` on an app-identified consumer raises
 `AppActorUnavailableError` (§6) rather than silently acting as the shared
 principal — the mirror of the gateway's own refusal in §3.1.
 
+What it does have is the preflight:
+
+```ts
+const accounts = await app.connections.list()
+// [{ provider: 'com.notion/mcp', registry: 'Notion', status: 'connected',
+//    accountRef: 'ops@corp.com', expiresAt: Date },
+//  { provider: 'app.linear/mcp', registry: 'Linear', status: 'not_connected' }]
+
+const blocked = accounts.filter((a) => a.status !== 'connected')
+if (blocked.length) throw new Error(`not connected: ${blocked.map((a) => a.registry)}`)
+```
+
+This is the half of the batch story the link cannot cover. A job that cannot be
+handed a URL at runtime has to learn at startup that an account is missing or
+has expired, while there is still a person around to fix it — otherwise the run
+gets to the first call on that server and fails there, halfway through.
+
+`status` is `connected`, `needs_reconnect` or `not_connected`, and `expiresAt`
+is the credential's own expiry, so a job can refuse to start a six-hour run on
+an account with twenty minutes left rather than discovering it at hour one.
+
 ## 5. Wire contracts the SDK wraps
 
 All of these live on the MCP plane, next to the consumer, and authenticate
@@ -238,6 +259,39 @@ SDK surfaces `expiresAt` as a `Date` and never caches a link past it.
 The SDK camel-cases the payload (`account_ref` → `accountRef`) and parses
 timestamps into `Date`. It does **not** invent fields the gateway does not send.
 
+### `GET {baseUrl}/connections` (no `end_user`) → `200`
+
+The same endpoint asked about the other actor. Omitting `end_user` asks what the
+application itself has connected — the principal `app:<consumer_id>` — which is
+what `app.connections.list()` calls.
+
+```jsonc
+{
+  "end_user": "",
+  "actor": "application",
+  "connections": [
+    {
+      "provider": "com.notion/mcp",
+      "code": "notion",
+      "registry": "Notion",
+      "status": "connected",
+      "account_ref": "ops@corp.com",
+      "expires_at": "2026-10-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+`actor` is `end_user` or `application`, and it is there because an empty
+`end_user` would otherwise read as an unnamed user rather than as the other
+actor entirely.
+
+A consumer that acts for its users has no accounts of its own, so this form
+answers `409 consumer_acts_for_users` rather than an empty list — the mirror of
+the `409 end_users_not_identified` the `end_user` form gives for a consumer that
+acts as itself. The SDK raises `AppActorUnavailableError` for the first and
+`EndUserActorUnavailableError` for the second.
+
 ### `POST {baseUrl}/mcp`
 
 Standard MCP, with `X-AG-API-Key` and, for the end-user actor,
@@ -271,12 +325,13 @@ maps to one typed error, all extending `TrustGateError` (carrying `status`,
 | 400 | `invalid_request` | `InvalidRequestError` | Bad body, bad `end_user`, unknown provider for this consumer |
 | 401 | `unauthenticated` | `AuthenticationError` | Wrong API key, or a slug that is not an MCP consumer of this gateway |
 | 409 | `end_users_not_identified` | `EndUsersNotIdentifiedError` | A per-end-user call against a consumer that is not app-identified — the integration is pointed at the wrong consumer |
+| 409 | `consumer_acts_for_users` | `AppActorUnavailableError` | An application-actor call against a consumer that acts for its users — it holds no accounts of its own, and an empty list would read as "connected to nothing" |
 | — | — | `AppActorUnavailableError` | `asApp()` on an app-identified consumer. Raised locally from the consumer's own shape, before any request: acting as the shared principal would pool every end user's access into one account |
 | 429 | — | `RateLimitedError` (with `retryAfterMs`) | Connect-attempt limiter, per consumer and per source |
 | 503 | `unavailable` | `ServiceUnavailableError` | Rate limiter unavailable |
 | 5xx | `internal_error` | `TrustGateServerError` | Gateway-side failure |
 
-Retry policy: `GET /connections` retries on 429/503/5xx and on network errors
+Retry policy: `GET /connections` — both actors — retries on 429/503/5xx and on network errors
 with exponential backoff plus jitter, honouring `Retry-After`.
 `POST /connections/links` is **not** retried automatically — every call mints a
 new ticket, and a silent retry would hand the app two live links.
@@ -332,7 +387,12 @@ state = tg.connections.list(end_user="user_123")
    app-identified consumer raises `AppActorUnavailableError` without a request.
    A compile-time test asserts the app handle exposes no link-minting call —
    the guarantee is the type, so a type that loses it is the regression.
-5. No API key appears in any error, log line or stack the SDK produces.
+5. The application actor's preflight: `app.connections.list()` on a consumer
+   with one connected and one unconnected upstream reports `connected` and
+   `not_connected` for the right servers and carries the connected one's
+   `expiresAt`; the same call against an app-identified consumer raises
+   `AppActorUnavailableError` from the gateway's `409`.
+6. No API key appears in any error, log line or stack the SDK produces.
 
 ## 10. Delivery
 
@@ -343,6 +403,7 @@ state = tg.connections.list(end_user="user_123")
 | 3 | `forEndUser`, `mcpUrl`, `mcpHeaders` |
 | 4 | `waitForConnection` + retry/backoff |
 | 4b | `asApp()`, `AppActorUnavailableError`, the compile-time guarantee |
+| 4c | `app.connections.list()` — the batch preflight, over `GET /connections` with no `end_user` |
 | 5 | README with the app's own snippet, integration suite, publish `0.1.0` |
 | 6 | App: flip `APP_IDENTITY_SOURCE_ENABLED` to `true` |
 | 7 | Python `0.1.0` |
@@ -363,15 +424,12 @@ state = tg.connections.list(end_user="user_123")
 - **Listing end users.** Nothing exposes "every end user this consumer has
   connected". Worth having for support and for GDPR deletion, but it is a
   gateway endpoint first.
-- **Preflight for the application actor.** `GET /{slug}/connections` answers for
-  an end user; nothing answers "which upstreams does this consumer itself have
-  connected". A batch therefore cannot ask whether it will work before it
-  starts — it finds out on the call that fails. Gateway endpoint first, then
-  `app.connections.list()`. This is the gap that most affects the batch case.
-- **Telling a batch its credential died.** When `app:<consumer_id>`'s refresh
-  token is revoked or expires, the job learns from the failure. A webhook or a
-  readable expiry would let it be fixed before the run. Same shape as the
-  webhook question above, different subject.
+- **Pushing a credential's death to a running job.** A run that starts with
+  every account connected can still have one revoked under it an hour later,
+  and it learns from the failure. `app.connections.list()` (§4.3) closes the
+  "before it starts" half; the "while it runs" half is the webhook question
+  above with a different subject, and a job that wants it today polls that same
+  call between batches.
 
 ## 12. What the survey changed
 
