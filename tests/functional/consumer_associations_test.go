@@ -239,6 +239,9 @@ func TestPolicyGlobalScope_CrossGatewayRejected(t *testing.T) {
 	assert.Equal(t, "not_found", body["error"])
 }
 
+// A scope naming a registry stays refused on an LLM consumer: the destination
+// dimension has no meaning outside MCP, so the policy would be attached and
+// never run.
 func TestAttachPolicy_ScopedPolicyOnLLMConsumerRejected(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-scope-llm-gw")})
@@ -255,6 +258,48 @@ func TestAttachPolicy_ScopedPolicyOnLLMConsumerRejected(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "validation_failed", body["error"])
 	assert.Empty(t, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"), "rejected attach leaves no link")
+}
+
+// The second reason for the 422 is the plugin, not the dimension: a group-only
+// scope would cross, but rate_limiter never opted into running where the scope
+// does not gate, so it is refused as well. Every production plugin looks like
+// this today (RUN-1621, open question 2).
+func TestAttachPolicy_GroupScopedPolicyOnLLMConsumerRejectedForTheNonInertPlugin(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-grp-llm-gw")})
+	policyID := CreatePolicy(t, gwID, scopedPolicyPayload(uniqueName("assoc-grp-pol"), map[string]any{
+		"groups": []string{"finance"},
+	}))
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-grp-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+	assert.Empty(t, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"), "rejected attach leaves no link")
+}
+
+// The combination the guard allows: a scope that narrows by group alone over a
+// plugin that does not resolve tool or registry names. It is a 204, and the
+// policy then runs on the consumer's LLM traffic with the group inert.
+func TestAttachPolicy_GroupScopedPolicyOnLLMConsumerAccepted(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	t.Skip("no production plugin returns ScopeInertSafe() == true yet: which ones may is the open product decision RUN-1621 Q2. Unskip once one does, using its slug here.")
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-inert-llm-gw")})
+	payload := scopedPolicyPayload(uniqueName("assoc-inert-pol"), map[string]any{
+		"groups": []string{"finance"},
+	})
+	policyID := CreatePolicy(t, gwID, payload)
+	llmConsumer := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-inert-llm-co")))
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gwID, llmConsumer, policyID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusNoContent, status, "body=%v", body)
+	assert.Equal(t, map[string]struct{}{llmConsumer: {}}, idSet(t, getPolicy(t, gwID, policyID), "consumer_ids"))
 }
 
 // Attaching a scoped policy answers 204 unless the consumer already runs the
