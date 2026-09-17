@@ -86,6 +86,14 @@ type RequestContext struct {
 	// merged out of an isolated request, so this one is the binding the
 	// dispatcher fixed.
 	MCPTool string
+	// MCPToolCallID is the LLM tool_call_id a client volunteered for a
+	// tools/call, "" when it sent none. It correlates one tool execution seen
+	// on the MCP path with the `role: tool` message the same execution produces
+	// on the LLM path, so a plugin counting executions can recognise the two
+	// observations as one (ENG-1579). It is a caller hint, not an identity:
+	// nothing stops a client from repeating or inventing one, so it may only
+	// suppress a duplicate count, never a charge no other path makes.
+	MCPToolCallID string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

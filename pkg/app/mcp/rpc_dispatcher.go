@@ -31,6 +31,16 @@ import (
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
 
+// toolCallIDMetaKey is the params._meta key an agent uses to tell the gateway
+// which LLM tool_call_id a tools/call is executing, so a policy watching both
+// protocols counts the execution once (ENG-1579). The reverse-DNS prefix keeps
+// it out of the way of the keys the MCP spec reserves.
+const toolCallIDMetaKey = "ai.neuraltrust/toolCallId"
+
+// maxToolCallIDLen bounds what a caller can put in a Redis key derived from the
+// id. Real ids are short ("call_abc123", "toolu_01A…").
+const maxToolCallIDLen = 128
+
 type InvalidParamsError struct {
 	Reason string
 }
@@ -166,6 +176,7 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
+		Meta      json.RawMessage `json:"_meta,omitempty"`
 	}
 	if err := json.Unmarshal(req.params, &params); err != nil || params.Name == "" {
 		return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
@@ -200,11 +211,12 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		return nil, err
 	}
 	call := ToolCall{
-		Exposed:    target.Exposed,
-		Registry:   target.Registry,
-		NativeTool: target.Tool.Name,
-		Arguments:  params.Arguments,
-		Plan:       planFor(ctx, req.consumer, target),
+		Exposed:          target.Exposed,
+		Registry:         target.Registry,
+		NativeTool:       target.Tool.Name,
+		Arguments:        params.Arguments,
+		Plan:             planFor(ctx, req.consumer, target),
+		ClientToolCallID: clientToolCallID(params.Meta),
 	}
 	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
 	if err != nil {
@@ -230,6 +242,47 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		result = post.Result
 	}
 	return result, nil
+}
+
+// clientToolCallID reads the tool_call_id a caller volunteered in
+// params._meta. Anything that is not a plain short token is dropped rather
+// than rejected: the id only ever suppresses a duplicate count, so a malformed
+// one costs the caller its correlation, not its call. Keeping the character set
+// closed also keeps the value safe to interpolate into a counter key, where a
+// separator smuggled inside the id could otherwise land it in another key's
+// namespace.
+func clientToolCallID(meta json.RawMessage) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		return ""
+	}
+	raw, ok := fields[toolCallIDMetaKey]
+	if !ok {
+		return ""
+	}
+	var id string
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return ""
+	}
+	if id == "" || len(id) > maxToolCallIDLen || !isToolCallIDToken(id) {
+		return ""
+	}
+	return id
+}
+
+func isToolCallIDToken(id string) bool {
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // planFor picks the stage plan for a resolved destination. Consumers without
