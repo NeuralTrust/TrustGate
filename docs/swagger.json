@@ -5213,6 +5213,10 @@
                 "name": {
                     "type": "string"
                 },
+                "pending_upstream_auth": {
+                    "description": "PendingUpstreamAuth counts the upstream accounts this application still\nowes before it can call every server it is bound to: never signed in, or\nsigned in and since expired or revoked.\nAbsent when nothing is owed, and on a plane that cannot read the accounts\nat all — a list must not claim everything is fine when it did not look.",
+                    "type": "integer"
+                },
                 "registry_ids": {
                     "type": "array",
                     "items": {
