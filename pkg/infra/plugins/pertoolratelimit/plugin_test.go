@@ -1326,3 +1326,161 @@ func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
 		})
 	}
 }
+
+func mcpReqWithToolCallID(body []byte, toolCallID string) *infracontext.RequestContext {
+	req := mcpReq(body)
+	req.MCPToolCallID = toolCallID
+	return req
+}
+
+func globalInput(
+	stage policy.Stage,
+	settings map[string]any,
+	req *infracontext.RequestContext,
+) appplugins.ExecInput {
+	in := input(stage, settings, req, nil)
+	in.Scope = appplugins.RuntimeScope{GatewayID: "gw-1", Global: true}
+	return in
+}
+
+func globalKey(tool string, win int) string {
+	return counterKey("pt-1", "global", "gw-1", tool, win)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolCountsOnce(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", val)
+}
+
+// A tools/call is the only observation that witnesses a real execution: the
+// `role: tool` message only reports one. So a slot already claimed from a
+// conversation must not excuse an MCP count, or a client could fabricate one
+// tool result and then run the tool for free. The real order never needs it —
+// the tool runs before its result can be in the conversation, so the MCP path
+// always observes first.
+func TestPlugin_GlobalScope_ConversationClaimDoesNotExcuseMCPCount(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err := p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err = p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolWithoutCorrelationCountsBoth(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := globalInput(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")))
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})))
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+}
+
+func TestPlugin_MCP_PreResponse_RepeatedToolCallIDStillCounts(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	for i := 0; i < 3; i++ {
+		in := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+		_, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+	}
+
+	val, err := rdb.Get(context.Background(), globalKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "3", val)
+}
+
+func TestPlugin_MCP_PreResponse_ClaimsDedupeSlotWithLargestWindowTTL(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := map[string]any{
+		"rules": []any{map[string]any{
+			"tool": "send_email", "behavior": "reject_response",
+			"windows": []any{
+				map[string]any{"duration": "1m", "max": 10},
+				map[string]any{"duration": "1h", "max": 100},
+			},
+		}},
+	}
+
+	in := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"))
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+
+	key := dedupeKey("pt-1", "global", "gw-1", "call_1")
+	ttl, err := rdb.TTL(context.Background(), key).Result()
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, ttl)
+}
+
+func TestPlugin_ConsumerScope_CrossProtocolChargesEachBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 10)
+
+	mcp := input(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_1"), nil)
+	mcp.Scope = appplugins.RuntimeScope{ConsumerID: "c-mcp", GatewayID: "gw-1"}
+	_, err := p.Execute(context.Background(), mcp)
+	require.NoError(t, err)
+
+	llm := input(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{"call_1", "send_email"})), nil)
+	llm.Scope = appplugins.RuntimeScope{ConsumerID: "c-llm", GatewayID: "gw-1"}
+	_, err = p.Execute(context.Background(), llm)
+	require.NoError(t, err)
+
+	mcpVal, err := rdb.Get(context.Background(), counterKey("pt-1", "consumer", "c-mcp", "send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", mcpVal)
+	llmVal, err := rdb.Get(context.Background(), counterKey("pt-1", "consumer", "c-llm", "send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", llmVal)
+}
+
+func TestPlugin_GlobalScope_CrossProtocolBudgetReachesMax(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 3)
+
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("call_%d", i)
+		mcp := globalInput(policy.StagePreResponse, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), id))
+		_, err := p.Execute(context.Background(), mcp)
+		require.NoError(t, err)
+
+		llm := globalInput(policy.StagePreRequest, settings, openAIReq(openAIToolResults(t, tcSpec{id, "send_email"})))
+		_, err = p.Execute(context.Background(), llm)
+		require.NoError(t, err)
+	}
+
+	blocked := globalInput(policy.StagePreRequest, settings, mcpReqWithToolCallID(mcpBody(t, "send_email"), "call_3"))
+	_, err := p.Execute(context.Background(), blocked)
+	var pe *appplugins.PluginError
+	require.ErrorAs(t, err, &pe)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
