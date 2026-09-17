@@ -84,3 +84,39 @@ func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 		t.Fatalf("message should name the variable: %q", msg)
 	}
 }
+
+// Every error above the default branch was written for a caller to read. An
+// error that falls through was not: it is whatever the layer that raised it
+// produced, and relaying it hands a remote client the gateway's internals —
+// a resolved upstream URL with a token in its query, a driver message, a path.
+func TestHandler_ToolsCall_UnclassifiedErrorIsGeneric(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "scrape", mock.Anything).
+		Return(nil, fmt.Errorf(
+			"post %q: pq: relation \"vault_credentials\" does not exist",
+			"https://mcp.brightdata.com/mcp?token=supersecret123",
+		)).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"scrape"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("JSON-RPC errors ride on HTTP 200, got %d", status)
+	}
+	rpcErr, _ := body["error"].(map[string]any)
+	if rpcErr == nil {
+		t.Fatalf("no error in body: %v", body)
+	}
+	if code, _ := rpcErr["code"].(float64); int(code) != -32603 {
+		t.Fatalf("code = %v, want internal error (-32603)", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); msg != "internal error" {
+		t.Fatalf("message = %q, want the generic internal message", msg)
+	}
+	raw := fmt.Sprint(body)
+	for _, leak := range []string{"supersecret123", "brightdata.com", "vault_credentials"} {
+		if strings.Contains(raw, leak) {
+			t.Fatalf("internal detail %q leaked to the client: %s", leak, raw)
+		}
+	}
+}
