@@ -223,7 +223,7 @@ func TestCreator_Create_WithMCPScope_StoresNormalizedScope(t *testing.T) {
 			return p.MCPScope != nil &&
 				len(p.MCPScope.RegistryIDs) == 1 && p.MCPScope.RegistryIDs[0] == snowflake &&
 				len(p.MCPScope.Tools) == 1 && p.MCPScope.Tools[0].Tool == "run_query" &&
-				len(p.MCPScope.Users) == 1 && p.MCPScope.Users[0] == "ana@acme.com"
+				len(p.MCPScope.Groups) == 1 && p.MCPScope.Groups[0] == "Finanzas"
 		})).
 		Return(nil).
 		Once()
@@ -233,13 +233,13 @@ func TestCreator_Create_WithMCPScope_StoresNormalizedScope(t *testing.T) {
 	in.MCPScope = &domain.MCPScope{
 		RegistryIDs: []ids.RegistryID{snowflake},
 		Tools:       []domain.MCPToolRef{{RegistryID: jira, Tool: "  run_query "}},
-		Users:       []string{"Ana@Acme.com"},
+		Groups:      []string{" Finanzas "},
 	}
 	p, err := creator.Create(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if p.MCPScope == nil || p.MCPScope.Tools[0].Tool != "run_query" || p.MCPScope.Users[0] != "ana@acme.com" {
+	if p.MCPScope == nil || p.MCPScope.Tools[0].Tool != "run_query" || p.MCPScope.Groups[0] != "Finanzas" {
 		t.Fatalf("scope was not normalised before saving: %+v", p.MCPScope)
 	}
 }

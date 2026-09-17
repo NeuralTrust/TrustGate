@@ -1042,10 +1042,6 @@ definitions:
         items:
           type: string
         type: array
-      except_users:
-        items:
-          type: string
-        type: array
       groups:
         items:
           type: string
@@ -1057,10 +1053,6 @@ definitions:
       tools:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest'
-        type: array
-      users:
-        items:
-          type: string
         type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest:
@@ -1120,10 +1112,6 @@ definitions:
         items:
           type: string
         type: array
-      except_users:
-        items:
-          type: string
-        type: array
       groups:
         items:
           type: string
@@ -1135,10 +1123,6 @@ definitions:
       tools:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse'
-        type: array
-      users:
-        items:
-          type: string
         type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse:
@@ -2741,6 +2725,8 @@ definitions:
         type: string
       operation:
         type: string
+      policy_scope:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope'
       prompt:
         type: string
       registry_id:
@@ -2762,6 +2748,28 @@ definitions:
       upstream_status:
         type: integer
       upstream_tool:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope:
+    properties:
+      evaluated:
+        type: integer
+      matched:
+        items:
+          type: string
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      reason:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry:

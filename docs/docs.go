@@ -5768,12 +5768,6 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "except_users": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "groups": {
                     "type": "array",
                     "items": {
@@ -5790,12 +5784,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest"
-                    }
-                },
-                "users": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
                     }
                 }
             }
@@ -5881,12 +5869,6 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "except_users": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "groups": {
                     "type": "array",
                     "items": {
@@ -5903,12 +5885,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse"
-                    }
-                },
-                "users": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
                     }
                 }
             }
@@ -8153,6 +8129,9 @@ const docTemplate = `{
                 "operation": {
                     "type": "string"
                 },
+                "policy_scope": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
+                },
                 "prompt": {
                     "type": "string"
                 },
@@ -8184,6 +8163,40 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope": {
+            "type": "object",
+            "properties": {
+                "evaluated": {
+                    "type": "integer"
+                },
+                "matched": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
                     "type": "string"
                 }
             }

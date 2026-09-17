@@ -178,9 +178,7 @@ func TestCodecRoundTripsPolicyMCPScope(t *testing.T) {
 	full := &policydomain.MCPScope{
 		RegistryIDs:  []ids.RegistryID{jira},
 		Tools:        []policydomain.MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}},
-		Users:        []string{"ana@acme.com"},
 		Groups:       []string{"Finanzas"},
-		ExceptUsers:  []string{"usr_123"},
 		ExceptGroups: []string{"Contractors"},
 	}
 	unscoped := newPolicy("unscoped", nil)
