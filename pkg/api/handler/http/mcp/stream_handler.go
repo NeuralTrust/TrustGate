@@ -177,12 +177,20 @@ func flushFrame(w *bufio.Writer, frame string) bool {
 }
 
 // StreamRoute returns the handler chain for the notification stream: a GET that
-// is not asking for the event stream keeps answering 405 without ever reaching
+// is not asking for the event stream keeps answering without ever reaching
 // authentication, so probes and browsers are unaffected.
+//
+// This route is a catch-all, so what it answers is also what the gateway says
+// about every path it does not serve. 405 with "Allow: POST" claims the
+// resource is there and was asked for with the wrong verb — which is true of an
+// MCP endpoint and a lie about anything else. A client walking the OAuth
+// discovery chain asks for /.well-known/openid-configuration after the
+// authorization-server document, and reads that lie as a server that is
+// misbehaving rather than one that simply has no OpenID metadata.
 func (h *Handler) StreamRoute(authMiddlewares []fiber.Handler) []fiber.Handler {
 	gate := func(c *fiber.Ctx) error {
 		if !WantsEventStream(c) {
-			return h.MethodNotAllowed(c)
+			return h.NotServedHere(c)
 		}
 		return c.Next()
 	}
