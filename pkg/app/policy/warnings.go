@@ -57,11 +57,28 @@ func (w *warner) Overlaps(ctx context.Context, p *domain.Policy) ([]string, erro
 	if p == nil || p.MCPScope == nil {
 		return nil, nil
 	}
-	reach, err := w.reach(ctx, p)
+	reach, unreached, err := w.reach(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	return w.overlaps(ctx, p, reach)
+	warnings, err := w.overlaps(ctx, p, reach)
+	if err != nil {
+		return nil, err
+	}
+	return appendUnreachedWarning(warnings, unreached), nil
+}
+
+// appendUnreachedWarning reports the non-MCP consumers a global policy stopped
+// running on the moment it gained a scope. Scoped policies never enter the
+// plan of an LLM or A2A consumer, so adding mcp_scope to a global policy
+// silently takes it off that traffic; an operator has to hear about it.
+func appendUnreachedWarning(warnings []string, unreached int) []string {
+	if unreached == 0 {
+		return warnings
+	}
+	return append(warnings, fmt.Sprintf(
+		"policy is global and scoped to MCP: it no longer runs on %d non-MCP consumer(s) of the gateway",
+		unreached))
 }
 
 func (w *warner) OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) ([]string, error) {
@@ -75,24 +92,32 @@ func (w *warner) OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, 
 	return w.overlaps(ctx, p, []ids.ConsumerID{consumerID})
 }
 
-// reach returns the consumers whose MCP plan p takes part in. A global policy
-// reaches every MCP consumer of the gateway; LLM and A2A consumers never run a
-// scoped policy, so they are left out.
-func (w *warner) reach(ctx context.Context, p *domain.Policy) ([]ids.ConsumerID, error) {
+// reach returns the consumers whose MCP plan p takes part in, and how many
+// consumers of the gateway it no longer reaches at all. A global policy reaches
+// every MCP consumer; LLM and A2A consumers never run a scoped policy, so they
+// are left out and counted as unreached. A non-global policy cannot be attached
+// to a non-MCP consumer in the first place, so it never has any.
+func (w *warner) reach(ctx context.Context, p *domain.Policy) ([]ids.ConsumerID, int, error) {
 	if !p.Global {
-		return p.ConsumerIDs, nil
+		return p.ConsumerIDs, 0, nil
 	}
 	consumers, err := w.consumers.ListByGateway(ctx, p.GatewayID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := make([]ids.ConsumerID, 0, len(consumers))
+	unreached := 0
 	for _, c := range consumers {
-		if c != nil && c.Type == consumerdomain.TypeMCP {
-			out = append(out, c.ID)
+		if c == nil {
+			continue
 		}
+		if c.Type != consumerdomain.TypeMCP {
+			unreached++
+			continue
+		}
+		out = append(out, c.ID)
 	}
-	return out, nil
+	return out, unreached, nil
 }
 
 func (w *warner) overlaps(ctx context.Context, p *domain.Policy, reach []ids.ConsumerID) ([]string, error) {

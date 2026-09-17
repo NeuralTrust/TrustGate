@@ -53,7 +53,7 @@ matches enters the plan.
 | `mcp_scope` absent or `null` | Applies to all traffic of its consumers (unchanged). |
 | `mcp_scope: {}` (present, empty) | Matches nothing. The API refuses to create or update a policy to `{}` (422). It only appears when the last registry a scope referenced is deleted: the prune writes `{}`, never `NULL`, so the policy goes dormant instead of silently widening to the whole consumer. Renaming such a policy still works. |
 | Caller without a user identity | An API key acting as the application runs as `app:<consumer_id>`; an `acts_for_users` consumer with source `app` runs as `app:<consumer_id>:<end_user>`. Neither carries groups or an email claim, so such a caller never matches `groups`, never matches an email in `users`, and never falls in `except_groups`. "Everyone but Finance" therefore still applies to it. |
-| `global: true` + scope | Allowed (`POST .../policies/{id}/global`). This is how a scoped policy reaches the MCP Store, whose consumer only sees global policies. |
+| `global: true` + scope | Allowed (`POST .../policies/{id}/global`). This is how a scoped policy reaches the MCP Store, whose consumer only sees global policies. **A scope also takes the policy off every non-MCP consumer of the gateway**: scoped policies never enter the plan of an LLM or A2A consumer. Giving a scope to a global policy that was covering LLM traffic silently stops it there, so create, update and `global` answer with a non-blocking warning (`policy is global and scoped to MCP: it no longer runs on <n> non-MCP consumer(s) of the gateway`). |
 | Same `slug` twice | Scoped policies are additive: they never replace a same-`slug` policy the way an unscoped consumer policy replaces an unscoped global one. A scoped `trustguard` next to an unscoped one runs both. The API returns non-blocking `warnings` (`consumer <id> already runs plugin <slug> without scope`) on create, update and `global`; attach answers `200 {"warnings": [...]}` when there are warnings and `204` otherwise. |
 | LLM consumer | A policy with `mcp_scope` cannot be attached to an LLM consumer (422). |
 
@@ -93,6 +93,16 @@ tools/call
 **Policies decide execution; the toolkit and Access decide visibility.** A tool
 a policy denies still appears in `tools/list`; the call fails with JSON-RPC
 error `-32001` on HTTP 200, without reaching the upstream.
+
+**The binding a plugin gates on is not rewritable.** Step 3 fixes the
+destination before any policy runs and records it on the request context as
+`RegistryID` and `MCPTool`. A plugin that rewrites the request body cannot
+reroute the call, and neither can one that writes metadata: `mcp.tool`,
+`mcp.registry_id`, `mcp.registry_name` and `mcp.exposed_tool` mirror the
+binding for plugins that only read metadata, but metadata is merged back out of
+the isolated requests of a parallel batch, so a plugin ordered ahead of another
+can change what it sees there. Plugins that gate a call — `tool_allowlist` — read
+`MCPTool`, never the metadata key.
 
 ## Deny pattern: "only group X may call this tool"
 

@@ -56,6 +56,10 @@ func overlapWarning(consumerID ids.ConsumerID, slug string) string {
 	return fmt.Sprintf("consumer %s already runs plugin %s without scope", consumerID, slug)
 }
 
+func unreachedWarning(n int) string {
+	return fmt.Sprintf("policy is global and scoped to MCP: it no longer runs on %d non-MCP consumer(s) of the gateway", n)
+}
+
 func TestWarner_Overlaps_UnscopedPolicyNeverWarns(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
@@ -129,7 +133,51 @@ func TestWarner_Overlaps_GlobalPolicyReachesMCPConsumersOnly(t *testing.T) {
 	w := apppolicy.NewWarner(repo, consumers)
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
-	assert.Equal(t, []string{overlapWarning(mcpWithUnscoped, "trustguard")}, warnings)
+	// The LLM consumer is not warned about an overlap — a scoped policy never
+	// enters its plan — but it is reported as lost reach, because that is what
+	// giving a global policy a scope did to it.
+	assert.Equal(t, []string{
+		overlapWarning(mcpWithUnscoped, "trustguard"),
+		unreachedWarning(1),
+	}, warnings)
+}
+
+// A global policy that gains an mcp_scope stops running on every non-MCP
+// consumer of the gateway without any error, so the write has to say so even
+// when no consumer overlaps.
+func TestWarner_Overlaps_GlobalScopedWarnsAboutNonMCPConsumers(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	p := scopedPolicy(gwID, "trustguard")
+	p.Global = true
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*consumerdomain.Consumer{
+		{ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Type: consumerdomain.TypeLLM},
+		{ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Type: consumerdomain.TypeLLM},
+	}, nil).Once()
+	repo := repomocks.NewRepository(t)
+
+	w := apppolicy.NewWarner(repo, consumers)
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{unreachedWarning(2)}, warnings)
+}
+
+// A consumer-scoped policy cannot be attached to a non-MCP consumer, so it
+// never loses reach and never carries the warning.
+func TestWarner_Overlaps_NonGlobalPolicyNeverWarnsAboutReach(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	p := scopedPolicy(gwID, "trustguard", consumerID)
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Once()
+
+	w := apppolicy.NewWarner(repo, consumermocks.NewRepository(t))
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
 }
 
 func TestWarner_Overlaps_GlobalUnscopedWarnsEveryReachedConsumer(t *testing.T) {
