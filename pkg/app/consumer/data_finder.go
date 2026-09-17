@@ -117,27 +117,34 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
+	globalsUnscoped, globalsScoped := partitionScoped(globalPolicies)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
 		chain := fallbackChainOf(c)
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
-		policies := composePolicies(globalPolicies, policiesByConsumer[c.ID])
+		consumerUnscoped, consumerScoped := partitionScoped(policiesByConsumer[c.ID])
+		policies := composePolicies(globalsUnscoped, consumerUnscoped)
+		scoped := mergeScoped(consumerScoped, globalsScoped)
 		routable = append(routable, RoutableConsumer{
 			Consumer:         c,
 			Registries:       collectBackends(poolRegistryIDs(c.RegistryIDs, chain), backendByID),
 			FallbackBackends: fallbackBackends,
 			Policies:         policies,
 			PolicyPlan:       f.buildPolicyPlan(policies),
+			ScopedPolicies:   scoped,
+			MCPPlans:         f.buildMCPPlans(c, policies, scoped),
 			Auths:            collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
 	data := NewData(gatewayID, routable)
 	data.StoreConsumer = &RoutableConsumer{
-		Consumer:   domain.BuildStoreConsumer(gatewayID),
-		Policies:   globalPolicies,
-		PolicyPlan: f.buildPolicyPlan(globalPolicies),
+		Consumer:       domain.BuildStoreConsumer(gatewayID),
+		Policies:       globalsUnscoped,
+		PolicyPlan:     f.buildPolicyPlan(globalsUnscoped),
+		ScopedPolicies: globalsScoped,
+		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, globalsUnscoped, globalsScoped, f.logger),
 	}
 	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
@@ -149,6 +156,13 @@ func (f *dataFinder) buildPolicyPlan(policies []*policydomain.Policy) *appplugin
 		return nil
 	}
 	return appplugins.NewStagePlan(f.pluginRegistry, policies, f.logger)
+}
+
+func (f *dataFinder) buildMCPPlans(c *domain.Consumer, unscoped, scoped []*policydomain.Policy) *PolicyPlans {
+	if c == nil || c.Type != domain.TypeMCP {
+		return nil
+	}
+	return BuildPolicyPlans(f.pluginRegistry, unscoped, scoped, f.logger)
 }
 
 func (f *dataFinder) loadBackends(
@@ -285,6 +299,39 @@ func collectBackends(idList []ids.RegistryID, byID map[ids.RegistryID]*registryd
 	for _, id := range idList {
 		if b, ok := byID[id]; ok {
 			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func partitionScoped(policies []*policydomain.Policy) (unscoped, scoped []*policydomain.Policy) {
+	unscoped = make([]*policydomain.Policy, 0, len(policies))
+	for _, p := range policies {
+		if p == nil {
+			continue
+		}
+		if p.MCPScope != nil {
+			scoped = append(scoped, p)
+			continue
+		}
+		unscoped = append(unscoped, p)
+	}
+	return unscoped, scoped
+}
+
+func mergeScoped(consumerScoped, globalsScoped []*policydomain.Policy) []*policydomain.Policy {
+	if len(consumerScoped)+len(globalsScoped) == 0 {
+		return nil
+	}
+	out := make([]*policydomain.Policy, 0, len(consumerScoped)+len(globalsScoped))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(consumerScoped)+len(globalsScoped))
+	for _, list := range [][]*policydomain.Policy{consumerScoped, globalsScoped} {
+		for _, p := range list {
+			if _, dup := seenIDs[p.ID]; dup {
+				continue
+			}
+			seenIDs[p.ID] = struct{}{}
+			out = append(out, p)
 		}
 	}
 	return out

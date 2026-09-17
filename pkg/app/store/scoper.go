@@ -240,8 +240,8 @@ func resolveInstance(
 // configuredRegistry is the single-instance exposure of an install that carries
 // per-user config: a shallow clone of the shelf registry (same id, same name — no
 // relabel, since there is nothing to disambiguate) whose target carries the
-// install's config as the dial-time overlay. The shared shelf entry is never
-// mutated.
+// install's config as the dial-time overlay and whose InstanceOf points back at
+// the shelf. The shared shelf entry is never mutated.
 func configuredRegistry(
 	shelf *registrydomain.Registry,
 	in *installationdomain.Installation,
@@ -250,6 +250,7 @@ func configuredRegistry(
 	target := *shelf.MCPTarget
 	target.InstanceConfig = copyConfig(in.Config)
 	clone.MCPTarget = &target
+	clone.InstanceOf = shelf.ID
 	return &clone
 }
 
@@ -265,10 +266,11 @@ func copyConfig(config map[string]string) map[string]string {
 }
 
 // instanceRegistry clones a shelf registry into a per-instance view for one
-// install: a stable per-instance id (re-tagged from the install id), a label
-// suffixed with the install's distinguishing config, and that config as a
-// request-scoped overlay the dial-time resolver reads. It copies the registry
-// and its target so the shared shelf entry is never mutated.
+// install: a stable per-instance id (re-tagged from the install id), InstanceOf
+// pointing back at the shelf so policy scopes naming the shelf reach every
+// instance, a label suffixed with the install's distinguishing config, and that
+// config as a request-scoped overlay the dial-time resolver reads. It copies the
+// registry and its target so the shared shelf entry is never mutated.
 func instanceRegistry(
 	shelf *registrydomain.Registry,
 	in *installationdomain.Installation,
@@ -277,6 +279,7 @@ func instanceRegistry(
 	target := *shelf.MCPTarget
 	clone.MCPTarget = &target
 	clone.ID = ids.From[ids.RegistryKind](in.ID.UUID())
+	clone.InstanceOf = shelf.ID
 	if label := in.InstanceLabel(); label != "" {
 		clone.Name = instanceName(shelf, label)
 	}
