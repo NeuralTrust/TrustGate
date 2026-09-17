@@ -63,7 +63,7 @@ func dblessOverrides(lkgPath, token, instanceID string, port int) []string {
 
 func startDBLessProxyPlane(t *testing.T, port int, overrides []string) (string, *syncBuffer) {
 	t.Helper()
-	killProcessesOnPorts([]int{port})
+	requireFreePorts([]int{port})
 
 	logs := &syncBuffer{}
 	cmd := exec.Command(gatewayBinaryPath, "proxy") //nolint:gosec // controlled binary path

@@ -28,7 +28,6 @@ const (
 	ResourceRegistries AdminResource = "registries"
 	ResourcePolicies   AdminResource = "policies"
 	ResourceConsumers  AdminResource = "consumers"
-	ResourceRoles      AdminResource = "roles"
 	ResourceAuths      AdminResource = "auths"
 )
 

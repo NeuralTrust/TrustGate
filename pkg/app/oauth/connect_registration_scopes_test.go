@@ -87,6 +87,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogScopes(t *testing.T) {
 		nil,
 		nil,
 		stubScopeCatalog{code: "com.vanta/mcp", scopes: []string{"mcp-api.all:write"}},
+		nil,
 	)
 	ctx := context.Background()
 
@@ -94,7 +95,7 @@ func TestConnectService_AutoRegistrationAppliesCatalogScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
-	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.vanta/mcp")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.vanta/mcp", "")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

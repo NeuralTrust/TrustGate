@@ -74,12 +74,12 @@ func TestStreamToolChanges_PushesOnceWhenConnectedAccountsChange(t *testing.T) {
 	})
 
 	body := out.String()
-	require.Equal(t, 1, strings.Count(body, "notifications/tools/list_changed"),
-		"a single connection change must push exactly one notification")
+	require.Equal(t, 2, strings.Count(body, "notifications/tools/list_changed"),
+		"open plus one connection change must push exactly two notifications")
 	require.Contains(t, body, "event: message")
 }
 
-func TestStreamToolChanges_StaysQuietWhileNothingChanges(t *testing.T) {
+func TestStreamToolChanges_PushesOnOpenWhenNothingChanges(t *testing.T) {
 	t.Parallel()
 	out := &syncBuffer{}
 	writer := bufio.NewWriter(out)
@@ -91,7 +91,8 @@ func TestStreamToolChanges_StaysQuietWhileNothingChanges(t *testing.T) {
 	})
 
 	body := out.String()
-	require.NotContains(t, body, "notifications/tools/list_changed")
+	require.Equal(t, 1, strings.Count(body, "notifications/tools/list_changed"),
+		"a recycled GET must still tell the client to re-list even if the snapshot is stable")
 	require.Contains(t, body, ": keepalive")
 }
 

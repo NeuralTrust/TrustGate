@@ -79,6 +79,7 @@ func (b *Builder) Build(
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
+		EndUser:          meta.EndUser,
 		Retention:        retention(meta, startTime),
 	}
 
@@ -336,9 +337,26 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			UpstreamStatus: attrs.UpstreamStatus,
 			RPCErrorCode:   attrs.RPCErrorCode,
 			AccountRef:     attrs.AccountRef,
+			PolicyScope:    mcpPolicyScope(attrs.PolicyScope),
 		}
 	}
 	return mcp, upstreamMs
+}
+
+func mcpPolicyScope(scope *trace.MCPPolicyScope) *events.MCPPolicyScope {
+	if scope == nil {
+		return nil
+	}
+	out := &events.MCPPolicyScope{Evaluated: scope.Evaluated}
+	if len(scope.Matched) > 0 {
+		out.Matched = append([]string(nil), scope.Matched...)
+	}
+	for _, skipped := range scope.Skipped {
+		out.Skipped = append(out.Skipped, events.MCPSkippedPolicy{
+			ID: skipped.ID, Name: skipped.Name, Reason: skipped.Reason,
+		})
+	}
+	return out
 }
 
 func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContext, served *trace.LLMAttrs) {

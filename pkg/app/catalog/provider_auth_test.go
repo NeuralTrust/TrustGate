@@ -145,6 +145,17 @@ func TestProviderAuthOptions_OpenAICompatibleHeaderFields(t *testing.T) {
 	}
 }
 
+func TestProviderAuthOptions_ReturnsIndependentCopies(t *testing.T) {
+	first := ProviderAuthOptions(providers.ProviderOpenAI)
+	first[0].Label = "mutated"
+	first[0].Fields[0].Label = "mutated"
+
+	second := ProviderAuthOptions(providers.ProviderOpenAI)
+	if second[0].Label == "mutated" || second[0].Fields[0].Label == "mutated" {
+		t.Fatal("provider auth options share mutable catalog state")
+	}
+}
+
 func fieldRequired(fields []AuthField, key string) bool {
 	for _, field := range fields {
 		if field.Key == key {

@@ -85,6 +85,23 @@ func TestPathResolver_MatchBySlugAndCaches(t *testing.T) {
 	require.Len(t, matches, 1)
 }
 
+func TestPathResolver_StoreSlugResolvesSyntheticNoAuthMatch(t *testing.T) {
+	t.Parallel()
+	// Strict mocks with no expectations: the Store must resolve without any
+	// consumer / auth / gateway repository call.
+	consumers := consumermocks.NewRepository(t)
+	auths := authmocks.NewRepository(t)
+	gateways := gatewaymocks.NewRepository(t)
+
+	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
+
+	matches, err := resolver.Match(context.Background(), "any-tenant.example.com", "/store/mcp")
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	require.Empty(t, matches[0].Auths, "the Store carries no auth so only the default IdP is admitted")
+	require.True(t, domain.IsStoreConsumer(matches[0].Consumer))
+}
+
 func TestPathResolver_HostFiltersToClaimingGateway(t *testing.T) {
 	t.Parallel()
 	gwB := ids.New[ids.GatewayKind]()

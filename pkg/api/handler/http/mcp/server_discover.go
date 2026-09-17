@@ -20,18 +20,20 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []string) map[string]any {
+func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, version string) map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
 		"capabilities":      configuredCapabilities(rc),
-		// Reconnect is the only refresh signal until the stateless gateway can emit list_changed.
+		// Nothing here may be cached past the moment it is read: the version
+		// below is the client's cache key, and a stale copy of it is exactly
+		// what keeps a freshly connected server out of the tool list.
 		"ttlMs":      discoverCacheTTLMs,
 		"cacheScope": "private",
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
-				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+				"version": serverVersion + "+" + version,
 			},
 		},
 	}

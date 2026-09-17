@@ -63,6 +63,20 @@ type fakeServer struct {
 	getSnapshot func(*snapshotpb.GetSnapshotRequest, snapshotpb.ConfigSync_GetSnapshotServer) error
 }
 
+type blockingSyncServer struct {
+	snapshotpb.UnimplementedConfigSyncServer
+	started chan struct{}
+}
+
+func (s *blockingSyncServer) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	close(s.started)
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
 func (f *fakeServer) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapshotpb.ConfigSync_GetSnapshotServer) error {
 	return f.getSnapshot(req, stream)
 }
@@ -228,6 +242,49 @@ func TestClient_WatchReconnectsOnStreamBreak(t *testing.T) {
 	client.mu.Unlock()
 	if !streamReset {
 		t.Fatal("stream was not reset after break; reconnect would reuse a dead stream")
+	}
+}
+
+func TestClient_WatchHonorsCallerCancellation(t *testing.T) {
+	server := &blockingSyncServer{started: make(chan struct{})}
+	lis, _ := newBufServer(t, server)
+	client := dialClient(t, lis, "dp-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.Watch(ctx)
+		result <- err
+	}()
+	select {
+	case <-server.started:
+	case <-time.After(time.Second):
+		t.Fatal("sync stream did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Watch error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Watch did not return after caller cancellation")
+	}
+	client.mu.Lock()
+	streamReset := client.stream == nil
+	client.mu.Unlock()
+	if !streamReset {
+		t.Fatal("canceled Watch retained its stream")
+	}
+}
+
+func TestClient_AckHonorsCanceledContext(t *testing.T) {
+	server := &blockingSyncServer{started: make(chan struct{})}
+	lis, _ := newBufServer(t, server)
+	client := dialClient(t, lis, "dp-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := client.Ack(ctx, "v1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Ack error = %v, want context.Canceled", err)
 	}
 }
 

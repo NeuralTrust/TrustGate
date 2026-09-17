@@ -32,6 +32,20 @@ type Registry struct {
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
+
+	// InstanceOf names the shelf registry a per-principal Store clone derives
+	// from. It is a request-scoped view built by the Store scoper: never
+	// persisted and never carried by the config snapshot.
+	InstanceOf ids.RegistryID `json:"-"`
+}
+
+// ScopeKey returns the registry id an MCP policy scope has to name to reach
+// this registry: the shelf id for a Store instance clone, otherwise its own id.
+func (b *Registry) ScopeKey() ids.RegistryID {
+	if !b.InstanceOf.IsNil() {
+		return b.InstanceOf
+	}
+	return b.ID
 }
 
 func NewLLMRegistry(

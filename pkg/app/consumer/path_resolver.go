@@ -73,6 +73,14 @@ func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatc
 	if slug == "" {
 		return nil, nil
 	}
+	// The MCP Store is a synthetic, non-persisted consumer served on every
+	// gateway at a fixed slug. It carries no auth of its own, so it resolves to a
+	// no-auth match: the chain then admits only the built-in default identity
+	// provider (platform login). The addressed gateway comes from the session's
+	// gwid claim, so the match needs no host/gateway lookup here.
+	if domain.IsStoreSlug(slug) {
+		return storeMatches(), nil
+	}
 	key := host + "|" + slug
 	if cached, ok := r.cached(key); ok {
 		return cached, nil
@@ -96,6 +104,14 @@ func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatc
 		return nil, errors.New("consumer path resolver: unexpected singleflight result type")
 	}
 	return matches, nil
+}
+
+// storeMatches is the synthetic path match for the MCP Store: the Store
+// consumer with no attached auths. GatewayID is left zero — the chain only
+// reads the auths to build the scope, and a default-IdP session binds to its
+// own gwid claim.
+func storeMatches() []PathMatch {
+	return []PathMatch{{Consumer: domain.BuildStoreConsumer(ids.GatewayID{})}}
 }
 
 func SlugFromMCPPath(path string) string {

@@ -39,6 +39,7 @@ type OAuth2ConfigRequest struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -51,6 +52,9 @@ type OAuth2ConfigRequest struct {
 	TokenURL         string   `json:"token_url,omitempty"`
 }
 
+// OIDCConfigRequest is the deprecated alias of OAuth2ConfigRequest. It is
+// accepted on create and update and mapped onto the oauth2 payload;
+// responses always carry the oauth2 shape.
 type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`
@@ -95,6 +99,7 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     c.OAuth2.ClientSecret,
@@ -107,15 +112,17 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			TokenURL:         c.OAuth2.TokenURL,
 		}
 	}
-	if c.OIDC != nil {
-		out.OIDC = &domain.OIDCConfig{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
+	// The deprecated oidc payload maps onto oauth2. An explicit oauth2 payload
+	// wins, so a caller sending both is not silently overridden by the alias.
+	if c.OIDC != nil && out.OAuth2 == nil {
+		out.OAuth2 = &domain.OAuth2Config{
+			Issuer:         c.OIDC.Issuer,
+			Audiences:      c.OIDC.Audiences,
+			JWKSURL:        c.OIDC.JWKSURL,
+			PublicKeys:     c.OIDC.PublicKeys,
+			RequiredScopes: c.OIDC.RequiredScopes,
+			Algorithms:     c.OIDC.AllowedAlgorithms,
+			SubjectClaim:   c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

@@ -17,6 +17,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Bodies (metadata class) | Not emitted (no `trustgate.request.body` / `trustgate.response.body`) |
 | Bodies (raw class) | Emitted as `trustgate.request.body` / `trustgate.response.body` when an `otlp` exporter is declared under `exporters.raw[]` |
 | Policy chain | `policy_chain[]` on the Event is JSON-encoded in `trustgate.policy_chain` (evidence never included) |
+| Policy scope | `mcp.policy_scope` on the Event (MCP `tools/call` resolved against an upstream only) records how the consumer's scoped policies applied: `evaluated` counts them, `matched[]` lists the ids that entered the plan and `skipped[]` the ones left out with a `reason` (`destination`, `principal`, `except`). Unscoped policies never appear; `policy_chain[]` keeps listing only the plugins that ran. Absent on discovery, prompts, resources, meta-tools and on consumers without scoped plans. Not flattened to an OTLP attribute yet |
 | `is_flagged` | Emitted as `trustgate.is_flagged` (bool) |
 | Retention | `trustgate.retention.expires_at` on **both** classes, or on neither. Absent means the gateway has no stamped plan retention — the sink applies its own fallback |
 
@@ -161,7 +162,8 @@ ladder that puts an expensive model at a low threshold yields a **negative**
 
 The attribute is emitted only when the tier table itself chose the route. Smart
 routing silently falls back to round-robin whenever the scorer is unconfigured,
-the score is unavailable, or no tier matches — those requests emit nothing rather
+the score is unavailable, or the mapped tier has no available candidate — those
+requests emit nothing rather
 than crediting a decision smart routing never made. A baseline whose model has no
 resolvable price likewise emits nothing, because a zero would be
 indistinguishable from "the top tier was already served". A request that *was*

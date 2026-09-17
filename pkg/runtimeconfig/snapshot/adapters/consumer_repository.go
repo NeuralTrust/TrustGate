@@ -75,7 +75,7 @@ func (r *consumerRepository) Save(_ context.Context, _ *domain.Consumer) error {
 	return configsync.ErrReadOnly
 }
 
-func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *domain.RegistryBindings) error {
+func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *domain.RegistryBindings, _ *[]ids.AuthID) error {
 	return configsync.ErrReadOnly
 }
 
@@ -97,14 +97,6 @@ func (r *consumerRepository) DetachRegistry(_ context.Context, _ ids.ConsumerID,
 
 func (r *consumerRepository) DetachRegistryIfUnreferenced(_ context.Context, _ ids.GatewayID, _ ids.ConsumerID, _ ids.RegistryID) (*domain.Consumer, error) {
 	return nil, configsync.ErrReadOnly
-}
-
-func (r *consumerRepository) AttachRole(_ context.Context, _ ids.ConsumerID, _ ids.RoleID) error {
-	return configsync.ErrReadOnly
-}
-
-func (r *consumerRepository) DetachRole(_ context.Context, _ ids.ConsumerID, _ ids.RoleID) error {
-	return configsync.ErrReadOnly
 }
 
 func (r *consumerRepository) AttachAuth(_ context.Context, _ ids.ConsumerID, _ ids.AuthID) error {

@@ -85,10 +85,10 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	var candidates []promptBinding
 	var pendingConsent *ConsentRequiredError
 	reachable := 0
-	for _, reg := range registries {
-		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
-			return up.ListPrompts(ctx)
-		})
+	for _, found := range discoverAll(c, ctx, rc, registries, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
+		return up.ListPrompts(ctx)
+	}) {
+		reg, prompts, err := found.registry, found.items, found.err
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
@@ -121,12 +121,8 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		}
 		return nil, nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
-	}
-	for i, name := range resolveExposedNames(items) {
-		candidates[i].exposed = name
+		candidates[i].exposed = exposedNameFor(b.exposed, b.registry).String()
 	}
 	return candidates, pendingConsent, nil
 }

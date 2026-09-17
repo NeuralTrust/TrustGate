@@ -69,3 +69,30 @@ func TestFromDomain_CustomDomainHost(t *testing.T) {
 		t.Fatalf("Hosts.MCP = %q, want acme.mcp.neuraltrust.ai", got.Hosts.MCP)
 	}
 }
+
+// The console reads the Store's curation mode from here to decide what a user
+// may install at once. It used to live only inside metadata, and a reader that
+// missed it there saw the domain default — open — so a curated Store looked
+// wide open and every install came back as an approval request.
+func TestFromDomain_ReportsTheStoreMode(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]string
+		want     string
+	}{
+		{"stamped open", map[string]string{domain.MetadataStoreModeKey: domain.StoreModeOpen}, domain.StoreModeOpen},
+		{"stamped none", map[string]string{domain.MetadataStoreModeKey: domain.StoreModeNone}, domain.StoreModeNone},
+		// Nothing stamped is a gateway nobody has governed, which grants nobody
+		// anything rather than opening the catalog to the whole org.
+		{"unstamped", nil, domain.StoreModeCurated},
+		{"nonsense", map[string]string{domain.MetadataStoreModeKey: "whatever"}, domain.StoreModeCurated},
+	} {
+		gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, domain.ClientTLSConfig{}, nil, now, now)
+		gw.Metadata = tc.metadata
+		if got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai"); got.StoreMode != tc.want {
+			t.Fatalf("%s: StoreMode = %q, want %q", tc.name, got.StoreMode, tc.want)
+		}
+	}
+}

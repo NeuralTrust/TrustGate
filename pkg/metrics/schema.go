@@ -21,7 +21,7 @@ const TableName = "trustgate_data"
 const (
 	ColumnTraceID       = "trace_id"
 	ColumnGatewayID     = "gateway_id"
-	ColumnTenantID        = "tenant_id"
+	ColumnTenantID      = "tenant_id"
 	ColumnOccurredOn    = "occurred_on"
 	ColumnSchemaVersion = "schema_version"
 	ColumnRequestBody   = "request_body"

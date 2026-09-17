@@ -15,6 +15,7 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -28,14 +29,18 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	vaultmocks "github.com/NeuralTrust/TrustGate/pkg/domain/vault/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
@@ -81,7 +86,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), nil)
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app
@@ -115,7 +120,6 @@ func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) 
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -167,13 +171,119 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), nil)
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), nil)
 	app.Post(mcpPath, handler.Handle)
 
 	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
 	if status != fiber.StatusOK {
 		t.Fatalf("status = %d, want 200 (default IdP must be accepted for a consumer with no attached auth)", status)
 	}
+}
+
+func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
+	t.Parallel()
+	// The MCP Store is not in the gateway's persisted consumer data; the handler
+	// synthesises it from the reserved /store/mcp path and serves it, so the
+	// fixed catalog URL initializes on any gateway.
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	data := appconsumer.NewData(gwID, nil)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (the synthetic Store must initialize at its fixed URL)", res.StatusCode)
+	}
+}
+
+func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
+	t.Parallel()
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	globalPolicy := &policydomain.Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: gwID,
+		Slug:      "per_tool_rate_limiter",
+		Enabled:   true,
+		Global:    true,
+		Stages:    []policydomain.Stage{policydomain.StagePreRequest},
+	}
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	data := appconsumer.NewData(gwID, nil)
+	data.StoreConsumer = &appconsumer.RoutableConsumer{
+		Consumer:   consumerdomain.BuildStoreConsumer(gwID),
+		Policies:   []*policydomain.Policy{globalPolicy},
+		PolicyPlan: appplugins.NewStagePlan(pluginRegistry, []*policydomain.Policy{globalPolicy}, discardLogger()),
+	}
+
+	executor := pluginmocks.NewExecutor(t)
+	executor.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+		return in.Stage == policydomain.StagePreRequest &&
+			len(in.Policies) == 1 && in.Policies[0].ID == globalPolicy.ID &&
+			in.Plan != nil && in.Plan.Has(policydomain.StagePreRequest)
+	})).Return(nil, &appplugins.PluginError{StatusCode: 429, Message: "rate limit exceeded"}).Once()
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	composer := mocks.NewComposer(t)
+	expectResolve(composer, "notion-search")
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), nil),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notion-search","arguments":{}}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if !strings.Contains(string(raw), `"code":-32004`) {
+		t.Fatalf("response = %s, want rate-limit JSON-RPC error", raw)
+	}
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
@@ -186,6 +296,12 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	result := body["result"].(map[string]any)
 	if result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("protocolVersion = %v, want echo of requested", result["protocolVersion"])
+	}
+	// The gateway steers the agent to route through TrustGate rather than wiring
+	// upstream MCP servers directly into the client.
+	instructions, _ := result["instructions"].(string)
+	if !strings.Contains(instructions, "TrustGate") || !strings.Contains(instructions, "bypass") {
+		t.Fatalf("initialize must carry governance instructions, got %q", instructions)
 	}
 }
 
@@ -216,7 +332,10 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+	composer.EXPECT().ListTools(mock.MatchedBy(func(ctx context.Context) bool {
+		original := requestmeta.FromContext(ctx)
+		return original != nil && original.IP != "" && len(original.Headers["Content-Type"]) == 1
+	}), mock.Anything).
 		Return([]appmcp.Tool{{Name: "gh_search"}}, nil).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -233,8 +352,7 @@ func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
-		Return(nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"}).Once()
+	expectToolCall(composer, "boom", nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"})
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom"}}`)
@@ -254,9 +372,10 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
+			Cause: appmcp.ConsentCauseRegisteredClientLost,
 		}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -277,6 +396,12 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
 		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
 	}
+	// Which condition asked for the reconnect. Without it a client reports every
+	// cause as "the session expired" and the real one is only in the gateway's
+	// logs.
+	if data["cause"] != appmcp.ConsentCauseRegisteredClientLost {
+		t.Fatalf("cause = %v, want the condition that produced the prompt", data["cause"])
+	}
 }
 
 // A tool the toolkit forbids is reported to the agent as a policy denial over
@@ -284,7 +409,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -384,8 +509,15 @@ func TestHandler_Initialize_VersionTracksConnectedAccounts(t *testing.T) {
 	if reconnected == linked {
 		t.Fatalf("version %q did not change after reconnecting the provider", reconnected)
 	}
-	if unrelated != pending {
-		t.Fatalf("version changed for a provider this consumer does not federate: %q vs %q", unrelated, pending)
+	// A provider this consumer does not federate moves the version too, and
+	// that is the trade taken deliberately. The version is now the same surface
+	// the notification stream watches — every credential, install and grant of
+	// this caller — because narrowing it to the consumer's own registries is
+	// what left the MCP Store, whose consumer holds none, reporting one
+	// unchanging version to every client forever. A spurious re-list costs one
+	// tools/list; a missed one costs a person finding a menu item.
+	if unrelated == pending {
+		t.Fatalf("version %q did not move when the caller connected an account", unrelated)
 	}
 }
 
@@ -426,8 +558,7 @@ func newAppWithVault(
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
@@ -579,7 +710,6 @@ func TestHandler_StampsJWTEmailOnTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 		nil,
 	)
 	app.Post(mcpPath, handler.Handle)
@@ -617,10 +747,13 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	rt := trace.New("trace-id", trace.Metadata{})
 	principal := &identity.Principal{Subject: "dogfood-key", Method: identity.MethodAPIKey}
 	vault := vaultmocks.NewRepository(t)
+	// The credential's name is what called; the account it reaches belongs to
+	// the application, so the vault is read under the consumer's subject.
+	// Read twice per handshake: once for the trace's email, once for the surface
+	// version. The watcher caches, so the second is usually free.
 	vault.EXPECT().
-		ListByPrincipal(mock.Anything, gwID, "dogfood-key").
-		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil).
-		Once()
+		ListByPrincipal(mock.Anything, gwID, consumerdomain.AppSubject(cons.ID)).
+		Return([]*vaultdomain.Credential{{AccountRef: "ada@gmail.com", Provider: "google"}}, nil)
 
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
@@ -633,8 +766,7 @@ func TestHandler_StampsVaultEmailOnAPIKeyTrace(t *testing.T) {
 	})
 	handler := mcphttp.NewHandler(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		vault,
+		appmcp.NewSurfaceWatcher(vault, nil),
 	)
 	app.Post(mcpPath, handler.Handle)
 

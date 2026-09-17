@@ -1,0 +1,300 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+)
+
+// PrincipalPreview is the admin read of one principal's Store state on a
+// gateway: what they have installed (or requested) and which company sources
+// they have linked their own account to. It powers the Portal preview ("what
+// does this user see?") and never exposes credential material — only whether a
+// connection exists, which account it is for, and whether it needs a reconnect.
+//
+//go:generate mockery --name=PrincipalPreview --dir=. --output=./mocks --filename=store_principal_preview_mock.go --case=underscore --with-expecter
+type PrincipalPreview interface {
+	Preview(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (*PrincipalState, error)
+}
+
+// PrincipalState is the principal's Store state on one gateway.
+type PrincipalState struct {
+	PrincipalSub string
+	Installs     []PrincipalInstall
+	Connections  []PrincipalConnection
+}
+
+// PrincipalInstall is one Store instance the principal holds: installed,
+// pending approval, or revoked (kept for audit, so the Portal can say "denied").
+type PrincipalInstall struct {
+	InstanceID  ids.InstallationID
+	Code        string
+	Name        string
+	RegistryID  ids.RegistryID
+	Registry    string
+	Status      installationdomain.Status
+	InstalledBy string
+	// NeedsConfig names the per-user URL variables this installation still has
+	// no value for. An install that stops for them is never recorded, but an
+	// approved request is: it is written the moment an approver says yes, and
+	// nobody has asked the requester for their own account URL or database
+	// name yet. Without this the row read as installed and its first tool call
+	// failed on a missing placeholder with nothing to act on.
+	NeedsConfig []string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// PrincipalConnection is the state of one company source that needs the
+// principal's own account (forwarded-auth registry), linked or not.
+type PrincipalConnection struct {
+	Provider       string
+	Code           string
+	RegistryID     ids.RegistryID
+	Registry       string
+	Linked         bool
+	AccountRef     string
+	ExpiresAt      time.Time
+	NeedsReconnect bool
+}
+
+type principalPreview struct {
+	installs   installationdomain.Repository
+	registries RegistryLister
+	catalog    CatalogReader
+	vault      vaultdomain.Repository
+	health     ConnectionHealth
+}
+
+// NewPrincipalPreview wires the preview read. vault may be nil (a plane without
+// a credential store): connections then report every forwarded-auth source as
+// not linked.
+// ConnectionHealth answers whether a credential the vault holds can still be
+// redeemed. The vault is not the whole answer: a dynamically registered OAuth
+// client lives in the shared cache, and a refresh token cannot be redeemed
+// without the client it was issued to, so a credential can outlive what makes
+// it usable. Implemented by the OAuth connect service.
+type ConnectionHealth interface {
+	CredentialUsable(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (bool, error)
+}
+
+// PrincipalPreviewOption tunes NewPrincipalPreview.
+type PrincipalPreviewOption func(*principalPreview)
+
+// WithConnectionHealth lets the preview report an account as needing a
+// reconnect when its stored credential can no longer be refreshed. Without it
+// the preview answers from the vault alone, as it used to.
+func WithConnectionHealth(h ConnectionHealth) PrincipalPreviewOption {
+	return func(p *principalPreview) { p.health = h }
+}
+
+func NewPrincipalPreview(
+	installs installationdomain.Repository,
+	registries RegistryLister,
+	catalog CatalogReader,
+	vault vaultdomain.Repository,
+	opts ...PrincipalPreviewOption,
+) (PrincipalPreview, error) {
+	if installs == nil || registries == nil || catalog == nil {
+		return nil, ErrUnavailable
+	}
+	p := &principalPreview{installs: installs, registries: registries, catalog: catalog, vault: vault}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+	return p, nil
+}
+
+func (p *principalPreview) Preview(ctx context.Context, gatewayID ids.GatewayID, principalSub string) (*PrincipalState, error) {
+	principalSub = strings.TrimSpace(principalSub)
+	if gatewayID.IsNil() {
+		return nil, fmt.Errorf("gateway id is required: %w", commonerrors.ErrValidation)
+	}
+	if principalSub == "" {
+		return nil, fmt.Errorf("principal subject is required: %w", commonerrors.ErrValidation)
+	}
+	regs, err := listRegistriesByGateway(ctx, p.registries, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list registries: %w", err)
+	}
+	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(regs))
+	for _, reg := range regs {
+		if reg != nil {
+			byID[reg.ID] = reg
+		}
+	}
+
+	installs, err := p.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, fmt.Errorf("store: list installs: %w", err)
+	}
+	state := &PrincipalState{
+		PrincipalSub: principalSub,
+		Installs:     make([]PrincipalInstall, 0, len(installs)),
+		Connections:  []PrincipalConnection{},
+	}
+	for _, in := range installs {
+		if in == nil {
+			continue
+		}
+		row := PrincipalInstall{
+			InstanceID:  in.ID,
+			Code:        in.CatalogCode,
+			Name:        in.CatalogCode,
+			RegistryID:  in.RegistryID,
+			Status:      in.Status,
+			InstalledBy: in.InstalledBy,
+			CreatedAt:   in.CreatedAt,
+			UpdatedAt:   in.UpdatedAt,
+		}
+		if entry, ok := p.catalog.GetByCode(in.CatalogCode); ok && entry.DisplayName != "" {
+			row.Name = entry.DisplayName
+		}
+		if reg := byID[in.RegistryID]; reg != nil {
+			row.Registry = reg.Name
+		}
+		row.NeedsConfig = p.missingConfig(ctx, gatewayID, principalSub, in)
+		state.Installs = append(state.Installs, row)
+	}
+
+	sorted := make([]*registrydomain.Registry, 0, len(regs))
+	for _, reg := range regs {
+		if reg != nil {
+			sorted = append(sorted, reg)
+		}
+	}
+	sortRegistries(sorted)
+	for _, reg := range sorted {
+		auth := forwardedAuthOf(reg)
+		if auth == nil || strings.TrimSpace(auth.Provider) == "" {
+			continue
+		}
+		conn := PrincipalConnection{
+			Provider:   auth.Provider,
+			Code:       reg.MCPTarget.Code,
+			RegistryID: reg.ID,
+			Registry:   reg.Name,
+		}
+		if err := p.fillConnection(ctx, gatewayID, principalSub, reg, &conn); err != nil {
+			return nil, err
+		}
+		state.Connections = append(state.Connections, conn)
+	}
+	return state, nil
+}
+
+// credentialExpiryGrace mirrors the connect flow: a token about to expire with
+// no refresh token counts as needing a reconnect.
+const credentialExpiryGrace = 60 * time.Second
+
+func (p *principalPreview) fillConnection(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+	conn *PrincipalConnection,
+) error {
+	if p.vault == nil {
+		return nil
+	}
+	cred, err := p.vault.Find(ctx, gatewayID, principalSub, registrydomain.ForwardedVaultProvider(reg))
+	switch {
+	case err == nil:
+		conn.Linked = true
+		conn.AccountRef = cred.AccountRef
+		conn.ExpiresAt = cred.ExpiresAt
+		conn.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+		if !conn.NeedsReconnect && p.health != nil {
+			// A credential whose refresh can no longer be redeemed is not a
+			// connected account: the next tool call asks the user to connect.
+			// A failed check answers "usable", so a cache blip does not send
+			// everyone round the reconnect loop.
+			if usable, _ := p.health.CredentialUsable(ctx, gatewayID, reg); !usable {
+				conn.NeedsReconnect = true
+			}
+		}
+	case errors.Is(err, vaultdomain.ErrUndecryptable):
+		// The credential exists but the vault key rotated: the user must link again.
+		conn.Linked = true
+		conn.NeedsReconnect = true
+	case errors.Is(err, vaultdomain.ErrNotFound):
+	default:
+		return fmt.Errorf("store: check linked credential %q: %w", conn.Provider, err)
+	}
+	return nil
+}
+
+// forwardedAuthOf returns the registry's auth block when the upstream expects the
+// caller's own credential (the "connect your account" sources), else nil.
+func forwardedAuthOf(reg *registrydomain.Registry) *registrydomain.MCPAuth {
+	if reg == nil || !reg.IsMCP() || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
+		return nil
+	}
+	if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
+		return nil
+	}
+	return reg.MCPTarget.Auth
+}
+
+// missingConfig names the required per-user URL variables this installation
+// still has no value for: a plain one absent from the row's config, a secret
+// one absent from the vault. A revoked row is nobody's problem, and a catalog
+// entry that declares none answers nil.
+func (p *principalPreview) missingConfig(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	in *installationdomain.Installation,
+) []string {
+	if in == nil || in.Status == installationdomain.StatusRevoked {
+		return nil
+	}
+	entry, ok := p.catalog.GetByCode(in.CatalogCode)
+	if !ok {
+		return nil
+	}
+	var missing []string
+	for _, v := range catalogURLVariables(entry.URLVariables) {
+		if !v.Required {
+			continue
+		}
+		if v.Secret {
+			if p.vault == nil {
+				continue
+			}
+			key := registrydomain.URLVariableVaultProvider(in.CatalogCode, v.Name)
+			if _, err := p.vault.Find(ctx, gatewayID, principalSub, key); err != nil {
+				missing = append(missing, v.Name)
+			}
+			continue
+		}
+		if strings.TrimSpace(in.Config[v.Name]) == "" {
+			missing = append(missing, v.Name)
+		}
+	}
+	return missing
+}

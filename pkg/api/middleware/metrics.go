@@ -16,11 +16,13 @@ package middleware
 
 import (
 	"net/url"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -30,6 +32,7 @@ import (
 )
 
 type MetricsMiddleware struct {
+	resolveClientIP     func(string, string) string
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
 	enableRequestTraces bool
@@ -38,6 +41,7 @@ type MetricsMiddleware struct {
 
 func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MetricsMiddleware {
 	return &MetricsMiddleware{
+		resolveClientIP:     requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs),
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
@@ -102,8 +106,8 @@ func (m *MetricsMiddleware) streamFinalizer(
 		resp := &infracontext.ResponseContext{
 			GatewayID:  gatewayID,
 			RegistryID: req.RegistryID,
-			Headers:    headers,
-			Body:       output,
+			Headers:    cloneStreamHeaders(headers),
+			Body:       append([]byte(nil), output...),
 			StatusCode: statusCode,
 			Streaming:  true,
 		}
@@ -127,24 +131,25 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 	meta := trace.Metadata{
 		GatewayID: gatewayID,
 		TenantID:  gw.TenantID(),
-		Path:      c.Path(),
-		Method:    c.Method(),
-		IP:        c.IP(),
+		Path:      strings.Clone(c.Path()),
+		Method:    strings.Clone(c.Method()),
+		IP:        metricsClientIP(c, m.resolveClientIP),
 	}
 	if window, ok := gw.RetentionWindow(); ok {
 		meta.RetentionWindow = window
 		meta.RetentionPlan = gw.Entitlements.Tier
 	}
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
-		meta.SessionID = sessionID
+		meta.SessionID = strings.Clone(sessionID)
 	}
 	return meta
 }
 
 func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) *infracontext.RequestContext {
 	headers := make(map[string][]string)
-	for key, values := range c.GetReqHeaders() {
-		headers[key] = append(headers[key], values...)
+	for key, value := range c.Request().Header.All() {
+		name := string(key)
+		headers[name] = append(headers[name], string(value))
 	}
 
 	query := url.Values{}
@@ -152,15 +157,17 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		query.Add(string(key), string(value))
 	}
 
-	return &infracontext.RequestContext{
+	req := &infracontext.RequestContext{
 		GatewayID: gatewayID,
 		Headers:   headers,
-		Method:    c.Method(),
-		Path:      c.Path(),
+		Method:    strings.Clone(c.Method()),
+		Path:      strings.Clone(c.Path()),
 		Query:     query,
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        c.IP(),
+		IP:        metricsClientIP(c, m.resolveClientIP),
 	}
+	stampRequestTarget(c, req)
+	return req
 }
 
 func gatewayIDFromContext(c *fiber.Ctx) string {
@@ -187,8 +194,9 @@ func gatewayExporters(gw *gatewaydomain.Gateway) []telemetrydomain.ExporterConfi
 
 func (m *MetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string) *infracontext.ResponseContext {
 	headers := make(map[string][]string)
-	for key, values := range c.GetRespHeaders() {
-		headers[key] = append(headers[key], values...)
+	for key, value := range c.Response().Header.All() {
+		name := string(key)
+		headers[name] = append(headers[name], string(value))
 	}
 
 	return &infracontext.ResponseContext{
@@ -198,4 +206,22 @@ func (m *MetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string)
 		StatusCode: c.Response().StatusCode(),
 		Streaming:  false,
 	}
+}
+
+func cloneStreamHeaders(headers map[string][]string) map[string][]string {
+	owned := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		key := strings.Clone(name)
+		for _, value := range values {
+			owned[key] = append(owned[key], strings.Clone(value))
+		}
+	}
+	return owned
+}
+
+func metricsClientIP(c *fiber.Ctx, resolve func(string, string) string) string {
+	if resolve == nil {
+		resolve = requestmeta.NewIPResolver("peer", nil)
+	}
+	return resolve(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
 }

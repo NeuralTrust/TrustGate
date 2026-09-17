@@ -30,6 +30,7 @@ type Event struct {
 	PrincipalSubject string `json:"principal_subject,omitempty"`
 	PrincipalMethod  string `json:"principal_method,omitempty"`
 	PrincipalEmail   string `json:"principal_email,omitempty"`
+	EndUser          string `json:"end_user,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`
@@ -83,6 +84,27 @@ type MCP struct {
 	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
 	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 	AccountRef        string `json:"account_ref,omitempty"`
+
+	PolicyScope *MCPPolicyScope `json:"policy_scope,omitempty"`
+}
+
+// MCPPolicyScope tells which scoped policies of the consumer applied to a
+// tools/call. Evaluated counts the scoped policies considered; Matched holds
+// the ids of those that entered the plan and Skipped the ones left out with
+// the reason. PolicyChain keeps listing only the plugins that ran, so a policy
+// in Skipped never appears there.
+type MCPPolicyScope struct {
+	Evaluated int                `json:"evaluated"`
+	Matched   []string           `json:"matched,omitempty"`
+	Skipped   []MCPSkippedPolicy `json:"skipped,omitempty"`
+}
+
+// MCPSkippedPolicy is a scoped policy that did not run on the call. Reason is
+// destination, principal or except.
+type MCPSkippedPolicy struct {
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason"`
 }
 
 type Consumer struct {

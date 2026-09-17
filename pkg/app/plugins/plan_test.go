@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,4 +160,164 @@ func TestStagePlan_GroupBatchesNonParallelIsSingleton(t *testing.T) {
 
 	batches := plan.batchesFor(policy.StagePreRequest)
 	assert.Equal(t, [][]string{{"a"}, {"b"}}, batchSlugs(batches))
+}
+
+func scoped(p *policy.Policy, scope *policy.MCPScope) *policy.Policy {
+	p.MCPScope = scope
+	return p
+}
+
+func preRequestPlugins(t *testing.T, names ...string) Registry {
+	t.Helper()
+	ps := make([]Plugin, 0, len(names))
+	for _, name := range names {
+		ps = append(ps, &fakePlugin{name: name, stages: []policy.Stage{policy.StagePreRequest}, result: &Result{}})
+	}
+	return newRegistry(t, ps...)
+}
+
+func entrySlugs(entries []chainEntry) []string {
+	out := make([]string, len(entries))
+	for i, entry := range entries {
+		out[i] = entry.config.Slug
+	}
+	return out
+}
+
+func TestStagePlan_EqualPriorityOrdersBySpecificityDesc(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_consumer", "b_registry", "c_tool", "d_tool_principal")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "a_consumer", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "b_registry", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "c_tool", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "d_tool_principal", enabled: true, priority: 10, stages: pre},
+	)
+	scoped(pols[1], &policy.MCPScope{RegistryIDs: []ids.RegistryID{registryID}})
+	scoped(pols[2], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+	scoped(pols[3], &policy.MCPScope{
+		Tools:  []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}},
+		Groups: []string{"Finanzas"},
+	})
+
+	plan := NewStagePlan(reg, pols, nil)
+
+	want := []string{"d_tool_principal", "c_tool", "b_registry", "a_consumer"}
+	assert.Equal(t, want, entrySlugs(plan.entriesFor(policy.StagePreRequest)),
+		"at equal priority the most specific scope must run first, ahead of slug order")
+	assert.Equal(t, [][]string{{"d_tool_principal"}, {"c_tool"}, {"b_registry"}, {"a_consumer"}},
+		batchSlugs(plan.batchesFor(policy.StagePreRequest)))
+	assert.Equal(t, want, entrySlugs(buildStageChain(reg, pols, policy.StagePreRequest)),
+		"the executor's ad-hoc chain must apply the same order as the precompiled plan")
+}
+
+func TestStagePlan_PriorityStillBeatsSpecificity(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "consumer_wide", "tool_scoped")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "tool_scoped", enabled: true, priority: 20, stages: pre},
+		polSpec{slug: "consumer_wide", enabled: true, priority: 10, stages: pre},
+	)
+	scoped(pols[0], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+
+	plan := NewStagePlan(reg, pols, nil)
+	assert.Equal(t, []string{"consumer_wide", "tool_scoped"}, entrySlugs(plan.entriesFor(policy.StagePreRequest)))
+}
+
+func TestStagePlan_ParallelBatchGroupsByPriorityOnly(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_consumer", "b_tool", "c_later")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	pols := policies(t,
+		polSpec{slug: "a_consumer", enabled: true, priority: 10, parallel: true, stages: pre},
+		polSpec{slug: "b_tool", enabled: true, priority: 10, parallel: true, stages: pre},
+		polSpec{slug: "c_later", enabled: true, priority: 20, parallel: true, stages: pre},
+	)
+	scoped(pols[1], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+
+	plan := NewStagePlan(reg, pols, nil)
+	assert.Equal(t, [][]string{{"b_tool", "a_consumer"}, {"c_later"}}, batchSlugs(plan.batchesFor(policy.StagePreRequest)),
+		"specificity orders inside a parallel batch but never splits it")
+}
+
+func TestStagePlan_EqualSpecificityFallsBackToSlugThenID(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "x", "y")
+	pre := []policy.Stage{policy.StagePreRequest}
+	scope := func() *policy.MCPScope {
+		return &policy.MCPScope{RegistryIDs: []ids.RegistryID{registryID}}
+	}
+
+	pols := policies(t,
+		polSpec{slug: "y", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "x", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "x", enabled: true, priority: 10, stages: pre},
+	)
+	for _, p := range pols {
+		scoped(p, scope())
+	}
+	firstX, secondX := pols[1], pols[2]
+	if secondX.ID.String() < firstX.ID.String() {
+		firstX, secondX = secondX, firstX
+	}
+
+	plan := NewStagePlan(reg, pols, nil)
+	entries := plan.entriesFor(policy.StagePreRequest)
+	require.Len(t, entries, 3)
+	assert.Equal(t, []string{"x", "x", "y"}, entrySlugs(entries))
+	assert.Equal(t, firstX.ID.String(), entries[0].config.ID)
+	assert.Equal(t, secondX.ID.String(), entries[1].config.ID)
+}
+
+func TestStagePlan_UnionRegroupsAcrossPlans(t *testing.T) {
+	registryID := ids.New[ids.RegistryKind]()
+	reg := preRequestPlugins(t, "a_scoped", "b_base", "c_first")
+	pre := []policy.Stage{policy.StagePreRequest}
+
+	base := NewStagePlan(reg, policies(t,
+		polSpec{slug: "b_base", enabled: true, priority: 10, parallel: true, stages: pre},
+	), nil)
+	scopedPols := policies(t,
+		polSpec{slug: "a_scoped", enabled: true, priority: 10, parallel: true, stages: pre},
+	)
+	scoped(scopedPols[0], &policy.MCPScope{Tools: []policy.MCPToolRef{{RegistryID: registryID, Tool: "run_query"}}})
+	scopedPlan := NewStagePlan(reg, scopedPols, nil)
+	first := NewStagePlan(reg, policies(t,
+		polSpec{slug: "c_first", enabled: true, priority: 5, stages: pre},
+	), nil)
+
+	union := base.Union(scopedPlan, first)
+
+	assert.Equal(t, []string{"c_first", "a_scoped", "b_base"}, entrySlugs(union.entriesFor(policy.StagePreRequest)))
+	assert.Equal(t, [][]string{{"c_first"}, {"a_scoped", "b_base"}}, batchSlugs(union.batchesFor(policy.StagePreRequest)),
+		"entries from different plans must share a parallel batch when priority matches")
+	assert.False(t, union.Has(policy.StagePostResponse))
+
+	assert.Equal(t, []string{"b_base"}, entrySlugs(base.entriesFor(policy.StagePreRequest)), "Union must not mutate its receiver")
+	assert.Equal(t, []string{"a_scoped"}, entrySlugs(scopedPlan.entriesFor(policy.StagePreRequest)), "Union must not mutate its inputs")
+}
+
+func TestStagePlan_UnionDedupsAndHandlesNil(t *testing.T) {
+	reg := preRequestPlugins(t, "only")
+	pre := []policy.Stage{policy.StagePreRequest}
+	plan := NewStagePlan(reg, policies(t,
+		polSpec{slug: "only", enabled: true, priority: 1, stages: pre},
+	), nil)
+
+	assert.Same(t, plan, plan.Union(), "without extras Union returns the receiver")
+	assert.Equal(t, []string{"only"}, entrySlugs(plan.Union(plan).entriesFor(policy.StagePreRequest)),
+		"the same policy present in several plans enters once")
+
+	var nilPlan *StagePlan
+	fromNil := nilPlan.Union(plan)
+	assert.Equal(t, []string{"only"}, entrySlugs(fromNil.entriesFor(policy.StagePreRequest)))
+	assert.Equal(t, [][]string{{"only"}}, batchSlugs(fromNil.batchesFor(policy.StagePreRequest)))
+
+	empty := plan.Union(nilPlan, NewStagePlan(nil, nil, nil))
+	assert.Equal(t, []string{"only"}, entrySlugs(empty.entriesFor(policy.StagePreRequest)))
 }

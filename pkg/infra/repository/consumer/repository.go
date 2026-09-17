@@ -27,7 +27,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -39,27 +38,22 @@ const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
 	pgCheckViolation      = "23514"
-	pgRoutingConflict     = "AG409"
 	pgCrossGatewayLink    = "AG422"
 
 	gatewayFKConstraint          = "consumers_gateway_id_fkey"
 	consumerRegistryFKConstraint = "consumer_registry_registry_id_fkey"
-	consumerRoleFKConstraint     = "consumer_role_role_id_fkey"
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerSlugUniqueIndex      = "consumers_slug_unique_idx"
-	consumerRoutingModeCheck     = "consumers_routing_mode_check"
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
-		       c.created_at, c.updated_at,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
+		       c.identity, c.auth_binding, c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
-		       COALESCE((SELECT array_agg(cr.role_id ORDER BY cr.role_id)
-		                   FROM consumer_role cr WHERE cr.consumer_id = c.id), '{}')::uuid[] AS role_ids,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
 		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids`
 
@@ -112,21 +106,27 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
 	}
+	identityBytes, err := json.Marshal(c.Identity)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal identity: %w", err)
+	}
+	authBindingBytes, err := json.Marshal(c.AuthBinding)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal auth_binding: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, created_at, updated_at
+			id, gateway_id, name, type, slug, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, identity, auth_binding, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
-	const insertConsumerRole = `
-		INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, identityBytes, authBindingBytes, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -135,16 +135,16 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 				return mapPgError(err)
 			}
 		}
-		for _, roleID := range c.RoleIDs {
-			if _, err := tx.Exec(ctx, insertConsumerRole, c.ID, roleID); err != nil {
-				return mapPgError(err)
-			}
-		}
 		return nil
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries *domain.RegistryBindings) error {
+func (r *Repository) Update(
+	ctx context.Context,
+	c *domain.Consumer,
+	registries *domain.RegistryBindings,
+	auths *[]ids.AuthID,
+) error {
 	if c == nil {
 		return errors.New("consumer repository: nil consumer")
 	}
@@ -168,33 +168,36 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
 	}
+	identityBytes, err := json.Marshal(c.Identity)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal identity: %w", err)
+	}
+	authBindingBytes, err := json.Marshal(c.AuthBinding)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal auth_binding: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
 		   SET name             = $2,
 		       type             = $3,
-		       routing_mode     = $4,
-		       lb_config        = $5,
-		       fallback         = $6,
-		       model_policies   = $7,
-		       toolkit          = $8,
-		       fail_mode        = $9,
-		       headers          = $10,
-		       active           = $11,
-		       updated_at       = $12
-		 WHERE id = $1 AND gateway_id = $13`
-	// The consumers row is written before the registry links because the
-	// routing-mode DB guard rejects registry rows on a role_based consumer: a
-	// role_based → inline switch has to land the new mode first.
+		       lb_config        = $4,
+		       fallback         = $5,
+		       model_policies   = $6,
+		       toolkit          = $7,
+		       fail_mode        = $8,
+		       headers          = $9,
+		       active           = $10,
+		       updated_at       = $11,
+		       identity         = $13,
+		       auth_binding     = $14
+		 WHERE id = $1 AND gateway_id = $12`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
 		}
-		if err := cleanupIncompatibleRelations(ctx, tx, c); err != nil {
-			return err
-		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
-			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID,
+			c.ID, c.Name, string(c.Type), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID, identityBytes, authBindingBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -205,16 +208,18 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		if err := replaceRegistryLinks(ctx, tx, c, registries); err != nil {
 			return err
 		}
+		if err := replaceAuthLinks(ctx, tx, c, auths); err != nil {
+			return err
+		}
 		return ensureRegistryRefsAssociated(ctx, tx, c)
 	})
 }
 
 // replaceRegistryLinks makes consumer_registry match the requested set,
 // detaching the links that are gone and upserting the rest with their weight and
-// their position in the set. A role_based consumer holds no links at all;
-// cleanupIncompatibleRelations already removed them.
+// their position in the set.
 func replaceRegistryLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, registries *domain.RegistryBindings) error {
-	if registries == nil || c.RoutingMode == domain.RoutingModeRoleBased {
+	if registries == nil {
 		return nil
 	}
 	const detachRemoved = `
@@ -236,18 +241,42 @@ func replaceRegistryLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, re
 	return nil
 }
 
-func cleanupIncompatibleRelations(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
-	var query string
-	switch c.RoutingMode {
-	case domain.RoutingModeRoleBased:
-		query = `DELETE FROM consumer_registry WHERE consumer_id = $1`
-	case domain.RoutingModeInline:
-		query = `DELETE FROM consumer_role WHERE consumer_id = $1`
-	default:
+// replaceAuthLinks makes consumer_auth match the requested set. The insert
+// selects the auth from the consumer's own gateway, so the statement itself is
+// what enforces tenant isolation: an auth moved or deleted between the
+// updater's validation and this commit matches nothing and the write is
+// rejected, rather than cross-attaching on any caller of Update that skips the
+// updater (RUN-1501).
+func replaceAuthLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, auths *[]ids.AuthID) error {
+	if auths == nil {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, query, c.ID); err != nil {
+	const detachRemoved = `
+		DELETE FROM consumer_auth
+		 WHERE consumer_id = $1
+		   AND auth_id <> ALL($2::uuid[])`
+	keep := ids.ToUUIDs(*auths)
+	if keep == nil {
+		keep = []uuid.UUID{}
+	}
+	if _, err := tx.Exec(ctx, detachRemoved, c.ID, keep); err != nil {
 		return mapPgError(err)
+	}
+	// The no-op DO UPDATE keeps an already-attached auth reporting one affected
+	// row, so re-attaching what the consumer already holds stays idempotent and
+	// only a genuinely unmatched auth reports zero.
+	const attachLink = `
+		INSERT INTO consumer_auth (consumer_id, auth_id)
+		SELECT $1, id FROM auths WHERE id = $2 AND gateway_id = $3
+		ON CONFLICT (consumer_id, auth_id) DO UPDATE SET auth_id = EXCLUDED.auth_id`
+	for _, authID := range *auths {
+		cmd, err := tx.Exec(ctx, attachLink, c.ID, authID, c.GatewayID)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: auth %s does not belong to the consumer's gateway", commonerrors.ErrConflict, authID)
+		}
 	}
 	return nil
 }
@@ -265,9 +294,6 @@ func lockConsumerRow(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) 
 }
 
 func ensureRegistryRefsAssociated(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
-	if c.RoutingMode == domain.RoutingModeRoleBased {
-		return nil
-	}
 	refs := consumerRegistryReferences(c)
 	if len(refs) == 0 {
 		return nil
@@ -382,26 +408,6 @@ func (r *Repository) detachRegistryIfUnreferenced(
 		return nil, err
 	}
 	return current, nil
-}
-
-func (r *Repository) AttachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	const query = `INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query, consumerID, roleID); err != nil {
-			return mapPgError(err)
-		}
-		return nil
-	})
-}
-
-func (r *Repository) DetachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	const query = `DELETE FROM consumer_role WHERE consumer_id = $1 AND role_id = $2`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query, consumerID, roleID); err != nil {
-			return mapPgError(err)
-		}
-		return nil
-	})
 }
 
 func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
@@ -708,23 +714,22 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		toolkitRaw       []byte
+		identityRaw      []byte
+		authBindingRaw   []byte
 		failModeRaw      *string
 		consumerType     string
-		routingMode      string
 		registryIDs      []uuid.UUID
 		registryWeights  []byte
-		roleIDs          []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
-		&c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &registryWeights, &roleIDs, &authIDs,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
+		&identityRaw, &authBindingRaw, &c.CreatedAt, &c.UpdatedAt,
+		&registryIDs, &registryWeights, &authIDs,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
-	c.RoutingMode = domain.RoutingMode(routingMode)
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
@@ -766,8 +771,17 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 			c.MCP = mcp
 		}
 	}
+	if len(identityRaw) > 0 {
+		if err := json.Unmarshal(identityRaw, &c.Identity); err != nil {
+			return nil, fmt.Errorf("scan identity: %w", err)
+		}
+	}
+	if len(authBindingRaw) > 0 {
+		if err := json.Unmarshal(authBindingRaw, &c.AuthBinding); err != nil {
+			return nil, fmt.Errorf("scan auth_binding: %w", err)
+		}
+	}
 	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
-	c.RoleIDs = ids.FromUUIDs[ids.RoleKind](roleIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
 	weights, err := parseRegistryWeights(registryWeights)
 	if err != nil {
@@ -776,9 +790,6 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	c.RegistryWeights = weights
 	if c.RegistryIDs == nil {
 		c.RegistryIDs = []ids.RegistryID{}
-	}
-	if c.RoleIDs == nil {
-		c.RoleIDs = []ids.RoleID{}
 	}
 	if c.AuthIDs == nil {
 		c.AuthIDs = []ids.AuthID{}
@@ -882,18 +893,13 @@ func consumerOrderBy(sort listing.Sort) string {
 func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
-		case pgRoutingConflict, pgCrossGatewayLink:
+		case pgCrossGatewayLink:
 			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, consumerSlugUniqueIndex) {
 				return domain.ErrSlugAlreadyExists
 			}
 			return domain.ErrAlreadyExists
-		case pgCheckViolation:
-			if strings.Contains(pgErr.ConstraintName, consumerRoutingModeCheck) {
-				return domain.ErrInvalidRoutingMode
-			}
-			return err
 		case pgForeignKeyViolation:
 			if strings.Contains(pgErr.ConstraintName, gatewayFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(gateway_id)") {
@@ -906,10 +912,6 @@ func mapPgError(err error) error {
 			if strings.Contains(pgErr.ConstraintName, consumerAuthFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(auth_id)") {
 				return domain.ErrInvalidAuthID
-			}
-			if strings.Contains(pgErr.ConstraintName, consumerRoleFKConstraint) ||
-				strings.Contains(pgErr.Detail, "(role_id)") {
-				return roledomain.ErrNotFound
 			}
 			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(policy_id)") {

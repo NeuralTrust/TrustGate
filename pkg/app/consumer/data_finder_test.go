@@ -20,6 +20,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -30,6 +31,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	backendmocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -41,7 +43,6 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 		Name:        "c",
 		Type:        domain.TypeLLM,
 		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 		AuthIDs:     authIDs,
@@ -97,7 +98,7 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, nil, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -154,6 +155,56 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	}
 }
 
+func TestDataFinder_FindByGateway_AppliesGlobalPoliciesToStoreConsumer(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	globalPolicy := &policydomain.Policy{
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: gwID,
+		Slug:      "per_tool_rate_limiter",
+		Enabled:   true,
+		Global:    true,
+		Stages:    []policydomain.Stage{policydomain.StagePreRequest},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{globalPolicy}, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(
+		repo,
+		backendmocks.NewRepository(t),
+		policyRepo,
+		authmocks.NewRepository(t),
+		pluginRegistry,
+		newCacheManager(),
+		newTestLogger(),
+	)
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	if data.StoreConsumer == nil || !domain.IsStoreConsumer(data.StoreConsumer.Consumer) {
+		t.Fatal("expected the aggregate to contain the synthetic Store consumer")
+	}
+	if len(data.StoreConsumer.Policies) != 1 || data.StoreConsumer.Policies[0].ID != globalPolicy.ID {
+		t.Fatalf("Store policies = %+v, want global policy %s", data.StoreConsumer.Policies, globalPolicy.ID)
+	}
+	if data.StoreConsumer.PolicyPlan == nil || !data.StoreConsumer.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("expected the Store policy plan to contain the global pre-request policy")
+	}
+	if len(data.Consumers) != 0 {
+		t.Fatalf("synthetic Store consumer must not appear in persisted consumers: %+v", data.Consumers)
+	}
+}
+
 func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
@@ -161,12 +212,11 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -199,7 +249,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -226,12 +276,11 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	fbEnabled, fbDisabled := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Slug:      "X84Yhsy8",
 		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -263,7 +312,7 @@ func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, newCacheManager(), newTestLogger(),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -298,7 +347,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -325,7 +374,7 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
 		policyRepo, authmocks.NewRepository(t),
-		nil, nil, mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -334,5 +383,293 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	}
 	if len(data.Consumers) != 0 {
 		t.Fatalf("expected empty aggregate, got %d consumers", len(data.Consumers))
+	}
+}
+
+func policyIDs(policies []*policydomain.Policy) []ids.PolicyID {
+	out := make([]ids.PolicyID, 0, len(policies))
+	for _, p := range policies {
+		out = append(out, p.ID)
+	}
+	return out
+}
+
+func containsPolicyID(policies []*policydomain.Policy, id ids.PolicyID) bool {
+	for _, p := range policies {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDataFinder_FindByGateway_SlugOverrideOnlyAmongUnscopedPolicies(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	scopedConsumer := routableConsumer(gwID, nil)
+	unscopedConsumer := routableConsumer(gwID, nil)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*domain.Consumer{scopedConsumer, unscopedConsumer}, nil).Once()
+
+	globalGuard := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "trustguard", Global: true}
+	globalGuardScoped := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "trustguard", Global: true,
+		MCPScope: &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{registryID}},
+	}
+	consumerGuardScoped := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "trustguard",
+		ConsumerIDs: []ids.ConsumerID{scopedConsumer.ID},
+		MCPScope:    &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+	}
+	consumerGuard := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "trustguard",
+		ConsumerIDs: []ids.ConsumerID{unscopedConsumer.ID},
+	}
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{globalGuard, globalGuardScoped, consumerGuardScoped, consumerGuard}, nil).Once()
+
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
+
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), nil, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	if len(data.Consumers) != 2 {
+		t.Fatalf("expected 2 consumers, got %d", len(data.Consumers))
+	}
+
+	withScoped := data.Consumers[0]
+	if len(withScoped.Policies) != 1 || withScoped.Policies[0].ID != globalGuard.ID {
+		t.Fatalf("a scoped consumer policy must not suppress the unscoped global of the same slug, got %v", policyIDs(withScoped.Policies))
+	}
+	if len(withScoped.ScopedPolicies) != 2 ||
+		!containsPolicyID(withScoped.ScopedPolicies, consumerGuardScoped.ID) ||
+		!containsPolicyID(withScoped.ScopedPolicies, globalGuardScoped.ID) {
+		t.Fatalf("scoped policies must be additive (consumer + global), got %v", policyIDs(withScoped.ScopedPolicies))
+	}
+	if withScoped.ScopedPolicies[0].ID != consumerGuardScoped.ID {
+		t.Fatal("consumer-scoped policies must precede global ones in ScopedPolicies")
+	}
+
+	withUnscoped := data.Consumers[1]
+	if len(withUnscoped.Policies) != 1 || withUnscoped.Policies[0].ID != consumerGuard.ID {
+		t.Fatalf("the unscoped consumer policy must still override the unscoped global, got %v", policyIDs(withUnscoped.Policies))
+	}
+	if len(withUnscoped.ScopedPolicies) != 1 || withUnscoped.ScopedPolicies[0].ID != globalGuardScoped.ID {
+		t.Fatalf("an unscoped consumer policy must never suppress a scoped global, got %v", policyIDs(withUnscoped.ScopedPolicies))
+	}
+}
+
+func TestDataFinder_FindByGateway_ScopedPoliciesStayOutOfThePolicyPlan(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := routableConsumer(gwID, nil)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
+
+	byRegistry := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true,
+		ConsumerIDs: []ids.ConsumerID{cons.ID},
+		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope:    &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+	}
+	pruned := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true,
+		ConsumerIDs: []ids.ConsumerID{cons.ID},
+		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope:    &policydomain.MCPScope{},
+	}
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{byRegistry, pruned}, nil).Once()
+
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	rc := data.Consumers[0]
+	if len(rc.Policies) != 0 {
+		t.Fatalf("scoped policies must not enter Policies, got %v", policyIDs(rc.Policies))
+	}
+	if rc.PolicyPlan == nil || rc.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("scoped policies must stay out of the base PolicyPlan the LLM plane and discovery read")
+	}
+	if len(rc.ScopedPolicies) != 2 || !containsPolicyID(rc.ScopedPolicies, byRegistry.ID) || !containsPolicyID(rc.ScopedPolicies, pruned.ID) {
+		t.Fatalf("both the registry-scoped and the pruned {} policy must be kept as scoped, got %v", policyIDs(rc.ScopedPolicies))
+	}
+}
+
+func TestDataFinder_FindByGateway_StoreConsumerPartitionsGlobalPolicies(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	unscoped := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true, Global: true,
+		Stages: []policydomain.Stage{policydomain.StagePreRequest},
+	}
+	scopedGlobal := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true, Global: true,
+		Stages:   []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope: &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{scopedGlobal, unscoped}, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(repo, backendmocks.NewRepository(t), policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	store := data.StoreConsumer
+	if store == nil {
+		t.Fatal("expected the synthetic Store consumer")
+	}
+	if len(store.Policies) != 1 || store.Policies[0].ID != unscoped.ID {
+		t.Fatalf("Store.Policies must hold only unscoped globals, got %v", policyIDs(store.Policies))
+	}
+	if len(store.ScopedPolicies) != 1 || store.ScopedPolicies[0].ID != scopedGlobal.ID {
+		t.Fatalf("scoped globals must reach the Store as ScopedPolicies, got %v", policyIDs(store.ScopedPolicies))
+	}
+	if store.PolicyPlan == nil || !store.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("the Store base plan must still carry the unscoped global")
+	}
+}
+
+func mcpRoutableConsumer(gwID ids.GatewayID, registryIDs ...ids.RegistryID) *domain.Consumer {
+	now := time.Now().UTC()
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "mcp",
+		Type:        domain.TypeMCP,
+		Slug:        "M84Yhsy8",
+		Active:      true,
+		RegistryIDs: registryIDs,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+}
+
+func TestDataFinder_FindByGateway_BuildsMCPPlansOnlyForMCPConsumers(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	snowflakeID := ids.New[ids.RegistryKind]()
+	mcpCons := mcpRoutableConsumer(gwID, snowflakeID)
+	llmCons := routableConsumer(gwID, nil)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*domain.Consumer{mcpCons, llmCons}, nil).Once()
+
+	scoped := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true,
+		ConsumerIDs: []ids.ConsumerID{mcpCons.ID, llmCons.ID},
+		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope:    &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{snowflakeID}},
+	}
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{scoped}, nil).Once()
+
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	if len(data.Consumers) != 2 {
+		t.Fatalf("expected 2 consumers, got %d", len(data.Consumers))
+	}
+
+	mcp := data.Consumers[0]
+	if mcp.MCPPlans == nil {
+		t.Fatal("an MCP consumer must carry precompiled MCPPlans")
+	}
+	if mcp.PolicyPlan == nil || mcp.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("the base PolicyPlan must still exclude scoped policies")
+	}
+	snowflake := &registrydomain.Registry{ID: snowflakeID, GatewayID: gwID, Enabled: true}
+	if plan := mcp.MCPPlans.PlanFor(snowflake, "run_query", nil); plan == nil || !plan.Has(policydomain.StagePreRequest) {
+		t.Fatal("PlanFor on the scoped registry must include the scoped policy")
+	}
+	other := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gwID, Enabled: true}
+	if plan := mcp.MCPPlans.PlanFor(other, "run_query", nil); plan == nil || plan.Has(policydomain.StagePreRequest) {
+		t.Fatal("PlanFor on another registry must fall back to the base plan")
+	}
+
+	llm := data.Consumers[1]
+	if llm.MCPPlans != nil {
+		t.Fatal("LLM consumers must not carry MCPPlans")
+	}
+}
+
+func TestDataFinder_FindByGateway_StoreConsumerPlansFromScopedGlobals(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	snowflakeID := ids.New[ids.RegistryKind]()
+	scopedGlobal := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "per_tool_rate_limiter", Enabled: true, Global: true,
+		Stages:   []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope: &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{snowflakeID}},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{scopedGlobal}, nil).Once()
+
+	pluginRegistry := appplugins.NewRegistry()
+	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+	finder := appconsumer.NewDataFinder(repo, backendmocks.NewRepository(t), policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	store := data.StoreConsumer
+	if store == nil || store.MCPPlans == nil {
+		t.Fatal("the Store consumer must carry MCPPlans built from the global policies")
+	}
+	if store.PolicyPlan == nil || store.PolicyPlan.Has(policydomain.StagePreRequest) {
+		t.Fatal("the Store base plan must exclude scoped globals")
+	}
+	snowflake := &registrydomain.Registry{ID: snowflakeID, GatewayID: gwID, Enabled: true}
+	if plan := store.MCPPlans.PlanFor(snowflake, "run_query", nil); plan == nil || !plan.Has(policydomain.StagePreRequest) {
+		t.Fatal("a scoped global must reach the Store plan for its registry")
+	}
+	other := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gwID, Enabled: true}
+	if plan := store.MCPPlans.PlanFor(other, "run_query", nil); plan == nil || plan.Has(policydomain.StagePreRequest) {
+		t.Fatal("a scoped global must not reach other registries in the Store")
 	}
 }

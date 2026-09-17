@@ -24,7 +24,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -41,7 +40,6 @@ type dataFinder struct {
 	registryRepo   registrydomain.Repository
 	policyRepo     policydomain.Repository
 	authRepo       authdomain.Repository
-	roleRepo       roledomain.Repository
 	pluginRegistry appplugins.Registry
 	memoryCache    *cache.TTLMap
 	logger         *slog.Logger
@@ -53,7 +51,6 @@ func NewDataFinder(
 	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
-	roleRepo roledomain.Repository,
 	pluginRegistry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
@@ -63,7 +60,6 @@ func NewDataFinder(
 		registryRepo:   registryRepo,
 		policyRepo:     policyRepo,
 		authRepo:       authRepo,
-		roleRepo:       roleRepo,
 		pluginRegistry: pluginRegistry,
 		memoryCache:    manager.GetTTLMap(cache.ConsumerDataTTLName),
 		logger:         logger,
@@ -108,11 +104,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
-	roles, err := f.loadRoles(ctx, gatewayID)
-	if err != nil {
-		return nil, err
-	}
-	backendByID, err := f.loadBackends(ctx, gatewayID, consumers, roles)
+	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err
 	}
@@ -125,23 +117,35 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
+	globalsUnscoped, globalsScoped := partitionScoped(globalPolicies)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
 		chain := fallbackChainOf(c)
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
-		policies := composePolicies(globalPolicies, policiesByConsumer[c.ID])
+		consumerUnscoped, consumerScoped := partitionScoped(policiesByConsumer[c.ID])
+		policies := composePolicies(globalsUnscoped, consumerUnscoped)
+		scoped := mergeScoped(consumerScoped, globalsScoped)
 		routable = append(routable, RoutableConsumer{
 			Consumer:         c,
 			Registries:       collectBackends(poolRegistryIDs(c.RegistryIDs, chain), backendByID),
 			FallbackBackends: fallbackBackends,
 			Policies:         policies,
 			PolicyPlan:       f.buildPolicyPlan(policies),
+			ScopedPolicies:   scoped,
+			MCPPlans:         f.buildMCPPlans(c, policies, scoped),
 			Auths:            collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
-	data := NewData(gatewayID, routable, roles)
+	data := NewData(gatewayID, routable)
+	data.StoreConsumer = &RoutableConsumer{
+		Consumer:       domain.BuildStoreConsumer(gatewayID),
+		Policies:       globalsUnscoped,
+		PolicyPlan:     f.buildPolicyPlan(globalsUnscoped),
+		ScopedPolicies: globalsScoped,
+		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, globalsUnscoped, globalsScoped, f.logger),
+	}
 	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
 	return data, nil
@@ -154,16 +158,21 @@ func (f *dataFinder) buildPolicyPlan(policies []*policydomain.Policy) *appplugin
 	return appplugins.NewStagePlan(f.pluginRegistry, policies, f.logger)
 }
 
+func (f *dataFinder) buildMCPPlans(c *domain.Consumer, unscoped, scoped []*policydomain.Policy) *PolicyPlans {
+	if c == nil || c.Type != domain.TypeMCP {
+		return nil
+	}
+	return BuildPolicyPlans(f.pluginRegistry, unscoped, scoped, f.logger)
+}
+
 func (f *dataFinder) loadBackends(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
-	roles []*roledomain.Role,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
 		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
 	})
-	idList = appendRoleRegistryIDs(idList, roles)
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
 	}
@@ -224,33 +233,6 @@ func (f *dataFinder) loadAuths(
 		byID[a.ID] = a
 	}
 	return byID, nil
-}
-
-func (f *dataFinder) loadRoles(ctx context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
-	if f.roleRepo == nil {
-		return nil, nil
-	}
-	return f.roleRepo.ListByGateway(ctx, gatewayID)
-}
-
-func appendRoleRegistryIDs(idList []ids.RegistryID, roles []*roledomain.Role) []ids.RegistryID {
-	seen := make(map[ids.RegistryID]struct{}, len(idList))
-	for _, id := range idList {
-		seen[id] = struct{}{}
-	}
-	for _, r := range roles {
-		if r == nil {
-			continue
-		}
-		for _, id := range r.RegistryIDs {
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			idList = append(idList, id)
-		}
-	}
-	return idList
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
@@ -317,6 +299,39 @@ func collectBackends(idList []ids.RegistryID, byID map[ids.RegistryID]*registryd
 	for _, id := range idList {
 		if b, ok := byID[id]; ok {
 			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func partitionScoped(policies []*policydomain.Policy) (unscoped, scoped []*policydomain.Policy) {
+	unscoped = make([]*policydomain.Policy, 0, len(policies))
+	for _, p := range policies {
+		if p == nil {
+			continue
+		}
+		if p.MCPScope != nil {
+			scoped = append(scoped, p)
+			continue
+		}
+		unscoped = append(unscoped, p)
+	}
+	return unscoped, scoped
+}
+
+func mergeScoped(consumerScoped, globalsScoped []*policydomain.Policy) []*policydomain.Policy {
+	if len(consumerScoped)+len(globalsScoped) == 0 {
+		return nil
+	}
+	out := make([]*policydomain.Policy, 0, len(consumerScoped)+len(globalsScoped))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(consumerScoped)+len(globalsScoped))
+	for _, list := range [][]*policydomain.Policy{consumerScoped, globalsScoped} {
+		for _, p := range list {
+			if _, dup := seenIDs[p.ID]; dup {
+				continue
+			}
+			seenIDs[p.ID] = struct{}{}
+			out = append(out, p)
 		}
 	}
 	return out

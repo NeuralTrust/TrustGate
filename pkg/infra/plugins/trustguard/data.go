@@ -18,17 +18,19 @@ import (
 	"encoding/json"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 type GuardRequest struct {
-	Payload    json.RawMessage `json:"payload"`
-	Direction  string          `json:"direction"`
-	Protocol   string          `json:"protocol"`
-	GatewayID  string          `json:"gateway_id"`
-	SessionID  string          `json:"session_id"`
-	ConsumerID string          `json:"consumer_id"`
-	Attributes GuardAttributes `json:"attributes"`
+	OriginalRequest *requestmeta.OriginalRequest `json:"original_request,omitempty"`
+	Payload         json.RawMessage              `json:"payload"`
+	Direction       string                       `json:"direction"`
+	Protocol        string                       `json:"protocol"`
+	GatewayID       string                       `json:"gateway_id"`
+	SessionID       string                       `json:"session_id"`
+	ConsumerID      string                       `json:"consumer_id"`
+	Attributes      GuardAttributes              `json:"attributes"`
 }
 
 type GuardUser struct {
@@ -111,6 +113,12 @@ type guardData struct {
 	FailureReason  string         `json:"failure_reason,omitempty"`
 	Degraded       bool           `json:"degraded,omitempty"`
 	DegradedReason string         `json:"degraded_reason,omitempty"`
+	// Skipped marks a leg the plugin decided not to inspect at all. Without
+	// it, "inspected and clean" and "never looked" produce an identical
+	// event, which is what let response coverage lapse unnoticed. Both fields
+	// are omitempty, so events that did inspect are unchanged.
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data guardData) {

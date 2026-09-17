@@ -59,7 +59,7 @@ func createInputMatcher(want apppolicy.CreateInput) interface{} {
 }
 
 func createFromInput(_ context.Context, in apppolicy.CreateInput) (*domain.Policy, error) {
-	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode)
+	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode, in.MCPScope)
 }
 
 func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
@@ -318,5 +318,69 @@ func TestDuplicator_PropagatesNonConflictCreateError(t *testing.T) {
 	_, err := dup.Duplicate(context.Background(), gwID, src.ID)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want sentinel", err)
+	}
+}
+
+func TestDuplicator_CopiesMCPScope(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	snowflake := ids.New[ids.RegistryKind]()
+	src := sourcePolicy(gwID, "Foo")
+	src.MCPScope = &domain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{snowflake},
+		Tools:        []domain.MCPToolRef{{RegistryID: ids.New[ids.RegistryKind](), Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Becarios"},
+	}
+
+	finder := policymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+	finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+	var captured *domain.MCPScope
+	creator := policymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in apppolicy.CreateInput) bool {
+			captured = in.MCPScope
+			return reflect.DeepEqual(in.MCPScope, src.MCPScope)
+		})).
+		RunAndReturn(createFromInput).
+		Once()
+
+	dup := apppolicy.NewDuplicator(finder, creator, newTestLogger())
+	got, err := dup.Duplicate(context.Background(), gwID, src.ID)
+	if err != nil {
+		t.Fatalf("Duplicate error: %v", err)
+	}
+	if !reflect.DeepEqual(got.MCPScope, src.MCPScope) {
+		t.Fatalf("scope = %+v, want %+v", got.MCPScope, src.MCPScope)
+	}
+	if captured == src.MCPScope {
+		t.Fatal("duplicate must not share the source's scope pointer")
+	}
+	captured.Groups[0] = "Marketing"
+	if src.MCPScope.Groups[0] != "Finanzas" {
+		t.Fatal("mutating the duplicate's scope leaked into the source")
+	}
+}
+
+func TestDuplicator_LeavesMCPScopeNilWhenSourceHasNone(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	src := sourcePolicy(gwID, "Foo")
+
+	finder := policymocks.NewFinder(t)
+	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
+	finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
+
+	creator := policymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in apppolicy.CreateInput) bool { return in.MCPScope == nil })).
+		RunAndReturn(createFromInput).
+		Once()
+
+	dup := apppolicy.NewDuplicator(finder, creator, newTestLogger())
+	if _, err := dup.Duplicate(context.Background(), gwID, src.ID); err != nil {
+		t.Fatalf("Duplicate error: %v", err)
 	}
 }

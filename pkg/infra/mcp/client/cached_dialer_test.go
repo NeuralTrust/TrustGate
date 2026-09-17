@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -219,65 +220,95 @@ func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
 	}
 }
 
-func TestCachedDialer_ClosingARedundantSessionDoesNotStallTheCache(t *testing.T) {
+func TestCachedDialer_ConcurrentColdConnectsShareOneSession(t *testing.T) {
 	t.Parallel()
-
-	var dialling atomic.Int64
-	bothDialling := make(chan struct{})
-	tearingDown := make(chan struct{}, 4)
-	finishTeardown := make(chan struct{})
-
+	const callers = 16
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	var inits atomic.Int64
 	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
 	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
 		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
 			if method == "initialize" {
-				if n := dialling.Add(1); n <= 2 {
-					if n == 2 {
-						close(bothDialling)
-					}
-					<-bothDialling
-				}
+				inits.Add(1)
+				once.Do(func() { close(started) })
+				<-release
 			}
 			return next(ctx, method, req)
 		}
 	})
-	inner := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			tearingDown <- struct{}{}
-			<-finishTeardown
-		}
-		inner.ServeHTTP(w, r)
-	}))
-	defer srv.Close()
-	defer close(finishTeardown)
-
+	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
+	t.Cleanup(srv.Close)
 	dialer := newCachedDialer()
-	for i := 0; i < 2; i++ {
+	errs := make(chan error, callers)
+	for range callers {
 		go func() {
-			_, _ = dialer.Connect(context.Background(),
-				appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
+			_, err := dialer.Connect(context.Background(), appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
+			errs <- err
 		}()
 	}
 	select {
-	case <-tearingDown:
+	case <-started:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the session that lost the race was never torn down")
+		t.Fatal("shared connection did not start")
 	}
-
-	dialled := make(chan error, 1)
-	go func() {
-		_, err := dialer.Connect(context.Background(),
-			appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:other"})
-		dialled <- err
-	}()
-	select {
-	case err := <-dialled:
+	close(release)
+	for range callers {
+		err := <-errs
 		if err != nil {
-			t.Fatalf("connect to a second registry: %v", err)
+			t.Fatalf("connect: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("a session lookup waited on the teardown round trip of an unrelated session")
+	}
+	if got := inits.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want one", got)
+	}
+}
+
+func TestCachedDialer_CancelledLeaderDoesNotCancelFollower(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	var inits atomic.Int64
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				inits.Add(1)
+				once.Do(func() { close(started) })
+				<-release
+			}
+			return next(ctx, method, req)
+		}
+	})
+	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil))
+	t.Cleanup(srv.Close)
+	dialer := newCachedDialer()
+	target := appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"}
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(leaderCtx, target)
+		leaderDone <- err
+	}()
+	<-started
+	followerDone := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), target)
+		followerDone <- err
+	}()
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader error = %v, want context.Canceled", err)
+	}
+	close(release)
+	if err := <-followerDone; err != nil {
+		t.Fatalf("follower connect: %v", err)
+	}
+	if got := inits.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want one", got)
 	}
 }
 

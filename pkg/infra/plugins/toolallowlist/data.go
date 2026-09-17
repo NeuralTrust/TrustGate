@@ -21,6 +21,13 @@ const (
 	actionStripped    = "stripped"
 	actionPassThrough = "pass_through"
 	actionSkipped     = "skipped"
+	actionAllowed     = "allowed"
+)
+
+const (
+	errNoToolsAllowed    = "no_tools_allowed"
+	errInvalidToolsField = "invalid_tools_field"
+	errToolDenied        = "tool_denied"
 )
 
 type ToolAllowlistData struct {
@@ -43,9 +50,12 @@ type errorDetail struct {
 	AllowedAfterFilter []string `json:"allowed_after_filter"`
 }
 
-func newErrorBody(requested []string) errorBody {
+func newErrorBody(kind string, requested []string) errorBody {
+	if requested == nil {
+		requested = []string{}
+	}
 	return errorBody{Error: errorDetail{
-		Type:               "no_tools_allowed",
+		Type:               kind,
 		Requested:          requested,
 		AllowedAfterFilter: []string{},
 	}}
