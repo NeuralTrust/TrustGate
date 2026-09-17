@@ -282,3 +282,31 @@ func TestStoreSurfaceVersionMovesWithAnInstall(t *testing.T) {
 	require.NotEqual(t, empty, withNotion, "installing a server must move the version")
 	require.NotEqual(t, withNotion, withLinear, "installing a second server must move it again")
 }
+
+// An install changes the caller's tools by definition, so its own reply carries
+// the announcement. Waiting for the cached snapshot to notice would put it on
+// the next request, which is the difference between a client that has the new
+// tools when the user next speaks and one that does not.
+func TestInstallAnnouncesOnItsOwnReply(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		method string
+		params string
+		want   bool
+	}{
+		{name: "install", method: "tools/call", params: `{"name":"trustgate_store_install"}`, want: true},
+		{name: "uninstall", method: "tools/call", params: `{"name":"trustgate_store_uninstall"}`, want: true},
+		{name: "search changes nothing", method: "tools/call", params: `{"name":"trustgate_store_search"}`},
+		{name: "a proxied tool", method: "tools/call", params: `{"name":"notion_notion-search"}`},
+		{name: "not a call at all", method: "tools/list", params: `{}`},
+		{name: "unreadable params", method: "tools/call", params: `[`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := changesTheSurface(tc.method, json.RawMessage(tc.params)); got != tc.want {
+				t.Fatalf("changesTheSurface(%q, %s) = %v, want %v", tc.method, tc.params, got, tc.want)
+			}
+		})
+	}
+}
