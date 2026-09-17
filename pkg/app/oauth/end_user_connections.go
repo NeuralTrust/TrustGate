@@ -40,6 +40,10 @@ var (
 	// ErrUnknownConnectProvider: the requested provider is not a forwarded-auth
 	// server of the consumer.
 	ErrUnknownConnectProvider = fmt.Errorf("oauth end-user connections: unknown provider: %w", commonerrors.ErrValidation)
+	// ErrAppConnectionsUnsupported: the consumer acts for users rather than as
+	// itself, so it holds no accounts of its own to report. Naming a user is
+	// how its connections are read.
+	ErrAppConnectionsUnsupported = fmt.Errorf("oauth connections: consumer acts for its users, not as itself: %w", commonerrors.ErrConflict)
 )
 
 // Connection states reported to the application, the equivalent of Composio's
@@ -77,6 +81,12 @@ type EndUserConnection struct {
 type EndUserConnectionsService interface {
 	Link(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey, endUser, provider string) (*EndUserLink, error)
 	Connections(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey, endUser string) ([]EndUserConnection, error)
+	// AppConnections reads what the application itself has connected, for a
+	// consumer that acts as itself. It is what a batch asks before it starts:
+	// nobody is present to follow a connect link once it is running, so the
+	// run either knows its accounts are good beforehand or finds out on the
+	// call that fails.
+	AppConnections(ctx context.Context, gatewayID ids.GatewayID, slug, rawKey string) ([]EndUserConnection, error)
 }
 
 // endUserAPIKeys is the API-key lookup the service needs.
@@ -187,6 +197,42 @@ func (s *endUserConnectionsService) Connections(
 	return out, nil
 }
 
+// AppConnections reports, per connectable server, whether the application's own
+// account is connected.
+//
+// It is the same question Connections answers for an end user, asked of the
+// other actor: the principal is app:<consumer_id> rather than one of its users,
+// and the consumer has to be one that acts as itself — an application whose
+// users sign in for themselves holds nothing here, and answering it with an
+// empty list would read as "connected to nothing" rather than "wrong actor".
+func (s *endUserConnectionsService) AppConnections(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	slug, rawKey string,
+) ([]EndUserConnection, error) {
+	target, err := s.authenticateApp(ctx, gatewayID, slug, rawKey)
+	if err != nil {
+		return nil, err
+	}
+	statuses, err := s.tickets.Statuses(ctx, gatewayID,
+		consumerdomain.AppSubject(target.Consumer.ID), appconsumer.MCPPath(slug))
+	if err != nil {
+		return nil, fmt.Errorf("oauth connections: read statuses: %w", err)
+	}
+	out := make([]EndUserConnection, 0, len(statuses))
+	for _, st := range statuses {
+		out = append(out, EndUserConnection{
+			Provider:   st.Provider,
+			Registry:   st.Registry,
+			Code:       st.Code,
+			Status:     connectionStatus(st),
+			AccountRef: st.AccountRef,
+			ExpiresAt:  st.ExpiresAt,
+		})
+	}
+	return out, nil
+}
+
 // authenticate resolves the consumer behind the slug and checks the API key
 // belongs to it. An unknown or non-MCP slug and a wrong key both read as
 // unauthorized so the endpoint never confirms which consumers exist; a consumer
@@ -219,6 +265,37 @@ func (s *endUserConnectionsService) authenticate(
 		return nil, nil, ErrEndUserConnectionsUnsupported
 	}
 	return data, target, nil
+}
+
+// authenticateApp is authenticate for the other actor: same slug, same key,
+// and the opposite identity check.
+func (s *endUserConnectionsService) authenticateApp(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	slug, rawKey string,
+) (*appconsumer.RoutableConsumer, error) {
+	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth connections: find consumer: %w", err)
+	}
+	target, ok := data.MatchSlug(slug)
+	if !ok || !validMCPConsumer(target, gatewayID) {
+		return nil, ErrAPIKeyConnectUnauthorized
+	}
+	auth, err := s.apiKeys.FindByAPIKey(ctx, strings.TrimSpace(rawKey))
+	if err != nil {
+		if errors.Is(err, authdomain.ErrNotFound) {
+			return nil, ErrAPIKeyConnectUnauthorized
+		}
+		return nil, fmt.Errorf("oauth connections: find API key: %w", err)
+	}
+	if !validAPIKeyAuth(auth, target.Consumer, gatewayID) {
+		return nil, ErrAPIKeyConnectUnauthorized
+	}
+	if target.Consumer.Identity.ActsForUsers {
+		return nil, ErrAppConnectionsUnsupported
+	}
+	return target, nil
 }
 
 func connectionStatus(st ProviderStatus) string {
