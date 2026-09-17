@@ -112,6 +112,9 @@ type ToolCall struct {
 	NativeTool string
 	Arguments  json.RawMessage
 	Plan       *appplugins.StagePlan
+	// ClientToolCallID is the LLM tool_call_id the caller volunteered in
+	// params._meta, "" when it sent none.
+	ClientToolCallID string
 }
 
 // PreRequest runs StagePreRequest over a resolved tools/call. The returned
@@ -349,6 +352,7 @@ func (r *PluginRunner) buildRequestContext(
 		SourceFormat:   "",
 		RequestedModel: "",
 		MCP:            true,
+		MCPToolCallID:  call.ClientToolCallID,
 		Body:           body,
 	}
 	if call.Registry != nil {
