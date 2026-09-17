@@ -28,6 +28,16 @@ var (
 	ErrUpstreamUnavailable = fmt.Errorf("mcp: upstream unavailable")
 )
 
+// ErrRegistryNotIntrospectable reports a registry whose upstream cannot be
+// dialed from the admin plane because the dial depends on a principal the admin
+// request does not carry: per-principal auth supplies the credential, URL
+// variables supply the host. It wraps commonerrors.ErrConflict so the HTTP
+// funnel answers 409.
+var ErrRegistryNotIntrospectable = fmt.Errorf(
+	"mcp: registry cannot be introspected without a principal: %w",
+	commonerrors.ErrConflict,
+)
+
 // ToolNotPermittedError reports a tool the upstream offers but the consumer's
 // toolkit excludes. It is a denial, not a missing tool and not an upstream
 // failure, so it carries its own type: the handler answers it as a policy block
