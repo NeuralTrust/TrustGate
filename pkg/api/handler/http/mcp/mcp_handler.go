@@ -175,6 +175,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
+	c.Locals(rpcMethodLocal, req.Method)
 	if req.Method != "ping" {
 		if rt := trace.FromContext(c.UserContext()); rt != nil {
 			stampRequestIdentity(c, rt, rc, h.surface)
@@ -285,6 +286,27 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 	return baseServerInstructions
 }
 
+// rpcMethodLocal carries the method being served, so an error can name it.
+const rpcMethodLocal = "trustgate.mcp.rpc.method"
+
+// logRPCError writes down a JSON-RPC failure.
+//
+// These go out as HTTP 200 with the error in the body, which is what JSON-RPC
+// over HTTP requires and what leaves an operator reading `"status":200` for a
+// call that failed. A client reports "it does not work" and the access log
+// agrees that everything is fine. The reason is a code and a message the
+// gateway itself composed; arguments and tickets stay out of it.
+func logRPCError(c *fiber.Ctx, code int, message string, attrs ...slog.Attr) {
+	method, _ := c.Locals(rpcMethodLocal).(string)
+	slog.LogAttrs(c.UserContext(), slog.LevelWarn, "mcp: request answered with an error",
+		append([]slog.Attr{
+			slog.String("method", method),
+			slog.Int("code", code),
+			slog.String("message", message),
+			slog.String("path", c.Path()),
+		}, attrs...)...)
+}
+
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
 		rpcErr        *appmcp.RPCError
@@ -304,6 +326,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
 		applyRPCErrorHeaders(c, rpcErr)
+		logRPCError(c, int(rpcErr.Code), rpcErr.Message)
 		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -317,6 +340,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			"connect_url": connectURL,
 			"cause":       consentErr.Cause,
 		})
+		// The message carries a connect ticket, so the provider and the cause go
+		// to the log in its place.
+		logRPCError(c, codeConsentRequired, "user consent required",
+			slog.String("provider", consentErr.Provider),
+			slog.String("cause", consentErr.Cause))
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -328,6 +356,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &appNotLinked):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codeConsentRequired, appNotLinked.Error())
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -335,6 +364,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &notPermitted):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codePolicyBlocked, notPermitted.Error())
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -397,6 +427,7 @@ func rawRPCResponse(id json.RawMessage, result json.RawMessage) any {
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	logRPCError(c, code, message)
 	outcome := o11y.OutcomeClientError
 	if code == codeInternalError {
 		outcome = o11y.OutcomeServerError
