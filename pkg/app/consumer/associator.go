@@ -153,7 +153,7 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
-	if err := validatePolicyScope(cons, pol); err != nil {
+	if err := a.validatePolicyScope(cons, pol); err != nil {
 		return err
 	}
 	if err := a.validatePolicyProtocol(cons, pol); err != nil {
@@ -167,14 +167,32 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	return nil
 }
 
-// validatePolicyScope refuses a scoped policy on a non-MCP consumer: the scope
-// would never match there and the policy would silently do nothing. A pruned
-// {} scope is still a scope.
-func validatePolicyScope(cons *domain.Consumer, pol *policydomain.Policy) error {
+// validatePolicyScope refuses the scopes that would reach a non-MCP consumer
+// and do nothing there. It is the write-side half of the predicate the config
+// load applies when it builds the inert plan; the two have to agree, or an
+// operator gets a 204 and a policy that never runs.
+//
+// A scope narrowing by group alone is allowed, provided the plugin does not
+// resolve tool or registry names: outside MCP the group is inert, and a plugin
+// that gates by name would then widen from "all but Finance" to "all"
+// (RUN-1621, rule 2). The two refusals carry different sentences so an
+// operator can act on either.
+func (a *associator) validatePolicyScope(cons *domain.Consumer, pol *policydomain.Policy) error {
 	if pol.MCPScope == nil || cons.Type == domain.TypeMCP {
 		return nil
 	}
-	return fmt.Errorf("%w: consumer %s is of type %s", domain.ErrPolicyScopeRequiresMCP, cons.ID, cons.Type)
+	switch {
+	case pol.MCPScope.HasDestination():
+		return fmt.Errorf("%w: the scope names a registry or a tool, and neither exists outside MCP; consumer %s is of type %s",
+			domain.ErrPolicyScopeDoesNotCross, cons.ID, cons.Type)
+	case pol.Dormant():
+		return fmt.Errorf("%w: the scope is empty and names nothing, so the policy would run nowhere; consumer %s is of type %s",
+			domain.ErrPolicyScopeDoesNotCross, cons.ID, cons.Type)
+	case !a.resolver.InertSafe(pol.Slug):
+		return fmt.Errorf("%w: plugin %s has not opted into running where the scope is inert, which a plugin that resolves tool or registry names cannot do; consumer %s is of type %s",
+			domain.ErrPolicyScopeDoesNotCross, pol.Slug, cons.ID, cons.Type)
+	}
+	return nil
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {
