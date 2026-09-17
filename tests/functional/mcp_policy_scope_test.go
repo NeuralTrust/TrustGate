@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -229,8 +230,9 @@ func TestMCPPolicyScope_UnscopedPolicyKeepsConsumerWideBehaviour(t *testing.T) {
 // An API-key consumer that does not act for users runs as the application
 // principal: a subject, no email, no groups. Scopes that select by user or
 // group therefore never match it, and an exception for a group never exempts
-// it. The positive half of the "only Finanzas" pattern needs a caller that
-// bears a groups claim, which this suite cannot mint yet.
+// it. This is the negative half of the principal dimension; the positive half,
+// where a caller does carry those claims, is covered by the tests below that
+// authenticate with a token from oauthIDPStub.
 func TestMCPPolicyScope_PrincipalScopedPoliciesAgainstAPIKeyCallers(t *testing.T) {
 	gatewayID, consumerID, headers, x, _ := setupMCPPluginChainTwoUpstreams(t, []string{"echo", "other"}, []string{"echo"})
 	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
@@ -252,10 +254,9 @@ func TestMCPPolicyScope_PrincipalScopedPoliciesAgainstAPIKeyCallers(t *testing.T
 		require.Equal(t, int64(1), x.callCount(), "the denied call must not reach the upstream")
 	})
 
-	t.Run("except_groups exempts a member of the group", func(t *testing.T) {
-		t.Skip("needs an MCP caller bearing a groups claim: oauthIDPStub serves a JWKS but discards its signing key, " +
-			"and no functional helper mints a bearer token the MCP plane accepts (RUN-1597 follow-up)")
-	})
+	// A member of the group is exempted rather than denied, which needs a
+	// caller bearing a groups claim: see
+	// TestMCPPolicyScope_ExceptGroupsExemptsMembersAndDeniesTheRest.
 }
 
 func TestMCPPolicyScope_ListToolsOncePerRegistryWithinTTL(t *testing.T) {
@@ -276,4 +277,185 @@ func TestMCPPolicyScope_ListToolsOncePerRegistryWithinTTL(t *testing.T) {
 	require.Equal(t, listsX, x.listCount(), "a second call within the TTL must not list X again")
 	require.Equal(t, listsY, y.listCount(), "a second call within the TTL must not list Y again")
 	require.Equal(t, int64(2), x.callCount())
+}
+
+// createOAuthMCPConsumer binds the registries to an MCP consumer whose only
+// credential is a bearer token from stub, and returns the consumer and the
+// audience its tokens must carry. createMCPConsumer attaches an API key
+// instead, and an API key carries no subject, email or groups, so a policy
+// scoped by user or group can never match a caller created that way.
+func createOAuthMCPConsumer(
+	t *testing.T,
+	gatewayID string,
+	registryIDs []string,
+	stub *oauthIDPStub,
+) (consumerID, audience string) {
+	t.Helper()
+	audience = "mcp-" + strings.ToLower(uniqueName("aud"))
+	authID := CreateAuth(t, gatewayID, oauth2AuthPayload(
+		uniqueName("idp"), stub.issuer, stub.jwksURL(), audience,
+		"client-"+strings.ToLower(uniqueName("c")), idpStubScope))
+	bindings := make([]map[string]any, 0, len(registryIDs))
+	for _, id := range registryIDs {
+		bindings = append(bindings, map[string]any{"id": id})
+	}
+	consumerID = CreateConsumer(t, gatewayID, map[string]any{
+		"name":       uniqueName("mcp-consumer"),
+		"type":       "mcp",
+		"registries": bindings,
+	})
+	AttachAuth(t, gatewayID, consumerID, authID)
+	return consumerID, audience
+}
+
+// setupScopedOAuthConsumer is setupMCPPluginChainTwoUpstreams for a consumer
+// that authenticates with bearer tokens, so each call can present a different
+// identity to the same consumer.
+func setupScopedOAuthConsumer(
+	t *testing.T,
+	toolsX, toolsY []string,
+) (gatewayID, consumerID, audience string, stub *oauthIDPStub, x, y *scopedUpstream) {
+	t.Helper()
+	gatewayID = CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	x = startScopedUpstream(t, gatewayID, toolsX...)
+	y = startScopedUpstream(t, gatewayID, toolsY...)
+	stub = newOAuthIDPStub(t)
+	consumerID, audience = createOAuthMCPConsumer(t, gatewayID, []string{x.registryID, y.registryID}, stub)
+	return gatewayID, consumerID, audience, stub, x, y
+}
+
+// A policy naming users runs for the caller it names and for nobody else. The
+// key is the token subject or its email, so both spellings must select.
+func TestMCPPolicyScope_UserScopedPolicySelectsTheNamedCaller(t *testing.T) {
+	gatewayID, consumerID, audience, stub, x, _ := setupScopedOAuthConsumer(t,
+		[]string{"echo", "other"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(toolScope(x.registryID, "echo"), map[string]any{"users": []string{"ana@acme.com"}}))
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(toolScope(x.registryID, "other"), map[string]any{"users": []string{"carl-subject"}}))
+
+	ana := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "ana-subject", "email": "ana@acme.com"}))
+	carl := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "carl-subject", "email": "carl@acme.com"}))
+
+	t.Run("the caller named by email is denied", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, ana, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount(), "the denied call must not reach the upstream")
+	})
+
+	t.Run("a caller the policy does not name keeps the tool", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, carl, x.exposed("echo"), "hi")
+		requireEchoed(t, status, body, "echo", "hi")
+	})
+
+	t.Run("the caller named by subject is denied", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, carl, x.exposed("other"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount())
+	})
+
+	t.Run("and that policy spares the other caller", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, ana, x.exposed("other"), "hi")
+		requireEchoed(t, status, body, "other", "hi")
+	})
+}
+
+// A policy naming groups runs for members of those groups, on the destination
+// it scopes and nowhere else.
+func TestMCPPolicyScope_GroupScopedPolicySelectsMembers(t *testing.T) {
+	gatewayID, consumerID, audience, stub, x, y := setupScopedOAuthConsumer(t,
+		[]string{"echo"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(registryScope(x.registryID), map[string]any{"groups": []string{"Finanzas"}}))
+
+	finance := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "fin-subject", "groups": []string{"Finanzas"}}))
+	marketing := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "mkt-subject", "groups": []string{"Marketing"}}))
+
+	t.Run("a member is denied on the scoped registry", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, finance, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Zero(t, x.callCount(), "the denied call must not reach the upstream")
+	})
+
+	t.Run("a member of another group is not", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, marketing, x.exposed("echo"), "hi")
+		requireEchoed(t, status, body, "echo", "hi")
+	})
+
+	t.Run("the member keeps every registry the policy does not scope", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, finance, y.exposed("echo"), "hi")
+		requireEchoed(t, status, body, "echo", "hi")
+	})
+}
+
+// "only Finanzas may call this tool" is a deny-all scoped with except_groups:
+// members fall out of the plan and the call proceeds, everyone else is denied.
+// This is the pattern docs/mcp-policy-scope.md documents as the deny primitive.
+func TestMCPPolicyScope_ExceptGroupsExemptsMembersAndDeniesTheRest(t *testing.T) {
+	gatewayID, consumerID, audience, stub, x, _ := setupScopedOAuthConsumer(t,
+		[]string{"echo"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(toolScope(x.registryID, "echo"), map[string]any{"except_groups": []string{"Finanzas"}}))
+
+	finance := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "fin-subject", "groups": []string{"Finanzas"}}))
+	marketing := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "mkt-subject", "groups": []string{"Marketing"}}))
+	groupless := bearerHeaders(stub.mint(t, audience, map[string]any{"sub": "none-subject"}))
+
+	t.Run("a member of the excepted group may call the tool", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, finance, x.exposed("echo"), "hi")
+		requireEchoed(t, status, body, "echo", "hi")
+	})
+
+	t.Run("a member of another group may not", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, marketing, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount(), "the denied call must not reach the upstream")
+	})
+
+	t.Run("a caller carrying no groups claim may not either", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, groupless, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount())
+	})
+}
+
+// A scope with a principal and no destination is the one plan shape that is
+// not precompiled per destination: it is filtered against the caller on every
+// tools/call, so it must reach every registry of the consumer.
+func TestMCPPolicyScope_PrincipalOnlyScopeCoversEveryRegistry(t *testing.T) {
+	gatewayID, consumerID, audience, stub, x, y := setupScopedOAuthConsumer(t,
+		[]string{"echo"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		map[string]any{"users": []string{"ana@acme.com"}})
+
+	ana := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "ana-subject", "email": "ana@acme.com"}))
+	bob := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "bob-subject", "email": "bob@acme.com"}))
+
+	t.Run("the named caller is denied on every registry", func(t *testing.T) {
+		for _, up := range []*scopedUpstream{x, y} {
+			status, body := callEcho(t, gatewayID, consumerID, ana, up.exposed("echo"), "hi")
+			requirePolicyBlocked(t, status, body)
+		}
+		require.Zero(t, x.callCount())
+		require.Zero(t, y.callCount())
+	})
+
+	t.Run("every other caller keeps every registry", func(t *testing.T) {
+		for _, up := range []*scopedUpstream{x, y} {
+			status, body := callEcho(t, gatewayID, consumerID, bob, up.exposed("echo"), "hi")
+			requireEchoed(t, status, body, "echo", "hi")
+		}
+	})
 }
