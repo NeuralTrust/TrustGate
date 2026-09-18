@@ -16,11 +16,13 @@ package router_test
 
 import (
 	"context"
+	appratelimit "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
@@ -281,4 +283,66 @@ func dispatchMCPRequest(
 	require.NoError(t, readErr)
 	require.NoError(t, closeErr)
 	return res, string(responseBody)
+}
+
+// The plane's pre-auth floor has to be in the base transport, and health has
+// to stay out of it: the routes are registered before the middlewares run, so
+// a flooded gateway still answers its probes and is not restarted for being
+// under attack.
+func TestMCPRouterPlaneRateLimit(t *testing.T) {
+	refusing := planeLimiterStub{
+		err: &appratelimit.PlaneLimitExceeded{RetryAfter: 42 * time.Second},
+	}
+	planeRateLimit := middleware.NewMCPPlaneRateLimitMiddleware(
+		refusing,
+		func(string, string) string { return "203.0.113.7" },
+		true,
+		nil,
+	)
+	mcpRouter := router.NewMCPRouter(
+		middleware.NewTransport(
+			middleware.NewSecurityHeadersMiddleware(),
+			planeRateLimit,
+		),
+		middleware.NewTransport(),
+		apihandler.NewHealthHandler(),
+		mcphttp.NewHandler(nil, nil),
+		new(oauthhttp.ProtectedResourceHandler),
+		new(oauthhttp.AuthorizationServerHandler),
+		new(oauthhttp.RegisterHandler),
+		new(oauthhttp.AuthorizeHandler),
+		new(oauthhttp.CallbackHandler),
+		new(oauthhttp.TokenHandler),
+		nil,
+		nil,
+		oauthhttp.NewConnectHandler(nil, nil, ""),
+		oauthhttp.NewConfigureHandler(nil),
+		new(oauthhttp.JWKSHandler),
+		nil,
+		nil,
+	)
+	app := fiber.New()
+	require.NoError(t, mcpRouter.BuildRoutes(app))
+
+	t.Run("refuses a plane route with 429 and Retry-After", func(t *testing.T) {
+		res, _ := dispatchMCPRequest(t, app, fiber.MethodGet, "/.well-known/jwks.json", "", "")
+
+		assert.Equal(t, fiber.StatusTooManyRequests, res.StatusCode)
+		assert.Equal(t, "42", res.Header.Get(fiber.HeaderRetryAfter))
+	})
+
+	t.Run("leaves the health probes alone", func(t *testing.T) {
+		for _, path := range []string{"/healthz", "/health"} {
+			res, _ := dispatchMCPRequest(t, app, fiber.MethodGet, path, "", "")
+			assert.Equal(t, fiber.StatusOK, res.StatusCode, path)
+		}
+	})
+}
+
+type planeLimiterStub struct {
+	err error
+}
+
+func (s planeLimiterStub) Check(context.Context, appratelimit.PlaneClass, string) error {
+	return s.err
 }

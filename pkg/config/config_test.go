@@ -154,6 +154,95 @@ func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_MCPPlaneRateLimitDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	got := cfg.MCPPlaneRateLimit
+	if !got.Enabled {
+		t.Fatal("the plane floor must be on by default")
+	}
+	if got.DefaultLimit != 600 || got.CredentialLimit != 60 || got.Window != time.Minute {
+		t.Fatalf("MCP plane rate limit = %+v", got)
+	}
+	if got.CredentialLimit >= got.DefaultLimit {
+		t.Fatal("credential routes must get the tighter budget")
+	}
+}
+
+func TestLoadConfig_MCPPlaneRateLimitConfigured(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_PLANE_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("MCP_PLANE_RATE_LIMIT_DEFAULT", "120")
+	t.Setenv("MCP_PLANE_RATE_LIMIT_CREDENTIAL", "12")
+	t.Setenv("MCP_PLANE_RATE_LIMIT_WINDOW", "30s")
+	t.Setenv("MCP_PLANE_TRUSTED_PROXY_CIDRS", "10.0.0.1/8")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	got := cfg.MCPPlaneRateLimit
+	if got.Enabled || got.DefaultLimit != 120 || got.CredentialLimit != 12 || got.Window != 30*time.Second {
+		t.Fatalf("MCP plane rate limit = %+v", got)
+	}
+	if len(got.TrustedProxyCIDRs) != 1 || got.TrustedProxyCIDRs[0].String() != "10.0.0.0/8" {
+		t.Fatalf("trusted proxy CIDRs = %v", got.TrustedProxyCIDRs)
+	}
+}
+
+// An operator who already told the gateway which proxies it sits behind should
+// not have to say it twice for the plane floor to read origins correctly.
+func TestLoadConfig_MCPPlaneRateLimitInheritsConnectTrustedProxies(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_CONNECT_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	got := cfg.MCPPlaneRateLimit.TrustedProxyCIDRs
+	if len(got) != 1 || got[0].String() != "10.0.0.0/8" {
+		t.Fatalf("trusted proxy CIDRs = %v, want the connect list", got)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidMCPPlaneRateLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "invalid enabled", key: "MCP_PLANE_RATE_LIMIT_ENABLED", value: "yes"},
+		{name: "zero default", key: "MCP_PLANE_RATE_LIMIT_DEFAULT", value: "0"},
+		{name: "negative default", key: "MCP_PLANE_RATE_LIMIT_DEFAULT", value: "-1"},
+		{name: "malformed default", key: "MCP_PLANE_RATE_LIMIT_DEFAULT", value: "many"},
+		{name: "zero credential", key: "MCP_PLANE_RATE_LIMIT_CREDENTIAL", value: "0"},
+		{name: "zero window", key: "MCP_PLANE_RATE_LIMIT_WINDOW", value: "0s"},
+		{name: "malformed window", key: "MCP_PLANE_RATE_LIMIT_WINDOW", value: "minute"},
+		{name: "invalid CIDR", key: "MCP_PLANE_TRUSTED_PROXY_CIDRS", value: "10.0.0.0/8,invalid"},
+		{name: "all IPv4 addresses", key: "MCP_PLANE_TRUSTED_PROXY_CIDRS", value: "0.0.0.0/0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := LoadConfig()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_RejectsInvalidMCPConnectRateLimit(t *testing.T) {
 	tests := []struct {
 		name  string

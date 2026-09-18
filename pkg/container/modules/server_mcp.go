@@ -36,6 +36,7 @@ type mcpMiddlewares struct {
 	PanicRecover       *middleware.PanicRecoverMiddleware
 	AccessLog          *middleware.AccessLogMiddleware
 	SecurityHeaders    *middleware.SecurityHeadersMiddleware
+	PlaneRateLimit     *middleware.MCPPlaneRateLimitMiddleware
 	OAuthChallenge     *middleware.OAuthChallengeMiddleware
 	Auth               *middleware.MCPAuthMiddleware
 	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
@@ -43,10 +44,16 @@ type mcpMiddlewares struct {
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
+	// PlaneRateLimit sits after the request id and the panic guard — so a
+	// refusal is still traceable and still cannot take the process down — and
+	// before everything else, because the point of it is to answer 429 without
+	// touching the database. The access log stays behind it so refusals are
+	// recorded like any other response.
 	return middleware.NewTransport(
 		m.RequestID,
 		m.SecurityHeaders,
 		m.PanicRecover,
+		m.PlaneRateLimit,
 		m.AccessLog,
 	)
 }

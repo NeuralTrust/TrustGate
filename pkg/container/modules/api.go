@@ -30,6 +30,7 @@ import (
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -121,6 +122,9 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(provideMCPPlaneRateLimitMiddleware); err != nil {
 		return err
 	}
 	if err := c.Provide(func(store *playgroundstore.Store) *playgroundhttp.GetTraceHandler {
@@ -340,6 +344,28 @@ func API(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+// provideMCPPlaneRateLimitMiddleware builds the plane's pre-auth floor. It
+// reads origins with the same trusted-proxy rules as the connect limiter, so
+// one deployment cannot disagree with itself about who a caller is.
+func provideMCPPlaneRateLimitMiddleware(
+	cfg *config.Config,
+	limiter ratelimitapp.PlaneLimiter,
+) *middleware.MCPPlaneRateLimitMiddleware {
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(
+			peer,
+			forwardedFor,
+			cfg.MCPPlaneRateLimit.TrustedProxyCIDRs,
+		)
+	}
+	return middleware.NewMCPPlaneRateLimitMiddleware(
+		limiter,
+		resolveSource,
+		cfg.MCPPlaneRateLimit.Enabled,
+		nil,
+	)
 }
 
 func provideAPIKeyConnectHandler(
