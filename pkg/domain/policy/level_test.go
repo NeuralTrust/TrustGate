@@ -307,9 +307,37 @@ func TestPolicy_Occupancy(t *testing.T) {
 			want: 0,
 		},
 		{
-			name: "an enabled policy with no scope and no consumers is all traffic",
+			// A draft: not global and nothing attached, so loadPolicies files it
+			// under neither bucket and it runs nowhere. Occupying the wildcard
+			// level here would make duplication always conflict, because a copy
+			// is born in exactly this shape.
+			name: "a draft takes no level",
 			policy: &Policy{
 				Enabled: true,
+			},
+			want: 0,
+		},
+		{
+			name: "a draft with a scope still takes no level",
+			policy: &Policy{
+				Enabled:  true,
+				MCPScope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}},
+			},
+			want: 0,
+		},
+		{
+			name: "attaching one consumer is what makes a draft occupy",
+			policy: &Policy{
+				Enabled:     true,
+				ConsumerIDs: []ids.ConsumerID{consumerX},
+			},
+			want: 1,
+		},
+		{
+			name: "promoting a draft to global is the other way it starts occupying",
+			policy: &Policy{
+				Enabled: true,
+				Global:  true,
 			},
 			want: 1,
 		},
