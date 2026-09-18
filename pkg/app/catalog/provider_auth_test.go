@@ -106,6 +106,24 @@ func TestProviderAuthOptions_BedrockVariants(t *testing.T) {
 	}
 }
 
+func TestProviderAuthOptions_VertexPassthrough(t *testing.T) {
+	t.Parallel()
+
+	opts := ProviderAuthOptions(providers.ProviderVertex)
+	if len(opts) != 2 {
+		t.Fatalf("len(auth_types) = %d, want 2", len(opts))
+	}
+	if opts[0].Type != "gcp_service_account" {
+		t.Fatalf("first type = %q, want gcp_service_account", opts[0].Type)
+	}
+	if opts[1].Type != "passthrough" {
+		t.Fatalf("second type = %q, want passthrough", opts[1].Type)
+	}
+	if len(opts[1].Fields) != 0 {
+		t.Fatalf("passthrough fields = %+v, want none", opts[1].Fields)
+	}
+}
+
 func TestProviderAuthOptions_SimpleProvidersOmitVariant(t *testing.T) {
 	t.Parallel()
 
