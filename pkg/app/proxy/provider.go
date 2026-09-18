@@ -308,7 +308,7 @@ func (p *providerInvoker) prepare(
 	if capability == capabilityFiles {
 		return &preparedInvocation{
 			client:       client,
-			cfg:          filesProviderConfig(bk),
+			cfg:          filesProviderConfig(bk, req.HeaderValue("Authorization")),
 			body:         req.Body,
 			sourceFormat: sourceFormat,
 			targetFormat: targetFormat,
@@ -360,7 +360,7 @@ func (p *providerInvoker) prepare(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,
@@ -545,11 +545,17 @@ func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocatio
 	}
 }
 
-func filesProviderConfig(bk *registry.Registry) *providers.Config {
+func filesProviderConfig(bk *registry.Registry, authorization string) *providers.Config {
 	return &providers.Config{
 		Options:     adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIFiles, bk.ProviderOptions()),
-		Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+		Credentials: registryCredentials(bk, authorization),
 	}
+}
+
+func registryCredentials(bk *registry.Registry, authorization string) providers.Credentials {
+	creds := providers.CredentialsFromTargetAuth(bk.Auth())
+	providers.ApplyIncomingBearer(&creds, bk.Auth(), authorization)
+	return creds
 }
 
 func (p *providerInvoker) prepareAudio(
@@ -592,7 +598,7 @@ func (p *providerInvoker) prepareAudio(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIAudio, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,
@@ -731,7 +737,7 @@ func (p *providerInvoker) prepareImages(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIImages, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,
