@@ -20,6 +20,7 @@ import (
 	"sort"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -52,6 +53,17 @@ func coalescedOntoUnscopedWarning(consumerID ids.ConsumerID, slug string) string
 	return fmt.Sprintf("consumer %s is not an MCP consumer and already runs plugin %s without scope: "+
 		"the scope is inert on that plane, so both collapse onto the same level and only the unscoped policy runs",
 		consumerID, slug)
+}
+
+// apiKeyIgnoresGroupsWarning names one consumer the policy reaches whose
+// callers can present an api key, for which the group narrowing does not gate
+// at all (RUN-1621, rule 5.2). It names the consumers instead of counting them
+// because the operator's next move is per consumer: drop the api-key auth, or
+// accept that "only Finance" does not hold for callers that use it.
+func apiKeyIgnoresGroupsWarning(consumerID ids.ConsumerID) string {
+	return fmt.Sprintf(
+		"policy narrows to groups but consumer %s accepts api-key auth: group checks do not apply to those callers",
+		consumerID)
 }
 
 func collapsedLevelWarning(consumerID ids.ConsumerID, slug string) string {
@@ -89,14 +101,22 @@ var _ Warner = (*warner)(nil)
 type warner struct {
 	policies  domain.Repository
 	consumers consumerdomain.Reader
+	auths     authdomain.Repository
 	plugins   appplugins.Registry
 }
 
-// NewWarner builds a Warner over the policy and consumer read models and the
-// plugin registry, which is what says whether a plugin still runs where the
-// scope does not gate.
-func NewWarner(policies domain.Repository, consumers consumerdomain.Reader, plugins appplugins.Registry) Warner {
-	return &warner{policies: policies, consumers: consumers, plugins: plugins}
+// NewWarner builds a Warner over the policy, consumer and auth read models and
+// the plugin registry, which is what says whether a plugin still runs where the
+// scope does not gate. The auth read model answers the other question a group
+// narrowing raises: which of the consumers reached admit a credential for which
+// the group does not gate at all.
+func NewWarner(
+	policies domain.Repository,
+	consumers consumerdomain.Reader,
+	auths authdomain.Repository,
+	plugins appplugins.Registry,
+) Warner {
+	return &warner{policies: policies, consumers: consumers, auths: auths, plugins: plugins}
 }
 
 func (w *warner) Overlaps(ctx context.Context, p *domain.Policy) ([]string, error) {
@@ -111,6 +131,11 @@ func (w *warner) Overlaps(ctx context.Context, p *domain.Policy) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
+	inertPrincipals, err := w.apiKeyReach(ctx, p, reach)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, inertPrincipals...)
 	collisions, err := w.collisions(ctx, p, reach)
 	if err != nil {
 		return nil, err
@@ -130,7 +155,16 @@ func (w *warner) OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return nil, err
 	}
-	return w.collisions(ctx, p, []reachedConsumer{{id: consumerID, mcp: isMCP(c)}})
+	reach := []reachedConsumer{{id: consumerID, mcp: isMCP(c), authIDs: authIDsOf(c)}}
+	warnings, err := w.apiKeyReach(ctx, p, reach)
+	if err != nil {
+		return nil, err
+	}
+	collisions, err := w.collisions(ctx, p, reach)
+	if err != nil {
+		return nil, err
+	}
+	return append(warnings, collisions...), nil
 }
 
 // reachWarnings describes where p runs from p alone, without asking what else
@@ -152,8 +186,9 @@ func (w *warner) reachWarnings(p *domain.Policy) []string {
 }
 
 type reachedConsumer struct {
-	id  ids.ConsumerID
-	mcp bool
+	id      ids.ConsumerID
+	mcp     bool
+	authIDs []ids.AuthID
 }
 
 // reach returns the consumers whose plan p takes part in. All three consumer
@@ -187,9 +222,72 @@ func (w *warner) reach(ctx context.Context, p *domain.Policy) ([]reachedConsumer
 		if !isMCP(c) && !crosses {
 			continue
 		}
-		out = append(out, reachedConsumer{id: c.ID, mcp: isMCP(c)})
+		out = append(out, reachedConsumer{id: c.ID, mcp: isMCP(c), authIDs: authIDsOf(c)})
 	}
 	return out, nil
+}
+
+// apiKeyReach names the MCP consumers the policy reaches that admit an api-key
+// credential. For a caller entering with one the principal is inert, so a
+// scope narrowing to groups selects it instead of rejecting it, and "only
+// Finance may call this" stops holding for that consumer (RUN-1621, rule 5.2).
+//
+// Only a scope naming groups is warned about, and only on MCP consumers. The
+// exception direction is not affected — an api-key caller carries no groups,
+// so it never fell in except_groups either — and outside MCP the whole
+// principal dimension is inert for every caller, which the coalescence
+// warnings already say.
+func (w *warner) apiKeyReach(ctx context.Context, p *domain.Policy, reach []reachedConsumer) ([]string, error) {
+	if len(reach) == 0 || p.MCPScope == nil || len(p.MCPScope.Groups) == 0 {
+		return nil, nil
+	}
+	apiKeys, err := w.apiKeyAuths(ctx, p.GatewayID)
+	if err != nil {
+		return nil, err
+	}
+	if len(apiKeys) == 0 {
+		return nil, nil
+	}
+	var warnings []string
+	for _, c := range reach {
+		if !c.mcp {
+			continue
+		}
+		for _, authID := range c.authIDs {
+			if _, ok := apiKeys[authID]; ok {
+				warnings = append(warnings, apiKeyIgnoresGroupsWarning(c.id))
+				break
+			}
+		}
+	}
+	sort.Strings(warnings)
+	return warnings, nil
+}
+
+// apiKeyAuths is the gateway's enabled api-key credentials. A disabled auth
+// authenticates nobody, the same exemption the collision warnings make.
+func (w *warner) apiKeyAuths(ctx context.Context, gatewayID ids.GatewayID) (map[ids.AuthID]struct{}, error) {
+	if w.auths == nil {
+		return nil, nil
+	}
+	auths, err := w.auths.ListEnabledByGatewayAndType(ctx, gatewayID, authdomain.TypeAPIKey)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ids.AuthID]struct{}, len(auths))
+	for _, a := range auths {
+		if a != nil {
+			out[a.ID] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+func authIDsOf(c *consumerdomain.Consumer) []ids.AuthID {
+	if c == nil {
+		return nil
+	}
+	return c.AuthIDs
 }
 
 // collisions reports, per reached consumer, the other policy of the same slug

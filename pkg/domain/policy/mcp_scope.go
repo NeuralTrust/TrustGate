@@ -50,6 +50,13 @@ type MCPTarget struct {
 // Groups never matches Groups nor falls in ExceptGroups.
 type MCPCaller struct {
 	Groups []string
+	// PrincipalInert marks a caller whose identity cannot carry groups because
+	// it authenticated as the application rather than as a person. The
+	// principal dimension of a scope does not gate for it: the scope's groups
+	// are ignored and the policy runs. Only the projection decides this, and
+	// only for one authentication method — the matcher never reads the method
+	// itself (RUN-1621, rule 5).
+	PrincipalInert bool
 }
 
 // SkipReason says which dimension of a scope rejected a call.
@@ -141,9 +148,16 @@ func (s *MCPScope) MatchesTarget(t MCPTarget) bool {
 
 // MatchesCaller reports whether the caller is selected by Groups and not
 // excluded by ExceptGroups. A scope without principal accepts any caller; a
-// caller without groups is never selected by Groups and never excluded.
+// caller without groups is never selected by Groups and never excluded; a
+// caller whose principal is inert is accepted whatever the scope names.
+//
+// The inert branch relaxes the allow-list direction only in practice, because
+// the callers it applies to carry no groups at all: they never matched Groups
+// and never fell in ExceptGroups, so the deny-list direction answered the same
+// before. It is the projection, not this matcher, that guarantees that
+// precondition (RUN-1621, rule 5.1).
 func (s *MCPScope) MatchesCaller(c MCPCaller) (bool, SkipReason) {
-	if !s.HasPrincipal() {
+	if !s.HasPrincipal() || c.PrincipalInert {
 		return true, ""
 	}
 	if len(s.Groups) > 0 && !intersectsGroups(s.Groups, c.Groups) {

@@ -314,11 +314,27 @@ func (p *PolicyPlans) callerFor(principal *identity.Principal) policydomain.MCPC
 	return callerOf(principal)
 }
 
+// callerOf projects the principal the scope matcher reads, and is the one
+// place that decides whether the group dimension gates for this caller.
+//
+// The decision is an allow-list of one method, never a deny-list: only an api
+// key makes the principal inert, because there the caller is the application
+// and no identity provider is in the loop. A nil principal, a bearer token
+// whose issuer emits no groups claim, mTLS, and the legacy undifferentiated
+// MethodJWT all keep gating. The repo already writes that convention down for
+// MethodJWT (identity/principal.go): "a principal that still carries it must
+// keep facing the checks it faced before, never fall through to a permissive
+// default". Reading the rule as "no groups in the claim means inert" would
+// turn one misconfigured identity provider into a gateway-wide bypass of
+// every group check (RUN-1621, rule 5.2).
 func callerOf(principal *identity.Principal) policydomain.MCPCaller {
 	if principal == nil {
 		return policydomain.MCPCaller{}
 	}
-	return policydomain.MCPCaller{Groups: principal.Groups()}
+	return policydomain.MCPCaller{
+		Groups:         principal.Groups(),
+		PrincipalInert: principal.Method == identity.MethodAPIKey,
+	}
 }
 
 func hasAnyStage(plan *appplugins.StagePlan) bool {
