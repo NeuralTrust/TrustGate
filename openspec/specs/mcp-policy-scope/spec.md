@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`groups`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry. El plano LLM no lee este campo.
+Define `Policy.MCPScope *MCPScope` (`pkg/domain/policy`): a qué destinos (`registry_ids`, `tools`) y principales (`groups`, `except_groups`) aplica una policy en el plano MCP, cómo decide `Matches(target, principal)`, qué valida la Admin API y cómo se poda al borrar un registry.
+
+El campo sigue gateando **solo** en el plano MCP. Fuera de él, la dimensión de destino no llega y la de principal llega y no gatea: eso lo define `policy-inert-scope`, que es la capability a la que hay que ir para saber qué pasa en LLM y A2A. Lo que esta spec ya no promete es que "el plano LLM nunca lee este campo": una policy con scope de **solo grupo** sí puede estar en el plan de un consumer no-MCP.
 
 ## Requirements
 
 ### Requirement: `nil` frente a scope vacío
 
 `MCPScope == nil` MUST aplicar a todo el tráfico MCP del consumer (comportamiento actual). Un scope presente sin entradas MUST NOT hacer match con nada.
+
+Un scope presente sin entradas es además una **lápida**: MUST dejar la policy fuera de todos los planes, no solo del MCP, y MUST ocupar cero niveles. Esa parte la define `policy-inert-scope`; aquí basta con que `{}` no case nunca.
 
 #### Scenario: Policy sin scope
 
@@ -40,7 +44,7 @@ Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`groups`
 
 ### Requirement: Identificación del principal
 
-El principal MUST ser siempre un grupo: `users` y `except_users` no existen como dimensión y una request que los traiga MUST ser rechazada con 422. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin grupos MUST NOT hacer match con `groups`.
+El principal MUST ser siempre un grupo: `users` y `except_users` no existen como dimensión y una request que los traiga MUST ser rechazada con 422. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin grupos MUST NOT hacer match con `groups`, salvo que su principal sea inerte (ver «El principal es inerte para un caller por api-key»).
 
 #### Scenario: Grupo del token
 
@@ -54,11 +58,47 @@ El principal MUST ser siempre un grupo: `users` y `except_users` no existen como
 - WHEN se crea o actualiza la policy
 - THEN 422, para que un scope no pierda su principal y se ensanche
 
-#### Scenario: API key
+#### Scenario: Token sin claim `groups`
 
-- GIVEN `groups: [Finanzas]` y un caller con `AppSubject` sin claims
+- GIVEN `groups: [Finanzas]` y un token cuyo IdP no emite `groups`
 - WHEN se evalúa el principal
-- THEN no hace match
+- THEN no hace match: el principal sigue gateando
+
+### Requirement: El principal es inerte para un caller por api-key
+
+Cuando `Principal.Method == identity.MethodAPIKey`, la dimensión de principal MUST NOT gatear: `MatchesCaller` MUST devolver `true` aunque el scope nombre `groups` que el caller no tiene, y la policy MUST entrar en el plan. El destino MUST seguir gateando con normalidad.
+
+La decisión MUST tomarse en la proyección del principal a `MCPCaller` (`callerOf`, `pkg/app/consumer/policy_plans.go`), nunca en el matcher de dominio, que recibe una proyección para no depender de `identity.Principal`.
+
+La relajación MUST ser una allow-list de un método y MUST NOT ser una deny-list: solo `MethodAPIKey` vuelve inerte el principal. Un principal nulo, `MethodMTLS`, `MethodJWT` (el valor legado indiferenciado), `MethodExternalJWT` y un bearer cuyo IdP no emite `groups` MUST seguir gateando. «Sin grupos en el claim → inerte» MUST NOT implementarse: un IdP mal configurado desactivaría todos los controles de grupo del gateway.
+
+La relajación MUST ser asimétrica: solo cambia la dirección allow-list (`groups`). La dirección deny-list (`except_groups`) MUST dar el mismo resultado que antes, porque un caller por api-key nunca llevó grupos y nunca cayó en la exclusión.
+
+Al crear, actualizar o atachar una policy con `groups`, la Admin API MUST devolver un warning no bloqueante que **nombre** cada consumer MCP alcanzado que acepta una auth de tipo `api_key`: `policy narrows to groups but consumer <id> accepts api-key auth: group checks do not apply to those callers`. El warning MUST nombrar los consumers, MUST NOT contarlos.
+
+#### Scenario: API key con `groups`
+
+- GIVEN `mcp_scope{tools: [{snowflake, run_query}], groups: [Finanzas]}` y un caller con api-key del consumer, que corre como `app:<consumer_id>` sin claim `groups`
+- WHEN llama a `run_query`
+- THEN hace match y la policy corre; el mismo caller por token y fuera de Finanzas no hace match
+
+#### Scenario: API key contra un destino que no casa
+
+- GIVEN la misma policy y un caller con api-key
+- WHEN llama a otra tool del mismo registry
+- THEN no hace match: `SkipDestination`, porque el destino no se ablanda
+
+#### Scenario: El método es una allow-list
+
+- GIVEN `groups: [Finanzas]` y un caller sin Finanzas
+- WHEN el principal es `nil`, `MethodMTLS`, `MethodJWT` o `MethodExternalJWT`
+- THEN no hace match en ninguno de los cuatro casos: `SkipPrincipal`
+
+#### Scenario: Warning de escritura con nombres
+
+- GIVEN una policy con `groups` que alcanza un consumer MCP con una auth `api_key` habilitada
+- WHEN se crea, se actualiza o se atacha
+- THEN la respuesta trae el warning nombrando ese consumer; un consumer alcanzado sin auth `api_key` no aparece
 
 ### Requirement: Excepciones
 
@@ -74,7 +114,7 @@ Tras el match positivo, si `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST 
 
 - GIVEN la misma policy y un caller con API key
 - WHEN llama a `run_query`
-- THEN hace match
+- THEN hace match, igual que antes de la inercia: la dirección deny-list no cambia
 
 ### Requirement: Tools por `(registry_id, nombre nativo)`
 
@@ -95,6 +135,10 @@ Tras el match positivo, si `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST 
 ### Requirement: Validación en la Admin API
 
 Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool` o `groups` vacíos o duplicados; `users` o `except_users` presentes; scope sin entradas; un registry a la vez en `registry_ids` y `tools`. En update, `mcp_scope` omitido MUST conservar el valor y `null` MUST eliminarlo. El listado MUST aceptar `registry_id`. La respuesta MAY incluir `warnings` no bloqueantes.
+
+Create, update, attach y promoción a `global` MUST devolver además **409** cuando la escritura ocuparía un nivel que otra policy habilitada del mismo plugin ya ocupa (`policy-level-uniqueness`). 409 y 422 MUST NOT confundirse: el 422 dice que la petición está mal formada o que la dimensión no cruza de plano; el 409 dice que la petición está bien y el estado la rechaza.
+
+Los `warnings` MUST cubrir además: una policy dormida (`policy has an empty mcp_scope and runs nowhere; set mcp_scope to null to run it everywhere`), una policy sin consumers y sin `global` (`policy has no consumers and is not global: it runs nowhere`), y la coalescencia del plano inerte. Ningún warning MUST seguir afirmando que un scope no alcanza a un consumer no-MCP: eso ya solo es cierto para la dimensión de destino.
 
 #### Scenario: Registry de otro gateway
 
@@ -120,9 +164,33 @@ Create/update MUST rechazar con 4xx: registries de otro gateway o no MCP; `tool`
 - WHEN se crea una `trustguard` global con scope
 - THEN 2xx con `warnings` mencionando a X, y `GET ?registry_id=` la devuelve
 
-### Requirement: `global` con scope; consumers LLM
+#### Scenario: Nivel ya ocupado
 
-Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data.StoreConsumer`). Asociar una policy con scope a un consumer LLM MUST rechazarse.
+- GIVEN una `trustguard` habilitada con `registry_ids: [snowflake]` en el consumer X
+- WHEN se crea otra `trustguard` con `registry_ids: [snowflake, jira]` en el mismo consumer
+- THEN 409 `"error": "conflict"`, porque los dos niveles se solapan en `snowflake`
+
+#### Scenario: Policy dormida
+
+- GIVEN una policy cuyo scope quedó en `{}` tras un prune
+- WHEN se lee o se actualiza
+- THEN la respuesta lleva el warning de que no corre en ningún sitio y cómo revivirla
+
+### Requirement: `global` con scope; consumers no-MCP
+
+Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data.StoreConsumer`).
+
+Asociar una policy con scope a un consumer no-MCP MUST decidirse **por dimensión**, no por la presencia del campo:
+
+| Scope que se adjunta a un consumer no-MCP | Resultado |
+|---|---|
+| Con destino (`registry_ids` o `tools`), con o sin grupo | **422** — el destino no cruza de plano |
+| Solo principal (`groups` / `except_groups`), plugin **no** inert-safe | **422** — el plugin gatea por nombre de tool o de registry |
+| Solo principal, plugin inert-safe (hoy `trustguard` y `request_size_limiter`) | **aceptado** — la policy corre y el grupo es inerte |
+
+Los dos motivos de 422 MUST dar mensajes distinguibles. `ErrPolicyScopeRequiresMCP` MUST dejar de prometer "requires MCP" para un scope de solo grupo.
+
+Una policy `global: true` con destino MUST seguir sin alcanzar los consumers no-MCP del gateway: la promoción no es una puerta de atrás. Con solo grupo, sí los alcanza. El predicado y los buckets de carga los define `policy-inert-scope`.
 
 #### Scenario: Global con scope
 
@@ -130,11 +198,23 @@ Una policy `global: true` con scope MUST permitirse (alcanza el Store vía `data
 - WHEN se crea
 - THEN se acepta y forma parte de `StoreConsumer`
 
-#### Scenario: Consumer LLM
+#### Scenario: Consumer LLM con destino
 
-- GIVEN una policy con scope
+- GIVEN una policy con `registry_ids` o `tools`
 - WHEN se asocia a un consumer LLM
-- THEN 4xx
+- THEN 422, con el mensaje que nombra la dimensión de destino
+
+#### Scenario: Consumer LLM con solo grupo
+
+- GIVEN una policy con `mcp_scope: {groups: [Finance]}` de un plugin inert-safe
+- WHEN se asocia a un consumer LLM
+- THEN se acepta y la policy corre en ese consumer con el grupo inerte
+
+#### Scenario: Consumer LLM con solo grupo y plugin que gatea por nombre
+
+- GIVEN la misma policy con `slug: tool_allowlist`
+- WHEN se asocia a un consumer LLM
+- THEN 422, con el mensaje que nombra al plugin, no a la dimensión
 
 ### Requirement: Prune al borrar un registry
 

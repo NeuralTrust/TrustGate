@@ -8,7 +8,15 @@ Define cómo `DataFinder` precompila `PolicyPlans` por consumer, cómo `callTool
 
 ### Requirement: Plan base sin scope
 
-`RoutableConsumer.PolicyPlan` MUST contener solo policies con `MCPScope == nil`. `tools/list`, prompts, resources y meta-tools `trustgate_*` MUST usar ese plan base. Sin policies con scope, `PlanFor` MUST devolver el plan base sin asignaciones.
+Para un consumer **MCP**, `RoutableConsumer.PolicyPlan` MUST contener solo policies con `MCPScope == nil`. `tools/list`, prompts, resources y meta-tools `trustgate_*` MUST usar ese plan base. Sin policies con scope, `PlanFor` MUST devolver el plan base sin asignaciones.
+
+Para un consumer **no-MCP** el plan lo define `policy-inert-scope`: `NewInertStagePlan(unscoped ∪ crossing)`, `MCPPlans = nil`, y `Policies` y `PolicyPlan` construidos del mismo conjunto. `PlanFor` no se usa en ese plano.
+
+#### Scenario: Consumer no-MCP
+
+- GIVEN un consumer LLM con policies sin scope y una de solo grupo inert-safe
+- WHEN se carga
+- THEN `PolicyPlan` incluye las dos y `MCPPlans` es `nil`
 
 #### Scenario: Consumer sin policies con scope
 
@@ -25,6 +33,8 @@ Define cómo `DataFinder` precompila `PolicyPlans` por consumer, cómo `callTool
 ### Requirement: Anulación por `slug` acotada; Store
 
 `composePolicies` MUST aplicar la anulación por `slug` solo entre policies sin scope; las con scope MUST ser aditivas. Las globales con scope MUST llegar a `data.StoreConsumer`.
+
+En un plano **inerte** esto se invierte por necesidad: la inercia colapsa los niveles que hacían aditivas a las policies con scope, así que allí MUST aplicarse la coalescencia por `slug` de `policy-inert-scope` (gana la sin scope; una sola colapsada corre; dos o más no corre ninguna). La aditividad MUST mantenerse intacta en el plano MCP.
 
 #### Scenario: TrustGuard global con scope
 
@@ -80,6 +90,8 @@ Tool desconocida, denegada por toolkit o con consentimiento pendiente MUST respo
 
 Orden: `Priority` ascendente; a igual prioridad, especificidad descendente (tool > registry > consumer; con principal > sin); después `slug`, `id`. El agrupamiento `Parallel` MUST seguir formando batches por `priority` igual.
 
+En un plano inerte la especificidad MUST aplanarse a 0 para toda entrada, de modo que el orden sea `priority → slug → id` (ver `policy-inert-scope`). `lessEntry` MUST NOT cambiar: el aplanado se hace al construir la cadena.
+
 #### Scenario: Empate de prioridad
 
 - GIVEN dos policies `priority: 10`, una por tool y otra por registry
@@ -91,6 +103,12 @@ Orden: `Priority` ascendente; a igual prioridad, especificidad descendente (tool
 - GIVEN dos policies `parallel: true`, `priority: 10`, distinta especificidad
 - WHEN se agrupan
 - THEN comparten batch; la especificidad solo ordena dentro
+
+#### Scenario: Empate en el plano inerte
+
+- GIVEN una policy sin scope y otra con `groups: [Finance]`, las dos `priority: 10`, en un consumer LLM
+- WHEN se construye el plan
+- THEN el orden es el mismo que tendrían las dos sin `mcp_scope`: la de grupo no adelanta a la otra
 
 ### Requirement: Filtro por principal opt-in
 

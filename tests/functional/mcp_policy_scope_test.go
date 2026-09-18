@@ -5,6 +5,7 @@ package functional_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -75,7 +76,7 @@ func attachScopedPolicy(t *testing.T, gatewayID, consumerID string, payload, mcp
 		payload["mcp_scope"] = mcpScope
 	}
 	policyID := CreatePolicy(t, gatewayID, payload)
-	AttachPolicy(t, gatewayID, consumerID, policyID)
+	attachPolicyWarnings(t, gatewayID, consumerID, policyID)
 	return policyID
 }
 
@@ -228,11 +229,11 @@ func TestMCPPolicyScope_UnscopedPolicyKeepsConsumerWideBehaviour(t *testing.T) {
 }
 
 // An API-key consumer that does not act for users runs as the application
-// principal: a subject, no groups. Scopes that select by group therefore never
-// match it, and an exception for a group never exempts it. This is the negative
-// half of the principal dimension; the positive half, where a caller does carry
-// a groups claim, is covered by the tests below that authenticate with a token
-// from oauthIDPStub.
+// principal: a subject, no groups. Its principal is inert, so the group
+// dimension of a scope does not gate for it: a scope naming groups selects it,
+// and an exception for a group still never exempts it. This is the api-key half
+// of the principal dimension; the half where a caller carries a groups claim is
+// covered by the tests below that authenticate with a token from oauthIDPStub.
 func TestMCPPolicyScope_PrincipalScopedPoliciesAgainstAPIKeyCallers(t *testing.T) {
 	gatewayID, consumerID, headers, x, _ := setupMCPPluginChainTwoUpstreams(t, []string{"echo", "other"}, []string{"echo"})
 	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
@@ -240,21 +241,135 @@ func TestMCPPolicyScope_PrincipalScopedPoliciesAgainstAPIKeyCallers(t *testing.T
 	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
 		withScope(toolScope(x.registryID, "other"), map[string]any{"except_groups": []string{"Finanzas"}}))
 
-	t.Run("group scopes stay dormant", func(t *testing.T) {
+	t.Run("a group scope runs for the api-key caller", func(t *testing.T) {
 		status, body := callEcho(t, gatewayID, consumerID, headers, x.exposed("echo"), "hi")
-		requireEchoed(t, status, body, "echo", "hi")
-		require.Equal(t, int64(1), x.callCount())
+		requirePolicyBlocked(t, status, body)
+		require.Zero(t, x.callCount(),
+			"the group dimension is inert for an api key, so the policy runs and the plugin denies")
 	})
 
 	t.Run("except_groups denies a caller outside the group", func(t *testing.T) {
 		status, body := callEcho(t, gatewayID, consumerID, headers, x.exposed("other"), "hi")
 		requirePolicyBlocked(t, status, body)
-		require.Equal(t, int64(1), x.callCount(), "the denied call must not reach the upstream")
+		require.Zero(t, x.callCount(), "the denied call must not reach the upstream")
 	})
 
 	// A member of the group is exempted rather than denied, which needs a
 	// caller bearing a groups claim: see
 	// TestMCPPolicyScope_ExceptGroupsExemptsMembersAndDeniesTheRest.
+}
+
+// createDualAuthMCPConsumer binds the registries to one MCP consumer that
+// accepts both a bearer token from stub and an api key. That is the shape the
+// inert principal is about: one consumer, two credentials, and a group scope
+// that answers differently depending on which of the two a caller presents.
+func createDualAuthMCPConsumer(
+	t *testing.T,
+	gatewayID string,
+	registryIDs []string,
+	stub *oauthIDPStub,
+) (consumerID, audience, apiKey string) {
+	t.Helper()
+	consumerID, audience = createOAuthMCPConsumer(t, gatewayID, registryIDs, stub)
+	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("mcp-key"))
+	AttachAuth(t, gatewayID, consumerID, authID)
+	return consumerID, audience, key
+}
+
+func setupScopedDualAuthConsumer(
+	t *testing.T,
+	toolsX, toolsY []string,
+) (gatewayID, consumerID, audience, apiKey string, stub *oauthIDPStub, x, y *scopedUpstream) {
+	t.Helper()
+	gatewayID = CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	x = startScopedUpstream(t, gatewayID, toolsX...)
+	y = startScopedUpstream(t, gatewayID, toolsY...)
+	stub = newOAuthIDPStub(t)
+	consumerID, audience, apiKey = createDualAuthMCPConsumer(t, gatewayID, []string{x.registryID, y.registryID}, stub)
+	return gatewayID, consumerID, audience, apiKey, stub, x, y
+}
+
+// The whole of rule 5 on one consumer that admits both credentials: the group
+// dimension gates a token caller and does not gate an api-key caller, and the
+// relaxation is one-directional. Both callers are in the same test because the
+// asymmetry is the point — a groups scope answers differently for the two, an
+// except_groups scope answers the same.
+func TestMCPPolicyScope_APIKeyCallerIsInertOnGroupsAndUnchangedOnExceptGroups(t *testing.T) {
+	gatewayID, consumerID, audience, apiKey, stub, x, _ := setupScopedDualAuthConsumer(t,
+		[]string{"echo", "other"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(toolScope(x.registryID, "echo"), map[string]any{"groups": []string{"Finanzas"}}))
+	attachScopedPolicy(t, gatewayID, consumerID, toolAllowlistMCPPolicyPayload(denyAllTools()),
+		withScope(toolScope(x.registryID, "other"), map[string]any{"except_groups": []string{"Finanzas"}}))
+
+	key := apiKeyHeaders(apiKey)
+	finance := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "fin-subject", "groups": []string{"Finanzas"}}))
+	marketing := bearerHeaders(stub.mint(t, audience, map[string]any{
+		"sub": "mkt-subject", "groups": []string{"Marketing"}}))
+
+	t.Run("groups: the api key is selected like a member of the group", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, key, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		status, body = callEcho(t, gatewayID, consumerID, finance, x.exposed("echo"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount(), "neither denied call reaches the upstream")
+	})
+
+	t.Run("groups: a token caller outside the group is still not selected", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, marketing, x.exposed("echo"), "hi")
+		requireEchoed(t, status, body, "echo", "hi")
+	})
+
+	t.Run("except_groups: the api key answers as it did before the rule", func(t *testing.T) {
+		before := x.callCount()
+		status, body := callEcho(t, gatewayID, consumerID, key, x.exposed("other"), "hi")
+		requirePolicyBlocked(t, status, body)
+		require.Equal(t, before, x.callCount(),
+			"an api-key caller carries no groups, so it never fell in the exception and still does not")
+	})
+
+	t.Run("except_groups: the excepted group is still excepted", func(t *testing.T) {
+		status, body := callEcho(t, gatewayID, consumerID, finance, x.exposed("other"), "hi")
+		requireEchoed(t, status, body, "other", "hi")
+	})
+}
+
+// The write path says out loud what the inert principal costs: a policy that
+// narrows to groups and reaches a consumer admitting api keys gets a warning
+// naming that consumer.
+func TestMCPPolicyScope_GroupScopeWarnsAboutTheAPIKeyConsumer(t *testing.T) {
+	gatewayID, consumerID, _, _, _, x, _ := setupScopedDualAuthConsumer(t, []string{"echo"}, []string{"echo"})
+	payload := toolAllowlistMCPPolicyPayload(denyAllTools())
+	payload["mcp_scope"] = withScope(toolScope(x.registryID, "echo"), map[string]any{"groups": []string{"Finanzas"}})
+	policyID := CreatePolicy(t, gatewayID, payload)
+
+	warnings := attachPolicyWarnings(t, gatewayID, consumerID, policyID)
+	require.Contains(t, warnings,
+		"policy narrows to groups but consumer "+consumerID+" accepts api-key auth: group checks do not apply to those callers",
+		"attaching a group-scoped policy to a consumer that admits api keys must name it")
+}
+
+// attachPolicyWarnings attaches and returns the warnings the attach answered
+// with. AttachPolicy asserts the 204 of the no-warning case; a group-scoped
+// policy on a consumer that admits api keys is warned about, so the same
+// endpoint answers 200 with a body, and both are the documented contract.
+func attachPolicyWarnings(t *testing.T, gatewayID, consumerID, policyID string) []string {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s",
+		AdminURL, gatewayID, consumerID, policyID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, status,
+		"attach policy failed: %v", body)
+	raw, _ := body["warnings"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if text, ok := w.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func TestMCPPolicyScope_ListToolsOncePerRegistryWithinTTL(t *testing.T) {
@@ -457,4 +572,29 @@ func TestMCPPolicyScope_PrincipalOnlyScopeCoversEveryRegistry(t *testing.T) {
 			requireEchoed(t, status, body, "echo", "hi")
 		}
 	})
+}
+
+// The nearer destination wins: a policy on (registry, tool) replaces the
+// registry-wide policy of the same slug on that tool, so the guard runs once
+// rather than twice. Before, both ran on every call to that tool.
+func TestMCPPolicyScope_ToolScopedPolicyReplacesTheRegistryOneOfTheSameSlug(t *testing.T) {
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	TrustGuardFunctionalStub.Reset()
+
+	gatewayID, consumerID, headers, x, _ := setupMCPPluginChainTwoUpstreams(t, []string{"echo", "other"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, trustGuardMCPPolicyPayload("request", ""), registryScope(x.registryID))
+	attachScopedPolicy(t, gatewayID, consumerID, trustGuardMCPPolicyPayload("request", ""), toolScope(x.registryID, "echo"))
+
+	before := TrustGuardFunctionalStub.GuardHits()
+	status, body := callEcho(t, gatewayID, consumerID, headers, x.exposed("echo"), "hi")
+	requireEchoed(t, status, body, "echo", "hi")
+	require.Equal(t, before+1, TrustGuardFunctionalStub.GuardHits(),
+		"the tool policy replaces the registry one: the guard must run once, not twice")
+
+	// The registry-wide policy still covers every other tool of that registry.
+	before = TrustGuardFunctionalStub.GuardHits()
+	status, body = callEcho(t, gatewayID, consumerID, headers, x.exposed("other"), "hi")
+	requireEchoed(t, status, body, "other", "hi")
+	require.Equal(t, before+1, TrustGuardFunctionalStub.GuardHits(),
+		"a tool that has no policy of its own still gets the registry-wide one")
 }

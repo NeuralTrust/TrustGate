@@ -93,6 +93,32 @@ Combinado con `mcp_scope`, `deny_tools: ["*"]` + `tools: [{registry, tool}]` + `
 - WHEN Marketing llama a `run_query`
 - THEN responde `-32001`
 
+### Requirement: `ScopeInertSafe() == false`
+
+El plugin MUST declarar `ScopeInertSafe() bool { return false }` (`policy-inert-scope`), con el comentario que cite la razón: gatea por el **nombre nativo de la tool**, y fuera de MCP ese binding no existe.
+
+En consecuencia, una policy `tool_allowlist` con `mcp_scope` MUST NOT entrar nunca en el plan de un consumer no-MCP, ni siquiera cuando el scope es de solo grupo y por tanto `CrossesPlanes()` es `true`; y asociarla a un consumer no-MCP MUST devolver **422** nombrando al plugin.
+
+El caso que esto impide, literalmente: `deny_tools: ["*"]` con `mcp_scope: {except_groups: [Finance]}` adjunta a un consumer LLM. El consumer gatea y casa, el scope no tiene destino, así que cruzaría; el principal es inerte, así que "para todos menos Finanzas" pasa a ser "para todos" y el deny-all se aplica a **todas** las function calls de ese consumer.
+
+#### Scenario: Declaración del plugin
+
+- GIVEN el descriptor de `tool_allowlist`
+- WHEN se consulta `ScopeInertSafe()`
+- THEN devuelve `false`
+
+#### Scenario: Deny-all con solo `except_groups` en LLM
+
+- GIVEN `deny_tools: ["*"]` con `mcp_scope: {except_groups: [Finance]}` sobre un consumer LLM
+- WHEN se construye el plan de ese consumer
+- THEN la policy no entra y las function calls pasan
+
+#### Scenario: La misma policy en MCP
+
+- GIVEN la misma policy sobre un consumer MCP
+- WHEN se construye el plan
+- THEN entra con normalidad y el scope gatea
+
 ### Requirement: Plano LLM sin cambios
 
 El comportamiento en `ProtocolLLM` MUST ser idéntico al actual: filtrado de `tools` del body, `on_empty_after_filter`, detección de claves ambiguas.

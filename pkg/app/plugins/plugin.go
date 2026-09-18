@@ -44,6 +44,46 @@ type PluginDescriptor interface {
 	MutatesMetadata() bool
 }
 
+// ScopeInertSafe is the opt-in a plugin declares to keep running on a plane
+// where the policy's mcp_scope does not gate. A plugin that resolves tool or
+// registry names — reading Metadata["mcp.tool"] or Metadata["mcp.registry_id"],
+// or carrying tool names in its settings — must return false: outside MCP
+// there is no (registry, native tool) binding, so matching by name is wrong
+// rather than degraded.
+//
+// Answered for RUN-1621: trustguard and request_size_limiter opted in, because
+// each gates on something every plane has — the content of the request, and its
+// size — and resolves no name that only exists inside MCP. tool_allowlist and
+// per_tool_rate_limiter stay out by their own nature, and a policy of theirs
+// narrowed by group alone is still refused with a 422 that names the plugin.
+// Anything added later starts denied: the opt-in is per plugin, never blanket.
+type ScopeInertSafe interface {
+	ScopeInertSafe() bool
+}
+
+// inertSafe reports whether the descriptor opted in. A descriptor that does not
+// implement ScopeInertSafe is denied, so no plugin turns cross-plane by
+// omission.
+func inertSafe(d PluginDescriptor) bool {
+	s, ok := d.(ScopeInertSafe)
+	return ok && s.ScopeInertSafe()
+}
+
+// IsInertSafe reports whether the plugin registered under slug opted into
+// running on a plane where the scope does not gate. It is the same predicate
+// inertSafe applies, reachable from the config load path so the decision has a
+// single implementation. An absent registry or an unknown slug is denied.
+func IsInertSafe(reg Registry, slug string) bool {
+	if reg == nil {
+		return false
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return false
+	}
+	return inertSafe(p)
+}
+
 // Plugin is a single unit of request/response processing. Each plugin declares
 // the fixed stages it runs on via Stages; the executor drives it only at those
 // stages and ignores the stage recorded in the policy configuration.

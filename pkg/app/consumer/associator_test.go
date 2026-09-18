@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -44,19 +45,49 @@ func newAssociator(
 	publisher *cachemocks.EventPublisher,
 	resolver ...*fakeProtocolResolver,
 ) appconsumer.Associator {
+	return newAssociatorWithGuard(repo, registryRepo, authRepo, policyRepo, publisher, &stubLevelGuard{}, resolver...)
+}
+
+// newAssociatorWithGuard is newAssociator with a level guard the test drives,
+// which is how the attach path is observed without a database.
+func newAssociatorWithGuard(
+	repo *repomocks.Repository,
+	registryRepo *backendmocks.Repository,
+	authRepo *authmocks.Repository,
+	policyRepo *policymocks.Repository,
+	publisher *cachemocks.EventPublisher,
+	levels apppolicy.LevelGuard,
+	resolver ...*fakeProtocolResolver,
+) appconsumer.Associator {
 	res := &fakeProtocolResolver{}
 	if len(resolver) > 0 {
 		res = resolver[0]
 	}
 	return appconsumer.NewAssociator(
-		repo, registryRepo, authRepo, policyRepo,
+		repo, registryRepo, authRepo, policyRepo, levels,
 		newCacheManager(), publisher, newTestLogger(), nil, res,
 	)
+}
+
+// stubLevelGuard answers with err, and lets the write through when there is
+// none, recording the policy it was asked about.
+type stubLevelGuard struct {
+	err     error
+	checked *policydomain.Policy
+}
+
+func (g *stubLevelGuard) Check(ctx context.Context, p *policydomain.Policy, write func(context.Context) error) error {
+	g.checked = p
+	if g.err != nil {
+		return g.err
+	}
+	return write(ctx)
 }
 
 type fakeProtocolResolver struct {
 	protocols     map[string][]string
 	settingsError error
+	inertSafe     map[string]bool
 }
 
 func (f *fakeProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
@@ -66,6 +97,10 @@ func (f *fakeProtocolResolver) SupportedProtocols(slug string) ([]string, bool) 
 
 func (f *fakeProtocolResolver) ValidateSettingsForProtocol(string, string, map[string]any) error {
 	return f.settingsError
+}
+
+func (f *fakeProtocolResolver) InertSafe(slug string) bool {
+	return f.inertSafe[slug]
 }
 
 func TestAssociator_AttachRegistry_Success(t *testing.T) {
@@ -515,41 +550,71 @@ func TestAssociator_DetachPolicy_Success(t *testing.T) {
 	}
 }
 
-// mcp_scope selects MCP destinations and principals, so a scoped policy on a
-// consumer of any other protocol would never match and silently do nothing.
-// A pruned {} scope is still a scope.
-func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
+// The guard is about the scope's dimension and the plugin behind the policy,
+// not about the consumer's type: outside MCP a registry or a tool has no
+// meaning, and a plugin that resolves tool names would read an inert group as
+// "everyone". A group-only scope over a plugin that does not read names is the
+// one combination that crosses (RUN-1621, rules 2 and 7).
+func TestAssociator_AttachPolicy_ScopeMustCrossIntoTheConsumerPlane(t *testing.T) {
 	t.Parallel()
+	inertSafeSlug := "inert_safe_guard"
+	nameGatingSlug := "trustguard"
 	tests := []struct {
 		name         string
 		consumerType domain.Type
+		slug         string
 		scope        *policydomain.MCPScope
 		wantAttach   bool
+		wantReason   string
 	}{
 		{
-			name:         "reject scoped policy on llm consumer",
+			name:         "reject registry scope on llm consumer even when the plugin is inert-safe",
 			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
 			scope:        &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+			wantReason:   "names a registry or a tool",
+		},
+		{
+			name:         "reject tool scope on a2a consumer",
+			consumerType: domain.TypeA2A,
+			slug:         inertSafeSlug,
+			scope: &policydomain.MCPScope{Tools: []policydomain.MCPToolRef{
+				{RegistryID: ids.New[ids.RegistryKind](), Tool: "run_query"},
+			}},
+			wantReason: "names a registry or a tool",
 		},
 		{
 			name:         "reject pruned scope on llm consumer",
 			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
 			scope:        &policydomain.MCPScope{},
+			wantReason:   "empty and names nothing",
 		},
 		{
-			name:         "reject scoped policy on a2a consumer",
-			consumerType: domain.TypeA2A,
+			name:         "reject group-only scope when the plugin gates by name",
+			consumerType: domain.TypeLLM,
+			slug:         nameGatingSlug,
+			scope:        &policydomain.MCPScope{ExceptGroups: []string{"Finanzas"}},
+			wantReason:   "has not opted into running where the scope is inert",
+		},
+		{
+			name:         "allow group-only scope when the plugin is inert-safe",
+			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
 			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+			wantAttach:   true,
 		},
 		{
-			name:         "allow scoped policy on mcp consumer",
+			name:         "allow a name-gating plugin with any scope on an mcp consumer",
 			consumerType: domain.TypeMCP,
+			slug:         nameGatingSlug,
 			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
 			wantAttach:   true,
 		},
 		{
 			name:         "allow unscoped policy on llm consumer",
 			consumerType: domain.TypeLLM,
+			slug:         nameGatingSlug,
 			wantAttach:   true,
 		},
 	}
@@ -566,7 +631,7 @@ func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
 				Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Once()
 			policyRepo := policymocks.NewRepository(t)
 			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
-				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "trustguard", MCPScope: tt.scope}, nil).Once()
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, MCPScope: tt.scope}, nil).Once()
 			publisher := cachemocks.NewEventPublisher(t)
 			if tt.wantAttach {
 				repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
@@ -575,7 +640,13 @@ func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
 					Return(nil).
 					Once()
 			}
-			resolver := &fakeProtocolResolver{protocols: map[string][]string{"trustguard": {"LLM", "MCP"}}}
+			resolver := &fakeProtocolResolver{
+				protocols: map[string][]string{
+					nameGatingSlug: {"LLM", "MCP"},
+					inertSafeSlug:  {"LLM", "MCP"},
+				},
+				inertSafe: map[string]bool{inertSafeSlug: true},
+			}
 			a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, publisher, resolver)
 
 			err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
@@ -585,11 +656,14 @@ func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, domain.ErrPolicyScopeRequiresMCP) {
-				t.Fatalf("err = %v, want ErrPolicyScopeRequiresMCP", err)
+			if !errors.Is(err, domain.ErrPolicyScopeDoesNotCross) {
+				t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross", err)
 			}
 			if !errors.Is(err, domain.ErrPolicyProtocolMismatch) || !errors.Is(err, commonerrors.ErrValidation) {
 				t.Fatalf("err = %v, want it to read as a protocol mismatch and a validation error", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantReason) {
+				t.Fatalf("err = %v, want it to give the reason %q", err, tt.wantReason)
 			}
 			if !strings.Contains(err.Error(), string(tt.consumerType)) {
 				t.Fatalf("err = %v, want it to name the consumer type", err)
@@ -597,5 +671,65 @@ func TestAssociator_AttachPolicy_ScopeRequiresMCPConsumer(t *testing.T) {
 			repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
 			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 		})
+	}
+}
+
+// Attaching a consumer takes the levels that consumer adds, so it goes through
+// the level guard and the junction row is never written when it is refused.
+func TestAssociator_AttachPolicy_RefusesAnOccupiedLevel(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "cors", Enabled: true}, nil).Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo,
+		cachemocks.NewEventPublisher(t), levels)
+
+	err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+	if !errors.Is(err, policydomain.ErrPolicyLevelConflict) {
+		t.Fatalf("err = %v, want ErrPolicyLevelConflict", err)
+	}
+	repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+	if len(levels.checked.ConsumerIDs) != 1 || levels.checked.ConsumerIDs[0] != consumerID {
+		t.Fatalf("guard saw consumers %v, want only %s", levels.checked.ConsumerIDs, consumerID)
+	}
+}
+
+// Detaching a consumer only releases levels, so it never asks the guard.
+func TestAssociator_DetachPolicy_IsNotGuarded(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+	repo.EXPECT().DetachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t),
+		policymocks.NewRepository(t), publisher, levels)
+
+	if err := a.DetachPolicy(context.Background(), gwID, consumerID, policyID); err != nil {
+		t.Fatalf("DetachPolicy error: %v", err)
+	}
+	if levels.checked != nil {
+		t.Fatal("detach must not consult the level guard")
 	}
 }

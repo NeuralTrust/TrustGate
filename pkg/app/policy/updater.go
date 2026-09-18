@@ -62,6 +62,7 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo         domain.Repository
+	levels       LevelGuard
 	registryRepo registrydomain.Repository
 	registry     appplugins.Registry
 	memoryCache  *cache.TTLMap
@@ -72,6 +73,7 @@ type updater struct {
 
 func NewUpdater(
 	repo domain.Repository,
+	levels LevelGuard,
 	registryRepo registrydomain.Repository,
 	registry appplugins.Registry,
 	manager *cache.TTLMapManager,
@@ -81,6 +83,7 @@ func NewUpdater(
 ) Updater {
 	return &updater{
 		repo:         repo,
+		levels:       levels,
 		registryRepo: registryRepo,
 		registry:     registry,
 		memoryCache:  manager.GetTTLMap(cache.PolicyTTLName),
@@ -147,7 +150,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// Only an update that carried mcp_scope writes the column: echoing back the
 	// value read at the top of Update would resurrect a registry that a prune
 	// removed in between.
-	if err := u.repo.Update(ctx, existing, in.MCPScope.Set); err != nil {
+	if err := u.levels.Check(ctx, existing, func(ctx context.Context) error {
+		return u.repo.Update(ctx, existing, in.MCPScope.Set)
+	}); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
