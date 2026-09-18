@@ -251,7 +251,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 			Code:            code,
 			Name:            displayName(entry, code),
 			RequiresConfig:  true,
-			RequiresAuth:    entry.RequiresAuth,
+			RequiresAuth:    requiresUserAuth(entry, decision.bound),
 			ConfigVariables: missingPlain,
 		}, nil
 	}
@@ -307,7 +307,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		Status:           decision.status,
 		InstanceID:       record.ID.String(),
 		Pending:          decision.status == installationdomain.StatusPendingApproval,
-		RequiresAuth:     entry.RequiresAuth,
+		RequiresAuth:     requiresUserAuth(entry, decision.bound),
 		AlreadyInstalled: alreadyInstalled,
 	}
 	// The install is recorded, but its tools stay dark until the user enters the
@@ -380,11 +380,28 @@ func planInstallConfig(
 // recording anything — that the caller must pick among several instances or
 // that an admin must connect the server first.
 type installDecision struct {
-	registryID         ids.RegistryID
+	registryID ids.RegistryID
+	// bound is the instance the install resolved to, even where registryID is
+	// left implicit, so the result can be answered from how that instance
+	// actually authenticates rather than from the catalog entry alone. Nil when
+	// no single instance was resolved (a materialised one, or a pending choice).
+	bound              *registrydomain.Registry
 	status             installationdomain.Status
 	materialise        bool
 	choices            []InstanceChoice
 	requiresAdminSetup bool
+}
+
+// requiresUserAuth reports whether the install still needs the user to sign in
+// upstream. An entry that requires auth may be shelved with a static credential
+// an admin supplied, and such an instance has no per-user account to connect:
+// answered from the catalog entry alone, the caller hands the user a connect
+// link that leads to a page with nothing to authorize.
+func requiresUserAuth(entry catalogdomain.MCPServer, bound *registrydomain.Registry) bool {
+	if bound == nil || bound.MCPTarget == nil || bound.MCPTarget.Auth == nil {
+		return entry.RequiresAuth
+	}
+	return bound.MCPTarget.Auth.Mode == registrydomain.MCPAuthModeForwarded
 }
 
 // decide applies the Store access model:
@@ -427,9 +444,9 @@ func (i *installer) decide(
 			return installDecision{}, fmt.Errorf("%w: %q is not an instance of %q", ErrUnknownInstance, in.RegistryID, code)
 		}
 		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
-			return installDecision{registryID: reg.ID, status: installationdomain.StatusInstalled}, nil
+			return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusInstalled}, nil
 		}
-		return installDecision{registryID: reg.ID, status: installationdomain.StatusPendingApproval}, nil
+		return installDecision{registryID: reg.ID, bound: reg, status: installationdomain.StatusPendingApproval}, nil
 	}
 
 	// No instance connected yet: materialise it for whoever holds the code (All,
@@ -466,13 +483,14 @@ func (i *installer) decide(
 		d := installDecision{status: installationdomain.StatusPendingApproval}
 		if len(instances) == 1 {
 			d.registryID = instances[0].ID
+			d.bound = instances[0]
 		}
 		return d, nil
 	case 1:
 		// The sole usable instance. When it is also the code's only instance it is
 		// the canonical one: leave the binding implicit so the install follows the
 		// registry (a re-materialised one included) rather than a stale id.
-		d := installDecision{status: installationdomain.StatusInstalled}
+		d := installDecision{status: installationdomain.StatusInstalled, bound: usable[0]}
 		if len(instances) > 1 {
 			d.registryID = usable[0].ID
 		}
