@@ -46,6 +46,15 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	if !ok || entry.OAuth == nil || !entry.OAuth.Required {
 		return nil
 	}
+	// An entry may advertise more than one install method: GitHub's hosted MCP
+	// takes an OAuth login or a PAT in Authorization: Bearer, and the catalog
+	// declares both (auth_methods). OAuth being required is what the OAuth path
+	// must obey, not a claim that it is the only path.
+	if target.Auth != nil && target.Auth.Mode == domain.MCPAuthModeStatic {
+		if static, _ := entry.SupportedAuthMethods(); static {
+			return canonicalizeStatic(target, entry, code)
+		}
+	}
 	if entry.OAuth.GrantType == grantTypeClientCredentials {
 		return canonicalizeClientCredentials(target, entry, code)
 	}
@@ -56,12 +65,57 @@ func CanonicalizeMCPAuthFromCatalog(target *domain.MCPTarget, catalog MCPAuthCat
 	return nil
 }
 
+// canonicalizeStatic keeps the operator's own credential, naming the header from
+// the entry when the caller left it out. Every OAuth-shaped field is dropped:
+// switching an installed instance from forwarded to static echoes back the OAuth
+// block the read API emitted, and a record carrying both shapes misreports how
+// the target dials — a masked client secret among them would then fail the
+// forwarded validation if the instance were ever switched back.
+func canonicalizeStatic(target *domain.MCPTarget, entry catalogdomain.MCPServer, code string) error {
+	if len(entry.AuthHeaders) == 0 {
+		return fmt.Errorf("%w: catalog entry %q offers auth mode static but declares no auth header to carry the credential",
+			commonerrors.ErrValidation, code)
+	}
+	if strings.TrimSpace(target.Auth.Header) == "" {
+		target.Auth.Header = strings.TrimSpace(entry.AuthHeaders[0].Name)
+	}
+	target.Auth.Provider = ""
+	target.Auth.Registration = ""
+	target.Auth.ClientID = ""
+	target.Auth.ClientSecret = ""
+	target.Auth.AuthorizeURL = ""
+	target.Auth.TokenURL = ""
+	target.Auth.Scopes = nil
+	target.Auth.Resource = ""
+	target.Auth.TokenEndpointAuthMethod = ""
+	return nil
+}
+
+// acceptedAuthModes names the modes an install may declare for the entry, in the
+// order the install UI offers them. Called only past the OAuth.Required gate, so
+// entry.OAuth is non-nil.
+func acceptedAuthModes(entry catalogdomain.MCPServer) []string {
+	var modes []string
+	if static, _ := entry.SupportedAuthMethods(); static && len(entry.AuthHeaders) > 0 {
+		modes = append(modes, string(domain.MCPAuthModeStatic))
+	}
+	if entry.OAuth.GrantType == grantTypeClientCredentials {
+		return append(modes, string(domain.MCPAuthModeClientCredentials))
+	}
+	return append(modes, string(domain.MCPAuthModeForwarded))
+}
+
+func errUnsupportedAuthMode(code, mode string, entry catalogdomain.MCPServer) error {
+	return fmt.Errorf("%w: catalog entry %q accepts auth mode %s, got %q",
+		commonerrors.ErrValidation, code, strings.Join(acceptedAuthModes(entry), " or "), mode)
+}
+
 func canonicalizeClientCredentials(target *domain.MCPTarget, entry catalogdomain.MCPServer, code string) error {
 	if target.Auth == nil {
 		target.Auth = &domain.MCPAuth{}
 	}
 	if mode := strings.TrimSpace(string(target.Auth.Mode)); mode != "" && mode != string(domain.MCPAuthModeClientCredentials) {
-		return fmt.Errorf("%w: catalog entry %q requires auth mode client_credentials", commonerrors.ErrValidation, code)
+		return errUnsupportedAuthMode(code, mode, entry)
 	}
 	if strings.TrimSpace(entry.OAuth.TokenURL) == "" {
 		return fmt.Errorf("%w: catalog entry %q is missing oauth.token_url", commonerrors.ErrValidation, code)
@@ -94,7 +148,7 @@ func canonicalizeAuthorizationCode(target *domain.MCPTarget, entry catalogdomain
 		target.Auth = &domain.MCPAuth{}
 	}
 	if mode := strings.TrimSpace(string(target.Auth.Mode)); mode != "" && mode != string(domain.MCPAuthModeForwarded) {
-		return fmt.Errorf("%w: catalog entry %q requires auth mode forwarded", commonerrors.ErrValidation, code)
+		return errUnsupportedAuthMode(code, mode, entry)
 	}
 	target.Auth.Mode = domain.MCPAuthModeForwarded
 	if strings.TrimSpace(target.Auth.Provider) == "" {
