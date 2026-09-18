@@ -44,6 +44,13 @@ func (p *Policy) IsGlobal() bool {
 	return p.Global
 }
 
+// Dormant reports whether the policy carries a tombstone scope and therefore
+// runs in no plane, MCP or otherwise. It says nothing about routing: IsGlobal
+// keeps reporting the Global flag alone.
+func (p *Policy) Dormant() bool {
+	return p != nil && p.MCPScope.Dormant()
+}
+
 func NewPolicy(
 	gatewayID ids.GatewayID,
 	name string,

@@ -4109,9 +4109,12 @@ paths:
       - consumers
     post:
       description: Associates a policy with a consumer (idempotent). Editing the policy
-        later affects every consumer it is attached to. A policy with mcp_scope can
-        only be attached to an MCP consumer. Answers 204, or 200 with a warnings body
-        when the consumer already runs the same plugin without scope.
+        later affects every consumer it is attached to. An mcp_scope that names a
+        registry or a tool, or that is the empty object, only attaches to an MCP consumer;
+        a scope narrowing by group alone also attaches to a non-MCP consumer, where
+        the group is inert, provided the plugin runs under an inert scope. Answers
+        204, or 200 with a warnings body when the consumer already runs the same plugin
+        without scope.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4150,6 +4153,11 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The gateway already runs this plugin at one of the levels the
+            attach would take
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "422":
@@ -4452,7 +4460,9 @@ paths:
       - application/json
       description: Creates a new policy in a gateway. An optional mcp_scope narrows
         it to MCP registries, tools and principals; the response echoes the stored
-        scope and may carry non-blocking warnings.
+        scope and may carry non-blocking warnings. The policy starts attached to no
+        consumer and not global, so it runs nowhere and holds no level until it is
+        attached or promoted.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4486,7 +4496,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: Conflict
+          description: A policy of this name already exists in the gateway
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4579,8 +4589,10 @@ paths:
       consumes:
       - application/json
       description: 'Updates an existing policy. mcp_scope is tri-state: omitted keeps
-        the stored scope, null clears it and an object replaces it. The response may
-        carry non-blocking warnings.'
+        the stored scope, null clears it and an object replaces it. An update that
+        moves the policy onto a level another policy of the same plugin already holds
+        is refused with 409, and so is turning enabled back on when that is what takes
+        the level. The response may carry non-blocking warnings.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4620,7 +4632,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: Conflict
+          description: A policy of this name already exists, or the gateway already
+            runs this plugin at one of the levels the update would take
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4718,8 +4731,10 @@ paths:
       - policies
     post:
       description: Promotes a policy to gateway-wide scope (applies to every consumer).
-        For a policy with mcp_scope the response may carry non-blocking warnings about
-        consumers that already run the same plugin without scope.
+        Promoting moves the policy to the all-traffic level, so it answers 409 when
+        another policy of the same plugin already holds it. For a policy with mcp_scope
+        the response may carry non-blocking warnings about consumers that already
+        run the same plugin without scope.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4750,6 +4765,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The gateway already runs this plugin at the all-traffic level
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:

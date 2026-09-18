@@ -36,7 +36,7 @@ func NewCreatePolicyHandler(creator apppolicy.Creator, warner apppolicy.Warner) 
 
 // Handle godoc
 // @Summary      Create a policy
-// @Description  Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings.
+// @Description  Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings. The policy starts attached to no consumer and not global, so it runs nowhere and holds no level until it is attached or promoted.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -47,7 +47,7 @@ func NewCreatePolicyHandler(creator apppolicy.Creator, warner apppolicy.Warner) 
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists in the gateway"
 // @Router       /v1/gateways/{gateway_id}/policies [post]
 func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)

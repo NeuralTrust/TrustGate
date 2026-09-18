@@ -950,3 +950,11 @@ func TestGraftChangedFields(t *testing.T) {
 		})
 	}
 }
+
+func TestPlugin_ScopeInertSafe_IsFalseBecauseItGatesByToolName(t *testing.T) {
+	p := New(nil)
+
+	var optIn appplugins.ScopeInertSafe = p
+	assert.False(t, optIn.ScopeInertSafe(),
+		"tool_allowlist gates by tool name, and off the MCP plane there is no (registry, native tool) binding to resolve those names against")
+}

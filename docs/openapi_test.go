@@ -162,6 +162,58 @@ func TestPolicyOpenAPIDocumentsMCPScopeAndWarnings(t *testing.T) {
 	assert.Contains(t, schemaByRef(t, document, warnedBody.Schema.Ref).Properties, "warnings")
 }
 
+// The level rule (RUN-1621, rule 3) surfaces as a 409 on the write paths that
+// can take a level. Create is not one of them: a new policy is attached to no
+// consumer and not global, so it holds no level and its 409 stays the name
+// clash. The test pins that asymmetry, because a 409 documented on create
+// would tell an operator to look for a conflict the guard cannot raise there.
+func TestPolicyOpenAPIDocumentsLevelConflictOnTheWritesThatTakeALevel(t *testing.T) {
+	document := loadOpenAPIDocument(t)
+
+	item, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}"]
+	require.True(t, ok)
+	assert.Contains(t, item.Put.Description, "level another policy of the same plugin already holds")
+	assert.Contains(t, item.Put.Description, "turning enabled back on",
+		"enabling is the write the rule would otherwise be sidestepped by")
+	updateConflict, ok := item.Put.Responses["409"]
+	require.True(t, ok, "update must document the level conflict")
+	assert.Contains(t, updateConflict.Description, "already runs this plugin at one of the levels")
+
+	promote, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}/global"]
+	require.True(t, ok)
+	promoteConflict, ok := promote.Post.Responses["409"]
+	require.True(t, ok, "promotion must document the level conflict")
+	assert.Contains(t, promoteConflict.Description, "all-traffic level")
+
+	attach, ok := document.Paths["/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}"]
+	require.True(t, ok)
+	attachConflict, ok := attach.Post.Responses["409"]
+	require.True(t, ok, "attach must document the level conflict")
+	assert.Contains(t, attachConflict.Description, "already runs this plugin at one of the levels")
+
+	collection, ok := document.Paths["/v1/gateways/{gateway_id}/policies"]
+	require.True(t, ok)
+	createConflict, ok := collection.Post.Responses["409"]
+	require.True(t, ok)
+	assert.NotContains(t, createConflict.Description, "level",
+		"a created policy is a draft and takes no level, so its 409 is the name clash alone")
+	assert.Contains(t, collection.Post.Description, "runs nowhere and holds no level until it is attached or promoted")
+}
+
+// Rule 2 opened the attach of a group-only scope to a non-MCP consumer, so the
+// description may no longer promise that a scoped policy is MCP-only.
+func TestAttachPolicyOpenAPIDescribesTheGroupOnlyScopeAsAttachable(t *testing.T) {
+	document := loadOpenAPIDocument(t)
+
+	attach, ok := document.Paths["/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}"]
+	require.True(t, ok)
+	description := attach.Post.Description
+	assert.NotContains(t, description, "A policy with mcp_scope can only be attached to an MCP consumer",
+		"rule 2 made that sentence false: a group-only scope attaches to a non-MCP consumer")
+	assert.Contains(t, description, "names a registry or a tool")
+	assert.Contains(t, description, "narrowing by group alone also attaches to a non-MCP consumer")
+}
+
 // refOf extracts the $ref of a property, whether inline or wrapped in allOf
 // (swagger2openapi wraps referenced properties that carry a description).
 func refOf(t *testing.T, property json.RawMessage) string {

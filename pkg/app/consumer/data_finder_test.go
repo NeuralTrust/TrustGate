@@ -467,7 +467,10 @@ func TestDataFinder_FindByGateway_SlugOverrideOnlyAmongUnscopedPolicies(t *testi
 	}
 }
 
-func TestDataFinder_FindByGateway_ScopedPoliciesStayOutOfThePolicyPlan(t *testing.T) {
+// The dimension decides, not the presence of a scope. A registry scope and a
+// tombstone stay out of the non-MCP plane; a group-only scope on an inert-safe
+// plugin is folded in (RUN-1621, §2.1).
+func TestDataFinder_FindByGateway_DestinationScopedPoliciesStayOutOfTheNonMCPPlan(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	cons := routableConsumer(gwID, nil)
@@ -487,31 +490,43 @@ func TestDataFinder_FindByGateway_ScopedPoliciesStayOutOfThePolicyPlan(t *testin
 		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
 		MCPScope:    &policydomain.MCPScope{},
 	}
+	byGroup := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Name: "G", Slug: inertSafeSlug, Enabled: true,
+		ConsumerIDs: []ids.ConsumerID{cons.ID},
+		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope:    &policydomain.MCPScope{Groups: []string{"finance"}},
+	}
 	policyRepo := policymocks.NewRepository(t)
 	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
-		Return([]*policydomain.Policy{byRegistry, pruned}, nil).Once()
+		Return([]*policydomain.Policy{byRegistry, pruned, byGroup}, nil).Once()
 
 	registryRepo := backendmocks.NewRepository(t)
 	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
 
-	pluginRegistry := appplugins.NewRegistry()
-	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+	h := newInertHarness(t)
+	if err := h.reg.Register(pertoolratelimit.New(nil, nil)); err != nil {
 		t.Fatalf("register plugin: %v", err)
 	}
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), h.reg, newCacheManager(), newTestLogger())
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
 		t.Fatalf("FindByGateway error: %v", err)
 	}
 	rc := data.Consumers[0]
-	if len(rc.Policies) != 0 {
-		t.Fatalf("scoped policies must not enter Policies, got %v", policyIDs(rc.Policies))
+	if containsPolicyID(rc.Policies, byRegistry.ID) || containsPolicyID(rc.Policies, pruned.ID) {
+		t.Fatalf("a registry scope and a tombstone must not enter Policies, got %v", policyIDs(rc.Policies))
 	}
-	if rc.PolicyPlan == nil || rc.PolicyPlan.Has(policydomain.StagePreRequest) {
-		t.Fatal("scoped policies must stay out of the base PolicyPlan the LLM plane and discovery read")
+	if len(rc.Policies) != 1 || rc.Policies[0].ID != byGroup.ID {
+		t.Fatalf("the group-only policy must enter Policies, got %v", policyIDs(rc.Policies))
 	}
-	if len(rc.ScopedPolicies) != 2 || !containsPolicyID(rc.ScopedPolicies, byRegistry.ID) || !containsPolicyID(rc.ScopedPolicies, pruned.ID) {
-		t.Fatalf("both the registry-scoped and the pruned {} policy must be kept as scoped, got %v", policyIDs(rc.ScopedPolicies))
+	if rc.PolicyPlan == nil {
+		t.Fatal("a non-MCP consumer must always carry a plan, or the executor rebuilds the chain unflattened")
+	}
+	if got := h.executedPlan(rc.PolicyPlan); len(got) != 1 || got[0] != "G" {
+		t.Fatalf("the inert plan must run the group-only policy and nothing else, got %v", got)
+	}
+	if len(rc.ScopedPolicies) != 3 {
+		t.Fatalf("every scoped policy must still be kept as scoped, got %v", policyIDs(rc.ScopedPolicies))
 	}
 }
 
@@ -573,7 +588,10 @@ func mcpRoutableConsumer(gwID ids.GatewayID, registryIDs ...ids.RegistryID) *dom
 	})
 }
 
-func TestDataFinder_FindByGateway_BuildsMCPPlansOnlyForMCPConsumers(t *testing.T) {
+// Promotion to global is not a back door: a destination scope stays MCP-only
+// however it arrived, while a group-only global reaches every plane
+// (RUN-1621, rule 7).
+func TestDataFinder_FindByGateway_MCPPlansAreMCPOnlyAndGlobalDestinationScopeNeverCrosses(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	snowflakeID := ids.New[ids.RegistryKind]()
@@ -590,18 +608,28 @@ func TestDataFinder_FindByGateway_BuildsMCPPlansOnlyForMCPConsumers(t *testing.T
 		Stages:      []policydomain.Stage{policydomain.StagePreRequest},
 		MCPScope:    &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{snowflakeID}},
 	}
+	globalByRegistry := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Name: "R", Slug: nameGatingSlug, Enabled: true, Global: true,
+		Stages:   []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope: &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{snowflakeID}},
+	}
+	globalByGroup := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Name: "G", Slug: inertSafeSlug, Enabled: true, Global: true,
+		Stages:   []policydomain.Stage{policydomain.StagePreRequest},
+		MCPScope: &policydomain.MCPScope{Groups: []string{"finance"}},
+	}
 	policyRepo := policymocks.NewRepository(t)
 	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
-		Return([]*policydomain.Policy{scoped}, nil).Once()
+		Return([]*policydomain.Policy{scoped, globalByRegistry, globalByGroup}, nil).Once()
 
 	registryRepo := backendmocks.NewRepository(t)
 	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, nil).Once()
 
-	pluginRegistry := appplugins.NewRegistry()
-	if err := pluginRegistry.Register(pertoolratelimit.New(nil, nil)); err != nil {
+	h := newInertHarness(t)
+	if err := h.reg.Register(pertoolratelimit.New(nil, nil)); err != nil {
 		t.Fatalf("register plugin: %v", err)
 	}
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), pluginRegistry, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authmocks.NewRepository(t), h.reg, newCacheManager(), newTestLogger())
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
 		t.Fatalf("FindByGateway error: %v", err)
@@ -629,6 +657,12 @@ func TestDataFinder_FindByGateway_BuildsMCPPlansOnlyForMCPConsumers(t *testing.T
 	llm := data.Consumers[1]
 	if llm.MCPPlans != nil {
 		t.Fatal("LLM consumers must not carry MCPPlans")
+	}
+	if containsPolicyID(llm.Policies, globalByRegistry.ID) || containsPolicyID(llm.Policies, scoped.ID) {
+		t.Fatalf("a destination scope must not cross, global or attached, got %v", policyIDs(llm.Policies))
+	}
+	if len(llm.Policies) != 1 || llm.Policies[0].ID != globalByGroup.ID {
+		t.Fatalf("a group-only global must reach every plane, got %v", policyIDs(llm.Policies))
 	}
 }
 
