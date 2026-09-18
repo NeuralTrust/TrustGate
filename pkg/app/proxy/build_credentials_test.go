@@ -56,3 +56,17 @@ func TestProviderCredentials_AzureManagedIdentity(t *testing.T) {
 	assert.True(t, creds.Azure.UseIdentity)
 	assert.Empty(t, creds.ApiKey)
 }
+
+func TestRegistryCredentials_PassthroughUsesIncomingBearer(t *testing.T) {
+	bk := &registrydomain.Registry{
+		LLMTarget: &registrydomain.LLMTarget{
+			Provider: "vertex",
+			Auth:     &registrydomain.TargetAuth{Type: registrydomain.AuthTypePassthrough},
+		},
+	}
+
+	creds := registryCredentials(bk, "Bearer ya29.caller-token")
+
+	assert.Equal(t, "ya29.caller-token", creds.ApiKey)
+	assert.Nil(t, creds.GCP)
+}

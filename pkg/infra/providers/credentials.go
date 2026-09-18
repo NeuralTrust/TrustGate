@@ -15,6 +15,8 @@
 package providers
 
 import (
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -58,6 +60,29 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 			creds.GCP = &GCP{ServiceAccountJSON: *a.GCPServiceAccount}
 		}
 	case registry.AuthTypeOAuth2:
+	case registry.AuthTypePassthrough:
 	}
 	return creds
+}
+
+const bearerPrefix = "Bearer "
+
+// ApplyIncomingBearer copies the caller's Authorization token onto credentials
+// when the registry auth type is passthrough. The Vertex client already sends
+// Credentials.ApiKey as Authorization: Bearer.
+func ApplyIncomingBearer(creds *Credentials, auth *registry.TargetAuth, authorization string) {
+	if creds == nil || auth == nil || auth.Type != registry.AuthTypePassthrough {
+		return
+	}
+	if token := bearerToken(authorization); token != "" {
+		creds.ApiKey = token
+	}
+}
+
+func bearerToken(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) >= len(bearerPrefix) && strings.EqualFold(raw[:len(bearerPrefix)], bearerPrefix) {
+		return strings.TrimSpace(raw[len(bearerPrefix):])
+	}
+	return raw
 }
