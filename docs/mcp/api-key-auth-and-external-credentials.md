@@ -185,6 +185,41 @@ parsing is bounded to 2048 bytes and 16 hops so a crafted header cannot burn CPU
 Configuration rejects `0.0.0.0/0` and `::/0`, which would trust anyone. Limiter
 backend failures surface as an opaque `503`, exceeded limits as `429`.
 
+### The plane's floor
+
+The limiter above guards one flow, and the plan limits on a gateway's
+entitlements meter one tenant — both after a credential is known. Half the MCP
+plane answers before that: dynamic client registration writes rows for anyone
+who asks, the token exchange says whether a code is real, and `/whoami` says
+whether an API key is. A third limiter sits on the base transport, ahead of
+authentication, so those are bounded too.
+
+| Variable | Meaning |
+|---|---|
+| `MCP_PLANE_RATE_LIMIT_ENABLED` | Turns the floor on |
+| `MCP_PLANE_RATE_LIMIT_DEFAULT` | Requests per origin per window, read-mostly routes |
+| `MCP_PLANE_RATE_LIMIT_CREDENTIAL` | Requests per origin per window, credential routes |
+| `MCP_PLANE_RATE_LIMIT_WINDOW` | Window duration |
+| `MCP_PLANE_TRUSTED_PROXY_CIDRS` | Proxies whose `X-Forwarded-For` is trusted; empty inherits the connect list |
+
+Credential routes are everything under `/oauth/` (except the static
+`/oauth/brands/` assets) plus `/whoami` — matched by prefix, so a new OAuth
+route lands in the tighter class without anyone remembering to add it. The
+bucket is keyed by the request host and the origin, so one gateway under attack
+does not spend another's allowance on a deployment that serves both; origins are
+HMAC-derived, like the connect limiter's.
+
+It deliberately does **not** meter against the plan: charging anonymous abuse to
+a customer's monthly quota would make a flood their outage and their bill. And
+unlike the connect limiter, it **fails open** — a counter that takes the plane
+down with it when Redis blinks is a worse outage than the one it prevents, so an
+unreachable limiter is logged and counted
+(`trustgate_mcp_plane_rate_limit_fail_open_total`) rather than enforced. Refusals
+answer HTTP `429` with `Retry-After`, before the request is parsed; the plan
+limit, which runs after dispatch, answers in JSON-RPC instead. Health probes are
+registered ahead of the middleware, so a flooded gateway still answers them and
+is not restarted for being under attack.
+
 ### Audit
 
 Lifecycle events are emitted with identifiers only, never with the secret:

@@ -133,6 +133,16 @@ const (
 	defaultMCPConnectRateLimitSource   = 10
 	defaultMCPConnectRateLimitConsumer = 100
 	defaultMCPConnectRateLimitWindow   = time.Minute
+	// The plane's floor. Generous next to the connect limiter, because it
+	// applies to every request an origin makes rather than to one flow: an
+	// agent polling its tools and a browser walking an OAuth redirect must
+	// both fit under it without noticing, while a script guessing tokens must
+	// not. Credential routes write rows or answer "is this secret real", so
+	// they get a tenth of the room.
+	defaultMCPPlaneRateLimitEnabled    = true
+	defaultMCPPlaneRateLimitDefault    = 600
+	defaultMCPPlaneRateLimitCredential = 60
+	defaultMCPPlaneRateLimitWindow     = time.Minute
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
@@ -173,6 +183,7 @@ type Config struct {
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
+	MCPPlaneRateLimit   MCPPlaneRateLimitConfig
 	AdminM2M            AdminM2MConfig
 }
 
@@ -466,12 +477,31 @@ type MCPConnectRateLimitConfig struct {
 	TrustedProxyCIDRs []netip.Prefix
 }
 
+// MCPPlaneRateLimitConfig bounds what one origin may send to the MCP plane
+// before it has authenticated. It is infrastructure protection, not metering:
+// the plan limits live on the gateway's entitlements and are checked per
+// tenant once a consumer is resolved.
+type MCPPlaneRateLimitConfig struct {
+	Enabled         bool
+	DefaultLimit    int
+	CredentialLimit int
+	Window          time.Duration
+	// TrustedProxyCIDRs decides how far back through X-Forwarded-For an origin
+	// may be read. Separate from the connect limiter's list only so an operator
+	// can stage one without the other; they normally hold the same value.
+	TrustedProxyCIDRs []netip.Prefix
+}
+
 func LoadConfig() (*Config, error) {
 	clientIP, err := getClientIPConfig()
 	if err != nil {
 		return nil, err
 	}
 	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
+	if err != nil {
+		return nil, err
+	}
+	mcpPlaneRateLimit, err := getMCPPlaneRateLimitConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +529,7 @@ func LoadConfig() (*Config, error) {
 		ConfigSync:          getConfigSyncConfig(),
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
+		MCPPlaneRateLimit:   mcpPlaneRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 	}
 	// The playground verifier trusts the admin M2M issuer keys by default, so
@@ -919,6 +950,44 @@ func getMCPConnectRateLimitConfig() (MCPConnectRateLimitConfig, error) {
 		Enabled:           enabled,
 		SourceLimit:       sourceLimit,
 		ConsumerLimit:     consumerLimit,
+		Window:            window,
+		TrustedProxyCIDRs: trustedProxyCIDRs,
+	}, nil
+}
+
+func getMCPPlaneRateLimitConfig() (MCPPlaneRateLimitConfig, error) {
+	enabled, err := parseStrictBoolEnv("MCP_PLANE_RATE_LIMIT_ENABLED", defaultMCPPlaneRateLimitEnabled)
+	if err != nil {
+		return MCPPlaneRateLimitConfig{}, err
+	}
+	defaultLimit, err := parsePositiveIntEnv("MCP_PLANE_RATE_LIMIT_DEFAULT", defaultMCPPlaneRateLimitDefault)
+	if err != nil {
+		return MCPPlaneRateLimitConfig{}, err
+	}
+	credentialLimit, err := parsePositiveIntEnv("MCP_PLANE_RATE_LIMIT_CREDENTIAL", defaultMCPPlaneRateLimitCredential)
+	if err != nil {
+		return MCPPlaneRateLimitConfig{}, err
+	}
+	window, err := parsePositiveDurationEnv("MCP_PLANE_RATE_LIMIT_WINDOW", defaultMCPPlaneRateLimitWindow)
+	if err != nil {
+		return MCPPlaneRateLimitConfig{}, err
+	}
+	// Falls back to the connect limiter's list, so an operator who already told
+	// the gateway which proxies it sits behind does not have to say it twice.
+	trustedProxyCIDRs, err := parsePrefixListEnv("MCP_PLANE_TRUSTED_PROXY_CIDRS")
+	if err != nil {
+		return MCPPlaneRateLimitConfig{}, err
+	}
+	if len(trustedProxyCIDRs) == 0 {
+		trustedProxyCIDRs, err = parsePrefixListEnv("MCP_CONNECT_TRUSTED_PROXY_CIDRS")
+		if err != nil {
+			return MCPPlaneRateLimitConfig{}, err
+		}
+	}
+	return MCPPlaneRateLimitConfig{
+		Enabled:           enabled,
+		DefaultLimit:      defaultLimit,
+		CredentialLimit:   credentialLimit,
 		Window:            window,
 		TrustedProxyCIDRs: trustedProxyCIDRs,
 	}, nil

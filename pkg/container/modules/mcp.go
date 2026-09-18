@@ -112,6 +112,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideConnectAttemptLimiter); err != nil {
 		return err
 	}
+	if err := c.Provide(providePlaneRateLimiter); err != nil {
+		return err
+	}
 	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
 		return err
 	}
@@ -434,6 +437,23 @@ func provideAPIKeyConnectService(
 	limiter appoauth.ConnectAttemptLimiter,
 ) appoauth.APIKeyConnectService {
 	return appoauth.NewAPIKeyConnectService(apiKeys, consumers, connect, limiter)
+}
+
+// providePlaneRateLimiter counts the MCP plane's requests per origin, ahead of
+// authentication. Separate from the connect limiter and from the plan limits:
+// this one protects the gateway, those protect a flow and a subscription.
+func providePlaneRateLimiter(
+	cfg *config.Config,
+	cc cache.Client,
+) ratelimitapp.PlaneLimiter {
+	if !cfg.MCPPlaneRateLimit.Enabled {
+		return ratelimitapp.NewNoopPlaneLimiter()
+	}
+	return ratelimit.NewPlaneLimiter(
+		cc.RedisClient(),
+		cfg.Server.SecretKey,
+		cfg.MCPPlaneRateLimit,
+	)
 }
 
 func provideConnectAttemptLimiter(
