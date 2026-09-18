@@ -44,6 +44,14 @@ func (r *ProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
 	return out, true
 }
 
+// InertSafe reports whether the plugin behind slug keeps running on a plane
+// where the policy's mcp_scope does not gate. It is the write-side reading of
+// the predicate the config load applies, so the attach guard and the plan
+// share one implementation instead of two that can drift.
+func (r *ProtocolResolver) InertSafe(slug string) bool {
+	return IsInertSafe(r.registry, slug)
+}
+
 // ValidateSettingsForProtocol reports whether a policy's settings mean on this
 // protocol what they say. Plugins that do not care return nil by not
 // implementing ProtocolConfigValidator.

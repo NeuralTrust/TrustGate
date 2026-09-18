@@ -37,7 +37,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) 
 
 // Handle godoc
 // @Summary      Update a policy
-// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. The response may carry non-blocking warnings.
+// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -49,7 +49,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) 
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take"
 // @Router       /v1/gateways/{gateway_id}/policies/{id} [put]
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)

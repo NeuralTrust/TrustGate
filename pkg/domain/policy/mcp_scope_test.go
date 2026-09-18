@@ -442,3 +442,58 @@ func TestMCPScopeUnmarshalDropsRetiredUsers(t *testing.T) {
 		t.Fatal("a destination-only scope applies to every caller, which is why the rows are migrated")
 	}
 }
+
+func TestMCPScope_CrossesPlanes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		scope *MCPScope
+		want  bool
+	}{
+		{name: "nil scope gates nothing and runs everywhere", scope: nil, want: false},
+		{name: "tombstone runs nowhere", scope: &MCPScope{}, want: false},
+		{name: "groups only", scope: &MCPScope{Groups: []string{"Finanzas"}}, want: true},
+		{name: "except_groups only", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, want: true},
+		{name: "registry destination", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, want: false},
+		{
+			name:  "groups and registry destination",
+			scope: &MCPScope{Groups: []string{"Finanzas"}, RegistryIDs: []ids.RegistryID{snowflake}},
+			want:  false,
+		},
+		{
+			name:  "tool destination",
+			scope: &MCPScope{Tools: []MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}}},
+			want:  false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.scope.CrossesPlanes(); got != tc.want {
+				t.Fatalf("CrossesPlanes() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMCPScope_Dormant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		scope *MCPScope
+		want  bool
+	}{
+		{name: "nil", scope: nil, want: false},
+		{name: "present and naming nothing", scope: &MCPScope{}, want: true},
+		{name: "principal entry", scope: &MCPScope{Groups: []string{"Finanzas"}}, want: false},
+		{name: "destination entry", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.scope.Dormant(); got != tc.want {
+				t.Fatalf("Dormant() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}

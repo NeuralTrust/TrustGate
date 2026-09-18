@@ -121,7 +121,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newRegistryMock(t, nil), mgr, newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), mgr, newTestLogger(), nil)
 
 	p, err := creator.Create(context.Background(), validCreateInput(gwID))
 	if err != nil {
@@ -139,7 +139,7 @@ func TestCreator_Create_Success(t *testing.T) {
 func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(ids.New[ids.GatewayKind]())
 	in.Name = ""
@@ -153,7 +153,7 @@ func TestCreator_Create_RejectsUnsupportedStage(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	sentinel := errors.New("stage not supported")
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newRegistryMock(t, sentinel), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, sentinel), newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if !errors.Is(err, sentinel) {
@@ -168,7 +168,7 @@ func TestCreator_Create_RejectsUnsupportedMode(t *testing.T) {
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(sentinel).Once()
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if !errors.Is(err, sentinel) {
@@ -180,7 +180,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(ids.New[ids.GatewayKind]())
 	in.Name = "dupe"
@@ -194,7 +194,7 @@ func TestCreator_Create_DefaultsToNonGlobal(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	p, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if err != nil {
@@ -228,7 +228,7 @@ func TestCreator_Create_WithMCPScope_StoresNormalizedScope(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := apppolicy.NewCreator(repo, registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
 	in := validCreateInput(gwID)
 	in.MCPScope = &domain.MCPScope{
 		RegistryIDs: []ids.RegistryID{snowflake},
@@ -251,7 +251,7 @@ func TestCreator_Create_PrincipalOnlyScope_SkipsRegistryLookup(t *testing.T) {
 		return p.MCPScope != nil && len(p.MCPScope.Groups) == 1 && p.MCPScope.Groups[0] == "Finanzas"
 	})).Return(nil).Once()
 
-	creator := apppolicy.NewCreator(repo, newRegistryRepo(t), newScopedRegistryMock(t, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newScopedRegistryMock(t, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
 	in := validCreateInput(ids.New[ids.GatewayKind]())
 	in.MCPScope = &domain.MCPScope{Groups: []string{" Finanzas "}}
 	if _, err := creator.Create(context.Background(), in); err != nil {

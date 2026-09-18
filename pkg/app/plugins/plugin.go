@@ -44,6 +44,43 @@ type PluginDescriptor interface {
 	MutatesMetadata() bool
 }
 
+// ScopeInertSafe is the opt-in a plugin declares to keep running on a plane
+// where the policy's mcp_scope does not gate. A plugin that resolves tool or
+// registry names — reading Metadata["mcp.tool"] or Metadata["mcp.registry_id"],
+// or carrying tool names in its settings — must return false: outside MCP
+// there is no (registry, native tool) binding, so matching by name is wrong
+// rather than degraded.
+//
+// Which plugins return true is still an open product decision (RUN-1621, open
+// question 2); until it is answered every plugin leaves it unimplemented or
+// false.
+type ScopeInertSafe interface {
+	ScopeInertSafe() bool
+}
+
+// inertSafe reports whether the descriptor opted in. A descriptor that does not
+// implement ScopeInertSafe is denied, so no plugin turns cross-plane by
+// omission.
+func inertSafe(d PluginDescriptor) bool {
+	s, ok := d.(ScopeInertSafe)
+	return ok && s.ScopeInertSafe()
+}
+
+// IsInertSafe reports whether the plugin registered under slug opted into
+// running on a plane where the scope does not gate. It is the same predicate
+// inertSafe applies, reachable from the config load path so the decision has a
+// single implementation. An absent registry or an unknown slug is denied.
+func IsInertSafe(reg Registry, slug string) bool {
+	if reg == nil {
+		return false
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return false
+	}
+	return inertSafe(p)
+}
+
 // Plugin is a single unit of request/response processing. Each plugin declares
 // the fixed stages it runs on via Stages; the executor drives it only at those
 // stages and ignores the stage recorded in the policy configuration.

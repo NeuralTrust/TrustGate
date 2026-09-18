@@ -5,6 +5,7 @@ package functional_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -135,6 +136,23 @@ func scopedPolicyPayload(name string, scope map[string]any) map[string]any {
 	return payload
 }
 
+// warningNaming returns the one warning that mentions needle. A write now
+// answers with several warnings at once, so a test that cares about the
+// consumer-overlap one has to pick it out rather than index the slice.
+func warningNaming(t *testing.T, warnings []any, needle string) string {
+	t.Helper()
+	var found string
+	for _, w := range warnings {
+		text, ok := w.(string)
+		if ok && strings.Contains(text, needle) {
+			require.Empty(t, found, "more than one warning names %s: %v", needle, warnings)
+			found = text
+		}
+	}
+	require.NotEmpty(t, found, "no warning names %s: %v", needle, warnings)
+	return found
+}
+
 // createMCPRegistry provisions an MCP registry whose upstream is never dialled
 // by the Admin API paths these tests exercise.
 func createMCPRegistry(t *testing.T, gatewayID string) string {
@@ -156,7 +174,13 @@ func TestCreatePolicy_WithMCPScope_EchoesStoredScope(t *testing.T) {
 		"except_groups": []string{"Contractors"},
 	}))
 	require.Equal(t, http.StatusCreated, status, "body=%v", body)
-	assert.Nil(t, body["warnings"], "a policy without consumers has nothing to overlap")
+	// There is still nothing to overlap, but the write now says what the scope
+	// and the missing consumers cost: the destination dimension keeps the
+	// policy on MCP traffic, and a policy nothing routes to runs nowhere.
+	assert.ElementsMatch(t, []any{
+		"policy scope names a registry or a tool: it runs on MCP traffic only, never on the LLM or A2A plane",
+		"policy has no consumers and is not global: it runs nowhere",
+	}, body["warnings"], "body=%v", body)
 
 	scope, ok := body["mcp_scope"].(map[string]any)
 	require.True(t, ok, "mcp_scope missing: %v", body)
@@ -252,18 +276,27 @@ func TestPolicyGlobalWithMCPScope_WarnsAboutUnscopedTrustGuard(t *testing.T) {
 		"mcp_scope": map[string]any{"registry_ids": []string{registryID}},
 	})
 	require.Equal(t, http.StatusCreated, status, "body=%v", body)
-	assert.Nil(t, body["warnings"], "not attached anywhere yet")
+	// Nothing is attached yet, so the create warns about the policy itself,
+	// never about a consumer.
+	assert.ElementsMatch(t, []any{
+		"policy scope names a registry or a tool: it runs on MCP traffic only, never on the LLM or A2A plane",
+		"policy has no consumers and is not global: it runs nowhere",
+	}, body["warnings"], "body=%v", body)
 	scopedID, _ := body["id"].(string)
 
 	status, body = sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/policies/%s/global", AdminURL, gwID, scopedID), nil, nil)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, true, body["global"])
+	// The promotion is what makes the policy run, so the "runs nowhere"
+	// warning is gone and the overlap one appears. The scope-bound warning
+	// stays: promoting is not what lets a destination scope leave MCP.
 	warnings, _ := body["warnings"].([]any)
-	require.Len(t, warnings, 1, "body=%v", body)
-	assert.Contains(t, warnings[0], withUnscoped)
-	assert.Contains(t, warnings[0], "trustguard")
-	assert.NotContains(t, warnings[0], clean)
+	require.Len(t, warnings, 2, "body=%v", body)
+	assert.NotContains(t, warnings, "policy has no consumers and is not global: it runs nowhere")
+	overlap := warningNaming(t, warnings, withUnscoped)
+	assert.Contains(t, overlap, "trustguard")
+	assert.NotContains(t, overlap, clean)
 
 	status, body = sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/policies?registry_id=%s", AdminURL, gwID, registryID), nil, nil)

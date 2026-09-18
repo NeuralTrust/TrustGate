@@ -43,5 +43,12 @@ var (
 	ErrInvalidFailMode    = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
 
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)
-	ErrPolicyScopeRequiresMCP = fmt.Errorf("consumer: a policy with mcp_scope can only be attached to an MCP consumer: %w", ErrPolicyProtocolMismatch)
+
+	// ErrPolicyScopeDoesNotCross is returned when an mcp_scope would not
+	// survive the crossing into the plane of a non-MCP consumer. What decides
+	// it is the scope's own dimension and the plugin behind the policy, not
+	// the consumer's type: a scope that narrows by group alone is attachable
+	// to any consumer as long as its plugin does not resolve tool or registry
+	// names (RUN-1621, rules 2 and 7).
+	ErrPolicyScopeDoesNotCross = fmt.Errorf("consumer: this mcp_scope does not cross into the consumer's plane: %w", ErrPolicyProtocolMismatch)
 )

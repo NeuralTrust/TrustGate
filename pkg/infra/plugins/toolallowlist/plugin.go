@@ -72,6 +72,12 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
 
+// ScopeInertSafe reports false: the plugin gates by tool name, and on a plane
+// where the mcp_scope does not gate there is no (registry, native tool)
+// binding to resolve those names against. A deny-all narrowed to a group would
+// widen to every function call of the consumer.
+func (p *Plugin) ScopeInertSafe() bool { return false }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
