@@ -573,3 +573,28 @@ func TestMCPPolicyScope_PrincipalOnlyScopeCoversEveryRegistry(t *testing.T) {
 		}
 	})
 }
+
+// The nearer destination wins: a policy on (registry, tool) replaces the
+// registry-wide policy of the same slug on that tool, so the guard runs once
+// rather than twice. Before, both ran on every call to that tool.
+func TestMCPPolicyScope_ToolScopedPolicyReplacesTheRegistryOneOfTheSameSlug(t *testing.T) {
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	TrustGuardFunctionalStub.Reset()
+
+	gatewayID, consumerID, headers, x, _ := setupMCPPluginChainTwoUpstreams(t, []string{"echo", "other"}, []string{"echo"})
+	attachScopedPolicy(t, gatewayID, consumerID, trustGuardMCPPolicyPayload("request", ""), registryScope(x.registryID))
+	attachScopedPolicy(t, gatewayID, consumerID, trustGuardMCPPolicyPayload("request", ""), toolScope(x.registryID, "echo"))
+
+	before := TrustGuardFunctionalStub.GuardHits()
+	status, body := callEcho(t, gatewayID, consumerID, headers, x.exposed("echo"), "hi")
+	requireEchoed(t, status, body, "echo", "hi")
+	require.Equal(t, before+1, TrustGuardFunctionalStub.GuardHits(),
+		"the tool policy replaces the registry one: the guard must run once, not twice")
+
+	// The registry-wide policy still covers every other tool of that registry.
+	before = TrustGuardFunctionalStub.GuardHits()
+	status, body = callEcho(t, gatewayID, consumerID, headers, x.exposed("other"), "hi")
+	requireEchoed(t, status, body, "other", "hi")
+	require.Equal(t, before+1, TrustGuardFunctionalStub.GuardHits(),
+		"a tool that has no policy of its own still gets the registry-wide one")
+}
