@@ -107,7 +107,7 @@ func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 func TestHandler_ToolsCall_UnclassifiedErrorIsGeneric(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "scrape", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "scrape").
 		Return(nil, fmt.Errorf(
 			"post %q: pq: relation \"vault_credentials\" does not exist",
 			"https://mcp.brightdata.com/mcp?token=supersecret123",
