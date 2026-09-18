@@ -298,6 +298,116 @@ func TestPolicyPlans_ExceptionsExcludeTheCallerAndSpareIdentitylessCallers(t *te
 		"the destination still has to match")
 }
 
+// An api-key caller enters as the application, so the group dimension of a
+// scope does not gate for it and a policy narrowing to groups runs. Every
+// other method keeps gating: this is the test that pins the allow-list, and it
+// fails if the projection is ever rewritten as "a caller with no groups is
+// inert" (RUN-1621, rule 5.2).
+func TestPolicyPlans_APIKeyPrincipalIsInertForGroupScopes(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "f_guard", "c_audit")
+	xID, yID := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	x, y := mcpRegistry(xID), mcpRegistry(yID)
+
+	financeOnly := preRequestPolicy("F", "f_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID}, Groups: []string{"Finanzas"},
+	})
+	plans := h.build(
+		[]*policydomain.Policy{preRequestPolicy("C", "c_audit", nil)},
+		[]*policydomain.Policy{financeOnly},
+	)
+
+	apiKey := &identity.Principal{Subject: "app:consumer", Method: identity.MethodAPIKey}
+	endUserByAPIKey := &identity.Principal{
+		Subject: "app:consumer:ana",
+		Method:  identity.MethodAPIKey,
+		Claims:  map[string]any{"end_user": "ana"},
+	}
+	legacyJWT := &identity.Principal{Subject: "usr_123", Method: identity.MethodJWT}
+	legacyJWTInGroup := &identity.Principal{
+		Subject: "usr_123",
+		Method:  identity.MethodJWT,
+		Claims:  map[string]any{"groups": []string{"Finanzas"}},
+	}
+	externalJWTNoGroups := &identity.Principal{Subject: "usr_456", Method: identity.MethodExternalJWT}
+	mtls := &identity.Principal{Subject: "CN=client", Method: identity.MethodMTLS}
+	methodless := &identity.Principal{Subject: "usr_789"}
+
+	tests := []struct {
+		name      string
+		principal *identity.Principal
+		want      []string
+	}{
+		{"api key runs a policy scoped to a group it is not in", apiKey, []string{"F", "C"}},
+		{"an api-key end-user principal is inert too", endUserByAPIKey, []string{"F", "C"}},
+		{"a bearer token outside the group still gates", groupPrincipal("Marketing"), []string{"C"}},
+		{"a bearer token in the group runs it, as before", groupPrincipal("Finanzas"), []string{"F", "C"}},
+		{"external jwt without a groups claim still gates", externalJWTNoGroups, []string{"C"}},
+		{"legacy jwt without a groups claim still gates", legacyJWT, []string{"C"}},
+		{"legacy jwt carrying the group runs it", legacyJWTInGroup, []string{"F", "C"}},
+		{"mtls still gates", mtls, []string{"C"}},
+		{"a principal with no method still gates", methodless, []string{"C"}},
+		{"a nil principal still gates", nil, []string{"C"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, h.executed(plans.PlanFor(x, "run_query", tc.principal)))
+		})
+	}
+
+	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(y, "run_query", apiKey)),
+		"the inert principal does not soften the destination dimension")
+}
+
+// The asymmetry: the rule relaxes the allow-list direction only. An api-key
+// caller already passed an except_groups scope, because it carries no groups,
+// so that direction answers the same before and after.
+func TestPolicyPlans_APIKeyPrincipalLeavesExceptGroupsUnchanged(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "e_deny", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	everyoneButFinance := preRequestPolicy("E", "e_deny", &policydomain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{xID},
+		ExceptGroups: []string{"Finanzas"},
+	})
+	plans := h.build(
+		[]*policydomain.Policy{preRequestPolicy("C", "c_audit", nil)},
+		[]*policydomain.Policy{everyoneButFinance},
+	)
+
+	apiKey := &identity.Principal{Subject: "app:consumer", Method: identity.MethodAPIKey}
+	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", apiKey)),
+		"a deny-all scoped by except_groups keeps denying an api-key caller")
+	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(x, "run_query", groupPrincipal("Finanzas"))),
+		"the excepted group is still excepted")
+}
+
+// A policy that entered the plan because the principal was inert is reported
+// as matched, with no reason of its own. The span cannot tell that call apart
+// from one made by a member of the group.
+func TestPolicyPlans_ExplainReportsAnInertPrincipalAsAPlainMatch(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "f_guard")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	financeOnly := preRequestPolicy("F", "f_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID}, Groups: []string{"Finanzas"},
+	})
+	plans := h.build(nil, []*policydomain.Policy{financeOnly})
+
+	_, decision := plans.Explain(x, "run_query", &identity.Principal{Method: identity.MethodAPIKey})
+	require.Len(t, decision.Matched, 1)
+	assert.Equal(t, financeOnly.ID.String(), decision.Matched[0].ID)
+	assert.Empty(t, decision.Skipped)
+
+	_, gated := plans.Explain(x, "run_query", groupPrincipal("Marketing"))
+	require.Len(t, gated.Skipped, 1)
+	assert.Equal(t, policydomain.SkipPrincipal, gated.Skipped[0].Reason)
+}
+
 func TestPolicyPlans_UnionOfStaticAndPrincipalScopedPolicies(t *testing.T) {
 	t.Parallel()
 	h := newPlanHarness(t, "r_registry", "g_group", "c_audit")

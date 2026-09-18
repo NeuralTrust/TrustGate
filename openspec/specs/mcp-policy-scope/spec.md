@@ -44,7 +44,7 @@ Dentro de una policy, destino (`registry_ids` ∪ `tools`) y principal (`groups`
 
 ### Requirement: Identificación del principal
 
-El principal MUST ser siempre un grupo: `users` y `except_users` no existen como dimensión y una request que los traiga MUST ser rechazada con 422. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin grupos MUST NOT hacer match con `groups`.
+El principal MUST ser siempre un grupo: `users` y `except_users` no existen como dimensión y una request que los traiga MUST ser rechazada con 422. `groups` MUST seguir la regla de `Grant.Allows` (`storeaccess/grant.go`): igualdad exacta tras `TrimSpace` contra `Principal.Groups()`. Un caller sin grupos MUST NOT hacer match con `groups`, salvo que su principal sea inerte (ver «El principal es inerte para un caller por api-key»).
 
 #### Scenario: Grupo del token
 
@@ -58,11 +58,47 @@ El principal MUST ser siempre un grupo: `users` y `except_users` no existen como
 - WHEN se crea o actualiza la policy
 - THEN 422, para que un scope no pierda su principal y se ensanche
 
-#### Scenario: API key
+#### Scenario: Token sin claim `groups`
 
-- GIVEN `groups: [Finanzas]` y un caller con `AppSubject` sin claims
+- GIVEN `groups: [Finanzas]` y un token cuyo IdP no emite `groups`
 - WHEN se evalúa el principal
-- THEN no hace match
+- THEN no hace match: el principal sigue gateando
+
+### Requirement: El principal es inerte para un caller por api-key
+
+Cuando `Principal.Method == identity.MethodAPIKey`, la dimensión de principal MUST NOT gatear: `MatchesCaller` MUST devolver `true` aunque el scope nombre `groups` que el caller no tiene, y la policy MUST entrar en el plan. El destino MUST seguir gateando con normalidad.
+
+La decisión MUST tomarse en la proyección del principal a `MCPCaller` (`callerOf`, `pkg/app/consumer/policy_plans.go`), nunca en el matcher de dominio, que recibe una proyección para no depender de `identity.Principal`.
+
+La relajación MUST ser una allow-list de un método y MUST NOT ser una deny-list: solo `MethodAPIKey` vuelve inerte el principal. Un principal nulo, `MethodMTLS`, `MethodJWT` (el valor legado indiferenciado), `MethodExternalJWT` y un bearer cuyo IdP no emite `groups` MUST seguir gateando. «Sin grupos en el claim → inerte» MUST NOT implementarse: un IdP mal configurado desactivaría todos los controles de grupo del gateway.
+
+La relajación MUST ser asimétrica: solo cambia la dirección allow-list (`groups`). La dirección deny-list (`except_groups`) MUST dar el mismo resultado que antes, porque un caller por api-key nunca llevó grupos y nunca cayó en la exclusión.
+
+Al crear, actualizar o atachar una policy con `groups`, la Admin API MUST devolver un warning no bloqueante que **nombre** cada consumer MCP alcanzado que acepta una auth de tipo `api_key`: `policy narrows to groups but consumer <id> accepts api-key auth: group checks do not apply to those callers`. El warning MUST nombrar los consumers, MUST NOT contarlos.
+
+#### Scenario: API key con `groups`
+
+- GIVEN `mcp_scope{tools: [{snowflake, run_query}], groups: [Finanzas]}` y un caller con api-key del consumer, que corre como `app:<consumer_id>` sin claim `groups`
+- WHEN llama a `run_query`
+- THEN hace match y la policy corre; el mismo caller por token y fuera de Finanzas no hace match
+
+#### Scenario: API key contra un destino que no casa
+
+- GIVEN la misma policy y un caller con api-key
+- WHEN llama a otra tool del mismo registry
+- THEN no hace match: `SkipDestination`, porque el destino no se ablanda
+
+#### Scenario: El método es una allow-list
+
+- GIVEN `groups: [Finanzas]` y un caller sin Finanzas
+- WHEN el principal es `nil`, `MethodMTLS`, `MethodJWT` o `MethodExternalJWT`
+- THEN no hace match en ninguno de los cuatro casos: `SkipPrincipal`
+
+#### Scenario: Warning de escritura con nombres
+
+- GIVEN una policy con `groups` que alcanza un consumer MCP con una auth `api_key` habilitada
+- WHEN se crea, se actualiza o se atacha
+- THEN la respuesta trae el warning nombrando ese consumer; un consumer alcanzado sin auth `api_key` no aparece
 
 ### Requirement: Excepciones
 
@@ -78,7 +114,7 @@ Tras el match positivo, si `Groups() ∩ except_groups ≠ ∅`, `Matches` MUST 
 
 - GIVEN la misma policy y un caller con API key
 - WHEN llama a `run_query`
-- THEN hace match
+- THEN hace match, igual que antes de la inercia: la dirección deny-list no cambia
 
 ### Requirement: Tools por `(registry_id, nombre nativo)`
 
