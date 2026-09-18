@@ -58,6 +58,44 @@ type scopedEntry struct {
 type destPlans struct {
 	static    *appplugins.StagePlan
 	principal []scopedEntry
+	// lower holds the registry-level entries a call to this tool still has to
+	// consider, and only exists on a tool destination. A tool-level policy of
+	// the same slug beats them; see "the nearer destination wins" below.
+	lower []scopedEntry
+	// staticSlugs are the slugs this destination applies unconditionally, so a
+	// registry-level entry carrying one can be dropped without matching it.
+	staticSlugs map[string]struct{}
+}
+
+// slugsOf collects the slugs of a policy list, for the override check.
+func slugsOf(policies []*policydomain.Policy) map[string]struct{} {
+	if len(policies) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(policies))
+	for _, pol := range policies {
+		out[pol.Slug] = struct{}{}
+	}
+	return out
+}
+
+func entrySlugs(entries []scopedEntry) map[string]struct{} {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(entries))
+	for i := range entries {
+		out[entries[i].ref.Slug] = struct{}{}
+	}
+	return out
+}
+
+func inSlugs(set map[string]struct{}, slug string) bool {
+	if set == nil {
+		return false
+	}
+	_, ok := set[slug]
+	return ok
 }
 
 // PolicyPlans holds the precompiled stage plans an MCP consumer runs on
@@ -150,17 +188,67 @@ func BuildPolicyPlans(
 	for id, statics := range staticByRegistry {
 		plans.destForRegistry(id).static = appplugins.NewStagePlan(reg, concatPolicies(unscoped, statics), logger)
 	}
-	for target, statics := range staticByTool {
-		registryStatics := staticByRegistry[target.RegistryID]
-		plans.destForTool(target).static = appplugins.NewStagePlan(
-			reg, concatPolicies(unscoped, registryStatics, statics), logger)
+	// Make sure every tool named by a static policy has a destination before the
+	// resolution pass below walks them.
+	for target := range staticByTool {
+		plans.destForTool(target)
 	}
 	for target, dest := range plans.byTool {
-		if dest.static == nil {
-			dest.static = plans.staticForRegistry(target.RegistryID)
-		}
+		plans.resolveToolDest(reg, target, dest, unscoped, staticByRegistry, staticByTool, logger)
 	}
 	return plans
+}
+
+// resolveToolDest settles, for one tool, which of the registry's policies still
+// apply to it. The rule is that the nearer destination wins **per slug**: a
+// policy attached to (registry, tool) replaces the registry-wide policy of the
+// same slug, and every other registry policy keeps running. Whether it wins can
+// depend on the caller, which is what the three branches are about.
+func (p *PolicyPlans) resolveToolDest(
+	reg appplugins.Registry,
+	target policydomain.MCPTarget,
+	dest *destPlans,
+	unscoped []*policydomain.Policy,
+	staticByRegistry map[ids.RegistryID][]*policydomain.Policy,
+	staticByTool map[policydomain.MCPTarget][]*policydomain.Policy,
+	logger *slog.Logger,
+) {
+	toolStatics := staticByTool[target]
+	dest.staticSlugs = slugsOf(toolStatics)
+	toolPrincipalSlugs := entrySlugs(dest.principal)
+
+	var keep []*policydomain.Policy
+	for _, pol := range staticByRegistry[target.RegistryID] {
+		switch {
+		case inSlugs(dest.staticSlugs, pol.Slug):
+			// A tool-level policy of this slug applies to every caller, so the
+			// registry-wide one never runs here. Dropping it is the whole point.
+		case inSlugs(toolPrincipalSlugs, pol.Slug):
+			// The tool-level policy only covers some callers, so whether this one
+			// is replaced cannot be decided now. It stops being precompiled and
+			// becomes an entry the request-time pass can drop for the callers the
+			// tool policy claims, and keep for the rest.
+			dest.lower = append(dest.lower, scopedEntry{
+				ref:   PolicyRef{ID: pol.ID.String(), Name: pol.Name, Slug: pol.Slug},
+				scope: pol.MCPScope,
+				plan:  appplugins.NewStagePlan(reg, []*policydomain.Policy{pol}, logger),
+			})
+		default:
+			keep = append(keep, pol)
+		}
+	}
+	// The registry's own principal-scoped policies lose to the tool the same way.
+	if rd, ok := p.byRegistry[target.RegistryID]; ok {
+		dest.lower = append(dest.lower, rd.principal...)
+	}
+	// Nothing was replaced or demoted and the tool adds nothing of its own, so
+	// its plan is the registry's plan. Share the pointer instead of compiling an
+	// identical one per tool.
+	if len(toolStatics) == 0 && len(keep) == len(staticByRegistry[target.RegistryID]) {
+		dest.static = p.staticForRegistry(target.RegistryID)
+		return
+	}
+	dest.static = appplugins.NewStagePlan(reg, concatPolicies(unscoped, keep, toolStatics), logger)
 }
 
 func (p *PolicyPlans) destForRegistry(id ids.RegistryID) *destPlans {
@@ -204,11 +292,11 @@ func (p *PolicyPlans) PlanFor(
 		return nil
 	}
 	target := targetOf(reg, nativeTool)
-	static, lists := p.destFor(target)
+	static, lists, toolStaticSlugs := p.destFor(target)
 	if emptyLists(lists) {
 		return static
 	}
-	return p.planWith(target, lists, static, p.callerFor(principal))
+	return p.planWith(target, lists, static, p.callerFor(principal), toolStaticSlugs)
 }
 
 // Explain returns the very plan PlanFor returns for the same arguments, plus
@@ -228,8 +316,8 @@ func (p *PolicyPlans) Explain(
 	}
 	target := targetOf(reg, nativeTool)
 	caller := p.callerFor(principal)
-	static, lists := p.destFor(target)
-	return p.planWith(target, lists, static, caller), p.explain(target, caller)
+	static, lists, toolStaticSlugs := p.destFor(target)
+	return p.planWith(target, lists, static, caller, toolStaticSlugs), p.explain(target, caller)
 }
 
 func (p *PolicyPlans) explain(target policydomain.MCPTarget, caller policydomain.MCPCaller) ScopeDecision {
@@ -264,18 +352,25 @@ func targetOf(reg *registrydomain.Registry, nativeTool string) policydomain.MCPT
 // — tool over registry over base — together with the principal-scoped entries
 // that still have to be filtered against the caller. The entries stay in three
 // separate lists so nothing is allocated to join them.
-func (p *PolicyPlans) destFor(target policydomain.MCPTarget) (*appplugins.StagePlan, [3][]scopedEntry) {
+func (p *PolicyPlans) destFor(
+	target policydomain.MCPTarget,
+) (*appplugins.StagePlan, [3][]scopedEntry, map[string]struct{}) {
 	static := p.base
 	lists := [3][]scopedEntry{p.anyDest, nil, nil}
+	var toolStaticSlugs map[string]struct{}
 	if dest, ok := p.byRegistry[target.RegistryID]; ok {
 		static = dest.static
 		lists[1] = dest.principal
 	}
 	if dest, ok := p.byTool[target]; ok {
 		static = dest.static
+		// Already merged at build time: the registry entries this tool still has
+		// to weigh, minus the ones a tool-level policy replaced outright.
+		lists[1] = dest.lower
 		lists[2] = dest.principal
+		toolStaticSlugs = dest.staticSlugs
 	}
-	return static, lists
+	return static, lists, toolStaticSlugs
 }
 
 func emptyLists(lists [3][]scopedEntry) bool {
@@ -290,10 +385,31 @@ func (p *PolicyPlans) planWith(
 	lists [3][]scopedEntry,
 	static *appplugins.StagePlan,
 	caller policydomain.MCPCaller,
+	toolStaticSlugs map[string]struct{},
 ) *appplugins.StagePlan {
+	// Which slugs a tool-level policy already covers for this caller. Only then
+	// does a registry-level policy of the same slug stand down: a tool policy
+	// that does not match this caller replaces nothing.
+	var toolWon map[string]struct{}
+	for i := range lists[2] {
+		if ok, _ := lists[2][i].scope.Matches(target, caller); ok {
+			if toolWon == nil {
+				toolWon = make(map[string]struct{}, len(lists[2]))
+			}
+			toolWon[lists[2][i].ref.Slug] = struct{}{}
+		}
+	}
+
 	var matched []*appplugins.StagePlan
-	for _, list := range lists {
+	for level, list := range lists {
 		for i := range list {
+			// level 1 is the registry; it yields to the tool for that slug.
+			if level == 1 {
+				slug := list[i].ref.Slug
+				if inSlugs(toolWon, slug) || inSlugs(toolStaticSlugs, slug) {
+					continue
+				}
+			}
 			if ok, _ := list[i].scope.Matches(target, caller); ok {
 				matched = append(matched, list[i].plan)
 			}

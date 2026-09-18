@@ -51,9 +51,12 @@ type PluginDescriptor interface {
 // there is no (registry, native tool) binding, so matching by name is wrong
 // rather than degraded.
 //
-// Which plugins return true is still an open product decision (RUN-1621, open
-// question 2); until it is answered every plugin leaves it unimplemented or
-// false.
+// Answered for RUN-1621: trustguard and request_size_limiter opted in, because
+// each gates on something every plane has — the content of the request, and its
+// size — and resolves no name that only exists inside MCP. tool_allowlist and
+// per_tool_rate_limiter stay out by their own nature, and a policy of theirs
+// narrowed by group alone is still refused with a 422 that names the plugin.
+// Anything added later starts denied: the opt-in is per plugin, never blanket.
 type ScopeInertSafe interface {
 	ScopeInertSafe() bool
 }

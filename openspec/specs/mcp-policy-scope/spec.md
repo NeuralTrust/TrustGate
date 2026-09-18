@@ -186,7 +186,7 @@ Asociar una policy con scope a un consumer no-MCP MUST decidirse **por dimensió
 |---|---|
 | Con destino (`registry_ids` o `tools`), con o sin grupo | **422** — el destino no cruza de plano |
 | Solo principal (`groups` / `except_groups`), plugin **no** inert-safe | **422** — el plugin gatea por nombre de tool o de registry |
-| Solo principal, plugin inert-safe | **aceptado** — la policy corre y el grupo es inerte |
+| Solo principal, plugin inert-safe (hoy `trustguard` y `request_size_limiter`) | **aceptado** — la policy corre y el grupo es inerte |
 
 Los dos motivos de 422 MUST dar mensajes distinguibles. `ErrPolicyScopeRequiresMCP` MUST dejar de prometer "requires MCP" para un scope de solo grupo.
 

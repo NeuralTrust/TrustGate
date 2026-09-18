@@ -63,6 +63,37 @@ either key is rejected with 422 rather than accepted without it, because a
 scope that lost its only principal would apply to every caller of its
 destination.
 
+## The nearer destination wins
+
+A policy attached to `(registry, tool)` **replaces** the registry-wide policy of
+the same `slug` on that tool. Every other slug keeps running, and so does the
+registry policy on every other tool of that registry.
+
+Before, both ran. On a call to that tool the same plugin executed twice: two
+`rate_limiter` policies meant two counters, each with its own budget, so the
+limit an operator had written for the tool was not the limit the tool had.
+
+The rule is per slug, never wholesale. A registry-wide `trustguard` is not
+switched off because someone attached a `rate_limiter` to one of its tools.
+
+Who wins can depend on the caller, because either policy may also narrow by
+group:
+
+| Registry policy | Tool policy | On that tool |
+|---|---|---|
+| applies to everyone | applies to everyone | the tool policy, alone |
+| applies to everyone | narrowed by group | the tool policy for a caller in the group; the registry policy for everyone else |
+| narrowed by group | applies to everyone | the tool policy, alone: it covers every caller |
+| narrowed by group | narrowed by group | the tool policy only for callers it reaches; otherwise the registry policy, if *it* reaches them |
+
+**A tool policy that does not reach a caller replaces nothing.** The registry
+policy is not disabled by the existence of a narrower one; it stands down only
+where the narrower one actually applies.
+
+What this rule does **not** cover: a consumer-wide policy (scope with no
+destination, or no scope at all) is not a destination, so it still stacks with
+both. Only registry and tool are ranked against each other.
+
 ## Inertness is per dimension
 
 `mcp_scope` is not one thing that is either on or off outside MCP. It is a set
@@ -155,6 +186,24 @@ Outside MCP every entry scores 0, so the order stays `priority` → `slug` →
 `groups: […]` to a policy attached to an LLM consumer must never move it ahead
 of its peers, because that would change which plugin writes first.
 
+### Which plugins run where the scope is inert
+
+The opt-in is per plugin and starts denied, so a plugin that says nothing keeps
+a group-only policy off the LLM and A2A planes with a 422 that names it.
+
+| Plugin | Runs on an inert plane | Why |
+|---|---|---|
+| `trustguard` | **yes** | inspects the content of the request or response; reads no tool or registry name |
+| `request_size_limiter` | **yes** | measures the body; means the same thing on every plane |
+| `rate_limiter` | no | would spend the group's budget on traffic that is not the group's |
+| `per_tool_rate_limiter` | no | keyed by tool; outside MCP there is no tool to key on |
+| `tool_allowlist` | no | gates by tool name; a deny-all narrowed to a group would widen to every function call |
+
+For the two that opted in, the group stops selecting **who** the policy runs
+for, so it covers all of that consumer's traffic. For a content guardrail and a
+size ceiling that is a stricter bound, never a wider one — which is the whole
+test a plugin has to pass before it may opt in.
+
 ## One plugin per level
 
 Two **enabled** policies of the same plugin may not run at the same level of a
@@ -205,7 +254,7 @@ how many warnings to expect.
 | Caller by api key | **The principal dimension does not gate for it.** An api key acting as the application runs as `app:<consumer_id>`, and an `acts_for_users` consumer with source `app` runs as `app:<consumer_id>:<end_user>`; the credential belongs to the application, not to a person, so the scope's `groups` are ignored and the policy runs. A policy written for one group therefore also runs on the consumer's api-key traffic, and `groups` can no longer keep a policy off it. See [Api-key callers and `groups`](#api-key-callers-and-groups). |
 | Caller by token without a `groups` claim | Gates as before: it is not in `groups`, so a scope naming them skips it (`principal`), and it never falls in `except_groups` either. An identity provider that emits no groups does not make the principal inert — only the api key does. |
 | `global: true` + scope | Allowed (`POST .../policies/{id}/global`). This is how a scoped policy reaches the MCP Store, whose consumer only sees global policies. What it does to the rest of the gateway depends on the dimension: with `registry_ids` or `tools` it stays MCP-only, exactly as before — promotion is not a back door. With **only** `groups` it now runs on every LLM and A2A consumer of the gateway too, with the group inert. Promotion also goes through the level check and can answer 409. |
-| Same `slug` twice | On MCP, scoped policies are additive: they never replace a same-`slug` policy the way an unscoped consumer policy replaces an unscoped global one. A scoped `trustguard` next to an unscoped one runs both. The API returns non-blocking `warnings` (`consumer <id> already runs plugin <slug> without scope`) on create, update and `global`; attach answers `200 {"warnings": [...]}` when there are warnings and `204` otherwise. Two same-slug policies at the **same** level are a 409 instead, and on an inert plane same-slug policies collapse rather than stack. |
+| Same `slug` twice | On MCP, scoped policies are additive **except between a registry and one of its tools**, where the nearer destination wins — see [The nearer destination wins](#the-nearer-destination-wins). A scoped `trustguard` next to an unscoped one still runs both. The API returns non-blocking `warnings` (`consumer <id> already runs plugin <slug> without scope`) on create, update and `global`; attach answers `200 {"warnings": [...]}` when there are warnings and `204` otherwise. Two same-slug policies at the **same** level are a 409 instead, and on an inert plane same-slug policies collapse rather than stack. |
 | LLM or A2A consumer | Depends on the dimension. With `registry_ids` or `tools`: 422, the destination does not cross. With only `groups`/`except_groups`: accepted if the plugin is cross-plane safe, and the policy runs there with the group inert; 422 naming the plugin if it is not. The two 422s have different messages. |
 | Policy with no consumers and not `global` | Runs nowhere, on any plane, and always did. Nothing was added to make that true — it simply falls in neither the global nor the per-consumer bucket. Create and update answer with a warning (`policy has no consumers and is not global: it runs nowhere`). |
 
