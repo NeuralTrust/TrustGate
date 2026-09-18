@@ -100,6 +100,13 @@ export function fallbackAuthOptions(providerCode: string): CatalogAuthTypeOption
             },
           ],
         },
+        {
+          type: "passthrough",
+          label: "Passthrough",
+          description:
+            "No credentials are stored. The caller must send Authorization: Bearer with a GCP access token on each request.",
+          fields: [],
+        },
       ];
     case "openai_compatible":
       return [
