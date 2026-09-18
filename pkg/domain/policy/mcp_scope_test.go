@@ -111,9 +111,13 @@ func TestMCPScope_MatchesTarget(t *testing.T) {
 	}
 }
 
+// groupless is a caller whose identity carries no groups and still faces the
+// principal dimension: a bearer token from an identity provider that emits no
+// groups claim. apiKey is the one caller for which the dimension is inert.
 func TestMCPScope_MatchesCaller(t *testing.T) {
 	t.Parallel()
-	apiKey := MCPCaller{}
+	groupless := MCPCaller{}
+	apiKey := MCPCaller{PrincipalInert: true}
 	tests := []struct {
 		name    string
 		scope   *MCPScope
@@ -121,17 +125,25 @@ func TestMCPScope_MatchesCaller(t *testing.T) {
 		want    bool
 		wantWhy SkipReason
 	}{
-		{name: "no principal accepts anyone", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, caller: apiKey, want: true},
+		{name: "no principal accepts anyone", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, caller: groupless, want: true},
+		{name: "no principal accepts an inert caller too", scope: &MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}, caller: apiKey, want: true},
 		{name: "group is case sensitive", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{"finanzas"}}, want: false, wantWhy: SkipPrincipal},
 		{name: "one of several caller groups", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{"Marketing", "Finanzas"}}, want: true},
 		{name: "group match", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: finance(), want: true},
 		{name: "group with surrounding spaces in token", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{" Finanzas "}}, want: true},
 		{name: "group mismatch", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: marketing(), want: false, wantWhy: SkipPrincipal},
-		{name: "api key never matches groups", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: apiKey, want: false, wantWhy: SkipPrincipal},
+		{name: "token without a groups claim never matches groups", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: groupless, want: false, wantWhy: SkipPrincipal},
+		{name: "api key matches groups it does not have: the principal is inert", scope: &MCPScope{Groups: []string{"Finanzas"}}, caller: apiKey, want: true},
 		{name: "any of the scoped groups", scope: &MCPScope{Groups: []string{"Finanzas", "Marketing"}}, caller: marketing(), want: true},
 		{name: "everyone but Finanzas: Marketing", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: marketing(), want: true},
 		{name: "everyone but Finanzas: Finanzas", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: finance(), want: false, wantWhy: SkipExcept},
-		{name: "everyone but Finanzas: api key", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: apiKey, want: true},
+		{name: "everyone but Finanzas: token without a groups claim", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: groupless, want: true},
+		{name: "everyone but Finanzas: api key, unchanged by the inert principal", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: apiKey, want: true},
+		// The inert branch skips the exception too. It is only equivalent to the
+		// behaviour before the rule because the callers projected as inert carry
+		// no groups: this case pins what would change if one ever did, which is
+		// the deny-list direction the rule is not supposed to touch.
+		{name: "inert caller carrying the excluded group is no longer excluded", scope: &MCPScope{ExceptGroups: []string{"Finanzas"}}, caller: MCPCaller{Groups: []string{"Finanzas"}, PrincipalInert: true}, want: true},
 		{name: "positive match then excluded", scope: &MCPScope{Groups: []string{"Finanzas", "Marketing"}, ExceptGroups: []string{"Marketing"}}, caller: marketing(), want: false, wantWhy: SkipExcept},
 		{name: "positive match not excluded", scope: &MCPScope{Groups: []string{"Finanzas"}, ExceptGroups: []string{"Marketing"}}, caller: finance(), want: true},
 	}
@@ -170,6 +182,9 @@ func TestMCPScope_Matches(t *testing.T) {
 		{name: "everyone but Finanzas: Finanzas", scope: onlyNotFinance, target: runQuery(), caller: finance(), want: false, wantWhy: SkipExcept},
 		{name: "everyone but Finanzas: api key", scope: onlyNotFinance, target: runQuery(), caller: MCPCaller{}, want: true},
 		{name: "destination checked before principal", scope: onlyNotFinance, target: MCPTarget{RegistryID: jira, Tool: "run_query"}, caller: finance(), want: false, wantWhy: SkipDestination},
+		{name: "inert principal on the scoped destination", scope: dlpFinance, target: runQuery(), caller: MCPCaller{PrincipalInert: true}, want: true},
+		{name: "inert principal does not soften the destination", scope: dlpFinance, target: MCPTarget{RegistryID: jira, Tool: "create_issue"}, caller: MCPCaller{PrincipalInert: true}, want: false, wantWhy: SkipDestination},
+		{name: "empty scope stays a tombstone for an inert principal", scope: &MCPScope{}, target: runQuery(), caller: MCPCaller{PrincipalInert: true}, want: false, wantWhy: SkipDestination},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

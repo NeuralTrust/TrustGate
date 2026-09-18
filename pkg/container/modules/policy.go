@@ -21,6 +21,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -79,8 +80,8 @@ func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewDuplicator); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, registry appplugins.Registry) apppolicy.Warner {
-		return apppolicy.NewWarner(repo, consumers, registry)
+	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, auths authdomain.Repository, registry appplugins.Registry) apppolicy.Warner {
+		return apppolicy.NewWarner(repo, consumers, auths, registry)
 	}); err != nil {
 		return err
 	}
