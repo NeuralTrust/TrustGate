@@ -131,6 +131,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		connectHandler,
 		oauthhttp.NewConfigureHandler(nil),
 		new(oauthhttp.JWKSHandler),
+		nil,
 		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
 	)
 	app := fiber.New()

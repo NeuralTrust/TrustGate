@@ -5258,6 +5258,37 @@
                     }
                 }
             }
+        },
+        "/whoami": {
+            "get": {
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.",
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Describe what an API key reaches",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/pkg_api_handler_http_mcp.WhoAmIResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "servers": [
@@ -9447,6 +9478,50 @@
                         "type": "integer"
                     },
                     "tenant_id": {
+                        "type": "string"
+                    }
+                }
+            },
+            "pkg_api_handler_http_mcp.WhoAmIConsumer": {
+                "type": "object",
+                "properties": {
+                    "acts_for_users": {
+                        "description": "ActsForUsers is false for a consumer that acts as the application\nitself, which is the actor a batch runs as.",
+                        "type": "boolean"
+                    },
+                    "active": {
+                        "type": "boolean"
+                    },
+                    "identity_source": {
+                        "description": "IdentitySource names who its users are when it acts for them.",
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "slug": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
+                        "type": "string"
+                    },
+                    "url": {
+                        "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                        "type": "string"
+                    }
+                }
+            },
+            "pkg_api_handler_http_mcp.WhoAmIResponse": {
+                "type": "object",
+                "properties": {
+                    "consumers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/pkg_api_handler_http_mcp.WhoAmIConsumer"
+                        }
+                    },
+                    "gateway": {
                         "type": "string"
                     }
                 }

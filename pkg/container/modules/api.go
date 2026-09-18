@@ -19,6 +19,7 @@ import (
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -327,6 +328,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideWhoAmIHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
 		return oauthhttp.NewConfigureHandler(configure)
 	}); err != nil {
@@ -353,6 +357,20 @@ func provideAPIKeyConnectHandler(
 		)
 	}
 	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
+}
+
+// provideWhoAmIHandler serves the MCP plane's /whoami. It needs the proxy
+// plane's base domain because the LLM consumer it reports lives over there,
+// on a host this plane never sees in a request of its own.
+func provideWhoAmIHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	consumers appconsumer.APIKeyConsumers,
+) *mcphttp.WhoAmIHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(
+		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
+	)
+	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain)
 }
 
 func provideEndUserConnectionsHandler(
