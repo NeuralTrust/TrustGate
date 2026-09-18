@@ -13,6 +13,11 @@ reach an LLM or A2A consumer at all, while the principal (`groups`) does reach
 it and simply does not gate there. See
 [Inertness is per dimension](#inertness-is-per-dimension).
 
+One limit before the examples: the group dimension does not gate a caller that
+authenticates with an api key, so a policy scoped to `groups` also runs on the
+consumer's api-key traffic. See
+[Api-key callers and `groups`](#api-key-callers-and-groups).
+
 ## Worked example
 
 `trustguard` DLP that only runs when someone in the Finance group calls a tool
@@ -197,11 +202,69 @@ how many warnings to expect.
 |---|---|
 | `mcp_scope` absent or `null` | Applies to all traffic of its consumers, on every plane (unchanged). |
 | `mcp_scope: {}` (present, empty) | A tombstone, not an empty filter. It matches nothing and the policy runs on **no** plane — not MCP, not LLM, not A2A — and occupies zero levels. The API refuses to create or update a policy to `{}` (422). It only appears when the last registry a scope referenced is deleted, or when the user-dimension migration resets a scope that had no group left: the prune writes `{}`, never `NULL`, so the policy goes dormant instead of silently widening to the whole consumer. Reading it back or updating it answers with a warning saying it runs nowhere and how to revive it. Renaming such a policy still works. |
-| Caller without groups | An API key acting as the application runs as `app:<consumer_id>`; an `acts_for_users` consumer with source `app` runs as `app:<consumer_id>:<end_user>`. Neither carries a `groups` claim, so such a caller never matches `groups` and never falls in `except_groups`. "Everyone but Finance" therefore still applies to it. |
+| Caller by api key | **The principal dimension does not gate for it.** An api key acting as the application runs as `app:<consumer_id>`, and an `acts_for_users` consumer with source `app` runs as `app:<consumer_id>:<end_user>`; the credential belongs to the application, not to a person, so the scope's `groups` are ignored and the policy runs. A policy written for one group therefore also runs on the consumer's api-key traffic, and `groups` can no longer keep a policy off it. See [Api-key callers and `groups`](#api-key-callers-and-groups). |
+| Caller by token without a `groups` claim | Gates as before: it is not in `groups`, so a scope naming them skips it (`principal`), and it never falls in `except_groups` either. An identity provider that emits no groups does not make the principal inert — only the api key does. |
 | `global: true` + scope | Allowed (`POST .../policies/{id}/global`). This is how a scoped policy reaches the MCP Store, whose consumer only sees global policies. What it does to the rest of the gateway depends on the dimension: with `registry_ids` or `tools` it stays MCP-only, exactly as before — promotion is not a back door. With **only** `groups` it now runs on every LLM and A2A consumer of the gateway too, with the group inert. Promotion also goes through the level check and can answer 409. |
 | Same `slug` twice | On MCP, scoped policies are additive: they never replace a same-`slug` policy the way an unscoped consumer policy replaces an unscoped global one. A scoped `trustguard` next to an unscoped one runs both. The API returns non-blocking `warnings` (`consumer <id> already runs plugin <slug> without scope`) on create, update and `global`; attach answers `200 {"warnings": [...]}` when there are warnings and `204` otherwise. Two same-slug policies at the **same** level are a 409 instead, and on an inert plane same-slug policies collapse rather than stack. |
 | LLM or A2A consumer | Depends on the dimension. With `registry_ids` or `tools`: 422, the destination does not cross. With only `groups`/`except_groups`: accepted if the plugin is cross-plane safe, and the policy runs there with the group inert; 422 naming the plugin if it is not. The two 422s have different messages. |
 | Policy with no consumers and not `global` | Runs nowhere, on any plane, and always did. Nothing was added to make that true — it simply falls in neither the global nor the per-consumer bucket. Create and update answer with a warning (`policy has no consumers and is not global: it runs nowhere`). |
+
+### Api-key callers and `groups`
+
+A caller that authenticates with an api key has an **inert principal**: the
+group dimension of the scope is not evaluated for it and the policy runs. This
+is deliberate — with an api key the caller is the application, and no identity
+provider is in the loop to say which groups it belongs to.
+
+The relaxation is **asymmetric**, and only one direction moved:
+
+| Scope | Caller by api key |
+|---|---|
+| `groups: [Finance]` | **Runs.** Previously it did not (`principal`). This is the change. |
+| `except_groups: [Finance]` | Runs, as before. An api-key caller carries no groups, so it never fell in the exception. |
+
+The direction that changed is the allow-list one. **`groups` no longer says
+who a policy applies to — it says which token holders it applies to, plus
+every api-key caller of the consumer.** Two consequences, and they point
+opposite ways:
+
+- A policy written as "this only concerns Finance" now also runs on the
+  consumer's api-key traffic. On the MCP plane every plugin that can carry a
+  scope is restrictive — `trustguard`, `tool_allowlist`, `rate_limiter`,
+  `per_tool_rate_limiter`, `request_size` — so what api-key callers get is
+  more enforcement, not less: calls that used to pass can start being denied,
+  rate-limited or inspected, and they share the group's rate-limit buckets.
+  Nobody has to edit anything for that to start happening.
+- There is no longer any way to keep a policy off machine traffic by scoping
+  it to a group. A scope that has to exclude api-key callers has to name a
+  destination they do not reach, or the consumer has to stop accepting api
+  keys.
+
+The inert branch skips the principal dimension entirely, so a plugin whose
+execution were permissive rather than restrictive would be granted, not
+applied, to those callers. None of the MCP-capable plugins is permissive
+today; that is a property of the plugin set, not of the rule.
+
+Three things follow, and they are the safeguards, not decoration:
+
+- The decision is an **allow-list of one method**. Only an api key makes the
+  principal inert. A caller with no principal at all, mTLS, a bearer token
+  whose issuer emits no `groups`, and the legacy undifferentiated `jwt` method
+  all keep gating, so one misconfigured identity provider cannot turn into a
+  gateway-wide bypass of every group check.
+- Create, update and attach answer with a non-blocking warning naming every
+  MCP consumer reached that accepts an api-key auth
+  (`policy narrows to groups but consumer <id> accepts api-key auth: group
+  checks do not apply to those callers`). Either drop the api-key auth from
+  that consumer, or accept that the narrowing does not cover it.
+- Auditing which policies this affects is a deploy gate, not a follow-up:
+  every policy with `groups` whose consumers accept api keys has to be seen by
+  its owner before the behaviour changes, because it changes without anyone
+  editing anything.
+
+To make a policy depend on the caller's group at all, the credential has to be
+one that carries a group: attach a token-based auth to the consumer and remove
+the api-key auth. There is no per-policy opt-out.
 
 ### Precedence at equal `priority`
 
@@ -274,8 +337,13 @@ for, the plugin denies.
 ```
 
 Finance callers are excepted, so the policy is not in their plan and the call
-proceeds. Everyone else, API keys included, gets `-32001`. In `mode: observe`
+proceeds. Everyone else, api keys included, gets `-32001`. In `mode: observe`
 the call goes through and the event records the decision.
+
+Nothing about this changed with the inert principal: an api-key caller carries
+no groups, so it was never excepted and still is not. The form that did change
+is `groups`, which now also selects api-key callers — so a deny-all scoped
+with `groups: ["Finance"]` denies them too.
 
 ## Observability
 
@@ -298,6 +366,11 @@ the MCP metadata:
 scoped policies; unscoped ones never appear. `policies[]` keeps listing the
 plugins that actually ran. Without an active span nothing is computed.
 
+A group-scoped policy that matched because the caller's principal was inert
+appears in `matched` like any other match: the span does not yet say that the
+group was not evaluated. Reading a trace, an api-key call and a call by a
+member of the group look the same.
+
 ## Admin API
 
 | Call | Shape |
@@ -306,7 +379,7 @@ plugins that actually ran. Without an active span nothing is computed.
 | `PUT /v1/gateways/{gw}/policies/{id}` | Tri-state: `mcp_scope` **omitted** leaves the stored scope untouched, `null` clears it, an object replaces it. Same 409. Flipping `enabled` to true is a write and is checked too. |
 | `GET /v1/gateways/{gw}/policies?registry_id=<uuid>` | Only policies whose scope names that registry, in `registry_ids` or in `tools`. A non-UUID value is a 400. |
 | `POST .../policies/{id}/global` | Promotes the policy to the all-traffic level; the response may carry `warnings`, and it can answer 409. |
-| `POST .../consumers/{id}/policies/{pid}` | `204`, or `200 {"warnings": [...]}` only when the consumer already runs the plugin without scope. 409 on a level conflict. On a non-MCP consumer, 422 for a destination scope or for a plugin that gates on tool names. |
+| `POST .../consumers/{id}/policies/{pid}` | `204`, or `200 {"warnings": [...]}` when the attach has something to warn about: the consumer already runs the plugin without scope, or the policy narrows to `groups` and the consumer accepts an api-key auth. 409 on a level conflict. On a non-MCP consumer, 422 for a destination scope or for a plugin that gates on tool names. |
 | `GET .../registries/{id}/tools` | The registry's advertised tools, with the upstream's **native** names — the key `mcp_scope.tools[].tool` stores. 409 when the registry cannot be introspected without a principal (per-principal auth, or URL variables in the target): write the tool name by hand. 502 when the upstream is unreachable or `tools/list` fails: retry. |
 
 Responses echo `mcp_scope` (absent when unset, `{}` when pruned) and, on

@@ -23,6 +23,8 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -115,19 +117,48 @@ func inertSafeRegistry(t *testing.T, safe bool) appplugins.Registry {
 	return reg
 }
 
+// noAPIKeyAuths is a gateway with no api-key credential at all, so the group
+// narrowing gates every caller and the api-key warning has nothing to say.
+func noAPIKeyAuths(t *testing.T) authdomain.Repository {
+	t.Helper()
+	auths := authmocks.NewRepository(t)
+	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, mock.Anything, authdomain.TypeAPIKey).
+		Return(nil, nil).Maybe()
+	return auths
+}
+
+// apiKeyAuths is a gateway whose listed credentials are enabled api keys.
+func apiKeyAuths(t *testing.T, gwID ids.GatewayID, authIDs ...ids.AuthID) authdomain.Repository {
+	t.Helper()
+	out := make([]*authdomain.Auth, 0, len(authIDs))
+	for _, id := range authIDs {
+		out = append(out, &authdomain.Auth{ID: id, GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true})
+	}
+	auths := authmocks.NewRepository(t)
+	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, gwID, authdomain.TypeAPIKey).
+		Return(out, nil).Maybe()
+	return auths
+}
+
+func apiKeyIgnoresGroupsWarning(consumerID ids.ConsumerID) string {
+	return fmt.Sprintf(
+		"policy narrows to groups but consumer %s accepts api-key auth: group checks do not apply to those callers",
+		consumerID)
+}
+
 func warnerOver(t *testing.T, gwID ids.GatewayID, consumers []*consumerdomain.Consumer, policies []*domain.Policy) apppolicy.Warner {
 	t.Helper()
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(consumers, nil).Maybe()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(policies, nil).Maybe()
-	return apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
+	return apppolicy.NewWarner(repo, consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, true))
 }
 
 func TestWarner_Overlaps_UnscopedPolicyNeverWarns(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
 
 	warnings, err := w.Overlaps(context.Background(), unscopedPolicy(gwID, "trustguard", ids.New[ids.ConsumerKind]()))
 	require.NoError(t, err)
@@ -153,7 +184,7 @@ func TestWarner_Overlaps_DormantScopeRunsNowhere(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	p := policyWith(gwID, "trustguard", &domain.MCPScope{}, ids.New[ids.ConsumerKind]())
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, []string{dormantWarning}, warnings)
@@ -166,7 +197,7 @@ func TestWarner_Overlaps_PolicyWithoutConsumersRunsNowhere(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	p := unscopedPolicy(gwID, "trustguard")
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, []string{orphanWarning}, warnings)
@@ -178,7 +209,7 @@ func TestWarner_Overlaps_GlobalPolicyWithoutConsumersDoesNotWarn(t *testing.T) {
 	p := unscopedPolicy(gwID, "trustguard")
 	p.Global = true
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
@@ -236,7 +267,7 @@ func TestWarner_Overlaps_DisabledPolicyDoesNotWarnAboutCollisions(t *testing.T) 
 	p := scopedPolicy(gwID, "trustguard", consumerID)
 	p.Enabled = false
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
@@ -399,7 +430,7 @@ func TestWarner_Overlaps_RepositoryErrorSurfaces(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, boom).Once()
 
-	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repo, consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	_, err := w.Overlaps(context.Background(), p)
 	assert.ErrorIs(t, err, boom)
 }
@@ -413,7 +444,7 @@ func TestWarner_Overlaps_ConsumerRepositoryErrorSurfaces(t *testing.T) {
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, boom).Once()
 
-	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo, inertSafeRegistry(t, true))
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, true))
 	_, err := w.Overlaps(context.Background(), p)
 	assert.ErrorIs(t, err, boom)
 }
@@ -497,7 +528,7 @@ func TestWarner_OverlapsOnAttach(t *testing.T) {
 			consumerRepo.EXPECT().FindByID(mock.Anything, consumerID).
 				Return(&consumerdomain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Maybe()
 
-			w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, true))
+			w := apppolicy.NewWarner(repo, consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, true))
 			warnings, err := w.OverlapsOnAttach(context.Background(), tt.gatewayID, consumerID, tt.policy.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, warnings)
@@ -520,7 +551,7 @@ func TestWarner_Overlaps_GlobalGroupScopeOnANameGatingPluginWarns(t *testing.T) 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Maybe()
 
-	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, false))
+	w := apppolicy.NewWarner(repo, consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, false))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, []string{inertUnsafeGlobalWarning("tool_allowlist")}, warnings)
@@ -552,7 +583,7 @@ func TestWarner_Overlaps_NonGlobalGroupScopeOnANameGatingPluginDoesNotWarn(t *te
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Maybe()
 
-	w := apppolicy.NewWarner(repo, consumerRepo, inertSafeRegistry(t, false))
+	w := apppolicy.NewWarner(repo, consumerRepo, noAPIKeyAuths(t), inertSafeRegistry(t, false))
 	warnings, err := w.Overlaps(context.Background(), p)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
@@ -561,4 +592,178 @@ func TestWarner_Overlaps_NonGlobalGroupScopeOnANameGatingPluginDoesNotWarn(t *te
 func inertUnsafeGlobalWarning(slug string) string {
 	return fmt.Sprintf("policy is global and its scope narrows by group alone, but plugin %s has not opted into "+
 		"running where the scope is inert: it runs on MCP traffic only, never on the LLM or A2A plane", slug)
+}
+
+func mcpConsumerWithAuths(gwID ids.GatewayID, id ids.ConsumerID, authIDs ...ids.AuthID) *consumerdomain.Consumer {
+	c := mcpConsumer(gwID, id)
+	c.AuthIDs = authIDs
+	return c
+}
+
+func llmConsumerWithAuths(gwID ids.GatewayID, id ids.ConsumerID, authIDs ...ids.AuthID) *consumerdomain.Consumer {
+	c := llmConsumer(gwID, id)
+	c.AuthIDs = authIDs
+	return c
+}
+
+func warnerOverAuths(
+	t *testing.T,
+	gwID ids.GatewayID,
+	consumers []*consumerdomain.Consumer,
+	policies []*domain.Policy,
+	auths authdomain.Repository,
+) apppolicy.Warner {
+	t.Helper()
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(consumers, nil).Maybe()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return(policies, nil).Maybe()
+	return apppolicy.NewWarner(repo, consumerRepo, auths, inertSafeRegistry(t, true))
+}
+
+// A policy narrowing to groups is not an access control against a consumer
+// that admits api keys: for those callers the principal is inert and the
+// policy runs. The warning names the consumers so the operator can drop the
+// credential or accept the reach (RUN-1621, rule 5.2).
+func TestWarner_Overlaps_GroupScopeNamesTheConsumersThatAcceptAPIKeys(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	withKey, withoutKey := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+	keyID, tokenID := ids.New[ids.AuthKind](), ids.New[ids.AuthKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", withKey, withoutKey)
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{
+			mcpConsumerWithAuths(gwID, withKey, keyID),
+			mcpConsumerWithAuths(gwID, withoutKey, tokenID),
+		},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID, keyID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{apiKeyIgnoresGroupsWarning(withKey)}, warnings,
+		"only the consumer whose auth is an api key is named")
+}
+
+func TestWarner_Overlaps_APIKeyWarningCoversDestinationScopesToo(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := policyWith(gwID, "trustguard", &domain.MCPScope{
+		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
+		Groups:      []string{"Finanzas"},
+	}, consumerID)
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{mcpConsumerWithAuths(gwID, consumerID, keyID)},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID, keyID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{scopeBoundWarning, apiKeyIgnoresGroupsWarning(consumerID)}, warnings,
+		"narrowing the destination does not restore the group check for an api-key caller")
+}
+
+// The exception direction is unaffected: an api-key caller carries no groups,
+// so it never fell in except_groups and nothing about it changed.
+func TestWarner_Overlaps_ExceptGroupsScopeDoesNotWarnAboutAPIKeys(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := policyWith(gwID, "trustguard", &domain.MCPScope{ExceptGroups: []string{"Finanzas"}}, consumerID)
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{mcpConsumerWithAuths(gwID, consumerID, keyID)},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID, keyID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+// Outside MCP the principal dimension is inert for every caller, whatever the
+// credential, which the coalescence warnings already say. Naming the
+// credential there would attribute it to the wrong cause.
+func TestWarner_Overlaps_APIKeyWarningIsMCPOnly(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", consumerID)
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{llmConsumerWithAuths(gwID, consumerID, keyID)},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID, keyID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+// A disabled api key authenticates nobody, so it does not widen anything.
+func TestWarner_Overlaps_DisabledAPIKeyDoesNotWarn(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", consumerID)
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{mcpConsumerWithAuths(gwID, consumerID, keyID)},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+func TestWarner_OverlapsOnAttach_NamesTheAPIKeyConsumer(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas")
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, p.ID).Return(p, nil).Once()
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Policy{p}, nil).Maybe()
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(mcpConsumerWithAuths(gwID, consumerID, keyID), nil).Once()
+
+	w := apppolicy.NewWarner(repo, consumerRepo, apiKeyAuths(t, gwID, keyID), inertSafeRegistry(t, true))
+	warnings, err := w.OverlapsOnAttach(context.Background(), gwID, consumerID, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{apiKeyIgnoresGroupsWarning(consumerID)}, warnings)
+}
+
+func TestWarner_Overlaps_AuthRepositoryErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	p := groupScopedPolicy(gwID, "trustguard", "Finanzas", consumerID)
+	boom := errors.New("boom")
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*consumerdomain.Consumer{mcpConsumer(gwID, consumerID)}, nil).Once()
+	auths := authmocks.NewRepository(t)
+	auths.EXPECT().ListEnabledByGatewayAndType(mock.Anything, gwID, authdomain.TypeAPIKey).
+		Return(nil, boom).Once()
+
+	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo, auths, inertSafeRegistry(t, true))
+	_, err := w.Overlaps(context.Background(), p)
+	assert.ErrorIs(t, err, boom)
 }
