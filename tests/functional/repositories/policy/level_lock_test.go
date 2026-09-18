@@ -33,6 +33,12 @@ func TestLevelGuard_ConcurrentWritesOfOneLevel(t *testing.T) {
 			defer wg.Done()
 			p := validPolicy(t, gwID, "racer")
 			p.Name = p.ID.String()
+			// Global, so the racers occupy a level at all. A policy with no
+			// consumers and no global flag is a draft, and a draft occupies
+			// nothing — the guard would short-circuit before taking the lock
+			// and both writes would land, which is correct and not what this
+			// test is about.
+			p.Global = true
 			<-start
 			errs[i] = guard.Check(context.Background(), p, func(ctx context.Context) error {
 				return r.Save(ctx, p)
@@ -141,3 +147,47 @@ func TestLevelLock_WithSlugLocked_TheWriteJoinsTheTransaction(t *testing.T) {
 }
 
 var _ apppolicy.LevelLock = (*repo.Repository)(nil)
+
+// TestLevelGuard_ConcurrentDraftsBothLand is the other half of the rule its
+// sibling relies on. A policy with no consumers and no global flag runs
+// nowhere, so it occupies no level, so the guard does not take the lock and
+// does not refuse it. Two of them racing must both land — otherwise creating
+// two policies of one plugin would conflict before either could ever run, and
+// duplicating a policy would answer 409 every time.
+func TestLevelGuard_ConcurrentDraftsBothLand(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	gwID := seedGateway(t, gw, "level-lock-drafts")
+	guard := apppolicy.NewLevelGuard(r)
+
+	const writers = 2
+	errs := make([]error, writers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p := validPolicy(t, gwID, "drafter")
+			p.Name = p.ID.String()
+			<-start
+			errs[i] = guard.Check(context.Background(), p, func(ctx context.Context) error {
+				return r.Save(ctx, p)
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("a draft occupies no level, so it cannot conflict: %v", err)
+		}
+	}
+	items, err := r.ListByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != writers {
+		t.Fatalf("stored %d drafts, want %d", len(items), writers)
+	}
+}
