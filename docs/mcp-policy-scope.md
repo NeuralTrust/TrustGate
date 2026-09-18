@@ -216,6 +216,19 @@ group dimension of the scope is not evaluated for it and the policy runs. This
 is deliberate — with an api key the caller is the application, and no identity
 provider is in the loop to say which groups it belongs to.
 
+**The Store is outside this by construction.** Groups carry the most meaning on
+the MCP Store, and the Store cannot be reached by an api key at all: it is
+synthetic, never persisted, and `BuildStoreConsumer` gives it no auths of its
+own, so platform login is the only way in. The inert branch never fires there.
+
+What is left is the narrower case the rule is really about: a regular MCP
+consumer carrying **both** an api-key auth **and** a token auth whose identity
+provider emits a `groups` claim. Nothing in the gateway reserves groups for the
+Store — `Principal.Groups()` reads the claim off whatever token authenticated
+the caller — so this is a convention of how the platform issues tokens, not an
+invariant the code enforces. The warning below names exactly that intersection,
+and on a deployment where only the Store emits groups it will stay silent.
+
 The relaxation is **asymmetric**, and only one direction moved:
 
 | Scope | Caller by api key |
