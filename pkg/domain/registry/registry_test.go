@@ -219,6 +219,7 @@ func TestTargetAuth_Validate(t *testing.T) {
 		{name: "oauth2 nil config", auth: &TargetAuth{Type: AuthTypeOAuth2}, wantErr: true},
 		{name: "gcp ok", auth: NewGCPServiceAccountAuth("eyJ...")},
 		{name: "gcp empty", auth: &TargetAuth{Type: AuthTypeGCPServiceAccount}, wantErr: true},
+		{name: "passthrough ok", auth: &TargetAuth{Type: AuthTypePassthrough}},
 		{name: "unknown type", auth: &TargetAuth{Type: "weird"}, wantErr: true},
 	}
 	for _, tc := range tests {
