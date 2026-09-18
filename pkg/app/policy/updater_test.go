@@ -67,7 +67,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), validUpdateInput(existing.ID))
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -95,7 +95,7 @@ func TestUpdater_Update_Partial(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -130,7 +130,7 @@ func TestUpdater_Update_PreservesModeWhenOmitted(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -155,7 +155,7 @@ func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Mode: ptr(domain.ModeThrottle)})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -173,7 +173,7 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	in := validUpdateInput(existing.ID)
 	in.GatewayID = ids.New[ids.GatewayKind]()
 	_, err := updater.Update(context.Background(), in)
@@ -191,7 +191,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := apppolicy.NewUpdater(repo, newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), validUpdateInput(id))
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -211,7 +211,7 @@ func TestUpdater_Update_SlugChangeRevalidatesTheStoredScope(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
 	updater := apppolicy.NewUpdater(
-		repo, registrymocks.NewRepository(t),
+		repo, freeLevels(t), registrymocks.NewRepository(t),
 		newScopedRegistryMock(t, appplugins.ProtocolLLM),
 		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
 	)
@@ -266,7 +266,7 @@ func TestUpdater_Update_SlugChangeOnPrunedScopeIsAllowed(t *testing.T) {
 
 func newScopeUpdater(t *testing.T, repo *repomocks.Repository, registryRepo *registrymocks.Repository, publisher *cachemocks.EventPublisher) apppolicy.Updater {
 	t.Helper()
-	return apppolicy.NewUpdater(repo, registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), publisher, newTestLogger(), nil)
+	return apppolicy.NewUpdater(repo, freeLevels(t), registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), publisher, newTestLogger(), nil)
 }
 
 func expectInvalidation(t *testing.T, gwID ids.GatewayID) *cachemocks.EventPublisher {

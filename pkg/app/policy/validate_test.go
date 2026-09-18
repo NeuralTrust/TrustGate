@@ -87,7 +87,7 @@ func TestCreator_Create_RejectsInvalidMCPScope(t *testing.T) {
 				registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(tt.found, nil).Once()
 			}
 			repo := repomocks.NewRepository(t)
-			creator := apppolicy.NewCreator(repo, registryRepo, newScopedRegistryMock(t, tt.protocols...), newCacheManager(), newTestLogger(), nil)
+			creator := apppolicy.NewCreator(repo, freeLevels(t), registryRepo, newScopedRegistryMock(t, tt.protocols...), newCacheManager(), newTestLogger(), nil)
 
 			in := validCreateInput(gwID)
 			in.MCPScope = tt.scope
@@ -115,7 +115,7 @@ func TestCreator_Create_MCPScope_PropagatesRegistryRepoError(t *testing.T) {
 	registryRepo := registrymocks.NewRepository(t)
 	registryRepo.EXPECT().FindByIDs(mock.Anything, gwID, mock.Anything).Return(nil, sentinel).Once()
 	repo := repomocks.NewRepository(t)
-	creator := apppolicy.NewCreator(repo, registryRepo, newScopedRegistryMock(t, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), registryRepo, newScopedRegistryMock(t, appplugins.ProtocolMCP), newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(gwID)
 	in.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}
@@ -146,7 +146,7 @@ func TestCreator_Create_MCPScope_UnknownPluginIsLeftToPluginValidation(t *testin
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	creator := apppolicy.NewCreator(repo, registryRepo, reg, newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), registryRepo, reg, newCacheManager(), newTestLogger(), nil)
 	in := validCreateInput(gwID)
 	in.MCPScope = &domain.MCPScope{RegistryIDs: []ids.RegistryID{snowflake}}
 	if _, err := creator.Create(context.Background(), in); err != nil {

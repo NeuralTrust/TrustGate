@@ -33,7 +33,21 @@ var planStages = [...]policy.Stage{
 	policy.StagePostResponse,
 }
 
+// NewStagePlan compiles the policies into a per-stage plan for the MCP plane,
+// where the scope gates and its specificity breaks ties at equal priority.
 func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, false)
+}
+
+// NewInertStagePlan compiles the policies into a per-stage plan for a plane
+// where the scope does not gate. Every entry scores zero specificity, so
+// adding a group to a policy's scope can no longer reorder the chain
+// (RUN-1621, rule 4).
+func NewInertStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, true)
+}
+
+func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, flatSpecificity bool) *StagePlan {
 	plan := &StagePlan{
 		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
 		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
@@ -65,7 +79,7 @@ func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) 
 			},
 			mode:        pol.Mode.Normalize(),
 			priority:    pol.Priority,
-			specificity: pol.MCPScope.Specificity(),
+			specificity: entrySpecificity(pol.MCPScope, flatSpecificity),
 			parallel:    pol.Parallel,
 			global:      pol.IsGlobal(),
 			mutatesReq:  plugin.MutatesRequestBody(),

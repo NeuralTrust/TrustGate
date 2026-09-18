@@ -298,6 +298,116 @@ func TestPolicyPlans_ExceptionsExcludeTheCallerAndSpareIdentitylessCallers(t *te
 		"the destination still has to match")
 }
 
+// An api-key caller enters as the application, so the group dimension of a
+// scope does not gate for it and a policy narrowing to groups runs. Every
+// other method keeps gating: this is the test that pins the allow-list, and it
+// fails if the projection is ever rewritten as "a caller with no groups is
+// inert" (RUN-1621, rule 5.2).
+func TestPolicyPlans_APIKeyPrincipalIsInertForGroupScopes(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "f_guard", "c_audit")
+	xID, yID := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	x, y := mcpRegistry(xID), mcpRegistry(yID)
+
+	financeOnly := preRequestPolicy("F", "f_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID}, Groups: []string{"Finanzas"},
+	})
+	plans := h.build(
+		[]*policydomain.Policy{preRequestPolicy("C", "c_audit", nil)},
+		[]*policydomain.Policy{financeOnly},
+	)
+
+	apiKey := &identity.Principal{Subject: "app:consumer", Method: identity.MethodAPIKey}
+	endUserByAPIKey := &identity.Principal{
+		Subject: "app:consumer:ana",
+		Method:  identity.MethodAPIKey,
+		Claims:  map[string]any{"end_user": "ana"},
+	}
+	legacyJWT := &identity.Principal{Subject: "usr_123", Method: identity.MethodJWT}
+	legacyJWTInGroup := &identity.Principal{
+		Subject: "usr_123",
+		Method:  identity.MethodJWT,
+		Claims:  map[string]any{"groups": []string{"Finanzas"}},
+	}
+	externalJWTNoGroups := &identity.Principal{Subject: "usr_456", Method: identity.MethodExternalJWT}
+	mtls := &identity.Principal{Subject: "CN=client", Method: identity.MethodMTLS}
+	methodless := &identity.Principal{Subject: "usr_789"}
+
+	tests := []struct {
+		name      string
+		principal *identity.Principal
+		want      []string
+	}{
+		{"api key runs a policy scoped to a group it is not in", apiKey, []string{"F", "C"}},
+		{"an api-key end-user principal is inert too", endUserByAPIKey, []string{"F", "C"}},
+		{"a bearer token outside the group still gates", groupPrincipal("Marketing"), []string{"C"}},
+		{"a bearer token in the group runs it, as before", groupPrincipal("Finanzas"), []string{"F", "C"}},
+		{"external jwt without a groups claim still gates", externalJWTNoGroups, []string{"C"}},
+		{"legacy jwt without a groups claim still gates", legacyJWT, []string{"C"}},
+		{"legacy jwt carrying the group runs it", legacyJWTInGroup, []string{"F", "C"}},
+		{"mtls still gates", mtls, []string{"C"}},
+		{"a principal with no method still gates", methodless, []string{"C"}},
+		{"a nil principal still gates", nil, []string{"C"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, h.executed(plans.PlanFor(x, "run_query", tc.principal)))
+		})
+	}
+
+	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(y, "run_query", apiKey)),
+		"the inert principal does not soften the destination dimension")
+}
+
+// The asymmetry: the rule relaxes the allow-list direction only. An api-key
+// caller already passed an except_groups scope, because it carries no groups,
+// so that direction answers the same before and after.
+func TestPolicyPlans_APIKeyPrincipalLeavesExceptGroupsUnchanged(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "e_deny", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	everyoneButFinance := preRequestPolicy("E", "e_deny", &policydomain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{xID},
+		ExceptGroups: []string{"Finanzas"},
+	})
+	plans := h.build(
+		[]*policydomain.Policy{preRequestPolicy("C", "c_audit", nil)},
+		[]*policydomain.Policy{everyoneButFinance},
+	)
+
+	apiKey := &identity.Principal{Subject: "app:consumer", Method: identity.MethodAPIKey}
+	assert.Equal(t, []string{"E", "C"}, h.executed(plans.PlanFor(x, "run_query", apiKey)),
+		"a deny-all scoped by except_groups keeps denying an api-key caller")
+	assert.Equal(t, []string{"C"}, h.executed(plans.PlanFor(x, "run_query", groupPrincipal("Finanzas"))),
+		"the excepted group is still excepted")
+}
+
+// A policy that entered the plan because the principal was inert is reported
+// as matched, with no reason of its own. The span cannot tell that call apart
+// from one made by a member of the group.
+func TestPolicyPlans_ExplainReportsAnInertPrincipalAsAPlainMatch(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "f_guard")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	financeOnly := preRequestPolicy("F", "f_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID}, Groups: []string{"Finanzas"},
+	})
+	plans := h.build(nil, []*policydomain.Policy{financeOnly})
+
+	_, decision := plans.Explain(x, "run_query", &identity.Principal{Method: identity.MethodAPIKey})
+	require.Len(t, decision.Matched, 1)
+	assert.Equal(t, financeOnly.ID.String(), decision.Matched[0].ID)
+	assert.Empty(t, decision.Skipped)
+
+	_, gated := plans.Explain(x, "run_query", groupPrincipal("Marketing"))
+	require.Len(t, gated.Skipped, 1)
+	assert.Equal(t, policydomain.SkipPrincipal, gated.Skipped[0].Reason)
+}
+
 func TestPolicyPlans_UnionOfStaticAndPrincipalScopedPolicies(t *testing.T) {
 	t.Parallel()
 	h := newPlanHarness(t, "r_registry", "g_group", "c_audit")
@@ -489,4 +599,121 @@ func TestPolicyPlans_ExplainAllocatesOnlyForTheDecision(t *testing.T) {
 	assert.LessOrEqual(t, allocs, 2.0, "Explain allocates the decision lists and nothing else")
 	require.NotNil(t, sink)
 	assert.Equal(t, 1, decision.Evaluated)
+}
+
+// jwtWithGroups is a caller whose groups the scope matcher reads.
+func jwtWithGroups(groups ...string) *identity.Principal {
+	return &identity.Principal{
+		Method: identity.MethodExternalJWT,
+		Claims: map[string]any{"groups": groups},
+	}
+}
+
+// The nearer destination wins per slug: a policy attached to (registry, tool)
+// replaces the registry-wide policy of the same slug on that tool, and leaves
+// every other slug alone. Before this, both ran — the same plugin twice on one
+// call, with two rate-limit buckets for it to spend.
+func TestPolicyPlans_ToolPolicyReplacesTheRegistryPolicyOfTheSameSlug(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "o_other", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", registryScope(xID))
+	onTool := preRequestPolicy("TOOL", "g_guard", toolScope(xID, "run_query"))
+	otherSlug := preRequestPolicy("OTHER", "o_other", registryScope(xID))
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build(
+		[]*policydomain.Policy{base},
+		[]*policydomain.Policy{onRegistry, onTool, otherSlug},
+	)
+
+	assert.ElementsMatch(t, []string{"TOOL", "OTHER", "C"},
+		h.executed(plans.PlanFor(x, "run_query", nil)),
+		"the tool policy replaces the registry one of its slug; another slug is untouched")
+	assert.ElementsMatch(t, []string{"REG", "OTHER", "C"},
+		h.executed(plans.PlanFor(x, "other", nil)),
+		"a tool with no policy of its own still gets the registry-wide one")
+}
+
+// The registry policy applies to everyone, the tool one only to a group: who
+// wins depends on the caller, so it cannot be settled when the plan is compiled.
+func TestPolicyPlans_ToolPolicyReplacesTheRegistryOneOnlyForTheCallersItClaims(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", registryScope(xID))
+	onTool := preRequestPolicy("TOOL", "g_guard", &policydomain.MCPScope{
+		Tools:  []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}},
+		Groups: []string{"Finanzas"},
+	})
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the caller is inside the tool policy, so it replaces the registry one")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Marketing"))),
+		"a tool policy that does not reach this caller replaces nothing: the registry one still runs")
+}
+
+// The mirror case: the tool policy applies to everyone and the registry one is
+// narrowed by group. The tool policy wins for every caller.
+func TestPolicyPlans_AnUnconditionalToolPolicyBeatsAGroupScopedRegistryOne(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID},
+		Groups:      []string{"Finanzas"},
+	})
+	onTool := preRequestPolicy("TOOL", "g_guard", toolScope(xID, "run_query"))
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the tool policy covers every caller, so the group-scoped registry one stands down")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "other", jwtWithGroups("Finanzas"))),
+		"on a tool it does not name, the registry policy is still the nearest one")
+}
+
+// Both narrowed by group. The registry policy only stands down for a caller the
+// tool policy actually reaches.
+func TestPolicyPlans_GroupScopedToolPolicyReplacesTheRegistryOnePerCaller(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID},
+		Groups:      []string{"Finanzas"},
+	})
+	onTool := preRequestPolicy("TOOL", "g_guard", &policydomain.MCPScope{
+		Tools:  []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}},
+		Groups: []string{"Marketing"},
+	})
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas", "Marketing"))),
+		"both reach this caller, so only the nearer destination runs")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the tool policy misses this caller, so the registry one is not replaced")
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Marketing"))),
+		"only the tool policy reaches this caller")
 }

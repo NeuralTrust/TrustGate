@@ -23,9 +23,11 @@ import (
 )
 
 // WithTx runs fn inside a database transaction obtained from the connection
-// pool. The transaction is committed when fn returns nil; otherwise it is
-// rolled back. A panic inside fn is propagated after a best-effort rollback
-// so the caller's defer chain stays intact.
+// pool, or inside the one the context already carries, in which case the
+// caller that opened it keeps the commit and the rollback. The transaction is
+// committed when fn returns nil; otherwise it is rolled back. A panic inside
+// fn is propagated after a best-effort rollback so the caller's defer chain
+// stays intact.
 //
 // Repositories use WithTx to compose multiple writes into a single atomic
 // unit:
@@ -35,6 +37,9 @@ import (
 //	    return tx.QueryRow(ctx, "...").Scan(&id)
 //	})
 func WithTx(ctx context.Context, conn *Connection, fn func(pgx.Tx) error) (err error) {
+	if tx, ok := txFromContext(ctx); ok {
+		return fn(tx)
+	}
 	if conn == nil || conn.Pool == nil {
 		return errors.New("database: nil connection")
 	}
@@ -64,4 +69,19 @@ func WithTx(ctx context.Context, conn *Connection, fn func(pgx.Tx) error) (err e
 		return err
 	}
 	return nil
+}
+
+type txContextKey struct{}
+
+// TxContext returns a context that carries tx. A repository write made with it
+// joins that transaction instead of opening one of its own, which is how a
+// check and the write it authorises commit or roll back together across
+// repositories.
+func TxContext(ctx context.Context, tx pgx.Tx) context.Context {
+	return context.WithValue(ctx, txContextKey{}, tx)
+}
+
+func txFromContext(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(txContextKey{}).(pgx.Tx)
+	return tx, ok
 }
