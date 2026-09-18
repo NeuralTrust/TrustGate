@@ -372,21 +372,25 @@ func occupiedLevels(t *testing.T, stored ...*domain.Policy) apppolicy.LevelGuard
 	return apppolicy.NewLevelGuard(newFakeLevelLock(stored...))
 }
 
-// TestCreator_Create_RefusesAnOccupiedLevel is the create half of the five
-// write paths: the guard sits between the validation and the store, so the row
-// is never written.
-func TestCreator_Create_RefusesAnOccupiedLevel(t *testing.T) {
+// TestCreator_Create_CannotConflictBecauseEveryNewPolicyIsADraft pins why the
+// guard call in Create never fires today. CreateInput carries neither
+// ConsumerIDs nor Global, so a created policy is always a draft, and a draft
+// occupies no level. The call stays because it is the right place for the check
+// the day CreateInput grows either field — and this test is the breadcrumb that
+// will fail then, instead of the gate disappearing in silence.
+func TestCreator_Create_CannotConflictBecauseEveryNewPolicyIsADraft(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	occupant := unscopedPolicy(gwID, "rate_limiter")
 	occupant.Global = true
 	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	creator := apppolicy.NewCreator(repo, occupiedLevels(t, occupant), newRegistryRepo(t), newRegistryMock(t, nil),
 		newCacheManager(), newTestLogger(), nil)
 
-	_, err := creator.Create(context.Background(), validCreateInput(gwID))
-	require.ErrorIs(t, err, domain.ErrPolicyLevelConflict)
-	repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+	created, err := creator.Create(context.Background(), validCreateInput(gwID))
+	require.NoError(t, err)
+	require.True(t, created.Draft(), "a created policy has no consumers and is not global")
 }
 
 func TestCreator_Create_WritesOnAFreeLevel(t *testing.T) {
@@ -482,20 +486,27 @@ func TestScoper_UnsetGlobal_IsNotGuarded(t *testing.T) {
 // The duplicate writes through the creator, so it carries the creator's guard
 // and no second one: a copy of a policy that runs everywhere would land on the
 // level its source already holds.
-func TestDuplicator_Duplicate_SurfacesTheLevelConflict(t *testing.T) {
+// TestDuplicator_Duplicate_OfAnOccupyingPolicySucceeds is the reason a draft
+// occupies nothing. The copy is born with no consumers and no global flag, so
+// if a draft took the wildcard level then duplicating a global or
+// consumer-less policy would land on its origin's level and always answer 409 —
+// the button would be broken for exactly the policies people duplicate most.
+func TestDuplicator_Duplicate_OfAnOccupyingPolicySucceeds(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	src := sourcePolicy(gwID, "Foo")
+	src.Global = true
 
 	finder := policymocks.NewFinder(t)
 	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
 	finder.EXPECT().List(mock.Anything, mock.Anything).Return([]*domain.Policy{src}, 1, nil).Once()
 
 	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	creator := apppolicy.NewCreator(repo, occupiedLevels(t, src), newRegistryRepo(t), newRegistryMock(t, nil),
 		newCacheManager(), newTestLogger(), nil)
 
-	_, err := apppolicy.NewDuplicator(finder, creator, newTestLogger()).Duplicate(context.Background(), gwID, src.ID)
-	require.ErrorIs(t, err, domain.ErrPolicyLevelConflict)
-	repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+	copied, err := apppolicy.NewDuplicator(finder, creator, newTestLogger()).Duplicate(context.Background(), gwID, src.ID)
+	require.NoError(t, err)
+	require.True(t, copied.Draft(), "the copy starts as a draft, which is what keeps it off the origin's level")
 }
