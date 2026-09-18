@@ -44,7 +44,7 @@ export interface SessionConfig {
   body_param_name?: string;
 }
 
-export type AuthKind = "api_key" | "azure" | "aws" | "oauth2" | "gcp_service_account";
+export type AuthKind = "api_key" | "azure" | "aws" | "oauth2" | "gcp_service_account" | "passthrough";
 
 export interface ApiKeyAuth {
   api_key?: string;
