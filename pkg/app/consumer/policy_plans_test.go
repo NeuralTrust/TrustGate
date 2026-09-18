@@ -600,3 +600,120 @@ func TestPolicyPlans_ExplainAllocatesOnlyForTheDecision(t *testing.T) {
 	require.NotNil(t, sink)
 	assert.Equal(t, 1, decision.Evaluated)
 }
+
+// jwtWithGroups is a caller whose groups the scope matcher reads.
+func jwtWithGroups(groups ...string) *identity.Principal {
+	return &identity.Principal{
+		Method: identity.MethodExternalJWT,
+		Claims: map[string]any{"groups": groups},
+	}
+}
+
+// The nearer destination wins per slug: a policy attached to (registry, tool)
+// replaces the registry-wide policy of the same slug on that tool, and leaves
+// every other slug alone. Before this, both ran — the same plugin twice on one
+// call, with two rate-limit buckets for it to spend.
+func TestPolicyPlans_ToolPolicyReplacesTheRegistryPolicyOfTheSameSlug(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "o_other", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", registryScope(xID))
+	onTool := preRequestPolicy("TOOL", "g_guard", toolScope(xID, "run_query"))
+	otherSlug := preRequestPolicy("OTHER", "o_other", registryScope(xID))
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build(
+		[]*policydomain.Policy{base},
+		[]*policydomain.Policy{onRegistry, onTool, otherSlug},
+	)
+
+	assert.ElementsMatch(t, []string{"TOOL", "OTHER", "C"},
+		h.executed(plans.PlanFor(x, "run_query", nil)),
+		"the tool policy replaces the registry one of its slug; another slug is untouched")
+	assert.ElementsMatch(t, []string{"REG", "OTHER", "C"},
+		h.executed(plans.PlanFor(x, "other", nil)),
+		"a tool with no policy of its own still gets the registry-wide one")
+}
+
+// The registry policy applies to everyone, the tool one only to a group: who
+// wins depends on the caller, so it cannot be settled when the plan is compiled.
+func TestPolicyPlans_ToolPolicyReplacesTheRegistryOneOnlyForTheCallersItClaims(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", registryScope(xID))
+	onTool := preRequestPolicy("TOOL", "g_guard", &policydomain.MCPScope{
+		Tools:  []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}},
+		Groups: []string{"Finanzas"},
+	})
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the caller is inside the tool policy, so it replaces the registry one")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Marketing"))),
+		"a tool policy that does not reach this caller replaces nothing: the registry one still runs")
+}
+
+// The mirror case: the tool policy applies to everyone and the registry one is
+// narrowed by group. The tool policy wins for every caller.
+func TestPolicyPlans_AnUnconditionalToolPolicyBeatsAGroupScopedRegistryOne(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID},
+		Groups:      []string{"Finanzas"},
+	})
+	onTool := preRequestPolicy("TOOL", "g_guard", toolScope(xID, "run_query"))
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the tool policy covers every caller, so the group-scoped registry one stands down")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "other", jwtWithGroups("Finanzas"))),
+		"on a tool it does not name, the registry policy is still the nearest one")
+}
+
+// Both narrowed by group. The registry policy only stands down for a caller the
+// tool policy actually reaches.
+func TestPolicyPlans_GroupScopedToolPolicyReplacesTheRegistryOnePerCaller(t *testing.T) {
+	t.Parallel()
+	h := newPlanHarness(t, "g_guard", "c_audit")
+	xID := ids.New[ids.RegistryKind]()
+	x := mcpRegistry(xID)
+
+	onRegistry := preRequestPolicy("REG", "g_guard", &policydomain.MCPScope{
+		RegistryIDs: []ids.RegistryID{xID},
+		Groups:      []string{"Finanzas"},
+	})
+	onTool := preRequestPolicy("TOOL", "g_guard", &policydomain.MCPScope{
+		Tools:  []policydomain.MCPToolRef{{RegistryID: xID, Tool: "run_query"}},
+		Groups: []string{"Marketing"},
+	})
+	base := preRequestPolicy("C", "c_audit", nil)
+
+	plans := h.build([]*policydomain.Policy{base}, []*policydomain.Policy{onRegistry, onTool})
+
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas", "Marketing"))),
+		"both reach this caller, so only the nearer destination runs")
+	assert.ElementsMatch(t, []string{"REG", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Finanzas"))),
+		"the tool policy misses this caller, so the registry one is not replaced")
+	assert.ElementsMatch(t, []string{"TOOL", "C"},
+		h.executed(plans.PlanFor(x, "run_query", jwtWithGroups("Marketing"))),
+		"only the tool policy reaches this caller")
+}
