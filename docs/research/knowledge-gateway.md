@@ -1,0 +1,474 @@
+# Knowledge Gateway — research de producto
+
+> Estado: research exploratorio, no es un commitment de roadmap.
+> Fecha: 2026-09-19 · Repo: NeuralTrust/TrustGate · Branch: `claude/knowledge-gateway-research-buaig8`
+> Pregunta de partida: *"¿tiene sentido que el gateway acumule, en paralelo y de forma agnóstica al proveedor,
+> el conocimiento que Claude y ChatGPT acumulan sobre una gran empresa?"*
+
+---
+
+## 0. TL;DR
+
+**Sí, hay producto — pero no el que sugiere la tesis inicial.**
+
+1. **La tesis "no seas prisionero del proveedor" es la parte más débil.** El coste de cambio del *memory*
+   de un proveedor hoy es bajo y **está bajando por decisión de los propios proveedores**: Anthropic lanzó
+   import/export de memoria en agosto de 2026, incluyendo importar memorias de ChatGPT y Gemini. Los
+   proveedores están compitiendo por *facilitar* el switch para robarse usuarios. Vender miedo al lock-in
+   es vender contra una tendencia que juega en contra.
+2. **La parte fuerte es la otra mitad: nadie está construyendo el activo.** El conocimiento que hoy se
+   genera dentro de ChatGPT/Claude en una gran empresa (decisiones, criterios, resoluciones, contexto de
+   cliente, "cómo hacemos las cosas aquí") **se evapora**: vive en transcripciones por usuario, sin
+   estructura, sin permisos, sin gobierno y sin que nadie lo convierta en activo reutilizable. Ese es el
+   dolor real, y no es un dolor de portabilidad: es un dolor de **capitalización y gobierno**.
+3. **La ventaja diferencial de NeuralTrust no es la memoria: es el punto de interceptación.** Mem0, Zep,
+   Letta, Supermemory y MemoryLake tienen motor de memoria pero **no tienen plano de interceptación
+   empresarial**. LiteLLM, Portkey (ahora Palo Alto), Kong y Cloudflare tienen plano pero **no tienen
+   memoria**. TrustGate ya está en la ruta de tráfico API + MCP, y NeuralTrust ya vende al comprador de
+   seguridad que firma los accesos de Enterprise. **La intersección gateway × memoria × gobierno está
+   vacía.**
+4. **Existe una tubería nativa que casi nadie está usando: Anthropic Inference Hooks.** Anthropic envía
+   **la transcripción de cada prompt gobernado** de claude.ai, Cowork y Claude Code al servidor HTTPS de tu
+   organización antes de la inferencia, y la propia documentación lista *"real-time transcript archival"*
+   como caso de uso. Es exactamente el rol de "AI security server" que NeuralTrust ya juega. **Es la única
+   vía inline y nativa para capturar el tráfico de las apps de primera parte.** OpenAI no tiene equivalente.
+5. **El bottom-up puro solo funciona en una de las dos mitades.** Capturar lo que los *empleados* hacen en
+   ChatGPT/Claude Enterprise requiere claves de admin y permisos de Owner: eso es top-down por construcción.
+   Lo que sí es PLG es la **memoria agnóstica para desarrolladores y agentes** (cambiar una base URL / un
+   `npx`). Recomendación: **PLG en la mitad de agentes, y usar esa adopción como caballo de Troya para la
+   venta enterprise de la mitad de asistentes.**
+
+**Veredicto:** construir, pero reposicionado. No es "escapa del lock-in", es **"el conocimiento que tu
+empresa genera usando IA se queda en tu empresa, gobernado, y funciona con cualquier modelo"**. La
+portabilidad es la *demo*, no la propuesta de valor.
+
+---
+
+## 1. La tesis, desmontada
+
+| Afirmación de partida | Veredicto | Por qué |
+|---|---|---|
+| "Las empresas son prisioneras del conocimiento acumulado en Claude/ChatGPT" | **Parcialmente falso** | Anthropic (ago-2026) permite exportar memoria e **importar desde ChatGPT y Gemini**. OpenAI expone conversaciones, ficheros, configs de GPTs y **memories** vía Compliance Logs Platform. La salida existe. |
+| "Ese conocimiento es un activo valioso" | **Cierto, pero no el que crees** | El valor no está en las "memories" del proveedor (preferencias de usuario, tono, formato — superficiales). Está en la **transcripción agregada**: decisiones, contexto de cliente, resoluciones, criterio. Eso sí es un activo y **nadie lo está estructurando**. |
+| "Hace falta una capa paralela agnóstica" | **Cierto** | Ningún proveedor va a construir un almacén de conocimiento que funcione mejor con su competidor. Es un complemento que ellos nunca comoditizarán del todo. |
+| "El gateway es el sitio natural" | **Cierto para agentes / API. A medias para asistentes** | El gateway ve el tráfico API. **No ve** claude.ai ni chatgpt.com. Para esa mitad hacen falta otras tuberías (§3). |
+| "Debe venderse bottom-up con PLG" | **Cierto solo para la mitad de agentes** | Ver §8. La mitad enterprise es venta top-down con comprador de seguridad. |
+
+### El reframe
+
+> No vendes **portabilidad**. Vendes **capitalización con gobierno**.
+> La portabilidad es la prueba de que el activo es tuyo (el *switch test*), no la razón de compra.
+
+Razón: "portabilidad" es un seguro contra un riesgo futuro e hipotético → presupuesto difícil, urgencia baja.
+"Estamos tirando a la basura el 100% del criterio que genera la empresa usando IA, y no hay forma de
+auditarlo" → dolor presente, comprador identificado (CISO / Head of AI), y encaja con lo que NeuralTrust ya vende.
+
+---
+
+## 2. Dónde vive realmente el conocimiento
+
+Mapa de superficies en una empresa grande, ordenado por volumen de conocimiento generado:
+
+| Superficie | Quién la usa | ¿La ve TrustGate hoy? | ¿Se puede capturar? |
+|---|---|---|---|
+| Apps de agentes propias (API) | Equipos de producto | **Sí** (proxy `:8081`) | Trivial, ya está |
+| Claude Code / Cursor / Copilot | Ingeniería | Parcial (si pasan por el gateway) | Sí, vía MCP o base URL |
+| claude.ai / Claude Cowork | Todo el mundo | **No** | Sí — Inference Hooks (inline) o Compliance API (batch) |
+| chatgpt.com (Business/Enterprise) | Todo el mundo | **No** | Solo batch (Compliance Logs) o interceptación de red/navegador |
+| Gemini / Copilot M365 | Todo el mundo | **No** | Vía sus propios logs de admin |
+| MCP servers corporativos | Agentes + asistentes | **Sí** (plano `:8082`) | Ya está |
+
+**Conclusión operativa:** el gateway cubre hoy la columna de agentes. La columna de asistentes
+(que es donde está el *volumen* de conocimiento humano) requiere **tuberías nuevas**, y esas tuberías
+existen y están documentadas. Eso es lo que hace que el proyecto sea viable y no una fantasía.
+
+---
+
+## 3. Vías técnicas de captura (el corazón del análisis)
+
+### A. Interceptación en el path API — *ya lo tenéis*
+
+TrustGate ya proxea `/v1/chat/completions`, `/v1/messages`, embeddings, files. Dos mecanismos concretos:
+
+**A1. Ser el backend del Memory Tool de Anthropic.**
+El memory tool de Claude es **client-side**: Claude *pide* operaciones de fichero sobre `/memories` y
+**la aplicación las ejecuta** y devuelve un `tool_result`. Se activa con el header beta
+`context-management-2025-06-27`.
+→ Un gateway en el medio puede **ejecutar él mismo esas operaciones** contra el almacén del cliente.
+El resultado: la memoria que Claude cree estar escribiendo en el disco de la app **acaba en el grafo de
+conocimiento de la empresa**, y es reinyectable en GPT, Gemini o Llama. Esta es, técnicamente, la
+demostración más limpia de la tesis completa, y **cuesta poco implementarla** porque TrustGate ya tiene
+`toolinjection` y `toolallowlist`.
+
+**A2. Inyección determinista de contexto.**
+Antes de reenviar al proveedor: recuperar del grafo y añadir al prompt (como hace el *Memory Router* de
+Supermemory, que es un proxy transparente con cambio de base URL). Ventaja frente a MCP: **es
+determinista**, no depende de que el modelo decida llamar a una herramienta.
+
+### B. Plano MCP — *ya lo tenéis*
+
+Exponer `memory.search` / `memory.write` como servidor MCP en `:8082`, consumible por Claude Desktop,
+Claude Code, Cursor, y por ChatGPT (custom MCP connectors; los write-capable están restringidos a
+Business/Enterprise/Edu). Es el patrón de OpenMemory (Mem0).
+**Pros:** instalación por usuario, cero permisos de admin, es el vector bottom-up.
+**Contras:** el modelo tiene que *querer* llamar a la herramienta (probabilístico), consume tokens de
+definición de tools en cada request, y en ChatGPT Enterprise el connector custom lo publica un admin.
+
+### C. Anthropic Inference Hooks — *la joya escondida* 🔑
+
+Beta, para organizaciones **Claude Enterprise**. Anthropic hace `POST` a un endpoint HTTPS tuyo con **la
+transcripción de la conversación** antes de cada inferencia gobernada, y espera un veredicto
+allow/deny (timeout configurable, 5 s por defecto), firmado según **Standard Webhooks**.
+
+- **Cobertura:** claude.ai, Cowork y Claude Code — web, desktop, móvil y CLI, con un solo hook.
+  También se dispara en el **retorno de resultados de herramientas**.
+- **Caso de uso documentado por Anthropic:** *"Real-time transcript archival — archive each transcript as
+  it arrives and always return allow"*. Literalmente la funcionalidad que queremos.
+- **Rollout seguro:** modo shadow (observa sin bloquear), porcentaje de rollout, exclusiones por rol,
+  failure handling configurable y circuit breaker.
+- **Límites duros:** no llegan system prompts ni definiciones de tools; no llegan bytes crudos de ficheros
+  ni imágenes (solo texto extraído y metadatos); el veredicto es **allow/deny, no reescritura**; no cubre
+  voice mode; **no está disponible en Bedrock ni Vertex**; requiere permiso `organization:manage`
+  (solo Owner / Primary owner).
+- **Anthropic no almacena** el contenido como parte del hook: solo metadatos de la actividad del hook.
+
+> **Implicación estratégica:** Anthropic ha construido el enchufe para que un vendor de seguridad se
+> siente inline en el tráfico de sus apps de primera parte. NeuralTrust *es* ese vendor. La misma
+> integración sirve simultáneamente para (a) DLP/guardrails — lo que ya vendéis — y (b) alimentar el
+> knowledge gateway. **Una integración, dos productos.** Y el comprador ya está comprando la primera.
+
+### D. Compliance APIs — la vía batch, completa y aburrida
+
+**Anthropic Compliance API** (`/v1/compliance/*`, Claude Enterprise, `Compliance Access Key`):
+Activity Feed + **contenido real** de chats, ficheros y proyectos de claude.ai, más **transcripciones de
+sesiones** de Cowork, Claude Code, Claude Science, Claude for M365 y Claude in Chrome. 600 req/min por
+organización padre. (Ojo: la *exportación CSV de audit logs* de la UI es mucho más pobre — no incluye
+contenido. No confundirlas.)
+
+**OpenAI Compliance Logs Platform** (Enterprise/Edu, no Team ni consumer): ficheros JSONL inmutables por
+ventana temporal con **conversaciones completas, ficheros subidos, configuraciones de GPTs, memories,
+acciones de admin y eventos de auth**. Retención en la plataforma de ~30 días → hay que hacer pull y
+guardarlo tú. **Esta es la única vía razonable del lado OpenAI**: no existe un hook inline nativo
+equivalente a Inference Hooks; las alternativas son proxy de red (Zscaler/Netskope) o extensión de navegador.
+
+### E. Red / navegador — probablemente no jugar aquí
+
+Es donde compiten Zscaler, Netskope, Microsoft Purview, dope.security. Interceptan por proxy SSL o
+extensión. Mem0 hizo la versión consumer con su extensión de Chrome. **Recomendación: no competir por el
+plano de red.** Es un mercado de SSE consolidado y no es vuestro punto fuerte.
+
+### Ranking de las vías
+
+| Vía | Fricción de adopción | Cobertura | Fidelidad | Cuándo |
+|---|---|---|---|---|
+| A. Path API (memory tool + inyección) | **Nula** (ya sois el proxy) | Agentes propios | Total | **Ya** |
+| B. MCP | Baja (por usuario) | Devs + asistentes | Parcial (probabilística) | **Ya** |
+| C. Inference Hooks | Media (Owner de Enterprise) | claude.ai + Cowork + Claude Code | Alta, inline | **Fase 2 — la apuesta** |
+| D. Compliance APIs | Media/alta (admin keys) | Todo el histórico, ambos proveedores | Alta, diferida | Fase 2 |
+| E. Red/navegador | Alta | Todo | Media | No |
+
+---
+
+## 4. Landscape competitivo
+
+### 4.1 Motores de memoria (los "competidores" que os preocupan)
+
+| Producto | Modelo | Señal | Riesgo para nosotros |
+|---|---|---|---|
+| **Mem0** | OSS + cloud, extracción LLM + búsqueda semántica | ~48k estrellas, $24M, memoria integrada en el Agent SDK de AWS, **OpenMemory MCP** + extensión Chrome | **Alto**: es el default mental y ya hace el cross-tool MCP |
+| **Zep / Graphiti** | Graphiti OSS Apache-2.0 (~31k ★), Zep gestionado | Grafo temporal bi-temporal, invalidación de hechos en vez de borrado; Community Edition **deprecada** (abr-2025) → Zep es enterprise-only, desde ~$125/mes por créditos/episodio | **Medio**: excelente motor, mala fricción PLG |
+| **Letta** (ex-MemGPT) | Runtime de agente completo | $10M seed; memoria en 3 niveles | Bajo: se comen toda la app, no es capa |
+| **Supermemory** | **Memory Router: proxy transparente, cambias la base URL** | Inyecta memorias y poda contexto sin cambios de código | **Muy alto**: es *exactamente* el patrón "memoria en el gateway" |
+| **Cognee / MemoryLake** | Pipelines de memoria; MemoryLake se vende como **"memory passport… platform-neutral"** | Provenance y trazabilidad por memoria | **Alto en mensaje**: MemoryLake ya ocupa el discurso de neutralidad |
+
+> ⚠️ **Dato incómodo: la posición de mensaje que queríamos ("memoria agnóstica del proveedor") ya está
+> ocupada por Supermemory (a nivel técnico) y MemoryLake (a nivel narrativo).** Lo que *no* está ocupado
+> es la combinación con interceptación enterprise y gobierno.
+
+### 4.2 Gateways
+
+Portkey **fue adquirido por Palo Alto Networks** (anunciado el 30-abr-2026, cerrado el 29-may-2026) y se
+está integrando en Prisma AIRS como plano de control de AI Gateway. Contraprestación total: **~$117M**,
+prácticamente todo en caja, según el 10-K FY2026 de PANW. LiteLLM sigue siendo el self-hosted de
+referencia; Cloudflare compite por el edge; Kong desde el mundo API.
+→ **Lectura, en dos direcciones.** (1) El mercado de gateways se está consolidando **dentro de vendors de
+seguridad**, que es exactamente la tesis de NeuralTrust — buena señal de categoría. (2) Pero $117M es un
+múltiplo modesto para el gateway *de referencia* del mercado: dice que **el gateway solo, como plano de
+tráfico, no es un negocio grande por sí mismo**; vale como punto de control desde el que vender otra cosa.
+Eso sube mucho la urgencia de tener una capa de producto encima que un Palo Alto no replique en un
+trimestre. **Memoria gobernada es exactamente ese tipo de capa** (es producto, no feature de proxy).
+
+### 4.3 Knowledge / enterprise search
+
+**Glean** (~$4.6B): +100 conectores, grafo de conocimiento **permission-aware**, explícitamente
+*model-agnostic* — es decir, **ya vende el argumento de "no te quedas atado a un LLM"**. En su propia
+evaluación afirma que sus respuestas se prefieren ~1,9× sobre *company knowledge* de ChatGPT y ~1,6× sobre
+Claude (self-reported, tomarlo como marketing). Alternativas OSS: Onyx, Dust.
+
+**OpenAI Company Knowledge** (Business/Enterprise/Edu): conecta Slack, SharePoint, Drive con citaciones, y
+va a soportar **custom MCP connectors con search/fetch**.
+
+> **Distinción crítica que hay que mantener clara:** Glean y Company Knowledge indexan **documentos que ya
+> existen**. Lo que proponemos captura **conocimiento que se está creando en la conversación y que no
+> existe en ningún documento**. Son capas distintas y complementarias. Si el pitch se confunde con
+> "enterprise search", perdéis contra Glean por recursos y contra OpenAI por distribución.
+
+### 4.4 Los proveedores como competidores
+
+- Anthropic: memoria unificada chat + Cowork (25-ago-2026), export en Settings, **import desde ChatGPT y
+  Gemini**.
+- OpenAI: memories exportables vía Compliance Logs; company knowledge.
+- Ambos tienen incentivo para hacer la *entrada* fácil y la *salida* aceptable. **Comoditizarán la
+  portabilidad simple.** Lo que no comoditizarán: estructura multi-proveedor, permisos corporativos,
+  retención, auditoría y reutilización por agentes propios.
+
+### 4.5 Estándares (relevante para posicionamiento, no para roadmap inmediato)
+
+Hay un **W3C AI Agent Memory Interoperability Community Group**, una propuesta de wire format neutral
+(*memorywire*, pensada como extensión de MCP), la **Engram Specification** (Apache-2.0, PLUR) y papers de
+transferencia de memoria con provenance verificable. **No hay estándar consolidado.**
+→ Oportunidad barata y de alto retorno reputacional: **participar/liderar desde Europa** y publicar el
+formato de export de TrustGate como implementación de referencia. Refuerza exactamente el mensaje de
+neutralidad y cuesta muy poco.
+
+### 4.6 Palanca regulatoria (útil, pero no la apuesta)
+
+El **EU Data Act** (aplicable desde el 12-sep-2025) impone régimen de switching: derecho contractual a
+cambiar de proveedor, procedimiento de migración, periodo transitorio máximo de 30 días, formato
+estructurado e interoperable, y **eliminación de tasas de egress a partir del 12-ene-2027**.
+**Pero:** la aplicabilidad a servicios de IA "as-a-service" sigue siendo interpretativa y discutida.
+→ Úsalo como **acelerador de conversación con Legal/Compliance en cuentas EU**, no como el argumento
+central. Si el argumento central es regulatorio, la compra se retrasa hasta que haya obligación clara.
+
+---
+
+## 5. Dónde está la fricción (lo que hay que resolver o esquivar)
+
+1. **Asimetría de captura.** Anthropic te da un hook inline; OpenAI no. Para ChatGPT solo tienes batch
+   (Compliance Logs, retención ~30 días) o interceptación de red/navegador. **El producto será mejor en
+   Claude que en ChatGPT, y hay que diseñar admitiendo esa asimetría** en vez de prometer paridad.
+2. **El modelo tiene que usar la memoria.** Si dependes de MCP, la recuperación es probabilística.
+   **Mitigación:** inyección determinista en el gateway (vía A2), con MCP como complemento.
+3. **El coste está en la escritura, no en la lectura.** Un grafo temporal tipo Graphiti dispara múltiples
+   llamadas LLM por episodio (extracción de nodos → dedup → extracción de aristas → resolución →
+   timestamping). Cifras de benchmark de terceros apuntan a ~$0,556/episodio (Graphiti) vs ~$0,109 (Mem0)
+   — direccionales, no auditadas. **A volumen de chat corporativo, "acumularlo todo en paralelo" no es
+   económicamente viable.** Hace falta triage: guardar barato siempre, extraer caro solo lo que supere un
+   umbral de valor.
+4. **Permisos.** Memoria derivada de documentos hereda los permisos de esos documentos. Aplanar todo en un
+   grafo compartido convierte el producto en **una máquina de fugas de información interna**. Este es el
+   problema de ingeniería más duro de todos (y el foso real de Glean). No se puede dejar para la v2.
+5. **Legal/laboral en Europa — subestimado.** Capturar conversaciones de empleados activa
+   **codeterminación del comité de empresa** (§87 BetrVG en Alemania; equivalentes en Austria, Países
+   Bajos y Francia), exige **DPIA**, y si el output se usa para evaluar desempeño puede caer en
+   **Anexo III del AI Act** como alto riesgo. **Implicación de diseño, no nota al pie:** opt-in por
+   workspace, memoria **visible y editable por el usuario**, redacción de PII en escritura, y narrativa de
+   *"conocimiento de equipo"*, nunca de *"vigilancia del empleado"*. Un despliegue que parezca monitorización
+   se muere en el comité de empresa antes de llegar a producción.
+6. **Demostrar valor es difícil.** Los benchmarks de memoria (LoCoMo) están saturados y no predicen
+   comportamiento agéntico; las puntuaciones que publican los vendors usan prompts de evaluación distintos
+   y no son comparables entre sí. La mayoría de fallos en producción ocurren en la **escritura y el
+   mantenimiento**, no en la lectura. **Hay que construir la medición desde el día 1** (tasa de recall útil,
+   contradicciones detectadas, reducción de re-explicación) o no se podrá renovar el contrato.
+7. **La categoría no existe.** Nadie busca "knowledge gateway". Sirve como nombre interno de la feature;
+   externamente hay que hablar el idioma del comprador.
+
+---
+
+## 6. Qué es defendible para NeuralTrust
+
+Tres cosas, en orden de solidez:
+
+1. **El punto de interceptación.** Ser simultáneamente proxy API, plano MCP y *AI security server* de
+   Inference Hooks. Un Mem0 tendría que construir el negocio de seguridad entero para llegar aquí; un
+   Palo Alto tendría que construir el motor de memoria. **Vosotros ya tenéis las dos mitades a medio camino.**
+2. **La memoria como política de gateway, no como base de datos.** Quién puede escribir, quién puede leer,
+   qué se redacta al escribir, cuánto se retiene, cómo se borra (derecho al olvido), quién lo auditó.
+   Mem0 y Zep venden recall; vosotros podéis vender **recall gobernado**, que es lo único que un banco
+   puede desplegar.
+3. **Neutralidad creíble y europea.** El mensaje de neutralidad suena hueco en boca de un vendor
+   americano dependiente de un proveedor. TrustGate es Apache-2.0, self-hostable, binario Go sin
+   dependencias de runtime. **Eso es verificable, no marketing.**
+
+---
+
+## 7. Arquitectura propuesta sobre TrustGate
+
+Lo relevante es cuánto de esto **ya existe** en el repo:
+
+| Pieza necesaria | Qué hay hoy en TrustGate | Qué falta |
+|---|---|---|
+| Interceptar/mutar requests | `pkg/infra/plugins/*` (stages de plugin, `toolinjection`, `prompttemplate`, `promptcompression`) | Plugin `memory` (read stage + write stage) |
+| Embeddings | `pkg/infra/embedding`, `pkg/domain/embedding`, ya usados por `semanticcache` | Reutilizar tal cual |
+| Servir tools a asistentes | Plano MCP `:8082` (`pkg/app/mcp`, `pkg/infra/mcp`, OAuth en `pkg/app/mcpoauth`) | Servidor MCP `memory` |
+| Multi-proveedor | `pkg/infra/providers` (9+ proveedores, routing, fallback) | Nada — es justo lo que hace agnóstica la memoria |
+| Identidad / consumers | auth por consumer, políticas por consumer | Mapear consumer → sujeto de memoria + ACL |
+| Redacción / seguridad | `logredact`, `firewall`, `trustguard` | Reutilizar en el write path |
+| Almacén de conocimiento | — | **Decisión pendiente (§7.1)** |
+| Endpoint de ingestión batch | — | Workers para Compliance APIs |
+| Endpoint de Inference Hooks | — | Receptor HTTPS con verificación Standard Webhooks |
+
+### 7.1 ¿Graphiti como motor?
+
+**Recomendación: no en la v1; sí evaluarlo en la v2 como motor opcional.**
+
+A favor: Apache-2.0, modelo bi-temporal maduro (invalida hechos en vez de borrarlos → auditoría e
+histórico gratis), retrieval híbrido rápido (P95 en cientos de ms), servidor MCP y REST ya incluidos,
+soporte multi-LLM y multi-DB (Neo4j, FalkorDB, Neptune).
+
+En contra, y pesa: es **Python** (TrustGate es un binario Go único sin dependencias de runtime — meter
+Python + Neo4j destruye literalmente el argumento de despliegue que usáis contra LiteLLM en el README),
+el **coste de escritura es alto**, y Zep deprecó su Community Edition, lo que señala que el upstream
+optimiza para su cloud enterprise, no para integradores.
+
+**Camino sugerido:** v1 con almacén propio simple (Postgres + pgvector, hechos con validez temporal y
+provenance al episodio origen — copiar el *modelo* bi-temporal de Graphiti sin copiar la dependencia).
+Dejar el motor detrás de una interfaz para poder enchufar Graphiti o Zep como backend en clientes que ya
+lo usen. Eso además convierte a Zep/Mem0 de competidores en *backends*, que es una postura comercial
+mucho más cómoda para un gateway neutral.
+
+---
+
+## 8. GTM bottom-up / PLG
+
+### 8.1 El problema estructural del bottom-up aquí
+
+La mitad que más te interesa (conocimiento de empleados en ChatGPT/Claude Enterprise) **es imposible de
+adoptar bottom-up**: Inference Hooks requiere `organization:manage` (solo Owner/Primary owner) y las
+Compliance APIs requieren claves de admin. No hay atajo. Fingir lo contrario lleva a un funnel roto.
+
+**Por tanto: dos movimientos, no uno.**
+
+```
+ PLG (self-serve, dev)                     Enterprise (asistido, seguridad)
+ ──────────────────────                    ───────────────────────────────
+ Memoria para agentes propios       ──►    Captura de claude.ai / ChatGPT
+ vía base URL o MCP                        vía Inference Hooks + Compliance API
+ Gratis / OSS / self-host                  Contrato, SSO, permisos, retención
+ Usuario: dev de agentes                   Comprador: CISO / Head of AI
+ ~10 minutos                               ~2 meses
+```
+
+El PLG no vende el producto enterprise: **genera la evidencia interna y el campeón** que lo vende.
+
+### 8.2 El momento de activación: el *switch test*
+
+Una sola demo, reproducible en <10 minutos, que contiene todo el argumento:
+
+1. Pasas tus llamadas por TrustGate (cambio de base URL).
+2. Trabajas un rato con Claude. El gateway acumula el conocimiento.
+3. Cambias el modelo a GPT-5 **en la config del gateway, sin tocar una línea de código**.
+4. Preguntas lo mismo. **Responde igual, porque el conocimiento es tuyo, no de Anthropic.**
+
+Eso es un GIF de 20 segundos, es compartible, es verificable, y es la prueba literal de la tesis del
+usuario. **Ese artefacto es el motor de crecimiento.** Si no se consigue hacer memorable, el PLG no arranca.
+
+### 8.3 Reducción de fricción (checklist innegociable)
+
+- Un solo comando: `npx trustgate memory` o `docker run` → funcionando sin cuenta, sin tarjeta, sin SaaS.
+- **Sin base de datos externa obligatoria** en el arranque (SQLite/Postgres embebido; Neo4j mata la activación).
+- Instalación MCP de un clic para Claude Code, Claude Desktop y Cursor.
+- El fallo es *pass-through*: si la capa de memoria cae, la request pasa igual al proveedor
+  (Supermemory lo publicita explícitamente; es tabla de apuestas).
+- Dashboard local desde el minuto uno: **el usuario tiene que VER su memoria**. Es lo que hace el producto
+  tangible, y además es el requisito de transparencia que os salva en la revisión legal (§5.5).
+
+### 8.4 Empaquetado sugerido
+
+| Nivel | Qué incluye | Precio |
+|---|---|---|
+| OSS / self-host | Memoria en el path API, MCP, un almacén, export completo | Gratis (Apache-2.0) |
+| Team | Memoria compartida, ACL por consumer, dashboard, retención | Por workspace |
+| Enterprise | Inference Hooks, ingestión Compliance API (Claude + OpenAI), memoria permission-aware, redacción PII, auditoría, SSO | Contrato |
+
+**Evitar el error de Mem0**: su salto $19 → $249 deja un hueco donde los equipos pequeños no pueden
+validar en producción. Métrica de cobro: **por workspace y retención**, no por operación de memoria
+— cobrar por escritura castiga justo el comportamiento que queréis fomentar (acumular).
+
+### 8.5 Mensaje
+
+- ❌ "Knowledge gateway" (nadie lo busca), "no seas prisionero de tu proveedor" (miedo abstracto).
+- ✅ **"El conocimiento que tu empresa genera con IA se queda en tu empresa."**
+- Subtítulo para el comprador técnico: *"Memoria gobernada para agentes y asistentes. Cualquier modelo.
+  Self-hosted. Exportable."*
+
+---
+
+## 9. Plan por fases y criterios de parada
+
+**Fase 0 — Validación (2–3 semanas, sin código de producto).**
+15 conversaciones: 5 plataformas de IA en empresas grandes, 5 devs de agentes, 5 CISOs.
+Preguntas que hay que responder con evidencia, no con intuición:
+(a) ¿alguien ha intentado ya exportar o reutilizar lo que hay en ChatGPT/Claude Enterprise?
+(b) ¿el dolor se articula como portabilidad, como capitalización o como auditoría?
+(c) ¿cuántos tienen Claude Enterprise **y** ChatGPT Enterprise a la vez? (si son pocos, la tesis
+multi-proveedor se debilita mucho y el producto es "memoria gobernada", sin más).
+> **Kill criterion:** si nadie ha *intentado* sacar ese conocimiento, no hay dolor — hay una idea bonita.
+
+**Fase 1 — El switch test (4–6 semanas).**
+Plugin `memory` (read+write) + backend del memory tool de Anthropic + servidor MCP `memory` + dashboard.
+Todo sobre la infraestructura que ya existe en el repo.
+> **Éxito:** X instalaciones self-serve y el GIF del switch test circulando. **Kill:** si los devs lo
+> instalan y no lo mantienen encendido a la semana, la memoria no está aportando y hay que parar.
+
+**Fase 2 — La apuesta enterprise (8–12 semanas).**
+Receptor de Inference Hooks (empezando en **modo shadow**, que es además la forma de entrar sin miedo en
+una cuenta) + ingestión desde Compliance API de Anthropic y OpenAI + memoria permission-aware.
+Venderlo **junto con el DLP que ya vendéis**: es la misma integración.
+> **Kill:** si en 2 cuentas piloto el comité de empresa o Legal bloquean la captura, el producto en EU es
+> inviable tal cual y hay que replegarse a "memoria de agentes", que sigue siendo un buen negocio.
+
+**Fase 3 — Neutralidad como estándar.**
+Formato de export documentado + participación en el W3C Community Group + backends opcionales
+(Zep/Mem0/Graphiti). Convierte la neutralidad en algo auditable y convierte competidores en integraciones.
+
+---
+
+## 10. Preguntas abiertas
+
+1. ¿Cuántas cuentas objetivo tienen **Claude Enterprise** (requisito de Inference Hooks) y no solo API?
+2. ¿Aceptará Anthropic que el AI security server de un tercero archive transcripciones como servicio
+   comercial? La documentación lo lista como caso de uso, pero **conviene confirmarlo con ellos antes de
+   construir encima**.
+3. ¿Merece la pena cubrir Gemini/Copilot M365 en v1, o multi-proveedor = OpenAI + Anthropic?
+4. ¿La memoria es **por usuario**, **por equipo** o **por organización**? Es la decisión de producto más
+   cara de revertir, y determina el modelo de permisos entero.
+5. ¿Cómo se mide "el conocimiento sirvió"? Sin esto no hay renovación.
+
+---
+
+## 11. Fuentes
+
+**Proveedores (documentación oficial)**
+- [Anthropic — Inference hooks](https://platform.claude.com/docs/en/manage-claude/inference-hooks)
+- [Anthropic — Compliance API](https://platform.claude.com/docs/en/manage-claude/compliance-api)
+- [Anthropic — Memory tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool)
+- [Anthropic — Import and export your memory from Claude](https://support.claude.com/en/articles/12123587-import-and-export-your-memory-from-claude)
+- [OpenAI — Compliance Platform for Enterprise and Edu](https://help.openai.com/en/articles/9261474-openai-compliance-platform-for-enterprise-and-edu-customers)
+- [OpenAI — New compliance and administrative tools for ChatGPT Enterprise](https://openai.com/index/new-tools-for-chatgpt-enterprise/)
+- [OpenAI — Company knowledge in ChatGPT](https://help.openai.com/en/articles/12628342-company-knowledge-in-chatgpt-business-enterprise-and-edu)
+- [OpenAI — Developer mode and MCP apps in ChatGPT](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+
+**Landscape de memoria**
+- [Graphiti (getzep/graphiti)](https://github.com/getzep/graphiti) · [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956) · [Zep pricing](https://www.getzep.com/pricing/)
+- [Mem0 — Introducing OpenMemory MCP](https://mem0.ai/blog/introducing-openmemory-mcp) · [OpenMemory Chrome extension](https://mem0.ai/blog/introducing-the-openmemory-chrome-extension) · [State of AI Agent Memory 2026](https://mem0.ai/blog/state-of-ai-agent-memory-2026)
+- [Supermemory — Memory Router](https://supermemory.ai/docs/memory-router/overview) · [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory)
+- [MemoryLake — cross-agent memory](https://www.memorylake.ai/en/blogs/cross-agent-memory)
+- [Comparativa Mem0 / Zep / Letta / Cognee / Supermemory (Q3 2026)](https://mnemoverse.com/docs/library/ai-memory-solutions-2026-q3) · [Feather DB — landscape 2026](https://www.getfeather.store/theory/ai-agent-memory-frameworks-landscape-2026)
+- [Coste de ingestión en grafos de memoria](https://codex.danielvaughan.com/2026/03/30/graphiti-agent-memory-store/) · [Graphiti issue #1193 — custom extraction and lower LLM costs](https://github.com/getzep/graphiti/issues/1193)
+- [Mem0 — benchmarks de memoria 2026 (LoCoMo, LongMemEval, BEAM)](https://mem0.ai/blog/ai-memory-benchmarks-in-2026) · [Cómo evaluar memoria de agentes](https://labelstud.io/learning-center/how-to-evaluate-agent-memory/)
+
+**Gateways y knowledge**
+- [Palo Alto Networks completa la adquisición de Portkey (nota de prensa)](https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents) · [PANW Form 10-K FY2026 (importe de la operación)](https://www.sec.gov/Archives/edgar/data/0001327567/000132756726000023/panw-20260731.htm) · [Comparativa de AI gateways 2026](https://www.braintrust.dev/articles/ai-gateway-comparison-2026)
+- [Glean — evaluación de enterprise search 2026 (self-reported)](https://www.glean.com/blog/enterprise-search-evaluation-2026) · [ChatGPT entra en enterprise search](https://www.reworked.co/knowledge-findability/openai-pushes-into-enterprise-search-with-company-knowledge/)
+- [AI DLP para ChatGPT y Claude (2026)](https://dope.security/post/best-ai-dlp-software-chatgpt-claude-compared-2026)
+
+**Estándares y regulación**
+- [W3C AI Agent Memory Interoperability Community Group](https://www.w3.org/community/ai-agent-memory-interop/) · [memorywire (arXiv 2606.01138)](https://arxiv.org/pdf/2606.01138) · [Engram Specification](https://plur.ai/blog/open-standard-ai-agent-memory/) · [Portable Agent Memory (arXiv 2605.11032)](https://arxiv.org/html/2605.11032v1)
+- [EU Data Act — régimen de switching](https://www.lw.com/en/insights/eu-data-act-significant-new-switching-requirements-due-to-take-effect-for-data-processing-services) · [Garrigues — claves del cambio de proveedor cloud](https://www.garrigues.com/en_GB/garrigues-digital/data-act-and-cloud-switching-keys-new-rules-changing-cloud-service-providers)
+- [Protección de datos del empleado e IA en la UE](https://www.fisherphillips.com/en/insights/insights/ai-employee-data-protection-european-union-takeaways-for-multinational-businesses) · [Monitorización de empleados y GDPR](https://secureprivacy.ai/blog/employee-monitoring-gdpr-guide)
+
+> **Nota sobre fiabilidad:** las cifras de benchmark, coste por episodio y cuota de preferencia proceden en
+> su mayoría de publicaciones de los propios vendors o de análisis de terceros no auditados. Son útiles
+> como orden de magnitud y como señal de mercado; **no deben citarse como dato en material comercial**
+> sin verificación propia.
