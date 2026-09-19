@@ -27,11 +27,13 @@
    memoria**. TrustGate ya está en la ruta de tráfico API + MCP, y NeuralTrust ya vende al comprador de
    seguridad que firma los accesos de Enterprise. **La intersección gateway × memoria × gobierno está
    vacía.**
-4. **Existe una tubería nativa que casi nadie está usando: Anthropic Inference Hooks.** Anthropic envía
-   **la transcripción de cada prompt gobernado** de claude.ai, Cowork y Claude Code al servidor HTTPS de tu
-   organización antes de la inferencia, y la propia documentación lista *"real-time transcript archival"*
-   como caso de uso. Es exactamente el rol de "AI security server" que NeuralTrust ya juega. **Es la única
-   vía inline y nativa para capturar el tráfico de las apps de primera parte.** OpenAI no tiene equivalente.
+4. **La tubería de captura es la Compliance API de Anthropic, no los Inference Hooks.** Da conversaciones
+   completas de claude.ai con turnos de asistente, **artifacts versionados**, ficheros generados,
+   knowledge base de projects, y transcripts de Cowork / Claude Code / Chrome / M365 con
+   **llamadas y resultados de herramientas MCP normalizados** — es decir, lo que el modelo respondió y lo
+   que sacó de las integraciones. Retención de 6 años → **backfill histórico**. Los Inference Hooks son un
+   complemento en tiempo real y, sobre todo, la palanca del negocio de DLP que ya vendéis. Del lado
+   OpenAI solo hay logs de compliance con **~30 días de retención**: lo que no se extraiga, se pierde.
 5. **El bottom-up puro solo funciona en una de las dos mitades.** Capturar lo que los *empleados* hacen en
    ChatGPT/Claude Enterprise requiere claves de admin y permisos de Owner: eso es top-down por construcción.
    Lo que sí es PLG es la **memoria agnóstica para desarrolladores y agentes** (cambiar una base URL / un
@@ -73,7 +75,7 @@ Mapa de superficies en una empresa grande, ordenado por volumen de conocimiento 
 |---|---|---|---|
 | Apps de agentes propias (API) | Equipos de producto | **Sí** (proxy `:8081`) | Trivial, ya está |
 | Claude Code / Cursor / Copilot | Ingeniería | Parcial (si pasan por el gateway) | Sí, vía MCP o base URL |
-| claude.ai / Claude Cowork | Todo el mundo | **No** | Sí — Inference Hooks (inline) o Compliance API (batch) |
+| claude.ai / Claude Cowork | Todo el mundo | **No** | Sí — Compliance API (contenido completo, 6 años) + Inference Hooks (señal inline) |
 | chatgpt.com (Business/Enterprise) | Todo el mundo | **No** | Solo batch (Compliance Logs) o interceptación de red/navegador |
 | Gemini / Copilot M365 | Todo el mundo | **No** | Vía sus propios logs de admin |
 | MCP servers corporativos | Agentes + asistentes | **Sí** (plano `:8082`) | Ya está |
@@ -114,42 +116,93 @@ Business/Enterprise/Edu). Es el patrón de OpenMemory (Mem0).
 **Contras:** el modelo tiene que *querer* llamar a la herramienta (probabilístico), consume tokens de
 definición de tools en cada request, y en ChatGPT Enterprise el connector custom lo publica un admin.
 
-### C. Anthropic Inference Hooks — *la joya escondida* 🔑
+### C. Compliance API de Anthropic — **la vía de captura real** 🔑
 
-Beta, para organizaciones **Claude Enterprise**. Anthropic hace `POST` a un endpoint HTTPS tuyo con **la
-transcripción de la conversación** antes de cada inferencia gobernada, y espera un veredicto
-allow/deny (timeout configurable, 5 s por defecto), firmado según **Standard Webhooks**.
+Es la que cubre exactamente lo que el hook no cubre: **respuestas del modelo, salidas de las
+integraciones, ficheros generados y artifacts**. Requiere Claude Enterprise y una `Compliance Access Key`
+(`sk-ant-api01-…`) con scope `read:compliance_user_data`.
 
-- **Cobertura:** claude.ai, Cowork y Claude Code — web, desktop, móvil y CLI, con un solo hook.
-  También se dispara en el **retorno de resultados de herramientas**.
-- **Caso de uso documentado por Anthropic:** *"Real-time transcript archival — archive each transcript as
-  it arrives and always return allow"*. Literalmente la funcionalidad que queremos.
-- **Rollout seguro:** modo shadow (observa sin bloquear), porcentaje de rollout, exclusiones por rol,
-  failure handling configurable y circuit breaker.
-- **Límites duros:** no llegan system prompts ni definiciones de tools; no llegan bytes crudos de ficheros
-  ni imágenes (solo texto extraído y metadatos); el veredicto es **allow/deny, no reescritura**; no cubre
-  voice mode; **no está disponible en Bedrock ni Vertex**; requiere permiso `organization:manage`
-  (solo Owner / Primary owner).
-- **Anthropic no almacena** el contenido como parte del hook: solo metadatos de la actividad del hook.
+**Chats de claude.ai** — `GET /v1/compliance/apps/chats` + `GET /v1/compliance/apps/chats/{id}/messages`.
+La propia documentación describe el bucle de export incremental: `order_by=updated_at` sin `user_ids[]`
+(scope de toda la organización) y paginar con `after_id`, persistiendo el último cursor entre ejecuciones.
+Cada mensaje trae `role` (`user` | `assistant`), su texto, y además:
 
-> **Implicación estratégica:** Anthropic ha construido el enchufe para que un vendor de seguridad se
-> siente inline en el tráfico de sus apps de primera parte. NeuralTrust *es* ese vendor. La misma
-> integración sirve simultáneamente para (a) DLP/guardrails — lo que ya vendéis — y (b) alimentar el
-> knowledge gateway. **Una integración, dos productos.** Y el comprador ya está comprando la primera.
+| Campo | Qué es | Por qué importa |
+|---|---|---|
+| `files` | Lo que subió el usuario | El input real, no solo lo que escribió |
+| `generated_files` | Binarios que Claude produjo vía tools (PDF, xlsx, slides) | El output de trabajo |
+| `artifacts` | Documentos versionados generados por el asistente, con un `version_id` por revisión | **El conocimiento ya estructurado, y con su historia de revisiones** |
 
-### D. Compliance APIs — la vía batch, completa y aburrida
+Hay endpoints de descarga para cada uno. Los **projects** exponen además instrucciones personalizadas,
+knowledge base y adjuntos.
 
-**Anthropic Compliance API** (`/v1/compliance/*`, Claude Enterprise, `Compliance Access Key`):
-Activity Feed + **contenido real** de chats, ficheros y proyectos de claude.ai, más **transcripciones de
-sesiones** de Cowork, Claude Code, Claude Science, Claude for M365 y Claude in Chrome. 600 req/min por
-organización padre. (Ojo: la *exportación CSV de audit logs* de la UI es mucho más pobre — no incluye
-contenido. No confundirlas.)
+**Sesiones de agentes** — `GET /v1/compliance/apps/sessions/local|remote/{id}/messages`, para Cowork,
+Claude Code, Claude Science, Claude for Microsoft 365 y Claude in Chrome. La doc lo define literalmente
+como *"user prompts, assistant responses, and tool calls and results"*. Y el detalle decisivo:
+**las llamadas y resultados de MCP se normalizan en bloques `tool_use` / `tool_result`** → la salida de
+las integraciones conectadas es recuperable.
 
-**OpenAI Compliance Logs Platform** (Enterprise/Edu, no Team ni consumer): ficheros JSONL inmutables por
-ventana temporal con **conversaciones completas, ficheros subidos, configuraciones de GPTs, memories,
-acciones de admin y eventos de auth**. Retención en la plataforma de ~30 días → hay que hacer pull y
-guardarlo tú. **Esta es la única vía razonable del lado OpenAI**: no existe un hook inline nativo
-equivalente a Inference Hooks; las alternativas son proxy de red (Zscaler/Netskope) o extensión de navegador.
+**Tres detalles operativos que no son opcionales:**
+1. `tool_result_max_bytes` y `tool_use_input_max_bytes` van **truncados a 10.000 bytes por defecto**.
+   Hay que pasar `-1` (máximo del servidor, ~1 MiB) o se pierden silenciosamente las respuestas de los
+   conectores, que es justo lo que se quiere capturar.
+2. **Retención de 6 años por defecto** (o el periodo custom de la organización) → se puede hacer
+   **backfill histórico**, no solo captura hacia adelante.
+3. Los cursores de paginación caducan a las 24 h; hay que deduplicar por `id` y solapar ventanas
+   `updated_at.gte` unos minutos hacia atrás, porque una sesión aún indexándose se pierde de forma
+   permanente si se ajusta el límite exacto.
+
+**Lo que aun así no se obtiene:** bloques de *thinking* (nunca), imágenes/PDFs y bloques binarios dentro
+del transcript (aparecen como `[image content not shown]`), metadatos de citación, definiciones de tools y
+configuración MCP, sesiones locales en organizaciones con ZDR o HIPAA readiness, y el turno de respuesta
+cuando el cliente abortó (`client_aborted`).
+
+### D. Anthropic Inference Hooks — **complemento en tiempo real, no la columna vertebral**
+
+Corrección respecto a la primera versión de este documento: **estaba sobrevalorado como vía de captura.**
+Conviene ser preciso sobre lo que sí y lo que no lleva el payload, porque la objeción intuitiva
+("solo veo la entrada del usuario") no es exacta, y la razón real para no usarlo como backbone es otra.
+
+**Sí lleva** (esquema del *prompt frame*): `messages[]` con `role` de `user` o `assistant` — es decir,
+**turnos previos del asistente incluidos** — y bloques `text`, `tool_use` (`tool_name`, `input`),
+`tool_result` (`content` como texto, `is_error`, `tool_name`) y `attachment` con el texto extraído.
+**La salida de las integraciones viaja en los `tool_result`**, y el propio diagrama de Anthropic engancha
+dos puntos: la llegada del prompt y **el retorno del resultado de herramienta**.
+
+**El problema real es otro, y es serio:**
+
+1. **No hay evento de respuesta.** El único evento hoy es `prompt`, *antes* de la inferencia;
+   *"response-side enforcement is planned as a later event"*. La respuesta del asistente solo llega
+   incrustada en el transcript del turno siguiente → **lag de un turno, y se pierde para siempre la última
+   respuesta de cada conversación**. Una conversación de un solo turno no aporta ningún contenido de
+   asistente.
+2. **Coste de transferencia cuadrático.** Los transcripts se envían **sin truncar** y completos en
+   *cada* turno (hasta 64 MiB por protocolo, ~10 MB en la práctica). Archivar por esta vía significa
+   retransferir toda la conversación N veces.
+3. **Te metes en la latencia de toda la organización.** Presupuesto de veredicto de 1 a 10.000 ms
+   (5.000 por defecto), un solo reintento y solo si falla la conexión, circuit breaker tras fallos
+   sostenidos, y un ajuste de *failure handling* que ante una caída tuya **o bloquea Claude a toda la
+   empresa o desactiva silenciosamente la inspección**. Como vendor de seguridad, eso es una
+   responsabilidad de disponibilidad sobre el asistente en producción del cliente.
+4. **Nunca incluye** system prompts, definiciones de tools, contexto interno de Anthropic, **el
+   razonamiento oculto de Claude** ni bytes crudos.
+
+**Dónde sí encaja:** (a) el producto de **DLP/guardrails inline que ya vendéis** — ahí estar en el path es
+justo el objetivo; (b) señal en tiempo real para marcar qué conversaciones merecen extracción cara
+(§5.3), delegando el contenido completo a la Compliance API. La propia doc recomienda, si se archiva por
+hooks, responder `allow` *antes* de persistir para sacar el round trip del camino crítico.
+
+### D-bis. Lado OpenAI — y la asimetría que crea urgencia
+
+OpenAI Compliance Logs Platform (Enterprise/Edu): JSONL con conversaciones completas, ficheros,
+configuraciones de GPTs, **memories**, acciones de admin y eventos de auth. No hay hook inline nativo
+equivalente.
+
+> ⚠️ **La asimetría de retención es el dato comercial más accionable de todo este documento.**
+> Anthropic retiene 6 años → puedes reconstruir el histórico el día que firmes.
+> OpenAI retiene ~30 días en la plataforma → **todo lo que no se extraiga se pierde de forma
+> irreversible**. Cada día sin conectar es un día de conocimiento de ChatGPT destruido para siempre.
+> Eso no es un argumento de portabilidad: es una urgencia con fecha.
 
 ### E. Red / navegador — probablemente no jugar aquí
 
@@ -159,13 +212,14 @@ plano de red.** Es un mercado de SSE consolidado y no es vuestro punto fuerte.
 
 ### Ranking de las vías
 
-| Vía | Fricción de adopción | Cobertura | Fidelidad | Cuándo |
-|---|---|---|---|---|
-| A. Path API (memory tool + inyección) | **Nula** (ya sois el proxy) | Agentes propios | Total | **Ya** |
-| B. MCP | Baja (por usuario) | Devs + asistentes | Parcial (probabilística) | **Ya** |
-| C. Inference Hooks | Media (Owner de Enterprise) | claude.ai + Cowork + Claude Code | Alta, inline | **Fase 2 — la apuesta** |
-| D. Compliance APIs | Media/alta (admin keys) | Todo el histórico, ambos proveedores | Alta, diferida | Fase 2 |
-| E. Red/navegador | Alta | Todo | Media | No |
+| Vía | Fricción | Cobertura | ¿Ve respuestas? | ¿Ve integraciones? | Cuándo |
+|---|---|---|---|---|---|
+| A. Path API (memory tool + inyección) | **Nula** (ya sois el proxy) | Agentes propios | Sí | Sí | **Ya** |
+| B. MCP | Baja (por usuario) | Devs + asistentes | Parcial | Solo lo que pase por vosotros | **Ya** |
+| **C. Compliance API** | Media (clave de compliance) | claude.ai + projects + Cowork + Code + Chrome + M365 | **Sí, completas** | **Sí** (`tool_result`, MCP normalizado) | **Fase 2 — la columna vertebral** |
+| D. Inference Hooks | Media (Owner de Enterprise) | claude.ai + Cowork + Code, inline | **Con lag de 1 turno; se pierde la última** | Sí | Fase 2, como complemento y como DLP |
+| D-bis. OpenAI Compliance Logs | Media/alta (admin) | ChatGPT Enterprise | Sí | Sí | Fase 2 — **urgente por retención de 30 días** |
+| E. Red/navegador | Alta | Todo | Sí | Parcial | No |
 
 ---
 
@@ -244,9 +298,11 @@ central. Si el argumento central es regulatorio, la compra se retrasa hasta que 
 
 ## 5. Dónde está la fricción (lo que hay que resolver o esquivar)
 
-1. **Asimetría de captura.** Anthropic te da un hook inline; OpenAI no. Para ChatGPT solo tienes batch
-   (Compliance Logs, retención ~30 días) o interceptación de red/navegador. **El producto será mejor en
-   Claude que en ChatGPT, y hay que diseñar admitiendo esa asimetría** en vez de prometer paridad.
+1. **Asimetría entre proveedores, en dos ejes.** *Profundidad:* Anthropic expone artifacts versionados,
+   ficheros generados, knowledge base de projects y transcripts de agentes con tool calls; OpenAI expone
+   conversaciones y memories, sin ese nivel de estructura. *Retención:* 6 años frente a ~30 días.
+   **El producto será claramente mejor en Claude que en ChatGPT.** Hay que diseñar admitiendo la asimetría
+   —y convertirla en argumento de urgencia en el lado OpenAI— en vez de prometer paridad.
 2. **El modelo tiene que usar la memoria.** Si dependes de MCP, la recuperación es probabilística.
    **Mitigación:** inyección determinista en el gateway (vía A2), con MCP como complemento.
 3. **El coste está en la escritura, no en la lectura.** Un grafo temporal tipo Graphiti dispara múltiples
@@ -280,8 +336,9 @@ central. Si el argumento central es regulatorio, la compra se retrasa hasta que 
 Tres cosas, en orden de solidez:
 
 1. **El punto de interceptación.** Ser simultáneamente proxy API, plano MCP y *AI security server* de
-   Inference Hooks. Un Mem0 tendría que construir el negocio de seguridad entero para llegar aquí; un
-   Palo Alto tendría que construir el motor de memoria. **Vosotros ya tenéis las dos mitades a medio camino.**
+   Inference Hooks, y consumidor autorizado de las Compliance APIs. Un Mem0 tendría que construir el
+   negocio de seguridad entero para que un CISO le entregue una Compliance Access Key; un Palo Alto
+   tendría que construir el motor de memoria. **Vosotros ya tenéis las dos mitades a medio camino.**
 2. **La memoria como política de gateway, no como base de datos.** Quién puede escribir, quién puede leer,
    qué se redacta al escribir, cuánto se retiene, cómo se borra (derecho al olvido), quién lo auditó.
    Mem0 y Zep venden recall; vosotros podéis vender **recall gobernado**, que es lo único que un banco
@@ -305,8 +362,8 @@ Lo relevante es cuánto de esto **ya existe** en el repo:
 | Identidad / consumers | auth por consumer, políticas por consumer | Mapear consumer → sujeto de memoria + ACL |
 | Redacción / seguridad | `logredact`, `firewall`, `trustguard` | Reutilizar en el write path |
 | Almacén de conocimiento | — | **Decisión pendiente (§7.1)** |
-| Endpoint de ingestión batch | — | Workers para Compliance APIs |
-| Endpoint de Inference Hooks | — | Receptor HTTPS con verificación Standard Webhooks |
+| Ingestión batch | — | Workers de Compliance API: bucle `order_by=updated_at` + cursor persistido, `tool_result_max_bytes=-1`, dedup por `id`, ventanas solapadas |
+| Endpoint de Inference Hooks | — | Receptor HTTPS (Go, ya es vuestro lenguaje): verificación Standard Webhooks, dedup por `webhook-id`, `allow` antes de persistir |
 
 ### 7.1 ¿Graphiti como motor?
 
@@ -343,7 +400,7 @@ Compliance APIs requieren claves de admin. No hay atajo. Fingir lo contrario lle
  PLG (self-serve, dev)                     Enterprise (asistido, seguridad)
  ──────────────────────                    ───────────────────────────────
  Memoria para agentes propios       ──►    Captura de claude.ai / ChatGPT
- vía base URL o MCP                        vía Inference Hooks + Compliance API
+ vía base URL o MCP                        vía Compliance API (+ hooks para DLP)
  Gratis / OSS / self-host                  Contrato, SSO, permisos, retención
  Usuario: dev de agentes                   Comprador: CISO / Head of AI
  ~10 minutos                               ~2 meses
@@ -379,7 +436,7 @@ usuario. **Ese artefacto es el motor de crecimiento.** Si no se consigue hacer m
 |---|---|---|
 | OSS / self-host | Memoria en el path API, MCP, un almacén, export completo | Gratis (Apache-2.0) |
 | Team | Memoria compartida, ACL por consumer, dashboard, retención | Por workspace |
-| Enterprise | Inference Hooks, ingestión Compliance API (Claude + OpenAI), memoria permission-aware, redacción PII, auditoría, SSO | Contrato |
+| Enterprise | Ingestión Compliance API (Claude + OpenAI) con backfill histórico, Inference Hooks para DLP inline, memoria permission-aware, redacción PII, auditoría, SSO | Contrato |
 
 **Evitar el error de Mem0**: su salto $19 → $249 deja un hueco donde los equipos pequeños no pueden
 validar en producción. Métrica de cobro: **por workspace y retención**, no por operación de memoria
@@ -412,9 +469,12 @@ Todo sobre la infraestructura que ya existe en el repo.
 > instalan y no lo mantienen encendido a la semana, la memoria no está aportando y hay que parar.
 
 **Fase 2 — La apuesta enterprise (8–12 semanas).**
-Receptor de Inference Hooks (empezando en **modo shadow**, que es además la forma de entrar sin miedo en
-una cuenta) + ingestión desde Compliance API de Anthropic y OpenAI + memoria permission-aware.
-Venderlo **junto con el DLP que ya vendéis**: es la misma integración.
+**Primero** los workers de Compliance API (Anthropic y OpenAI) — es donde está el contenido real y no
+toca la latencia de nadie. Empezar por el **backfill** de Anthropic: una cuenta piloto ve, el primer día,
+años de su propio conocimiento estructurado. Ese es el momento "ajá" de la venta enterprise, y es
+irreproducible por cualquiera que no tenga la clave.
+**Después** el receptor de Inference Hooks, en **modo shadow**, vendido como DLP inline — que es el
+producto que ya tenéis y la forma de entrar sin fricción. Y memoria permission-aware en paralelo.
 > **Kill:** si en 2 cuentas piloto el comité de empresa o Legal bloquean la captura, el producto en EU es
 > inviable tal cual y hay que replegarse a "memoria de agentes", que sigue siendo un buen negocio.
 
@@ -426,7 +486,7 @@ Formato de export documentado + participación en el W3C Community Group + backe
 
 ## 10. Preguntas abiertas
 
-1. ¿Cuántas cuentas objetivo tienen **Claude Enterprise** (requisito de Inference Hooks) y no solo API?
+1. ¿Cuántas cuentas objetivo tienen **Claude Enterprise** (requisito tanto de la Compliance API de contenido como de los hooks) y no solo acceso por API?
 2. ¿Aceptará Anthropic que el AI security server de un tercero archive transcripciones como servicio
    comercial? La documentación lo lista como caso de uso, pero **conviene confirmarlo con ellos antes de
    construir encima**.
@@ -442,6 +502,9 @@ Formato de export documentado + participación en el W3C Community Group + backe
 **Proveedores (documentación oficial)**
 - [Anthropic — Inference hooks](https://platform.claude.com/docs/en/manage-claude/inference-hooks)
 - [Anthropic — Compliance API](https://platform.claude.com/docs/en/manage-claude/compliance-api)
+- [Anthropic — Retrieve and delete chats, files, and projects](https://platform.claude.com/docs/en/manage-claude/compliance-content-data)
+- [Anthropic — Retrieve session transcripts](https://platform.claude.com/docs/en/manage-claude/compliance-sessions)
+- [Anthropic — Develop an Inference hooks integration (esquema del payload)](https://platform.claude.com/docs/en/manage-claude/inference-hooks-endpoint)
 - [Anthropic — Memory tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool)
 - [Anthropic — Import and export your memory from Claude](https://support.claude.com/en/articles/12123587-import-and-export-your-memory-from-claude)
 - [OpenAI — Compliance Platform for Enterprise and Edu](https://help.openai.com/en/articles/9261474-openai-compliance-platform-for-enterprise-and-edu-customers)
