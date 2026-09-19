@@ -4,6 +4,8 @@
 > Fecha: 2026-09-19 · Repo: NeuralTrust/TrustGate · Branch: `claude/knowledge-gateway-research-buaig8`
 > Pregunta de partida: *"¿tiene sentido que el gateway acumule, en paralelo y de forma agnóstica al proveedor,
 > el conocimiento que Claude y ChatGPT acumulan sobre una gran empresa?"*
+>
+> **Diseño del flujo de datos:** [`knowledge-gateway-dataflow.md`](knowledge-gateway-dataflow.md)
 
 ---
 
