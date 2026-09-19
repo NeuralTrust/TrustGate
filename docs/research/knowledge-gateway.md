@@ -5,7 +5,8 @@
 > Pregunta de partida: *"¿tiene sentido que el gateway acumule, en paralelo y de forma agnóstica al proveedor,
 > el conocimiento que Claude y ChatGPT acumulan sobre una gran empresa?"*
 >
-> **Diseño del flujo de datos:** [`knowledge-gateway-dataflow.md`](knowledge-gateway-dataflow.md)
+> **Tesis de categoría (nivel de ambición actual):** [`knowledge-gateway-thesis.md`](knowledge-gateway-thesis.md)
+> **Diseño del flujo de datos (el wedge):** [`knowledge-gateway-dataflow.md`](knowledge-gateway-dataflow.md)
 
 ---
 
