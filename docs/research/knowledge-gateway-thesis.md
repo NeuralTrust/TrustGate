@@ -188,7 +188,7 @@ difícil… o que nadie lo quiere. Es exactamente la apuesta 2 del §8, y sigue 
 Una tesis grande sin cuña estrecha es como mueren las empresas. Segment no lanzó "la categoría CDP":
 lanzó **un `<script>`**. El nombre de la categoría llegó después, y se lo quedaron ellos.
 
-**La cuña propuesta: el informe de contradicciones.**
+**La cuña propuesta: el informe de contradicciones.** → diseño completo en [`contradiction-report.md`](contradiction-report.md)
 
 > *"Tus agentes se contradicen entre sí. Aquí están los 40 sitios donde pasa."*
 
