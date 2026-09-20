@@ -128,6 +128,49 @@ duro de verdad. Difícil de construir = difícil de copiar.
 
 ---
 
+## 4-bis. ¿Hacen ya los demás la capa de "company brain"? — verificado en código
+
+Todos usan el vocabulario ("organizational memory", "company brain", "contexto de empresa"). **Ninguno ha
+construido el primitivo organizativo.** Los tres hacen lo mismo: memoria particionada por una clave plana.
+
+| | Primitivo de scope | Qué es de verdad |
+|---|---|---|
+| **Mem0** | `user_id` · `agent_id` · `run_id` | Memoria por usuario, agente o ejecución. **No existe org, team ni tenant** en la firma de `add()` / `search()`. |
+| **Graphiti** | `group_id` | Clave de partición plana. |
+| **Supermemory** | `containerTag` | Clave de partición plana. Su propia doc: *"un container puede ser cualquier cosa: un usuario, un proyecto, un equipo, una organización, etc."* |
+
+**"Puede ser cualquier cosa" es precisamente el problema: es un namespace, no un modelo organizativo.**
+Una clave de partición significa que todo lo que hay dentro es una bolsa indiferenciada, y que nada
+cruza entre bolsas. De ahí salen las tres carencias que *son* el problema del company brain:
+
+**1. No hay reconciliación entre personas.** La deduplicación y la invalidación de Graphiti corren
+*dentro* de un `group_id`. Si María y Juan creen cosas distintas, o están en particiones distintas —y
+entonces la contradicción no se detecta nunca— o están en la misma —y sus creencias se funden sin
+noción de quién dijo qué—. Ninguna de las dos es un cerebro de empresa.
+
+**2. No hay recuperación sensible a permisos.** No hay ACL en el motor de Graphiti ni en el de Mem0
+*(los aciertos de `grep` por "permission" eran cabeceras de licencia Apache y parámetros IAM de SDKs
+cloud)*. Supermemory es el único con control de acceso, pero es **autorización sobre el contenedor, no
+sobre el conocimiento**: una API key está o no autorizada en un tag, y una petición fuera de su
+conjunto devuelve `403`. Eso es scoping de claves, no *"María puede ver este hecho y Juan no"*. Y es
+solo Enterprise.
+
+> Consecuencia directa: un company brain sobre una partición compartida **es una máquina de fugas**;
+> sobre particiones por persona **no es un company brain**. **Ninguno de los tres tiene término medio.**
+
+**3. No hay autoridad ni procedencia entre actores.** Nadie modela que lo que afirma el CFO sobre el año
+fiscal pesa más que la suposición de un becario. Sin eso no se puede resolver una contradicción: solo se
+puede detectar.
+
+Nota de honestidad: esto es la superficie abierta y documentada. Zep Cloud y Supermemory Enterprise
+podrían hacer más de lo visible — aunque la propia tabla de Enterprise de Supermemory anuncia
+*"autenticación y controles de acceso para toda la organización"*, que sigue siendo cuenta, no semántica
+del conocimiento. Y las "Organizations" de su consola gestionan, en sus palabras, *"miembros, claves y
+separación de facturación"*.
+
+**Y la contracautela que hay que sostener:** que nadie lo haya construido puede significar que es
+difícil… o que nadie lo quiere. Es exactamente la apuesta 2 del §8, y sigue sin validar.
+
 ## 5. Por qué no lo ganan los que ya están
 
 | Quién | Por qué no |
