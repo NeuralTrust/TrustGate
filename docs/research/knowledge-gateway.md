@@ -286,6 +286,58 @@ superficie de distribución.
    *(Nota aparte: `smfs`, en Rust y con 480 ★, "un sistema de ficheros diseñado para agentes", parece una
    apuesta distinta y vale la pena vigilarla.)*
 
+### 4.2-ter Apertura real de los tres: auditoría de código
+
+Los tres repos clonados e inspeccionados directamente (no leyendo su web).
+
+| | **Supermemory** `57b430b` | **Graphiti / Zep** `5764a6c` | **Mem0** `a39a802` |
+|---|---|---|---|
+| Licencia | MIT | Apache-2.0 | Apache-2.0 |
+| **¿Motor en el repo?** | ❌ **No** | ✅ **Sí** — 158 ficheros `.py` en `graphiti_core` | ✅ **Sí** — `memory/main.py`, 3.868 líneas |
+| **¿Prompts de extracción?** | ❌ No | ✅ `prompts/extract_nodes.py`, `extract_edges.py`, `dedupe_*`, `summarize_*` | ✅ `configs/prompts.py`, 1.062 líneas |
+| Servidor / API | ❌ No hay rutas `/v3` ni `/v4` | ✅ `server/` + `mcp_server/` + Dockerfile + compose | ✅ `server/` + `proxy/main.py` |
+| Gating de features | Motor cerrado por diseño | ✅ Ninguno encontrado | ✅ Ninguno encontrado |
+| Llamadas a API propietaria | 26 refs a `api.supermemory.ai` | **Cero** en el código Python | Cliente de plataforma, opcional |
+| **Riesgo de cierre** | Ya cerrado | ⚠️ **CLA de Zep Software** + Community Edition deprecada (abr-2025) | ⚠️ Sistema de *notices* remoto |
+
+**Orden de apertura real: Graphiti > Mem0 > Supermemory.**
+
+**Graphiti es genuinamente abierto.** Está el pipeline entero —extracción combinada, operaciones de nodos
+y aristas, deduplicación, comunidades, migraciones, búsqueda, drivers— y, lo más revelador, **los prompts
+de extracción**, que es justo el know-how que Supermemory declara propietario. Cero llamadas a un API
+hospedado. La pega no está en el código: está en el **CLA**, que cede a Zep Software, Inc. los derechos
+sobre las contribuciones. Con ese CLA y el precedente de haber deprecado la Community Edition, **la
+apertura de Graphiti es una concesión revocable, no una garantía estructural.**
+
+**Mem0 está abierto, pero instrumentado como embudo.** El motor y los prompts están. Pero
+`mem0/memory/notices.py` **descarga en tiempo de ejecución una configuración remota desde GitHub raw**
+y hace **A/B testing sobre los usuarios de OSS** (`variant_split: 0.5`, flags estilo PostHog). El fichero
+`oss_notices_config.json` declara avisos para `first_run`, `scale_threshold`, y —esto es lo llamativo—
+`temporal_stub` y `decay_stub` **con `notice_type: "error"`**. Hoy solo el de escala está cableado en
+`main.py` (salta en `add` y con `top_k` grande) y los demás están deshabilitados con copy vacío: la
+maquinaria está instalada y es conmutable en remoto sin publicar una versión. Y hay una skill que se
+llama, literalmente, **`mem0-oss-to-platform`**.
+
+**Dos conclusiones para el posicionamiento:**
+
+1. **"Somos open source" no diferencia nada** — compites contra dos Apache-2.0. Lo que diferencia es
+   **qué tipo de apertura**, y eso sí es auditable y por tanto defendible: motor en el repo · prompts
+   incluidos · sin CLA que permita relicenciar · **sin configuración remota que modifique el
+   comportamiento del binario del usuario** · sin phone-home · y un historial de no haber matado la
+   edición community. Eso es una tabla comparativa publicable, y cualquiera puede verificarla clonando.
+   *(Y conviene mirarse al espejo con esa misma tabla antes de publicarla.)*
+
+2. **El playbook de distribución ya está copiado por los dos líderes.** Supermemory tiene un repo por
+   superficie (`claude-supermemory` 2,8k ★, `opencode-supermemory` 1,6k ★, `openclaw-` 796 ★,
+   `codex-`, `cursor-`, `muse-`, `hermes-`). Mem0 lo hace dentro del monorepo:
+   `.claude-plugin`, `.cursor-plugin`, `.codex-plugin`, `.kimi-plugin`, `marketplace.json` y un
+   directorio `skills/`. **Un plugin por superficie de agente ya no es un diferencial: es el precio de
+   entrada** — y se llega tarde a esa carrera.
+
+Lo cual refuerza la tesis de `knowledge-gateway-thesis.md`: no hay que pelear en la capa de librería de
+memoria, donde ellos tienen decenas de miles de estrellas y presencia en cada superficie, sino en la
+posición que estructuralmente no pueden ocupar.
+
 ### 4.2 Gateways
 
 Portkey **fue adquirido por Palo Alto Networks** (anunciado el 30-abr-2026, cerrado el 29-may-2026) y se
