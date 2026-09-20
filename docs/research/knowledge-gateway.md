@@ -235,12 +235,56 @@ plano de red.** Es un mercado de SSE consolidado y no es vuestro punto fuerte.
 | **Mem0** | OSS + cloud, extracción LLM + búsqueda semántica | ~48k estrellas, $24M, memoria integrada en el Agent SDK de AWS, **OpenMemory MCP** + extensión Chrome | **Alto**: es el default mental y ya hace el cross-tool MCP |
 | **Zep / Graphiti** | Graphiti OSS Apache-2.0 (~31k ★), Zep gestionado | Grafo temporal bi-temporal, invalidación de hechos en vez de borrado; Community Edition **deprecada** (abr-2025) → Zep es enterprise-only, desde ~$125/mes por créditos/episodio | **Medio**: excelente motor, mala fricción PLG |
 | **Letta** (ex-MemGPT) | Runtime de agente completo | $10M seed; memoria en 3 niveles | Bajo: se comen toda la app, no es capa |
-| **Supermemory** | **Memory Router: proxy transparente, cambias la base URL** | Inyecta memorias y poda contexto sin cambios de código | **Muy alto**: es *exactamente* el patrón "memoria en el gateway" |
+| **Supermemory** | **Open-surface, closed-engine** (ver §4.2-bis). Memory Router: proxy transparente con cambio de base URL | 31k ★ en un repo que **no contiene el motor**; playbook de un plugin por agente | **Muy alto** en patrón y en distribución; **bajo en apertura real** |
 | **Cognee / MemoryLake** | Pipelines de memoria; MemoryLake se vende como **"memory passport… platform-neutral"** | Provenance y trazabilidad por memoria | **Alto en mensaje**: MemoryLake ya ocupa el discurso de neutralidad |
 
 > ⚠️ **Dato incómodo: la posición de mensaje que queríamos ("memoria agnóstica del proveedor") ya está
 > ocupada por Supermemory (a nivel técnico) y MemoryLake (a nivel narrativo).** Lo que *no* está ocupado
 > es la combinación con interceptación enterprise y gobierno.
+
+### 4.2-bis Supermemory: qué es open source y qué no (verificado en el repo)
+
+Auditado `supermemoryai/supermemory` @ `57b430b` (2026-09-18), licencia MIT, ~31k estrellas.
+**El motor no está.** Lo que contiene el repo:
+
+| Hay | No hay |
+|---|---|
+| `apps/docs` (web de documentación) | Ningún handler de `/v3/*` ni `/v4/*` |
+| `apps/mcp` (worker de Cloudflare) | Ningún servidor de API |
+| `apps/web` (solo `layout.tsx` + `page.tsx`) | Ningún Dockerfile ni compose |
+| SDKs TS/Python, `@supermemory/tools`, `ai-sdk` | Ningún esquema de base de datos |
+| `@supermemory/memory-graph` (**visualización**) | Ningún pipeline de extracción |
+| Extensión de Raycast, playgrounds | Ningún build de binario en los workflows |
+
+Evidencia adicional: 26 referencias en el código apuntan a `https://api.supermemory.ai`; el puerto
+`6767` y `supermemory-server` aparecen **solo en ficheros `.mdx` de documentación, nunca en código**;
+los workflows de publicación solo publican SDKs y el componente de grafo; y el paquete npm
+`supermemory` es el SDK de TypeScript (repo `sdk-ts`, Apache-2.0, cero dependencias, `bin/cli`).
+El binario self-hosted llega por `curl | bash`, no se compila desde este repo.
+
+Y sus propios documentos de self-hosting explican el modelo sin ambigüedad:
+
+> *"En producción, Supermemory ejecuta sus propios modelos propietarios, específicamente afinados para
+> comprensión de datos a largo horizonte y extracción de memoria. Self-hosted, el mismo pipeline corre
+> sobre el modelo que le apuntes."*
+> Y en la tabla local vs. Enterprise: **conectores `—` en local**, auth de una sola clave, una máquina.
+
+Es decir: **la calidad de la memoria es, por diseño, el diferencial cerrado.** Lo abierto es la
+superficie de distribución.
+
+**Dos lecturas estratégicas:**
+
+1. **"Verificablemente abierto" es un diferencial real, no marketing.** TrustGate es Apache-2.0 con un
+   motor de verdad en el repo y un binario autocontenido. Frente a Supermemory (motor cerrado) y Zep
+   (Community Edition deprecada en abril de 2025 → enterprise-only), es la única de las tres posiciones
+   auditables. Para un discurso de neutralidad y no-lock-in, eso importa: **un motor cerrado es otro
+   proveedor del que depender.**
+2. **Su motor de crecimiento no es el open source del core: es un plugin por ecosistema de agente.**
+   `claude-supermemory` (2,8k ★), `opencode-supermemory` (1,6k ★), `openclaw-supermemory` (796 ★),
+   `codex-supermemory`, `cursor-supermemory`, `muse-supermemory`, `hermes-supermemory`. **Un repo por
+   superficie.** Ahí está la lección de PLG replicable, y no requiere regalar nada crítico.
+   *(Nota aparte: `smfs`, en Rust y con 480 ★, "un sistema de ficheros diseñado para agentes", parece una
+   apuesta distinta y vale la pena vigilarla.)*
 
 ### 4.2 Gateways
 
