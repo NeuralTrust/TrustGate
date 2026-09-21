@@ -417,7 +417,7 @@ func TestUpdater_Update_RefusesEnablingOntoAnOccupiedLevel(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	updater := apppolicy.NewUpdater(repo, occupiedLevels(t, occupant), newRegistryRepo(t), newRegistryMock(t, nil),
+	updater := apppolicy.NewUpdater(repo, nil, occupiedLevels(t, occupant), newRegistryRepo(t), newRegistryMock(t, nil),
 		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Enabled: ptr(true)})
@@ -438,7 +438,7 @@ func TestUpdater_Update_DisablingOntoAnOccupiedLevelIsAllowed(t *testing.T) {
 	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
-	updater := apppolicy.NewUpdater(repo, occupiedLevels(t, occupant), newRegistryRepo(t), newRegistryMock(t, nil),
+	updater := apppolicy.NewUpdater(repo, nil, occupiedLevels(t, occupant), newRegistryRepo(t), newRegistryMock(t, nil),
 		newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Enabled: ptr(false)})
