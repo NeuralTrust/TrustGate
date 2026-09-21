@@ -206,7 +206,12 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 				if req != nil {
 					format = adapter.Format(req.SourceFormat)
 				}
-				event := adapter.StreamErrorEvent(format, "upstream stream terminated unexpectedly")
+				event := adapter.StreamErrorEvent(
+					format,
+					fiber.StatusInternalServerError,
+					adapter.StreamErrorTypeUpstream,
+					adapter.StreamErrorMessageUpstreamTerminated,
+				)
 				if finalizer != nil {
 					captured.Write(event)
 					captured.Write(newline)
