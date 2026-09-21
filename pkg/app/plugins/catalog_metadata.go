@@ -498,7 +498,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"tool_allowlist": {
 		name:        "Tool Allowlist",
 		group:       groupRouting,
-		description: "Control which tools appear on the request with allow and deny glob patterns. Deny wins; choose how to handle an empty tools list after filtering.",
+		description: "Control which tools a request may use with allow and deny glob patterns; deny wins. LLM requests have their tools list filtered, with a choice of what to do when nothing is left; on MCP a denied tools/call is refused before it reaches the upstream.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -519,7 +519,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "on_empty_after_filter",
 					Label:       "On Empty After Filter",
 					Type:        FieldTypeEnum,
-					Description: "Behavior when filtering removes every tool from the request.",
+					Description: "Behavior when filtering removes every tool from an LLM request. Not applicable to MCP, where a tools/call is either allowed or refused.",
 					Enum:        enumOptions("reject", "pass_through_empty", "strip_tools_field"),
 					Default:     "reject",
 				},

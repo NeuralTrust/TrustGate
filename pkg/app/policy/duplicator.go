@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -81,6 +82,7 @@ func (d *duplicator) Duplicate(ctx context.Context, gatewayID ids.GatewayID, id 
 			Settings:    cloneSettings(src.Settings),
 			Stages:      cloneStages(src.Stages),
 			Mode:        src.Mode,
+			MCPScope:    cloneMCPScope(src.MCPScope),
 		})
 		if createErr == nil {
 			return p, nil
@@ -198,4 +200,16 @@ func cloneStages(in []domain.Stage) []domain.Stage {
 	out := make([]domain.Stage, len(in))
 	copy(out, in)
 	return out
+}
+
+func cloneMCPScope(in *domain.MCPScope) *domain.MCPScope {
+	if in == nil {
+		return nil
+	}
+	return &domain.MCPScope{
+		RegistryIDs:  slices.Clone(in.RegistryIDs),
+		Tools:        slices.Clone(in.Tools),
+		Groups:       slices.Clone(in.Groups),
+		ExceptGroups: slices.Clone(in.ExceptGroups),
+	}
 }

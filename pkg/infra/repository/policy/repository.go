@@ -37,9 +37,15 @@ const (
 )
 
 const policySelectColumns = `
-		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description, p.mode,
+		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description, p.mode, p.mcp_scope,
 		       COALESCE((SELECT array_agg(cp.consumer_id ORDER BY cp.consumer_id)
 		                   FROM consumer_policy cp WHERE cp.policy_id = p.id), '{}')::uuid[] AS consumer_ids`
+
+// mcpScopeReferencesRegistry matches policies whose mcp_scope names a registry
+// in registry_ids or in tools. The registry id is bound as text because the
+// JSONB stores ids as strings; a NULL parameter matches nothing.
+const mcpScopeReferencesRegistry = `(mcp_scope->'registry_ids' ? $%[1]d::text
+		        OR mcp_scope->'tools' @> jsonb_build_array(jsonb_build_object('registry_id', $%[1]d::text)))`
 
 var _ domain.Repository = (*Repository)(nil)
 
@@ -78,13 +84,17 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	if err != nil {
 		return fmt.Errorf("policy repository: marshal stages: %w", err)
 	}
+	scopeBytes, err := marshalMCPScope(p.MCPScope)
+	if err != nil {
+		return fmt.Errorf("policy repository: marshal mcp_scope: %w", err)
+	}
 	const query = `
-		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at, description, mode)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at, description, mode, mcp_scope)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
-			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description, string(p.Mode.Normalize()),
+			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), scopeBytes,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -92,7 +102,10 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
+// Update writes every column of p. writeMCPScope false leaves mcp_scope as
+// stored, so an update that did not ask to change the scope cannot overwrite a
+// prune that ran between the caller's read and this write.
+func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope bool) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
@@ -103,6 +116,10 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 	stagesBytes, err := marshalStages(p.Stages)
 	if err != nil {
 		return fmt.Errorf("policy repository: marshal stages: %w", err)
+	}
+	scopeBytes, err := marshalMCPScope(p.MCPScope)
+	if err != nil {
+		return fmt.Errorf("policy repository: marshal mcp_scope: %w", err)
 	}
 	const query = `
 		UPDATE policies
@@ -116,12 +133,14 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 		       stages      = $9,
 		       updated_at  = $10,
 		       description = $11,
-		       mode        = $12
+		       mode        = $12,
+		       mcp_scope   = CASE WHEN $15::boolean THEN $14::jsonb ELSE mcp_scope END
 		 WHERE id = $1 AND gateway_id = $13`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
-			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID,
+			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID, scopeBytes,
+			writeMCPScope,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -233,7 +252,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	page := filter.Page.Normalize()
 	offset := page.Offset()
 
-	const countQuery = `
+	countQuery := `
 		SELECT COUNT(*)
 		  FROM policies
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
@@ -241,7 +260,8 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($3::boolean IS NULL OR enabled = $3)
 		   AND ($4::boolean IS NULL OR global = $4)
 		   AND ($5 = '' OR mode = $5)
-		   AND (NOT $6::boolean OR slug = ANY($7::text[]))`
+		   AND (NOT $6::boolean OR slug = ANY($7::text[]))
+		   AND ($8::text IS NULL OR ` + fmt.Sprintf(mcpScopeReferencesRegistry, 8) + `)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 	modeParam := string(filter.Mode)
@@ -249,6 +269,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	if slugs == nil {
 		slugs = []string{}
 	}
+	registryParam := nullableRegistryID(filter.RegistryID)
 
 	var total int
 	if err := r.conn.Pool.QueryRow(
@@ -261,6 +282,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		modeParam,
 		filter.RestrictToSlugs,
 		slugs,
+		registryParam,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("policy repository: count: %w", err)
 	}
@@ -273,8 +295,9 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($4::boolean IS NULL OR p.global = $4)
 		   AND ($5 = '' OR p.mode = $5)
 		   AND (NOT $6::boolean OR p.slug = ANY($7::text[]))
+		   AND ($8::text IS NULL OR ` + fmt.Sprintf(mcpScopeReferencesRegistry, 8) + `)
 		 ORDER BY ` + policyOrderBy(filter.Sort) + `
-		 LIMIT $8 OFFSET $9`
+		 LIMIT $9 OFFSET $10`
 	rows, err := r.conn.Pool.Query(
 		ctx,
 		listQuery,
@@ -285,6 +308,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		modeParam,
 		filter.RestrictToSlugs,
 		slugs,
+		registryParam,
 		page.Size,
 		offset,
 	)
@@ -315,12 +339,13 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
 	var settingsRaw []byte
 	var stagesRaw []byte
+	var scopeRaw []byte
 	var consumerIDs []uuid.UUID
 	var mode string
 	if err := s.Scan(
 		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.Priority, &p.Parallel,
 		&settingsRaw, &stagesRaw,
-		&p.CreatedAt, &p.UpdatedAt, &p.Description, &mode,
+		&p.CreatedAt, &p.UpdatedAt, &p.Description, &mode, &scopeRaw,
 		&consumerIDs,
 	); err != nil {
 		return nil, err
@@ -338,7 +363,32 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 			return nil, fmt.Errorf("scan stages: %w", err)
 		}
 	}
+	scope, err := unmarshalMCPScope(scopeRaw)
+	if err != nil {
+		return nil, err
+	}
+	p.MCPScope = scope
 	return p, nil
+}
+
+// marshalMCPScope keeps the nil-vs-empty distinction on the wire: a nil scope
+// becomes SQL NULL and an empty one becomes '{}', which matches nothing.
+func marshalMCPScope(s *domain.MCPScope) ([]byte, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+func unmarshalMCPScope(raw []byte) (*domain.MCPScope, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	scope := &domain.MCPScope{}
+	if err := json.Unmarshal(raw, scope); err != nil {
+		return nil, fmt.Errorf("scan mcp_scope: %w", err)
+	}
+	return scope, nil
 }
 
 func marshalSettings(s map[string]any) ([]byte, error) {
@@ -360,6 +410,13 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+func nullableRegistryID(id *ids.RegistryID) any {
+	if id == nil || id.IsNil() {
+		return nil
+	}
+	return id.String()
 }
 
 func policyOrderBy(sort listing.Sort) string {

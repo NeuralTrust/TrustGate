@@ -35,9 +35,13 @@ import (
 //
 //	POST /{slug}/connections/links  {end_user, provider?} → a connect link for that user
 //	GET  /{slug}/connections?end_user=…                    → that user's connection states
+//	GET  /{slug}/connections                               → the application's own
 //
-// Both authenticate with the consumer's API key, like the MCP requests the
-// application makes for that user.
+// All three authenticate with the consumer's API key, like the MCP requests the
+// application makes. Omitting end_user asks about the other actor: the
+// application acting as itself, which is the question a batch has to be able to
+// ask before it starts, since nobody is present to open a connect link once it
+// is running.
 type EndUserConnectionsHandler struct {
 	gateways      resolver.GatewayResolver
 	connections   appoauth.EndUserConnectionsService
@@ -83,11 +87,22 @@ type EndUserConnectionResponse struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 }
 
-// EndUserConnectionsResponse lists an end user's connection states.
+// EndUserConnectionsResponse lists the connection states of one actor: the end
+// user named in end_user, or the application itself when none was.
 type EndUserConnectionsResponse struct {
-	EndUser     string                      `json:"end_user"`
+	// EndUser is empty when the states are the application's own.
+	EndUser string `json:"end_user"`
+	// Actor names whose connections these are: "end_user" or "application".
+	// Without it an empty end_user would read as an unnamed user.
+	Actor       string                      `json:"actor"`
 	Connections []EndUserConnectionResponse `json:"connections"`
 }
+
+// Actors a connection listing can answer for.
+const (
+	actorEndUser     = "end_user"
+	actorApplication = "application"
+)
 
 // Link godoc
 // @Summary      Mint a connect link for an application's end user
@@ -135,12 +150,12 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 }
 
 // List godoc
-// @Summary      Read an application's end-user connection states
-// @Description  For an MCP consumer whose application identifies its end users (identity.source = app). Reports, per connectable server, whether the named end user is connected, needs to reconnect, or has not connected. Authenticated with the consumer's API key.
+// @Summary      Read connection states for an end user or for the application itself
+// @Description  Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.
 // @Tags         connections
 // @Produce      json
-// @Param        slug      path   string  true  "Consumer slug"
-// @Param        end_user  query  string  true  "End-user id the application uses"
+// @Param        slug      path   string  true   "Consumer slug"
+// @Param        end_user  query  string  false  "End-user id the application uses; omit to ask about the application itself"
 // @Success      200       {object}  EndUserConnectionsResponse
 // @Failure      400       {object}  httpio.ErrorBody
 // @Failure      401       {object}  httpio.ErrorBody
@@ -156,12 +171,25 @@ func (h *EndUserConnectionsHandler) List(c *fiber.Ctx) error {
 	if err != nil || gateway == nil {
 		return writeConnectionsError(c, fiber.StatusUnauthorized, "unauthenticated", "unknown gateway")
 	}
-	endUser := c.Query("end_user")
-	items, err := h.connections.Connections(c.UserContext(), gateway.ID, c.Params("slug"), resolver.APIKeyFromRequest(c), endUser)
+	endUser := strings.TrimSpace(c.Query("end_user"))
+	actor := actorEndUser
+	var items []appoauth.EndUserConnection
+	if endUser == "" {
+		actor = actorApplication
+		items, err = h.connections.AppConnections(
+			c.UserContext(), gateway.ID, c.Params("slug"), resolver.APIKeyFromRequest(c))
+	} else {
+		items, err = h.connections.Connections(
+			c.UserContext(), gateway.ID, c.Params("slug"), resolver.APIKeyFromRequest(c), endUser)
+	}
 	if err != nil {
 		return h.writeServiceError(c, err)
 	}
-	out := EndUserConnectionsResponse{EndUser: strings.TrimSpace(endUser), Connections: make([]EndUserConnectionResponse, 0, len(items))}
+	out := EndUserConnectionsResponse{
+		EndUser:     endUser,
+		Actor:       actor,
+		Connections: make([]EndUserConnectionResponse, 0, len(items)),
+	}
 	for _, item := range items {
 		entry := EndUserConnectionResponse{
 			Provider:   item.Provider,
@@ -201,6 +229,8 @@ func (h *EndUserConnectionsHandler) writeServiceError(c *fiber.Ctx, err error) e
 		return writeConnectionsError(c, fiber.StatusUnauthorized, "unauthenticated", "invalid API key for this consumer")
 	case errors.Is(err, appoauth.ErrEndUserConnectionsUnsupported):
 		return writeConnectionsError(c, fiber.StatusConflict, "end_users_not_identified", err.Error())
+	case errors.Is(err, appoauth.ErrAppConnectionsUnsupported):
+		return writeConnectionsError(c, fiber.StatusConflict, "consumer_acts_for_users", err.Error())
 	case errors.Is(err, commonerrors.ErrValidation):
 		return writeConnectionsError(c, fiber.StatusBadRequest, "invalid_request", err.Error())
 	default:

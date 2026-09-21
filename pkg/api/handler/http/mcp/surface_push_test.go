@@ -15,11 +15,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -183,6 +186,29 @@ func TestPostKeepsJSONForAClientThatOnlyAsksForJSON(t *testing.T) {
 	require.NotContains(t, string(body), "list_changed")
 }
 
+// A client reads a POST stream until it has the answer to its own request, and
+// may stop there. Anything written after the response can go unread, so the
+// notification has to come first.
+func TestPostPutsTheNotificationBeforeTheResponse(t *testing.T) {
+	t.Parallel()
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Post("/*", func(c *fiber.Ctx) error {
+		return writeRPCBody(c, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: fiber.Map{}}, true)
+	})
+	response, err := app.Test(httptest.NewRequest(http.MethodPost, "/store/mcp", nil))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	raw, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+
+	body := string(raw)
+	notification := strings.Index(body, "notifications/tools/list_changed")
+	result := strings.Index(body, `"result"`)
+	require.NotEqual(t, -1, notification, "the stream carries no notification: %s", body)
+	require.NotEqual(t, -1, result, "the stream carries no response: %s", body)
+	require.Less(t, notification, result, "the response came first, so the notification can go unread")
+}
+
 func TestSurfaceMemoryForgetsTheOldestWhenFull(t *testing.T) {
 	memory := newSurfaceMemory()
 	require.False(t, memory.moved("a", "one"), "a first sighting is not a change")
@@ -309,4 +335,38 @@ func TestInstallAnnouncesOnItsOwnReply(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A JSON-RPC failure goes out as HTTP 200 with the error in the body, which is
+// what the transport requires and what leaves the access log reading
+// `"status":200` for a call that failed. A client reports that nothing works
+// and the log agrees that everything is fine, so the reason has to be written
+// down separately.
+func TestAnErrorAnsweredWith200IsStillWrittenDown(t *testing.T) {
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	app.Post("/*", func(c *fiber.Ctx) error {
+		c.Locals(rpcMethodLocal, "tools/call")
+		return writeRPCError(c, json.RawMessage("1"), codeInvalidParams, "tool not found: notion_search")
+	})
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	response, err := app.Test(httptest.NewRequest(http.MethodPost, "/store/mcp", nil))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+
+	// The wire is unchanged: the transport wants 200 with the error in the body.
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Contains(t, string(body), "tool not found")
+
+	written := logged.String()
+	require.Contains(t, written, "mcp: request answered with an error")
+	require.Contains(t, written, "tools/call")
+	require.Contains(t, written, "tool not found: notion_search")
+	require.Contains(t, written, "/store/mcp")
 }

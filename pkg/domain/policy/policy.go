@@ -35,12 +35,20 @@ type Policy struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []Stage          `json:"stages,omitempty"`
 	Mode        Mode             `json:"mode"`
+	MCPScope    *MCPScope        `json:"mcp_scope,omitempty"`
 	CreatedAt   time.Time        `json:"created_at"`
 	UpdatedAt   time.Time        `json:"updated_at"`
 }
 
 func (p *Policy) IsGlobal() bool {
 	return p.Global
+}
+
+// Dormant reports whether the policy carries a tombstone scope and therefore
+// runs in no plane, MCP or otherwise. It says nothing about routing: IsGlobal
+// keeps reporting the Global flag alone.
+func (p *Policy) Dormant() bool {
+	return p != nil && p.MCPScope.Dormant()
 }
 
 func NewPolicy(
@@ -54,6 +62,7 @@ func NewPolicy(
 	stages []Stage,
 	description string,
 	mode Mode,
+	mcpScope *MCPScope,
 ) (*Policy, error) {
 	id, err := ids.NewV7[ids.PolicyKind]()
 	if err != nil {
@@ -72,6 +81,7 @@ func NewPolicy(
 		Settings:    settings,
 		Stages:      stages,
 		Mode:        mode.Normalize(),
+		MCPScope:    mcpScope,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -95,6 +105,7 @@ func Rehydrate(
 	settings map[string]any,
 	stages []Stage,
 	mode Mode,
+	mcpScope *MCPScope,
 	createdAt, updatedAt time.Time,
 ) *Policy {
 	return &Policy{
@@ -111,6 +122,7 @@ func Rehydrate(
 		Settings:    settings,
 		Stages:      stages,
 		Mode:        mode.Normalize(),
+		MCPScope:    mcpScope,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}
@@ -147,5 +159,5 @@ func (p *Policy) Validate() error {
 	if p.Mode != "" && !p.Mode.IsValid() {
 		return fmt.Errorf("%w: %q", ErrInvalidMode, p.Mode)
 	}
-	return nil
+	return p.MCPScope.Validate()
 }

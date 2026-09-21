@@ -43,7 +43,7 @@ func TestFederatedToolKeepsDestinationAcrossOutage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, before, 3)
 	originalName := before[0].Name
-	result, err := comp.CallTool(context.Background(), rc, originalName, nil)
+	result, err := resolveAndInvoke(context.Background(), comp, rc, originalName, nil)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"server":"A"}`, string(result))
 	dialer.dialErr[c.MCPTarget.URL] = ErrUnreachable
@@ -54,7 +54,7 @@ func TestFederatedToolKeepsDestinationAcrossOutage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, after, 2)
 	require.Equal(t, originalName, after[0].Name)
-	result, err = comp.CallTool(context.Background(), rc, originalName, nil)
+	result, err = resolveAndInvoke(context.Background(), comp, rc, originalName, nil)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"server":"A"}`, string(result))
 	require.Empty(t, ub.lastCall)
@@ -142,7 +142,7 @@ func TestFederatedLongNamesStayDistinctAndCallable(t *testing.T) {
 	require.NotEqual(t, listed[0].Name, listed[1].Name)
 	for i, raw := range []string{first, second, short} {
 		require.LessOrEqual(t, len(listed[i].Name), 64)
-		_, err := comp.CallTool(context.Background(), rc, listed[i].Name, nil)
+		_, err := resolveAndInvoke(context.Background(), comp, rc, listed[i].Name, nil)
 		require.NoError(t, err)
 		require.Equal(t, raw, up.lastCall)
 	}

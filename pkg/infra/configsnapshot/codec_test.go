@@ -21,6 +21,7 @@ import (
 
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -160,4 +161,44 @@ func TestCodecRoundTripsStoreGrants(t *testing.T) {
 	assert.Equal(t, reg, got[1].RegistryID)
 	assert.Equal(t, []string{"ana"}, got[1].Users)
 	assert.Empty(t, snap.StoreGrantsByGateway(ids.New[ids.GatewayKind]()))
+}
+
+func TestCodecRoundTripsPolicyMCPScope(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	snowflake := ids.New[ids.RegistryKind]()
+	jira := ids.New[ids.RegistryKind]()
+
+	newPolicy := func(name string, scope *policydomain.MCPScope) policydomain.Policy {
+		p, err := policydomain.NewPolicy(gw, name, "trustguard", true, 0, false, nil, nil, "", policydomain.ModeEnforce, scope)
+		require.NoError(t, err)
+		return *p
+	}
+	full := &policydomain.MCPScope{
+		RegistryIDs:  []ids.RegistryID{jira},
+		Tools:        []policydomain.MCPToolRef{{RegistryID: snowflake, Tool: "run_query"}},
+		Groups:       []string{"Finanzas"},
+		ExceptGroups: []string{"Contractors"},
+	}
+	unscoped := newPolicy("unscoped", nil)
+	pruned := newPolicy("pruned", &policydomain.MCPScope{})
+	scoped := newPolicy("scoped", full)
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{unscoped, pruned, scoped}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.Data().Policies
+	require.Len(t, got, 3)
+	assert.Nil(t, got[0].MCPScope, "nil scope stays nil so the policy keeps applying consumer-wide")
+	require.NotNil(t, got[1].MCPScope, "an empty scope must survive as {} rather than collapse to nil")
+	assert.True(t, got[1].MCPScope.IsEmpty())
+	require.NotNil(t, got[2].MCPScope)
+	assert.Equal(t, full, got[2].MCPScope)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
 }

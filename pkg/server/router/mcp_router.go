@@ -40,6 +40,7 @@ type mcpRouter struct {
 	connectHandler             *oauthhttp.ConnectHandler
 	configureHandler           *oauthhttp.ConfigureHandler
 	jwksHandler                *oauthhttp.JWKSHandler
+	whoAmIHandler              *mcphttp.WhoAmIHandler
 }
 
 func NewMCPRouter(
@@ -58,6 +59,7 @@ func NewMCPRouter(
 	connectHandler *oauthhttp.ConnectHandler,
 	configureHandler *oauthhttp.ConfigureHandler,
 	jwksHandler *oauthhttp.JWKSHandler,
+	whoAmIHandler *mcphttp.WhoAmIHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
 	return &mcpRouter{
@@ -77,6 +79,7 @@ func NewMCPRouter(
 		connectHandler:             connectHandler,
 		configureHandler:           configureHandler,
 		jwksHandler:                jwksHandler,
+		whoAmIHandler:              whoAmIHandler,
 	}
 }
 
@@ -125,6 +128,12 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 		app.Post("/:slug/connections/links", r.endUserConnectionsHandler.Link)
 		app.Get("/:slug/connections", r.endUserConnectionsHandler.List)
 	}
+	// Ahead of the catch-all below, which would otherwise answer this as an
+	// unserved path. It is the one question a client asks before it knows any
+	// slug at all, so it carries none.
+	if r.whoAmIHandler != nil {
+		app.Get(mcphttp.WhoAmIPath, r.whoAmIHandler.Handle)
+	}
 	app.Get("/+/connect", r.connectHandler.Page)
 	if r.configureHandler != nil {
 		app.Get("/+/configure", r.configureHandler.Page)
@@ -136,7 +145,7 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	// middleware: a GET that is not asking for the event stream still answers
 	// 405 without authenticating.
 	app.Get("/*", r.mcpHandler.StreamRoute(r.authTransport.GetMiddlewares())...)
-	app.Delete("/*", r.mcpHandler.MethodNotAllowed)
+	app.Delete("/*", r.mcpHandler.NotServedHere)
 
 	installMiddlewares(app, r.authTransport)
 	app.Post("/*", r.mcpHandler.Handle)

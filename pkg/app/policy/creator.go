@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -36,6 +37,7 @@ type CreateInput struct {
 	Settings    map[string]any
 	Stages      []domain.Stage
 	Mode        domain.Mode
+	MCPScope    *domain.MCPScope
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=policy_creator_mock.go --case=underscore --with-expecter
@@ -46,38 +48,49 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
-	registry    appplugins.Registry
-	memoryCache *cache.TTLMap
-	logger      *slog.Logger
-	signaler    configsyncport.SnapshotSignaler
+	repo         domain.Repository
+	levels       LevelGuard
+	registryRepo registrydomain.Repository
+	registry     appplugins.Registry
+	memoryCache  *cache.TTLMap
+	logger       *slog.Logger
+	signaler     configsyncport.SnapshotSignaler
 }
 
 func NewCreator(
 	repo domain.Repository,
+	levels LevelGuard,
+	registryRepo registrydomain.Repository,
 	registry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 ) Creator {
 	return &creator{
-		repo:        repo,
-		registry:    registry,
-		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
-		logger:      logger,
-		signaler:    signaler,
+		repo:         repo,
+		levels:       levels,
+		registryRepo: registryRepo,
+		registry:     registry,
+		memoryCache:  manager.GetTTLMap(cache.PolicyTTLName),
+		logger:       logger,
+		signaler:     signaler,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, error) {
-	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode)
+	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode, in.MCPScope)
 	if err != nil {
 		return nil, err
 	}
 	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings); err != nil {
 		return nil, err
 	}
-	if err := c.repo.Save(ctx, p); err != nil {
+	if err := validateMCPScope(ctx, c.registryRepo, c.registry, in.GatewayID, in.Slug, p.MCPScope); err != nil {
+		return nil, err
+	}
+	if err := c.levels.Check(ctx, p, func(ctx context.Context) error {
+		return c.repo.Save(ctx, p)
+	}); err != nil {
 		return nil, err
 	}
 	c.memoryCache.Set(p.ID.String(), p)

@@ -29,6 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"go.uber.org/dig"
 )
@@ -40,21 +41,24 @@ func Registry(c *container.Container) error {
 	return provideRegistryServices(c)
 }
 
-// registryRepositoryDeps carries the consumer repository so a registry delete
-// can prune the routing JSONB that references it in the delete's own
-// transaction, which no foreign key can cascade.
+// registryRepositoryDeps carries the consumer and policy repositories so a
+// registry delete can prune the routing JSONB and the policy mcp_scope that
+// reference it in the delete's own transaction, which no foreign key can
+// cascade.
 //
 // RUN-1501: Consumers is deliberately not `optional`. Only Registry and
 // Consumer together (modules.All) provide this repository, so an unsatisfied
 // field is never legitimate - it would just trade a boot failure for a
 // DELETE /registries/{id} that answers 204 while leaving the dangling
 // references this ticket removes, with no error and no log.
+// RUN-1597: Policies follows the same rule for the mcp_scope prune.
 type registryRepositoryDeps struct {
 	dig.In
 	Conn      *database.Connection
 	Encrypter vaultdomain.Encrypter
 	Appender  outboxrepo.Appender
 	Consumers *consumerrepo.Repository
+	Policies  *policyrepo.Repository
 }
 
 func provideRegistryRepository(c *container.Container) error {
@@ -64,6 +68,7 @@ func provideRegistryRepository(c *container.Container) error {
 			deps.Encrypter,
 			deps.Appender,
 			registryrepo.WithDeleteHook(deps.Consumers.PruneRegistryReferencesTx),
+			registryrepo.WithDeleteHook(deps.Policies.PruneRegistryReferencesTx),
 		)
 	})
 }

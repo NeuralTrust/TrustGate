@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -87,7 +88,7 @@ func clientAcceptsEventStream(c *fiber.Ctx) bool {
 // that refreshes by itself on the next thing the user says and one that needs a
 // person to find the menu item.
 func (h *Handler) surfaceMoved(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) bool {
-	if h.surface == nil || h.memory == nil || !clientAcceptsEventStream(c) {
+	if h.surface == nil || h.memory == nil {
 		return false
 	}
 	if rc == nil || rc.Consumer == nil {
@@ -101,7 +102,21 @@ func (h *Handler) surfaceMoved(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) b
 	defer cancel()
 	snapshot := h.surface.WatchSnapshot(ctx, rc, principal)
 	key := rc.Consumer.GatewayID.String() + "|" + rc.Consumer.ID.String() + "|" + principal.Subject
-	return h.memory.moved(key, snapshot)
+	moved := h.memory.moved(key, snapshot)
+	if moved && !clientAcceptsEventStream(c) {
+		// The one reason a change can be known and still not announced. The
+		// transport has a client advertise both content types on a POST; one
+		// that does not cannot be handed a stream, so it will keep serving the
+		// tool list it cached until a person refreshes it by hand. Worth saying
+		// out loud, because from outside it looks exactly like a gateway that
+		// noticed nothing.
+		slog.LogAttrs(c.UserContext(), slog.LevelWarn,
+			"mcp: tools changed but the client does not accept a notification stream",
+			slog.String("accept", c.Get(fiber.HeaderAccept)),
+			slog.String("path", c.Path()))
+		return false
+	}
+	return moved
 }
 
 // surfaceVersion is the value a client keys its cached tool list on, in
@@ -155,8 +170,13 @@ func changesTheSurface(method string, params json.RawMessage) bool {
 }
 
 // writeRPCBody sends one JSON-RPC response, as a lone JSON document or — when
-// the caller's tools have changed under them — as a short stream carrying the
-// response and then notifications/tools/list_changed.
+// the caller's tools have changed under them — as a short stream carrying
+// notifications/tools/list_changed and then the response.
+//
+// The notification goes first. A client reads a POST stream until it has the
+// response to the request it made, and is entitled to stop there: anything
+// written after the response may never be read. Putting the notification ahead
+// of it means a client that reads its own answer has already read the news.
 func writeRPCBody(c *fiber.Ctx, body any, listChanged bool) error {
 	if !listChanged {
 		return writeJSON(c, body)
@@ -171,6 +191,6 @@ func writeRPCBody(c *fiber.Ctx, body any, listChanged bool) error {
 	// response was complete, which for a single-shot stream is never.
 	c.Set("X-Accel-Buffering", "no")
 	return c.Status(fiber.StatusOK).SendString(
-		"event: message\ndata: " + string(payload) + "\n\n" + toolsListChangedFrame,
+		toolsListChangedFrame + "event: message\ndata: " + string(payload) + "\n\n",
 	)
 }

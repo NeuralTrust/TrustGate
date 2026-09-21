@@ -28,15 +28,16 @@ import (
 
 type UpdatePolicyHandler struct {
 	updater apppolicy.Updater
+	warner  apppolicy.Warner
 }
 
-func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
-	return &UpdatePolicyHandler{updater: updater}
+func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) *UpdatePolicyHandler {
+	return &UpdatePolicyHandler{updater: updater, warner: warner}
 }
 
 // Handle godoc
 // @Summary      Update a policy
-// @Description  Updates an existing policy.
+// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -48,7 +49,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take"
 // @Router       /v1/gateways/{gateway_id}/policies/{id} [put]
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
@@ -61,6 +62,10 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
+		return httpio.WriteError(c, err)
+	}
+	scopeSet, scope, err := req.ToMCPScope()
+	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 
@@ -76,9 +81,10 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Settings:    req.Settings,
 		Stages:      req.ToStages(),
 		Mode:        req.ToMode(),
+		MCPScope:    apppolicy.MCPScopePatch{Set: scopeSet, Value: scope},
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
 }

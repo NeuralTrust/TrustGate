@@ -41,13 +41,38 @@ import (
 const (
 	serverName              = "trustgate"
 	serverVersion           = "1.0"
-	latestProtocolVersion   = "2025-06-18"
-	discoverCacheTTLMs      = 0
+	latestProtocolVersion   = "2026-07-28"
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
+// advertisedProtocolVersions is what server/discover offers and what
+// initialize will negotiate, newest first. They are the same list on purpose:
+// advertising a revision initialize then refuses downgrades a client silently,
+// and it keeps applying the newer rules to answers built under the older one.
+//
+// What 2026-07-28 costs this gateway, and what it is given:
+//   - server/discover, which servers must implement, and which is where a
+//     client on this revision starts.
+//   - the result envelope on every answer, the relayed ones included
+//     (stampResultEnvelope).
+//   - subscriptions/listen in place of the GET stream, carrying the tool-list
+//     changes a client opts in to.
+//   - statelessness, which cost nothing: this gateway has never minted a
+//     session id or required a handshake before serving a request.
+//
+// What it does not implement, and why nothing here claims otherwise: the
+// resource subscriptions and prompt-list changes of a listen stream (the
+// acknowledgement names only what it will send, and the capabilities claim
+// only tools.listChanged), and the multi-round-trip pattern, which a gateway
+// has no use for on its own — an upstream that returns an input_required
+// result has it relayed with its own resultType intact.
+//
+// initialize and ping are gone in this revision but still answered, because
+// every client below it needs them and answering a method nobody on the newer
+// revision calls costs nothing.
 var advertisedProtocolVersions = []string{
 	latestProtocolVersion,
+	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
@@ -147,6 +172,17 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
 }
 
+// NotServedHere answers a request on a catch-all route: 405 for an MCP endpoint
+// reached with the wrong verb, 404 for a path this gateway does not serve at
+// all. Only the first is a resource the caller could have reached another way,
+// and only for it does "Allow: POST" say anything true.
+func (h *Handler) NotServedHere(c *fiber.Ctx) error {
+	if appconsumer.SlugFromMCPPath(c.Path()) != "" {
+		return h.MethodNotAllowed(c)
+	}
+	return c.SendStatus(fiber.StatusNotFound)
+}
+
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
 	rc, err := resolveMCPConsumer(c)
@@ -175,6 +211,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
+	c.Locals(rpcMethodLocal, req.Method)
 	if req.Method != "ping" {
 		if rt := trace.FromContext(c.UserContext()); rt != nil {
 			stampRequestIdentity(c, rt, rc, h.surface)
@@ -190,7 +227,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.surfaceVersion(c, rc)))
 	case "ping":
 		skipMetrics(c)
-		return writeRPCResult(c, req.ID, struct{}{})
+		return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, struct{}{}))
+	case "subscriptions/listen":
+		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
 	result, err := h.gateway.DispatchWithBaseURL(c.UserContext(), rc, c.BaseURL(), req.Method, req.Params)
@@ -205,6 +244,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	// and announcing a change on it asks for another list of what was just sent.
 	// The surface is re-read either way, so the announcement is recorded against
 	// the snapshot the next request will compare with.
+	result = stampResultEnvelope(req.Method, result)
 	moved := h.surfaceMoved(c, rc)
 	listChanged := req.Method != "tools/list" &&
 		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
@@ -259,7 +299,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	if supportedProtocolVersions[params.ProtocolVersion] {
 		version = params.ProtocolVersion
 	}
-	return writeRPCResult(c, req.ID, fiber.Map{
+	return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, fiber.Map{
 		"protocolVersion": version,
 		"capabilities": fiber.Map{
 			"tools":     fiber.Map{"listChanged": true},
@@ -271,7 +311,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
 		"instructions": serverInstructions(rc),
-	})
+	}))
 }
 
 const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."
@@ -283,6 +323,27 @@ func serverInstructions(rc *appconsumer.RoutableConsumer) string {
 		return baseServerInstructions + storeServerInstructions
 	}
 	return baseServerInstructions
+}
+
+// rpcMethodLocal carries the method being served, so an error can name it.
+const rpcMethodLocal = "trustgate.mcp.rpc.method"
+
+// logRPCError writes down a JSON-RPC failure.
+//
+// These go out as HTTP 200 with the error in the body, which is what JSON-RPC
+// over HTTP requires and what leaves an operator reading `"status":200` for a
+// call that failed. A client reports "it does not work" and the access log
+// agrees that everything is fine. The reason is a code and a message the
+// gateway itself composed; arguments and tickets stay out of it.
+func logRPCError(c *fiber.Ctx, code int, message string, attrs ...slog.Attr) {
+	method, _ := c.Locals(rpcMethodLocal).(string)
+	slog.LogAttrs(c.UserContext(), slog.LevelWarn, "mcp: request answered with an error",
+		append([]slog.Attr{
+			slog.String("method", method),
+			slog.Int("code", code),
+			slog.String("message", message),
+			slog.String("path", c.Path()),
+		}, attrs...)...)
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
@@ -304,6 +365,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
 		applyRPCErrorHeaders(c, rpcErr)
+		logRPCError(c, int(rpcErr.Code), rpcErr.Message)
 		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -317,6 +379,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			"connect_url": connectURL,
 			"cause":       consentErr.Cause,
 		})
+		// The message carries a connect ticket, so the provider and the cause go
+		// to the log in its place.
+		logRPCError(c, codeConsentRequired, "user consent required",
+			slog.String("provider", consentErr.Provider),
+			slog.String("cause", consentErr.Cause))
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -328,6 +395,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &appNotLinked):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codeConsentRequired, appNotLinked.Error())
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -335,6 +403,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &notPermitted):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codePolicyBlocked, notPermitted.Error())
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -370,7 +439,14 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.Is(err, registrydomain.ErrURLTemplate):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
-		return writeRPCError(c, id, codeInternalError, err.Error())
+		// Everything above is an error the gateway classified, and its text was
+		// written to be read by a caller. What reaches here was not: it carries
+		// whatever the layer that raised it put in it — a driver message, a
+		// resolved upstream URL with a token in its query, a file path. The
+		// caller gets the fact, the operator gets the error.
+		slog.Default().Error("mcp handler: unclassified internal error",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "internal error")
 	}
 }
 
@@ -393,6 +469,7 @@ func rawRPCResponse(id json.RawMessage, result json.RawMessage) any {
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	logRPCError(c, code, message)
 	outcome := o11y.OutcomeClientError
 	if code == codeInternalError {
 		outcome = o11y.OutcomeServerError

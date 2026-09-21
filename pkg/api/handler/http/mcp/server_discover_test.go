@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -34,8 +35,10 @@ func TestAdvertisedProtocolVersionsAreAllNegotiable(t *testing.T) {
 	// Pinned rather than derived: adding a revision here has to be a deliberate
 	// edit, because advertising one obliges every response the gateway emits —
 	// including the tools/call results it relays verbatim from upstreams — to
-	// satisfy that revision's envelope.
-	require.Equal(t, []string{"2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
+	// satisfy that revision's envelope. 2026-07-28 is on the list because
+	// stampResultEnvelope meets that obligation for both kinds of result; the
+	// tests below hold it to it.
+	require.Equal(t, []string{"2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
 	require.Equal(t, latestProtocolVersion, advertisedProtocolVersions[0],
 		"the preferred revision must be the one initialize falls back to")
 	for _, version := range advertisedProtocolVersions {
@@ -93,7 +96,14 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			require.Len(t, capabilities, len(tc.want))
 			for _, kind := range tc.want {
 				require.Contains(t, capabilities, kind)
-				require.Empty(t, capabilities[kind])
+				if kind == "tools" {
+					// The one surface the gateway watches and announces, so the
+					// one capability it claims to notify on.
+					require.Equal(t, map[string]any{"listChanged": true}, capabilities[kind])
+					continue
+				}
+				require.Empty(t, capabilities[kind],
+					"claiming a notification the gateway never sends leaves a client waiting for it")
 			}
 			serverInfo := result["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
 			require.Equal(t, serverName, serverInfo["name"])
@@ -174,4 +184,71 @@ func TestServerDiscoveryResultChangesAfterConnectingAnAccount(t *testing.T) {
 	}
 	require.NotEqual(t, versionOf(pending), versionOf(linked))
 	require.NotEqual(t, versionOf(linked), versionOf(reconnected))
+}
+
+// The envelope the newest advertised revision requires, on both kinds of result
+// the gateway produces: the ones it composes and the ones it relays from an
+// upstream that has never heard of that revision.
+func TestStampResultEnvelope(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a relayed result is given the type it lacks", func(t *testing.T) {
+		t.Parallel()
+		relayed := json.RawMessage(`{"content":[{"type":"text","text":"hi"}]}`)
+		out := stampResultEnvelope("tools/call", relayed).(json.RawMessage)
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(out, &got))
+		require.Equal(t, "complete", got["resultType"])
+		require.NotContains(t, got, "ttlMs", "a tool call is an effect, not something to cache")
+		// Everything the upstream sent is carried across untouched.
+		content := got["content"].([]any)[0].(map[string]any)
+		require.Equal(t, "hi", content["text"])
+	})
+
+	t.Run("an upstream that says what kind of result it is keeps it", func(t *testing.T) {
+		t.Parallel()
+		relayed := json.RawMessage(`{"resultType":"input_required","requestState":"s1"}`)
+		out := stampResultEnvelope("tools/call", relayed).(json.RawMessage)
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(out, &got))
+		require.Equal(t, "input_required", got["resultType"],
+			"overwriting this would end an upstream's interactive call on its first turn")
+	})
+
+	t.Run("a cacheable result says whose copy it is and for how long", func(t *testing.T) {
+		t.Parallel()
+		out := stampResultEnvelope("tools/list", map[string]any{"tools": []any{}}).(map[string]any)
+
+		require.Equal(t, "complete", out["resultType"])
+		require.Equal(t, "private", out["cacheScope"],
+			"the surface is built from one principal's installs, accounts and policy")
+		require.Equal(t, 0, out["ttlMs"],
+			"it changes the moment they install a server or sign an account in")
+	})
+
+	t.Run("an upstream cache hint does not survive the gateway", func(t *testing.T) {
+		t.Parallel()
+		relayed := json.RawMessage(`{"contents":[],"cacheScope":"public","ttlMs":600000}`)
+		out := stampResultEnvelope("resources/read", relayed).(json.RawMessage)
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(out, &got))
+		require.Equal(t, "private", got["cacheScope"],
+			"the upstream described its own answer; this one is served per principal")
+		require.Equal(t, float64(0), got["ttlMs"])
+	})
+
+	t.Run("a result that is not an object is relayed as it was", func(t *testing.T) {
+		t.Parallel()
+		relayed := json.RawMessage(`[1,2,3]`)
+		require.Equal(t, relayed, stampResultEnvelope("tools/call", relayed))
+	})
+
+	t.Run("an empty result still says it is complete", func(t *testing.T) {
+		t.Parallel()
+		out := stampResultEnvelope("ping", struct{}{}).(json.RawMessage)
+		require.JSONEq(t, `{"resultType":"complete"}`, string(out))
+	})
 }

@@ -33,7 +33,7 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), signaler)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), validCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -50,7 +50,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(errors.New("boom")).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), signaler)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), validCreateInput(gwID)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -66,7 +66,7 @@ func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	if _, err := creator.Create(context.Background(), validCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)

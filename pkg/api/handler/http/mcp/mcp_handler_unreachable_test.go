@@ -33,16 +33,31 @@ import (
 func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 	t.Parallel()
 	const secretURL = "https://mcp.brightdata.com/mcp?token=supersecret123"
-	cases := map[string]error{
-		"unreachable": fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL),
-		"unavailable (fail-closed)": fmt.Errorf("%w: registry %q: %w", appmcp.ErrUpstreamUnavailable, "brightdata",
-			fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL)),
+	cases := []struct {
+		name        string
+		fromResolve bool
+		err         error
+	}{
+		{
+			name: "unreachable",
+			err:  fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL),
+		},
+		{
+			name:        "unavailable (fail-closed)",
+			fromResolve: true,
+			err: fmt.Errorf("%w: registry %q: %w", appmcp.ErrUpstreamUnavailable, "brightdata",
+				fmt.Errorf("%w: %s: dial tcp: connection refused", appmcp.ErrUnreachable, secretURL)),
+		},
 	}
-	for name, upstreamErr := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			composer := mocks.NewComposer(t)
-			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "scrape", mock.Anything).Return(nil, upstreamErr).Once()
+			if tc.fromResolve {
+				composer.EXPECT().Resolve(mock.Anything, mock.Anything, "scrape").Return(nil, tc.err).Once()
+			} else {
+				expectToolCall(composer, "scrape", nil, tc.err)
+			}
 			app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 			status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"scrape"}}`)
@@ -71,8 +86,8 @@ func TestHandler_ToolsCall_UnreachableUpstreamIsGeneric(t *testing.T) {
 func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "query", mock.Anything).
-		Return(nil, fmt.Errorf("%w: missing required variable %q", registrydomain.ErrURLTemplate, "account_url")).Once()
+	expectToolCall(composer, "query", nil,
+		fmt.Errorf("%w: missing required variable %q", registrydomain.ErrURLTemplate, "account_url"))
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"query"}}`)
@@ -82,5 +97,41 @@ func TestHandler_ToolsCall_URLTemplateErrorIsInvalidRequest(t *testing.T) {
 	}
 	if msg, _ := rpcErr["message"].(string); !strings.Contains(msg, "account_url") {
 		t.Fatalf("message should name the variable: %q", msg)
+	}
+}
+
+// Every error above the default branch was written for a caller to read. An
+// error that falls through was not: it is whatever the layer that raised it
+// produced, and relaying it hands a remote client the gateway's internals —
+// a resolved upstream URL with a token in its query, a driver message, a path.
+func TestHandler_ToolsCall_UnclassifiedErrorIsGeneric(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "scrape").
+		Return(nil, fmt.Errorf(
+			"post %q: pq: relation \"vault_credentials\" does not exist",
+			"https://mcp.brightdata.com/mcp?token=supersecret123",
+		)).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"scrape"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("JSON-RPC errors ride on HTTP 200, got %d", status)
+	}
+	rpcErr, _ := body["error"].(map[string]any)
+	if rpcErr == nil {
+		t.Fatalf("no error in body: %v", body)
+	}
+	if code, _ := rpcErr["code"].(float64); int(code) != -32603 {
+		t.Fatalf("code = %v, want internal error (-32603)", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); msg != "internal error" {
+		t.Fatalf("message = %q, want the generic internal message", msg)
+	}
+	raw := fmt.Sprint(body)
+	for _, leak := range []string{"supersecret123", "brightdata.com", "vault_credentials"} {
+		if strings.Contains(raw, leak) {
+			t.Fatalf("internal detail %q leaked to the client: %s", leak, raw)
+		}
 	}
 }
