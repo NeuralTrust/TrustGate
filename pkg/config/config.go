@@ -458,7 +458,7 @@ type OpenAIModerationConfig struct {
 }
 
 // ModelArmorConfig configures the REST client used by the google_model_armor
-// guardrail plugin (pkg/infra/plugins/modelarmor). BaseURL overrides Model
+// guardrail plugin (pkg/infra/plugins/googlemodelarmor). BaseURL overrides Model
 // Armor's regional host — Model Armor has no global endpoint — for tests or
 // a private egress proxy; leave it empty in production so each call
 // addresses the region its own request names.
