@@ -59,12 +59,17 @@ type openaiResponsesTool struct {
 }
 
 type openaiResponsesResponse struct {
-	ID     string                `json:"id"`
-	Object string                `json:"object"`
-	Model  string                `json:"model"`
-	Status string                `json:"status"`
-	Output []openaiResponsesItem `json:"output"`
-	Usage  *openaiResponsesUsage `json:"usage,omitempty"`
+	ID                string                            `json:"id"`
+	Object            string                            `json:"object"`
+	Model             string                            `json:"model"`
+	Status            string                            `json:"status"`
+	IncompleteDetails *openaiResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
+	Output            []openaiResponsesItem             `json:"output"`
+	Usage             *openaiResponsesUsage             `json:"usage,omitempty"`
+}
+
+type openaiResponsesIncompleteDetails struct {
+	Reason string `json:"reason"`
 }
 
 type openaiResponsesItem struct {
@@ -120,6 +125,7 @@ type openaiResponsesStreamEvent struct {
 	OutputIndex  int             `json:"output_index,omitempty"`
 	ContentIndex int             `json:"content_index,omitempty"`
 	Item         json.RawMessage `json:"item,omitempty"`
+	Part         json.RawMessage `json:"part,omitempty"`
 	Response     json.RawMessage `json:"response,omitempty"`
 }
 
@@ -273,6 +279,9 @@ func decodeResponsesResponse(body []byte) (*CanonicalResponse, error) {
 		}
 	case "incomplete":
 		cr.FinishReason = "length"
+		if resp.IncompleteDetails != nil && resp.IncompleteDetails.Reason == "content_filter" {
+			cr.FinishReason = "content_filter"
+		}
 	default:
 		cr.FinishReason = "stop"
 	}
@@ -355,6 +364,33 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 				sc.Model = completed.Model
 				if completed.Usage != nil {
 					sc.Usage = openaiResponsesUsageToCanonical(*completed.Usage)
+				}
+			}
+		}
+		return sc, nil
+
+	// Without this case the event decodes to nil, and a nil decode classifies
+	// as an opaque unit, which the stream guard releases immediately. Our own
+	// cut terminator would then overtake the text it is meant to hold back.
+	case "response.incomplete":
+		sc := &CanonicalStreamChunk{
+			FinishReason: "length",
+		}
+		if event.Response != nil {
+			var incomplete struct {
+				ID                string                            `json:"id"`
+				Model             string                            `json:"model"`
+				Usage             *openaiResponsesUsage             `json:"usage"`
+				IncompleteDetails *openaiResponsesIncompleteDetails `json:"incomplete_details"`
+			}
+			if json.Unmarshal(event.Response, &incomplete) == nil {
+				sc.ID = incomplete.ID
+				sc.Model = incomplete.Model
+				if incomplete.Usage != nil {
+					sc.Usage = openaiResponsesUsageToCanonical(*incomplete.Usage)
+				}
+				if incomplete.IncompleteDetails != nil && incomplete.IncompleteDetails.Reason == "content_filter" {
+					sc.FinishReason = "content_filter"
 				}
 			}
 		}
@@ -496,6 +532,26 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// canonicalFinishToResponsesStatus maps a canonical finish reason onto the
+// Responses status and, where the status needs one, the incomplete_details
+// reason that explains it. The buffered and the streamed encode share it so a
+// cut cannot be honest on one path and a lie on the other.
+//
+// A cut must not land on "completed": the Responses SDKs read that status as a
+// clean finish, which is the whole failure this maps away from. length is left
+// exactly as it was — its terminator is already malformed and fixing it would
+// change what every truncated response emits, not just the cut ones.
+func canonicalFinishToResponsesStatus(reason string) (status, incompleteReason string) {
+	switch reason {
+	case "length":
+		return "incomplete", ""
+	case "content_filter", "refusal":
+		return "incomplete", "content_filter"
+	default:
+		return "completed", ""
+	}
+}
+
 func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 	out := openaiResponsesResponse{
 		ID:     resp.ID,
@@ -503,14 +559,17 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 		Model:  resp.Model,
 	}
 
-	switch resp.FinishReason {
-	case "length":
-		out.Status = "incomplete"
-	default:
-		out.Status = "completed"
+	status, incompleteReason := canonicalFinishToResponsesStatus(resp.FinishReason)
+	out.Status = status
+	if incompleteReason != "" {
+		out.IncompleteDetails = &openaiResponsesIncompleteDetails{Reason: incompleteReason}
 	}
 
 	if resp.Content != "" {
+		messageStatus := "completed"
+		if incompleteReason != "" {
+			messageStatus = "incomplete"
+		}
 		out.Output = append(out.Output, openaiResponsesItem{
 			Type: "message",
 			Role: "assistant",
@@ -518,7 +577,7 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 				Type: "output_text",
 				Text: resp.Content,
 			}},
-			Status: "completed",
+			Status: messageStatus,
 		})
 	}
 
@@ -541,6 +600,46 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 	}
 
 	return json.Marshal(out)
+}
+
+// responsesCutCloseEvents closes the message item a cut interrupts, in the
+// order the Responses protocol nests it: the text, then the content part, then
+// the item. It closes an item for event-tracking clients only; snapshot
+// reconstruction is out of reach until this encoder emits response.created,
+// which it never does.
+//
+// It fires only when the cut chunk itself proves a text item is open. The
+// adapter is a stateless shared singleton and a synthesised terminator usually
+// arrives bare, so on any other chunk it cannot tell a message item from a
+// function_call one — and both open at output index 0. Closing index 0 as a
+// message there would leave the real item unterminated and close one that was
+// never added, which is worse than closing nothing. The guard has to carry the
+// open item's index and kind for that case to be answerable.
+func responsesCutCloseEvents(chunk *CanonicalStreamChunk) [][]byte {
+	if len(chunk.ToolCallDeltas) > 0 || (chunk.Delta == "" && chunk.Role == "") {
+		return nil
+	}
+
+	var lines [][]byte
+
+	textDone, _ := json.Marshal(openaiResponsesStreamEvent{Type: "response.output_text.done"})
+	lines = append(lines, SSEEvent("response.output_text.done", textDone)...)
+
+	partEvent := openaiResponsesStreamEvent{Type: "response.content_part.done"}
+	partEvent.Part, _ = json.Marshal(openaiResponsesContent{Type: "output_text"})
+	partDone, _ := json.Marshal(partEvent)
+	lines = append(lines, SSEEvent("response.content_part.done", partDone)...)
+
+	itemEvent := openaiResponsesStreamEvent{Type: "response.output_item.done"}
+	itemEvent.Item, _ = json.Marshal(openaiResponsesItem{
+		Type:   "message",
+		Role:   "assistant",
+		Status: "incomplete",
+	})
+	itemDone, _ := json.Marshal(itemEvent)
+	lines = append(lines, SSEEvent("response.output_item.done", itemDone)...)
+
+	return lines
 }
 
 func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
@@ -607,15 +706,21 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	}
 
 	if chunk.FinishReason != "" {
-		status := "completed"
-		if chunk.FinishReason == "length" {
-			status = "incomplete"
+		status, incompleteReason := canonicalFinishToResponsesStatus(chunk.FinishReason)
+
+		terminator := "response.completed"
+		if incompleteReason != "" {
+			terminator = "response.incomplete"
+			allLines = append(allLines, responsesCutCloseEvents(chunk)...)
 		}
 
 		respObj := map[string]interface{}{
 			"status": status,
 			"object": "response",
 			"output": []interface{}{},
+		}
+		if incompleteReason != "" {
+			respObj["incomplete_details"] = map[string]string{"reason": incompleteReason}
 		}
 		if chunk.ID != "" {
 			respObj["id"] = chunk.ID
@@ -632,11 +737,11 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 		}
 
 		event := openaiResponsesStreamEvent{
-			Type: "response.completed",
+			Type: terminator,
 		}
 		event.Response, _ = json.Marshal(respObj)
 		data, _ := json.Marshal(event)
-		allLines = append(allLines, SSEEvent("response.completed", data)...)
+		allLines = append(allLines, SSEEvent(terminator, data)...)
 	}
 
 	if len(allLines) == 0 {
