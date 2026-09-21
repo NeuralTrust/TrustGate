@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package modelarmor is a REST client for Google Cloud Model Armor
+// Package googlemodelarmor is a REST client for Google Cloud Model Armor
 // (https://cloud.google.com/security-command-center/docs/model-armor-overview).
 // There is no global Model Armor endpoint: every template lives in one of 21
 // regional hosts (modelarmor.{location}.rep.googleapis.com), so callers name
@@ -37,11 +37,10 @@ import (
 )
 
 const (
-	// defaultTimeout is a fallback for direct construction in tests. The
-	// authoritative value is MODEL_ARMOR_TIMEOUT in pkg/config, which the
-	// container always resolves before calling New; the two are kept equal so
-	// there is never a second answer to the same question.
-	defaultTimeout   = 15 * time.Second
+	// No local timeout default on purpose: MODEL_ARMOR_TIMEOUT in pkg/config
+	// is the single owner of that value, the way openai_moderation does it.
+	// A second literal here would be a second answer to the same question,
+	// free to drift from the first.
 	maxResponseBytes = 1 << 20
 
 	hostTemplate = "https://modelarmor.%s.rep.googleapis.com"
@@ -90,9 +89,6 @@ type client struct {
 // A future settings field can add an explicit-credential path without
 // changing this constructor's signature, since gcpauth already supports it.
 func newClient(baseURL string, timeout time.Duration) *client {
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
 	adc := gcpauth.NewApplicationDefaultCache()
 	return newClientWithTokenSource(baseURL, timeout, func(ctx context.Context) (string, error) {
 		return adc.Token(ctx, gcpauth.CloudPlatformScope)
@@ -100,9 +96,6 @@ func newClient(baseURL string, timeout time.Duration) *client {
 }
 
 func newClientWithTokenSource(baseURL string, timeout time.Duration, ts tokenSource) *client {
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
 	// Borrow the pool's tuned transport (dial timeout, per-host connection
 	// limits) keyed to this plugin, so our connections stay isolated from the
 	// rest of the gateway. The pooled *http.Client itself is shared under that
@@ -151,6 +144,7 @@ type FilterResults struct {
 	PIAndJailbreak *PIAndJailbreakFilterResult `json:"pi_and_jailbreak,omitempty"`
 	MaliciousURIs  *MaliciousURIsFilterResult  `json:"malicious_uris,omitempty"`
 	CSAM           *CSAMFilterResult           `json:"csam,omitempty"`
+	VirusScan      *VirusScanFilterResult      `json:"virus_scan,omitempty"`
 }
 
 // SDPFilterResult is the sensitive-data-protection filter outcome. Like every
@@ -253,6 +247,20 @@ type CSAMFilterResult struct {
 
 // CSAMResult reports the CSAM filter's match state.
 type CSAMResult struct {
+	MatchState string `json:"matchState"`
+}
+
+// VirusScanFilterResult is the malware/virus scan outcome, the sixth member
+// of the FilterResult union. It only fires for the document scanning paths
+// this plugin does not implement, and block_on has no entry for it, so
+// nothing acts on it; it is modelled so the union decodes completely rather
+// than silently dropping a filter a template may well have enabled.
+type VirusScanFilterResult struct {
+	VirusScanFilterResult *VirusScanResult `json:"virusScanFilterResult,omitempty"`
+}
+
+// VirusScanResult reports the virus scan's match state.
+type VirusScanResult struct {
 	MatchState string `json:"matchState"`
 }
 
