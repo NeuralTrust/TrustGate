@@ -121,6 +121,8 @@ const (
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
+	defaultModelArmorTimeout = 15 * time.Second
+
 	defaultConfigSyncDataPlaneEnabled  = false
 	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
 	defaultConfigSyncPollInterval      = 5 * time.Minute
@@ -170,6 +172,7 @@ type Config struct {
 	TrustGuard          TrustGuardConfig
 	FirewallComplexity  FirewallComplexityConfig
 	OpenAIModeration    OpenAIModerationConfig
+	ModelArmor          ModelArmorConfig
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
@@ -454,6 +457,16 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
+// ModelArmorConfig configures the REST client used by the google_model_armor
+// guardrail plugin (pkg/infra/plugins/modelarmor). BaseURL overrides Model
+// Armor's regional host — Model Armor has no global endpoint — for tests or
+// a private egress proxy; leave it empty in production so each call
+// addresses the region its own request names.
+type ModelArmorConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
 type RateLimitConfig struct {
 	Enabled bool
 }
@@ -496,6 +509,7 @@ func LoadConfig() (*Config, error) {
 		TrustGuard:          getTrustGuardConfig(),
 		FirewallComplexity:  getFirewallComplexityConfig(),
 		OpenAIModeration:    getOpenAIModerationConfig(),
+		ModelArmor:          getModelArmorConfig(),
 		ConfigSync:          getConfigSyncConfig(),
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
@@ -808,6 +822,17 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	return OpenAIModerationConfig{
 		BaseURL: getEnv("OPENAI_MODERATION_BASE_URL", "https://api.openai.com"),
 		Timeout: getEnvDuration("OPENAI_MODERATION_TIMEOUT", defaultOpenAIModerationTimeout),
+	}
+}
+
+// getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT. Unlike
+// OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
+// an empty value tells the client to derive the host per call from the
+// request's own location instead of pinning one region.
+func getModelArmorConfig() ModelArmorConfig {
+	return ModelArmorConfig{
+		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
+		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
 	}
 }
 
