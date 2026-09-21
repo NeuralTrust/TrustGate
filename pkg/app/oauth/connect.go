@@ -188,13 +188,44 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	return &ConnectPage{
+	page := &ConnectPage{
 		ConsumerPath: ticket.ConsumerPath,
 		ResumeURL:    ticket.ResumeURL,
 		Providers:    providers,
 		Code:         ticket.Code,
 		Instance:     ticket.InstanceID,
-	}, nil
+	}
+	// A ticket pinned to one provider is the one-server case, so it gets the
+	// focused card rather than a picker with a single entry in it: the user was
+	// sent here to connect that server, and a grid of one is a picker with
+	// nothing to pick.
+	if page.Code == "" {
+		page.Code = pinnedPageCode(ticket, providers)
+	}
+	return page, nil
+}
+
+// pinnedPageCode is the catalog code a provider-pinned ticket's page is focused
+// on, or empty when there is not exactly one.
+//
+// The pin is by provider and the page focuses by code, which are the same thing
+// for a server whose provider is its code and not in general — so this asks the
+// rows rather than assuming, and stands down when they disagree.
+func pinnedPageCode(ticket *ConnectTicket, providers []ProviderStatus) string {
+	if strings.TrimSpace(ticket.Provider) == "" {
+		return ""
+	}
+	code := ""
+	for _, status := range providers {
+		if status.Provider != ticket.Provider {
+			continue
+		}
+		if status.Code == "" || (code != "" && status.Code != code) {
+			return ""
+		}
+		code = status.Code
+	}
+	return code
 }
 
 func (s *connectService) Statuses(

@@ -1500,6 +1500,11 @@ func TestConnectService_ProviderTicketReachesOnlyItsProvider(t *testing.T) {
 	if len(page.Providers) != 1 || page.Providers[0].Provider != "com.notion/mcp" {
 		t.Fatalf("providers = %+v, want only the one the link was minted for", page.Providers)
 	}
+	// Focused on that server, so the user who was sent here to connect one gets
+	// its card rather than a picker with a single entry in it.
+	if page.Code != "com.notion/mcp" {
+		t.Fatalf("page code = %q, want the pinned server's own code", page.Code)
+	}
 
 	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "app.linear/mcp", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("Start on another provider = %v, want ErrProviderNotFound", err)
