@@ -356,6 +356,8 @@ func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {
 func applyFinding(data *Data, f *finding) {
 	data.Filter = f.filter
 	data.InfoTypes = f.infoTypes
+	data.Confidence = f.confidence
+	data.Category = f.category
 }
 
 func lastUserText(creq *adapter.CanonicalRequest) (string, int) {
