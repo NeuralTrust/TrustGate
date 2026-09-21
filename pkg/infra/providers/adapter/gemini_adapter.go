@@ -380,13 +380,30 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 	return cr, nil
 }
 
-func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
-	fr := "STOP"
-	switch resp.FinishReason {
+// canonicalFinishToGeminiReason maps a canonical finish reason onto Gemini's
+// finishReason vocabulary, returning "" for anything outside it so each call
+// site keeps the fallback it had. content_filter becomes SAFETY rather than
+// PROHIBITED_CONTENT: SAFETY is the value every generation of the Gemini SDKs
+// understands and it covers a block from any filter, while PROHIBITED_CONTENT
+// asserts one specific Google policy we cannot claim on behalf of an Azure or
+// Bedrock upstream.
+func canonicalFinishToGeminiReason(reason string) string {
+	switch reason {
+	case "stop", "tool_calls": // Gemini reports STOP even for function calls.
+		return "STOP"
 	case "length":
-		fr = "MAX_TOKENS"
-	case "tool_calls":
-		fr = "STOP" // Gemini uses STOP even for function calls
+		return "MAX_TOKENS"
+	case "content_filter", "refusal":
+		return "SAFETY"
+	default:
+		return ""
+	}
+}
+
+func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
+	fr := canonicalFinishToGeminiReason(resp.FinishReason)
+	if fr == "" {
+		fr = "STOP"
 	}
 
 	var parts []geminiPart
@@ -514,16 +531,9 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		})
 	}
 
-	finishReason := ""
-	switch chunk.FinishReason {
-	case "stop", "tool_calls":
-		finishReason = "STOP"
-	case "length":
-		finishReason = "MAX_TOKENS"
-	default:
-		if chunk.FinishReason != "" {
-			finishReason = chunk.FinishReason
-		}
+	finishReason := canonicalFinishToGeminiReason(chunk.FinishReason)
+	if finishReason == "" {
+		finishReason = chunk.FinishReason
 	}
 
 	out := geminiResponse{
