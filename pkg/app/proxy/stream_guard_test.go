@@ -194,6 +194,17 @@ func guardCases() []guardCase {
 			wantBlocked: true,
 		},
 		{
+			// A masking policy must not become a no-op on a streamed response.
+			// The buffer rewrite is a later slice, so until then the head
+			// escalates rather than releasing the text the guard asked to mask.
+			name:        "a transform verdict escalates instead of releasing unmasked text",
+			format:      adapter.FormatOpenAI,
+			lines:       openAIStreamLines(),
+			outcome:     &appplugins.SegmentOutcome{HasTransform: true, Transformed: "[MASKED]"},
+			wantCalls:   1,
+			wantBlocked: true,
+		},
+		{
 			name:          "a blocked head speaks the caller's dialect",
 			format:        adapter.FormatAnthropic,
 			lines:         anthropicStreamLines(),
