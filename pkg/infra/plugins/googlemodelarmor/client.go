@@ -20,7 +20,7 @@
 // client. This package intentionally stops at transport: sanitize/anonymize
 // policy decisions (block_on handling, message building, plugin
 // registration) are out of scope here and land with the plugin itself.
-package modelarmor
+package googlemodelarmor
 
 import (
 	"bytes"
