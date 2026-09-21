@@ -40,19 +40,44 @@ const (
 // nobody opted a category in.
 var allFilters = []string{filterSDP, filterRAI, filterPIAndJailbreak, filterMaliciousURIs, filterCSAM}
 
-// Settings configures the google_model_armor plugin. There is deliberately no
-// service-account-JSON field: policy settings persist through a bare
-// json.Marshal with no encryption in the repository layer, and a GCP service
-// account key is an RSA private key that does not belong there. Authentication
-// goes through pkg/infra/providers/gcpauth's Application Default Credentials /
-// Workload Identity path instead.
+// Credentials selects how the plugin authenticates to Model Armor for one
+// policy, nested under a `credentials` key in settings and shaped after
+// bedrock_guardrail's own Credentials struct. Application Default Credentials
+// alone means every policy on a gateway calls Model Armor as the same pod
+// identity — fine self-hosted, unworkable multi-tenant, since our one
+// identity would then need a grant on every customer's GCP project.
+// Precedence, most specific first:
+//
+//  1. ImpersonateServiceAccount set: impersonate that service account by
+//     email through GCP's IAM Credentials API. This is the keyless path to
+//     lead with: the customer creates a service account in their own
+//     project, grants it roles/modelarmor.user, and grants our ambient
+//     identity roles/iam.serviceAccountTokenCreator on it. An email is not a
+//     credential — useless without their grant, and revocable without
+//     touching our database.
+//  2. ServiceAccountJSON set: mint tokens from that explicit service-account
+//     key. Like bedrock_guardrail's own access_key_id/secret_access_key,
+//     policy settings persist through a bare json.Marshal with no encryption
+//     in the repository layer, so this sits there in plaintext next to
+//     bedrock's secret_access_key. That is a known, separate decision
+//     (RUN-1644), not an oversight here.
+//  3. Neither set: Application Default Credentials / GKE Workload Identity —
+//     today's only behaviour, unchanged, so a policy with no credentials
+//     block keeps working exactly as before.
+type Credentials struct {
+	ImpersonateServiceAccount string `mapstructure:"impersonate_service_account"`
+	ServiceAccountJSON        string `mapstructure:"service_account_json"` // #nosec G101 -- config field name, not a credential
+}
+
+// Settings configures the google_model_armor plugin.
 type Settings struct {
-	Project   string   `mapstructure:"project"`
-	Location  string   `mapstructure:"location"`
-	Template  string   `mapstructure:"template"`
-	BlockOn   []string `mapstructure:"block_on"`
-	SDPAction string   `mapstructure:"sdp_action"`
-	Message   string   `mapstructure:"message"`
+	Project     string      `mapstructure:"project"`
+	Location    string      `mapstructure:"location"`
+	Template    string      `mapstructure:"template"`
+	BlockOn     []string    `mapstructure:"block_on"`
+	SDPAction   string      `mapstructure:"sdp_action"`
+	Message     string      `mapstructure:"message"`
+	Credentials Credentials `mapstructure:"credentials"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -95,6 +120,12 @@ func (s *Settings) validate() error {
 	case sdpActionBlock, sdpActionAnonymize:
 	default:
 		return fmt.Errorf("google_model_armor: sdp_action must be one of block, anonymize")
+	}
+	if strings.TrimSpace(s.Credentials.ImpersonateServiceAccount) != "" &&
+		strings.TrimSpace(s.Credentials.ServiceAccountJSON) != "" {
+		return fmt.Errorf(
+			"google_model_armor: credentials: set only one of impersonate_service_account or service_account_json",
+		)
 	}
 	return nil
 }

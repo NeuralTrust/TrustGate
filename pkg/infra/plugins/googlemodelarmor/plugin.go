@@ -70,20 +70,31 @@ func (s rewriteSpan) result(body []byte) *appplugins.Result {
 // support for those endpoints.
 type Plugin struct {
 	registry *adapter.Registry
-	client   *client
+	clients  *clientCache
 	logger   *slog.Logger
 }
 
 // New builds the plugin. baseURL and timeout come from cfg.ModelArmor
 // (pkg/config); baseURL is normally empty so the client derives the regional
-// host from each call's own location. Authentication is always Application
-// Default Credentials / Workload Identity via pkg/infra/providers/gcpauth.
+// host from each call's own location. Authentication is per policy: a
+// *client (and the token source it wraps) is built lazily, at most once per
+// distinct credentials fingerprint, the first time a policy using that
+// credential set runs — see clientFor and Settings.Credentials.
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
 	return &Plugin{
 		registry: registry,
-		client:   newClient(baseURL, timeout),
+		clients:  newModelArmorClientCache(baseURL, timeout, newCredentialSources()),
 		logger:   logger,
 	}
+}
+
+// clientFor resolves the *client for cfg's credentials, reusing the cached
+// client for that credential fingerprint when one already exists.
+func (p *Plugin) clientFor(cfg Settings) (*client, error) {
+	if p.clients == nil {
+		return nil, fmt.Errorf("google_model_armor: plugin has no client cache configured")
+	}
+	return p.clients.get(credentialsFromConfig(cfg.Credentials))
 }
 
 func (p *Plugin) Name() string { return PluginName }
@@ -120,11 +131,15 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err != nil {
 		return nil, fmt.Errorf("google_model_armor: %w", err)
 	}
+	cl, err := p.clientFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("google_model_armor: %w", err)
+	}
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.executePreRequest(ctx, in, cfg)
+		return p.executePreRequest(ctx, in, cfg, cl)
 	case policy.StagePreResponse:
-		return p.executePreResponse(ctx, in, cfg)
+		return p.executePreResponse(ctx, in, cfg, cl)
 	default:
 		return passThrough(), nil
 	}
@@ -133,7 +148,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 // executePreRequest sends only the last user message, like bedrock: Model
 // Armor bills per request, so replaying the whole conversation on every turn
 // would grow the bill linearly with conversation length.
-func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
+func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput, cfg Settings, cl *client) (*appplugins.Result, error) {
 	if in.Request == nil || len(in.Request.Body) == 0 || in.Request.Provider == "" || p.registry == nil {
 		return passThrough(), nil
 	}
@@ -156,7 +171,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 		},
 	}
 	sanitize := func(ctx context.Context) (*SanitizationResult, error) {
-		return p.client.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, text)
+		return cl.SanitizeUserPrompt(ctx, cfg.Project, cfg.Location, cfg.Template, text)
 	}
 	return p.runGuardrail(ctx, in, cfg, sanitize, span)
 }
@@ -164,7 +179,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 // executePreResponse sanitizes the completion in its own call, separate from
 // pre_request, again to keep Model Armor billing to one call per turn per
 // stage rather than resending history.
-func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
+func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings, cl *client) (*appplugins.Result, error) {
 	if in.Request == nil || in.Response == nil || p.registry == nil {
 		return passThrough(), nil
 	}
@@ -195,7 +210,7 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 		},
 	}
 	sanitize := func(ctx context.Context) (*SanitizationResult, error) {
-		return p.client.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, text, userPrompt)
+		return cl.SanitizeModelResponse(ctx, cfg.Project, cfg.Location, cfg.Template, text, userPrompt)
 	}
 	return p.runGuardrail(ctx, in, cfg, sanitize, span)
 }

@@ -14,17 +14,23 @@
 
 // Package gcpauth provides shared Google Cloud Platform authentication
 // primitives for TrustGate providers and plugins that call GCP-hosted APIs
-// (Vertex AI, Model Armor, …). Two credential sources are supported:
+// (Vertex AI, Model Armor, …). Three credential sources are supported:
 //
 //   - ServiceAccountCache mints tokens from an explicit service-account JSON
 //     credential, e.g. one configured on a provider connection.
 //   - ApplicationDefaultCache mints tokens from Application Default
 //     Credentials / GKE Workload Identity, i.e. the ambient credential of the
 //     process, with nothing stored in TrustGate at all.
+//   - ImpersonationCache mints tokens for a target service account named only
+//     by its email, by having the ambient identity (ApplicationDefaultCache)
+//     impersonate it through the IAM Credentials API. This is the keyless,
+//     per-tenant path: a customer grants our ambient identity
+//     roles/iam.serviceAccountTokenCreator on a service account they control,
+//     and nothing about the grant is stored in TrustGate either.
 //
 // Callers pick the source that matches what they store: a plugin that has no
-// place to keep a service-account JSON should use ApplicationDefaultCache
-// rather than growing one.
+// place to keep a service-account JSON should use ApplicationDefaultCache or
+// ImpersonationCache rather than growing one.
 package gcpauth
 
 import (
@@ -126,6 +132,14 @@ func (c *ServiceAccountCache) source(serviceAccountJSON, scope string) (oauth2.T
 }
 
 func serviceAccountKey(serviceAccountJSON, scope string) string {
-	sum := sha256.Sum256([]byte(serviceAccountJSON + "\x00" + scope))
+	return hashKey(serviceAccountJSON, scope)
+}
+
+// hashKey derives a cache key from two credential-identifying strings (a
+// service-account JSON or a target email, plus a scope) so that unrelated
+// credentials never collide in a cache keyed by string equality alone.
+// Shared by ServiceAccountCache and ImpersonationCache.
+func hashKey(a, b string) string {
+	sum := sha256.Sum256([]byte(a + "\x00" + b))
 	return hex.EncodeToString(sum[:])
 }

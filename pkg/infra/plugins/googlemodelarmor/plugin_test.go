@@ -77,7 +77,11 @@ func (s *modelArmorStub) path() string {
 func pluginWithStub(s *modelArmorStub) *Plugin {
 	return &Plugin{
 		registry: adapter.NewRegistry(),
-		client:   newClientWithTokenSource(s.server.URL, time.Second, staticTokenSource("test-token", nil)),
+		clients: &clientCache{
+			build: func(modelArmorCredentials) (*client, error) {
+				return newClientWithTokenSource(s.server.URL, time.Second, staticTokenSource("test-token", nil)), nil
+			},
+		},
 	}
 }
 
@@ -88,7 +92,11 @@ func pluginWithStub(s *modelArmorStub) *Plugin {
 func pluginWithClientError(err error) *Plugin {
 	return &Plugin{
 		registry: adapter.NewRegistry(),
-		client:   newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("", err)),
+		clients: &clientCache{
+			build: func(modelArmorCredentials) (*client, error) {
+				return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("", err)), nil
+			},
+		},
 	}
 }
 
