@@ -232,6 +232,37 @@ func TestGetFirewallComplexityConfig(t *testing.T) {
 	}
 }
 
+func TestGetModelArmorConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("MODEL_ARMOR_BASE_URL", "")
+		if err := os.Unsetenv("MODEL_ARMOR_BASE_URL"); err != nil {
+			t.Fatalf("unset MODEL_ARMOR_BASE_URL: %v", err)
+		}
+		if err := os.Unsetenv("MODEL_ARMOR_TIMEOUT"); err != nil {
+			t.Fatalf("unset MODEL_ARMOR_TIMEOUT: %v", err)
+		}
+		cfg := getModelArmorConfig()
+		if cfg.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty so the client derives the regional host per call", cfg.BaseURL)
+		}
+		if cfg.Timeout != defaultModelArmorTimeout {
+			t.Errorf("Timeout = %s, want default %s", cfg.Timeout, defaultModelArmorTimeout)
+		}
+	})
+
+	t.Run("explicit values", func(t *testing.T) {
+		t.Setenv("MODEL_ARMOR_BASE_URL", "https://modelarmor.example.internal")
+		t.Setenv("MODEL_ARMOR_TIMEOUT", "5s")
+		cfg := getModelArmorConfig()
+		if cfg.BaseURL != "https://modelarmor.example.internal" {
+			t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://modelarmor.example.internal")
+		}
+		if cfg.Timeout != 5*time.Second {
+			t.Errorf("Timeout = %s, want 5s", cfg.Timeout)
+		}
+	})
+}
+
 func TestGetProviderConfig_ResponseHeaderTimeout(t *testing.T) {
 	tests := []struct {
 		name           string
