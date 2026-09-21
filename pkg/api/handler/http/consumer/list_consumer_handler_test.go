@@ -88,10 +88,24 @@ func listConsumers(
 	finder *stubConsumerFinder,
 	upstream appoauth.ConsumerUpstreamAccounts,
 ) response.ListConsumerResponse {
+	return listConsumersWith(t, gw, finder, upstream, "")
+}
+
+func listConsumersWith(
+	t *testing.T,
+	gw ids.GatewayID,
+	finder *stubConsumerFinder,
+	upstream appoauth.ConsumerUpstreamAccounts,
+	query string,
+) response.ListConsumerResponse {
 	t.Helper()
 	app := fiber.New()
 	app.Get("/gateways/:gateway_id/consumers", consumerhttp.NewListConsumerHandler(finder, upstream).Handle)
-	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/gateways/"+gw.String()+"/consumers", nil))
+	url := "/gateways/" + gw.String() + "/consumers"
+	if query != "" {
+		url += "?" + query
+	}
+	res, err := app.Test(httptest.NewRequest(http.MethodGet, url, nil))
 	require.NoError(t, err)
 	defer func() { _ = res.Body.Close() }()
 	require.Equal(t, http.StatusOK, res.StatusCode)
@@ -169,4 +183,67 @@ func TestListConsumers_ServesWithoutTheConnectService(t *testing.T) {
 
 	require.Len(t, out.Items, 1)
 	require.Nil(t, out.Items[0].PendingUpstreamAuth)
+}
+
+// The Store is served without being stored, so it is in no listing that reads
+// the table — and a caller building a picker over everything this gateway serves
+// has no other way to reach it.
+func TestListConsumers_OffersTheStoreWhenAsked(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	agent := mcpConsumer(gw, "support-agent", domain.Identity{})
+	finder := &stubConsumerFinder{items: []*domain.Consumer{agent}}
+
+	out := listConsumersWith(t, gw, finder, nil, "include_synthetic=true")
+
+	require.Len(t, out.Items, 2)
+	require.Equal(t, domain.StoreSlug, out.Items[0].Slug)
+	require.True(t, out.Items[0].Synthetic)
+	require.Equal(t, 2, out.Total)
+	require.False(t, out.Items[1].Synthetic)
+}
+
+// Opt-in, because every caller that manages consumers wants the opposite: there
+// is nothing here to edit, delete or give a key to.
+func TestListConsumers_LeavesTheStoreOutByDefault(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	finder := &stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "support-agent", domain.Identity{})}}
+
+	out := listConsumers(t, gw, finder, nil)
+
+	require.Len(t, out.Items, 1)
+	require.False(t, out.Items[0].Synthetic)
+	require.Equal(t, 1, out.Total)
+}
+
+// It belongs to no page of a table it is not in, so it goes on the first only.
+func TestListConsumers_KeepsTheStoreOffLaterPages(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	finder := &stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "support-agent", domain.Identity{})}}
+
+	out := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&page=2")
+
+	require.Len(t, out.Items, 1)
+	require.False(t, out.Items[0].Synthetic)
+}
+
+// A filter is a filter: the Store is an MCP consumer and no key holds it, so
+// asking for LLM consumers or for the holders of a key must not turn it up.
+func TestListConsumers_FiltersApplyToTheStoreToo(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	finder := &stubConsumerFinder{}
+
+	llmOnly := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&type=LLM")
+	require.Empty(t, llmOnly.Items)
+
+	byKey := listConsumersWith(t, gw, finder, nil,
+		"include_synthetic=true&auth_id="+ids.New[ids.AuthKind]().String())
+	require.Empty(t, byKey.Items)
+
+	byName := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&search=store")
+	require.Len(t, byName.Items, 1)
+	require.True(t, byName.Items[0].Synthetic)
 }
