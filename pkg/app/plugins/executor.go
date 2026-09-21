@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"time"
@@ -82,6 +83,101 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 		}
 	}
 	return outcome, nil
+}
+
+// RunStreamSegment runs the pre_response entries that implement StreamInspector
+// against one block of a streaming response and consolidates their verdicts. It
+// stays off the Executor interface on purpose: the stream guard consumes it
+// through a narrow interface of its own, so RunStage, the MCP callers and the
+// generated mocks keep a contract that has no notion of streaming.
+//
+// The chain stops at the first blocking verdict — with a single call in flight
+// there is nothing left to cancel, and every later call would rediscover the
+// same finding over the same cumulative text.
+//
+// StageInput.Stage is ignored: a stream is a pre_response concern, so the chain
+// is always the pre_response one and ExecInput.Stage is always
+// policy.StagePreResponse whatever the caller passed.
+func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg StreamSegment) (*SegmentOutcome, error) {
+	outcome := &SegmentOutcome{}
+	entries := e.streamEntries(in)
+	if len(entries) == 0 {
+		return outcome, nil
+	}
+
+	for _, entry := range entries {
+		inspector, ok := entry.plugin.(StreamInspector)
+		if !ok {
+			continue
+		}
+		verdict, err := inspector.InspectSegment(ctx, ExecInput{
+			Stage:    policy.StagePreResponse,
+			Mode:     entry.mode,
+			Config:   entry.config,
+			Scope:    scopeFromRequest(in.Request, entry.global),
+			Request:  in.Request,
+			Response: in.Response,
+		}, seg)
+		if err != nil {
+			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+		}
+		if verdict == nil {
+			continue
+		}
+		if e.mergeVerdict(outcome, verdict, entry) {
+			break
+		}
+	}
+	return outcome, nil
+}
+
+func (e *executor) streamEntries(in StageInput) []chainEntry {
+	if in.Plan != nil {
+		return in.Plan.entriesFor(policy.StagePreResponse)
+	}
+	return buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)
+}
+
+// mergeVerdict folds one verdict into the consolidated outcome and reports
+// whether the chain must stop. Both the cut and the rewrite are gated on
+// Blocks(entry.mode): an observe-mode entry contributes its findings and its
+// fingerprints, but never cuts the stream and never rewrites text the client is
+// about to read.
+func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict, entry chainEntry) bool {
+	outcome.Fingerprints = append(outcome.Fingerprints, verdict.Fingerprints...)
+	if outcome.Type == "" && verdict.Type != "" {
+		outcome.Type = verdict.Type
+		outcome.Message = verdict.Message
+	}
+	if !Blocks(entry.mode) {
+		return false
+	}
+	if verdict.Block {
+		outcome.Block = true
+		outcome.Type = verdict.Type
+		outcome.Message = verdict.Message
+		outcome.HasTransform = false
+		outcome.Transformed = ""
+		return true
+	}
+	if verdict.HasTransform {
+		if outcome.HasTransform {
+			e.warnExcessStreamTransform(entry)
+			return false
+		}
+		outcome.HasTransform = true
+		outcome.Transformed = verdict.Transformed
+	}
+	return false
+}
+
+func (e *executor) warnExcessStreamTransform(entry chainEntry) {
+	if e.logger == nil {
+		return
+	}
+	e.logger.Warn("stream segment produced multiple transforms; keeping first in chain order",
+		slog.String("stage", string(policy.StagePreResponse)),
+		slog.String("slug", entry.config.Slug))
 }
 
 func (e *executor) runBatch(
