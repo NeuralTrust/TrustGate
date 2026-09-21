@@ -870,6 +870,8 @@ What this means in practice:
   the auth binding. Everyone admitted sees the whole set. If per-person subsets
   of one application are ever wanted, the answer is more consumers (each with its
   own server set), not Access inside one.
+- **Policies, not the surface, can still be narrowed inside one consumer** to a
+  registry, a tool or a group with `mcp_scope`: see `mcp-policy-scope.md`.
 - **The Store keeps everything.** Live mode resolution (own policy → most
   permissive group → gateway default), grants by catalog code or instance,
   install approvals, and the re-check at request time rather than only at install

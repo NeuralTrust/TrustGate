@@ -28,9 +28,27 @@ type RoutableConsumer struct {
 	Registries []*registrydomain.Registry
 
 	FallbackBackends []*registrydomain.Registry
-	Policies         []*policydomain.Policy
 	Auths            []*authdomain.Auth
-	PolicyPlan       *appplugins.StagePlan
+
+	// Policies and PolicyPlan hold the same set of policies, always. The
+	// executor accepts both and rebuilds the chain from Policies whenever
+	// PolicyPlan is nil, so a set that appears in one and not the other would
+	// be executed under an ordering the plan never agreed to. For a non-MCP
+	// consumer PolicyPlan is therefore never nil: its set includes the
+	// group-only policies whose specificity only the inert plan flattens
+	// (RUN-1621, rule 4).
+	Policies   []*policydomain.Policy
+	PolicyPlan *appplugins.StagePlan
+
+	// ScopedPolicies are the policies carrying an MCPScope, kept apart so the
+	// MCP tools/call path can select among them per destination. A non-MCP
+	// consumer also carries them, and they are inert there: only the subset
+	// that crosses planes is folded into Policies and PolicyPlan.
+	ScopedPolicies []*policydomain.Policy
+
+	// MCPPlans are the precompiled per-destination plans the MCP tools/call
+	// path selects from; nil for consumers that are not MCP.
+	MCPPlans *PolicyPlans
 }
 
 type Data struct {

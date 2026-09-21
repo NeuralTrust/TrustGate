@@ -186,7 +186,7 @@ func TestComposer_ListTools_PerInstanceNamesDoNotFlap(t *testing.T) {
 	}
 
 	// And the prefixed name is callable, so a client that cached it keeps working.
-	if _, err := oneDown.CallTool(context.Background(), routable(consumer, finance, analytics), namedFor(finance, "query"), nil); err != nil {
+	if _, err := resolveAndInvoke(context.Background(), oneDown, routable(consumer, finance, analytics), namedFor(finance, "query"), nil); err != nil {
 		t.Fatalf("calling the stable per-instance name: %v", err)
 	}
 }

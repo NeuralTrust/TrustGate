@@ -33,7 +33,21 @@ var planStages = [...]policy.Stage{
 	policy.StagePostResponse,
 }
 
+// NewStagePlan compiles the policies into a per-stage plan for the MCP plane,
+// where the scope gates and its specificity breaks ties at equal priority.
 func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, false)
+}
+
+// NewInertStagePlan compiles the policies into a per-stage plan for a plane
+// where the scope does not gate. Every entry scores zero specificity, so
+// adding a group to a policy's scope can no longer reorder the chain
+// (RUN-1621, rule 4).
+func NewInertStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	return newStagePlan(reg, policies, logger, true)
+}
+
+func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, flatSpecificity bool) *StagePlan {
 	plan := &StagePlan{
 		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
 		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
@@ -65,6 +79,7 @@ func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) 
 			},
 			mode:        pol.Mode.Normalize(),
 			priority:    pol.Priority,
+			specificity: entrySpecificity(pol.MCPScope, flatSpecificity),
 			parallel:    pol.Parallel,
 			global:      pol.IsGlobal(),
 			mutatesReq:  plugin.MutatesRequestBody(),
@@ -78,13 +93,61 @@ func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) 
 		}
 	}
 	for stage := range plan.byStage {
-		entries := plan.byStage[stage]
-		sort.SliceStable(entries, func(i, j int) bool {
-			return entries[i].priority < entries[j].priority
-		})
-		plan.batches[stage] = groupBatches(entries, stage, logger)
+		plan.finishStage(stage, plan.byStage[stage], logger)
 	}
 	return plan
+}
+
+// Union returns a plan holding the entries of p and of every extra plan,
+// deduplicated by policy id and regrouped into batches under the same ordering
+// NewStagePlan applies. It never consults the plugin Registry, so it is safe on
+// the request path. Without extras it returns p itself.
+func (p *StagePlan) Union(extra ...*StagePlan) *StagePlan {
+	if len(extra) == 0 {
+		return p
+	}
+	out := &StagePlan{
+		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
+		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
+	}
+	for _, stage := range planStages {
+		merged := appendUniqueEntries(nil, p.entriesFor(stage))
+		for _, other := range extra {
+			merged = appendUniqueEntries(merged, other.entriesFor(stage))
+		}
+		if len(merged) == 0 {
+			continue
+		}
+		out.finishStage(stage, merged, nil)
+	}
+	return out
+}
+
+func (p *StagePlan) finishStage(stage policy.Stage, entries []chainEntry, logger *slog.Logger) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return lessEntry(entries[i], entries[j])
+	})
+	p.byStage[stage] = entries
+	p.batches[stage] = groupBatches(entries, stage, logger)
+}
+
+func appendUniqueEntries(dst, src []chainEntry) []chainEntry {
+	for _, entry := range src {
+		if containsEntry(dst, entry.config.ID) {
+			continue
+		}
+		dst = append(dst, entry)
+	}
+	return dst
+}
+
+func containsEntry(entries []chainEntry, id string) bool {
+	for i := range entries {
+		if entries[i].config.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *StagePlan) Has(stage policy.Stage) bool {
@@ -126,14 +189,7 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 	}
 	sorted := append([]chainEntry(nil), entries...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.priority != b.priority {
-			return a.priority < b.priority
-		}
-		if a.config.Slug != b.config.Slug {
-			return a.config.Slug < b.config.Slug
-		}
-		return a.config.ID < b.config.ID
+		return lessEntry(sorted[i], sorted[j])
 	})
 
 	batches := make([][]chainEntry, 0, len(sorted))

@@ -24,15 +24,16 @@ import (
 
 type GlobalPolicyHandler struct {
 	scoper apppolicy.Scoper
+	warner apppolicy.Warner
 }
 
-func NewGlobalPolicyHandler(scoper apppolicy.Scoper) *GlobalPolicyHandler {
-	return &GlobalPolicyHandler{scoper: scoper}
+func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *GlobalPolicyHandler {
+	return &GlobalPolicyHandler{scoper: scoper, warner: warner}
 }
 
 // SetGlobal godoc
 // @Summary      Mark a policy as global
-// @Description  Promotes a policy to gateway-wide scope (applies to every consumer).
+// @Description  Promotes a policy to gateway-wide scope (applies to every consumer). Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -42,6 +43,7 @@ func NewGlobalPolicyHandler(scoper apppolicy.Scoper) *GlobalPolicyHandler {
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody  "The gateway already runs this plugin at the all-traffic level"
 // @Router       /v1/gateways/{gateway_id}/policies/{id}/global [post]
 func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
@@ -52,7 +54,7 @@ func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
 }
 
 // UnsetGlobal godoc

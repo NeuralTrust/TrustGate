@@ -119,6 +119,14 @@ func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
 	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
+// ScopeInertSafe reports true: TrustGuard inspects the content of a request or
+// response. It reads no tool or registry name, so on a plane where the
+// mcp_scope does not gate it does exactly what it does on MCP. The scope's
+// group stops selecting who it runs for, which means the policy covers all of
+// that consumer's traffic — for a content guardrail that is more inspection,
+// never less.
+func (p *Plugin) ScopeInertSafe() bool { return true }
+
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }

@@ -1276,7 +1276,7 @@
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
-                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.",
+                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -1311,6 +1311,12 @@
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Attached with non-blocking warnings",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse"
+                        }
+                    },
                     "204": {
                         "description": "No Content"
                     },
@@ -1328,6 +1334,18 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at one of the levels the attach would take",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1749,6 +1767,13 @@
                     },
                     {
                         "type": "string",
+                        "format": "uuid",
+                        "description": "Only policies whose mcp_scope names this registry (in registry_ids or tools)",
+                        "name": "registry_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Sort field (name, created_at, updated_at, priority)",
                         "name": "sort",
                         "in": "query"
@@ -1805,7 +1830,7 @@
                 ]
             },
             "post": {
-                "description": "Creates a new policy in a gateway.",
+                "description": "Creates a new policy in a gateway. An optional mcp_scope narrows it to MCP registries, tools and principals; the response echoes the stored scope and may carry non-blocking warnings. The policy starts attached to no consumer and not global, so it runs nowhere and holds no level until it is attached or promoted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1861,7 +1886,7 @@
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "A policy of this name already exists in the gateway",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1935,7 +1960,7 @@
                 ]
             },
             "put": {
-                "description": "Updates an existing policy.",
+                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1999,7 +2024,7 @@
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2143,7 +2168,7 @@
         },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
-                "description": "Promotes a policy to gateway-wide scope (applies to every consumer).",
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -2190,6 +2215,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at the all-traffic level",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2816,7 +2847,7 @@
         },
         "/v1/gateways/{gateway_id}/registries/{id}/tools": {
             "get": {
-                "description": "Introspects the MCP server behind the registry and returns its advertised tools. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 502 when the upstream MCP server is unreachable.",
+                "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
                 "produces": [
                     "application/json"
                 ],
@@ -2863,6 +2894,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3786,7 +3823,7 @@
         },
         "/v1/models-catalog": {
             "get": {
-                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied, the list is narrowed to the models that registry's credentials can actually use: AWS Bedrock registries are checked against the AWS control plane (on-demand base models and system-defined inference profiles), and every other provider is checked against its authenticated models listing (so org-restricted API keys and Azure deployments are respected). A provider the catalog does not carry — a self-hosted openai_compatible endpoint — is listed live from the registry itself instead of returning nothing. Malformed ids, providers without a listing, and unreachable provider endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -4119,16 +4156,42 @@
                 }
             }
         },
+        "/whoami": {
+                "get": {
+                    "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.",
+                    "produces": [
+                        "application/json"
+                    ],
+                    "tags": [
+                        "mcp"
+                    ],
+                    "summary": "Describe what an API key reaches",
+                    "responses": {
+                        "200": {
+                            "description": "OK",
+                            "schema": {
+                                "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse"
+                            }
+                        },
+                        "401": {
+                            "description": "Unauthorized",
+                            "schema": {
+                                "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                            }
+                        }
+                    }
+                }
+            },
         "/{slug}/connections": {
             "get": {
-                "description": "For an MCP consumer whose application identifies its end users (identity.source = app). Reports, per connectable server, whether the named end user is connected, needs to reconnect, or has not connected. Authenticated with the consumer's API key.",
+                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "connections"
                 ],
-                "summary": "Read an application's end-user connection states",
+                "summary": "Read connection states for an end user or for the application itself",
                 "parameters": [
                     {
                         "type": "string",
@@ -4139,10 +4202,9 @@
                     },
                     {
                         "type": "string",
-                        "description": "End-user id the application uses",
+                        "description": "End-user id the application uses; omit to ask about the application itself",
                         "name": "end_user",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -5092,6 +5154,17 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse": {
+            "type": "object",
+            "properties": {
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse": {
             "type": "object",
             "properties": {
@@ -5182,6 +5255,10 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "pending_upstream_auth": {
+                    "description": "PendingUpstreamAuth counts the upstream accounts this application still\nowes before it can call every server it is bound to: never signed in, or\nsigned in and since expired or revoked.\nAbsent when nothing is owed, and on a plane that cannot read the accounts\nat all — a list must not claim everything is fine when it did not look.",
+                    "type": "integer"
                 },
                 "registry_ids": {
                     "type": "array",
@@ -5687,6 +5764,14 @@
                 "enabled": {
                     "type": "boolean"
                 },
+                "mcp_scope": {
+                    "description": "MCPScope narrows the policy to MCP destinations and principals. Omitted\n(or null) keeps the policy consumer-wide; {} is rejected as it would\nnever match.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest"
+                        }
+                    ]
+                },
                 "mode": {
                     "type": "string"
                 },
@@ -5714,6 +5799,47 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -5722,6 +5848,10 @@
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope is tri-state: omitted leaves the stored scope untouched, null\nclears it and an object replaces it. A pointer field could not tell\nomitted from null, so the raw JSON is kept until ToMCPScope reads it.",
+                    "type": "object"
                 },
                 "mode": {
                     "type": "string"
@@ -5770,6 +5900,46 @@
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse": {
+            "type": "object",
+            "properties": {
+                "except_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
@@ -5796,6 +5966,14 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "mcp_scope": {
+                    "description": "MCPScope is echoed as stored: absent when the policy is consumer-wide,\n{} when a registry delete pruned every destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse"
+                        }
+                    ]
                 },
                 "mode": {
                     "type": "string"
@@ -5824,6 +6002,13 @@
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings are non-blocking notes about the write that just succeeded,\nsuch as a consumer that already runs the same plugin without scope.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -7517,6 +7702,13 @@
                         "type": "string"
                     }
                 },
+                "capabilities": {
+                    "description": "Capabilities are the three “What you can do” lines the Employee Portal\nshows. Seeded when curated; otherwise derived from Tools at catalog load.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "category": {
                     "type": "string"
                 },
@@ -7618,12 +7810,32 @@
                 "name": {
                     "type": "string"
                 },
+                "options": {
+                    "description": "Options closes the value to a fixed set the vendor publishes — a region,\nan edition. One entry then covers what would otherwise be a near-duplicate\nentry per value. Empty means free text.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption"
+                    }
+                },
                 "required": {
                     "type": "boolean"
                 },
                 "secret": {
                     "description": "Secret marks a variable that carries a credential (e.g. a token passed in\nthe query string) so the UI/secret store treats it as sensitive.",
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "description": "Label is what the operator picks by — \"Europe\", not \"mcp.eu.vanta.com\".",
+                    "type": "string"
+                },
+                "value": {
+                    "description": "Value is substituted into the template.",
+                    "type": "string"
                 }
             }
         },
@@ -7957,6 +8169,9 @@
                 "operation": {
                     "type": "string"
                 },
+                "policy_scope": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope"
+                },
                 "prompt": {
                     "type": "string"
                 },
@@ -7988,6 +8203,40 @@
                     "type": "integer"
                 },
                 "upstream_tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope": {
+            "type": "object",
+            "properties": {
+                "evaluated": {
+                    "type": "integer"
+                },
+                "matched": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
                     "type": "string"
                 }
             }
@@ -8209,6 +8458,50 @@
                 }
             }
         },
+        "pkg_api_handler_http_mcp.WhoAmIConsumer": {
+                "type": "object",
+                "properties": {
+                    "acts_for_users": {
+                        "description": "ActsForUsers is false for a consumer that acts as the application\nitself, which is the actor a batch runs as.",
+                        "type": "boolean"
+                    },
+                    "active": {
+                        "type": "boolean"
+                    },
+                    "identity_source": {
+                        "description": "IdentitySource names who its users are when it acts for them.",
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "slug": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
+                        "type": "string"
+                    },
+                    "url": {
+                        "description": "URL is where this consumer is served \u2014 the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                        "type": "string"
+                    }
+                }
+            },
+            "pkg_api_handler_http_mcp.WhoAmIResponse": {
+                "type": "object",
+                "properties": {
+                    "consumers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer"
+                        }
+                    },
+                    "gateway": {
+                        "type": "string"
+                    }
+                }
+            },
         "pkg_api_handler_http_oauth.EndUserConnectionResponse": {
             "type": "object",
             "properties": {
@@ -8235,6 +8528,10 @@
         "pkg_api_handler_http_oauth.EndUserConnectionsResponse": {
             "type": "object",
             "properties": {
+                "actor": {
+                    "description": "Actor names whose connections these are: \"end_user\" or \"application\".\nWithout it an empty end_user would read as an unnamed user.",
+                    "type": "string"
+                },
                 "connections": {
                     "type": "array",
                     "items": {
@@ -8242,6 +8539,7 @@
                     }
                 },
                 "end_user": {
+                    "description": "EndUser is empty when the states are the application's own.",
                     "type": "string"
                 }
             }

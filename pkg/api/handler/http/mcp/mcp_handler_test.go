@@ -257,8 +257,10 @@ func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
+	composer := mocks.NewComposer(t)
+	expectResolve(composer, "notion-search")
 	handler := mcphttp.NewHandler(
-		mcphttp.NewRPCGateway(mocks.NewComposer(t), appmcp.NewPluginRunner(executor, discardLogger()), nil),
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), nil),
 		nil,
 	)
 	app.Post(storePath, handler.Handle)
@@ -281,6 +283,7 @@ func TestHandler_Store_ToolCallUsesGatewayWidePolicies(t *testing.T) {
 	if !strings.Contains(string(raw), `"code":-32004`) {
 		t.Fatalf("response = %s, want rate-limit JSON-RPC error", raw)
 	}
+	composer.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
@@ -321,7 +324,7 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
 	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`)
 	result := body["result"].(map[string]any)
-	if result["protocolVersion"] != "2025-06-18" {
+	if result["protocolVersion"] != "2026-07-28" {
 		t.Fatalf("protocolVersion = %v, want latest", result["protocolVersion"])
 	}
 }
@@ -349,8 +352,7 @@ func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
-		Return(nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"}).Once()
+	expectToolCall(composer, "boom", nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"})
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
 	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom"}}`)
@@ -370,7 +372,7 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
 			Cause: appmcp.ConsentCauseRegisteredClientLost,
@@ -407,7 +409,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().Resolve(mock.Anything, mock.Anything, "notion-search").
 		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -593,18 +595,16 @@ func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
 	if result["resultType"] != "complete" {
 		t.Fatalf("resultType = %v, want complete", result["resultType"])
 	}
-	// A client probing with 2026-07-28 must still get a discovery answer rather
-	// than a method-not-found, but it must be told only what the gateway can
-	// actually negotiate: advertising the probed revision downgraded the client
-	// silently and made it reject every tools/call result as malformed.
+	// A client probing with 2026-07-28 gets it back, and initialize will
+	// negotiate it: what discover advertises and what initialize accepts are
+	// one list, because a client told about a revision the handshake then
+	// refuses is downgraded silently and goes on applying the newer rules.
 	versions, _ := result["supportedVersions"].([]any)
-	if len(versions) == 0 || versions[0] != "2025-06-18" {
-		t.Fatalf("supportedVersions = %v, want the negotiable revision first", versions)
+	if len(versions) == 0 || versions[0] != "2026-07-28" {
+		t.Fatalf("supportedVersions = %v, want the newest revision first", versions)
 	}
-	for _, version := range versions {
-		if version == "2026-07-28" {
-			t.Fatalf("supportedVersions advertises a revision initialize refuses: %v", versions)
-		}
+	if result["cacheScope"] != "private" {
+		t.Fatalf("cacheScope = %v, want private", result["cacheScope"])
 	}
 	capabilities := result["capabilities"].(map[string]any)
 	for _, kind := range []string{"tools", "prompts", "resources"} {

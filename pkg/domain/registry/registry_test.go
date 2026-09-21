@@ -15,7 +15,9 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,5 +320,40 @@ func TestEmbeddingConfig_ValueAndScan(t *testing.T) {
 	}
 	if rt.Provider != original.Provider || rt.Model != original.Model {
 		t.Fatalf("roundtrip mismatch: %+v vs %+v", rt, original)
+	}
+}
+
+func TestRegistry_ScopeKey(t *testing.T) {
+	t.Parallel()
+	shelf := ids.New[ids.RegistryKind]()
+	plain := &Registry{ID: ids.New[ids.RegistryKind]()}
+	if !plain.InstanceOf.IsNil() {
+		t.Fatal("a registry built from storage must not carry InstanceOf")
+	}
+	if plain.ScopeKey() != plain.ID {
+		t.Fatalf("ScopeKey = %s, want own id %s", plain.ScopeKey(), plain.ID)
+	}
+	clone := &Registry{ID: ids.New[ids.RegistryKind](), InstanceOf: shelf}
+	if clone.ScopeKey() != shelf {
+		t.Fatalf("ScopeKey = %s, want shelf id %s", clone.ScopeKey(), shelf)
+	}
+}
+
+func TestRegistry_InstanceOfNeverSerialises(t *testing.T) {
+	t.Parallel()
+	clone := &Registry{ID: ids.New[ids.RegistryKind](), InstanceOf: ids.New[ids.RegistryKind]()}
+	raw, err := json.Marshal(clone)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "instance_of") || strings.Contains(string(raw), clone.InstanceOf.String()) {
+		t.Fatalf("InstanceOf is a request-scoped view and must not reach JSON, got %s", raw)
+	}
+	var back Registry
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !back.InstanceOf.IsNil() {
+		t.Fatal("InstanceOf must not round-trip through JSON")
 	}
 }

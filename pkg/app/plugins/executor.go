@@ -44,7 +44,7 @@ func (e *executor) batchesFor(in StageInput) [][]chainEntry {
 	if in.Plan != nil {
 		return in.Plan.batchesFor(in.Stage)
 	}
-	return groupBatches(buildStageChain(e.registry, in.Policies, in.Stage), in.Stage, e.logger)
+	return groupBatches(buildStageChain(e.registry, in.Policies, in.Stage, false), in.Stage, e.logger)
 }
 
 type StageOutcome struct {

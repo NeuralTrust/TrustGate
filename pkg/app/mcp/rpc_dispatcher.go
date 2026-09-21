@@ -21,12 +21,25 @@ import (
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
+
+// toolCallIDMetaKey is the params._meta key an agent uses to tell the gateway
+// which LLM tool_call_id a tools/call is executing, so a policy watching both
+// protocols counts the execution once (ENG-1579). The reverse-DNS prefix keeps
+// it out of the way of the keys the MCP spec reserves.
+const toolCallIDMetaKey = "ai.neuraltrust/toolCallId"
+
+// maxToolCallIDLen bounds what a caller can put in a Redis key derived from the
+// id. Real ids are short ("call_abc123", "toolu_01A…").
+const maxToolCallIDLen = 128
 
 type InvalidParamsError struct {
 	Reason string
@@ -163,6 +176,7 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
+		Meta      json.RawMessage `json:"_meta,omitempty"`
 	}
 	if err := json.Unmarshal(req.params, &params); err != nil || params.Name == "" {
 		return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
@@ -188,24 +202,39 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		}
 		return d.store.Call(ctx, req.consumer, req.baseURL, params.Name, params.Arguments)
 	}
-	pre, err := d.plugins.PreRequest(ctx, req.consumer, params.Name, params.Arguments)
+	// The binding is fixed before any plugin sees the request, so the plan is
+	// chosen for the real destination and a body rewrite cannot reroute the call.
+	// A name nobody serves, a toolkit denial or a pending consent answers here,
+	// before any stage runs.
+	target, err := d.composer.Resolve(ctx, req.consumer, params.Name)
 	if err != nil {
 		return nil, err
 	}
-	arguments := params.Arguments
+	call := ToolCall{
+		Exposed:          target.Exposed,
+		Registry:         target.Registry,
+		NativeTool:       target.Tool.Name,
+		Arguments:        params.Arguments,
+		Plan:             planFor(ctx, req.consumer, target),
+		ClientToolCallID: clientToolCallID(params.Meta),
+	}
+	pre, err := d.plugins.PreRequest(ctx, req.consumer, call)
+	if err != nil {
+		return nil, err
+	}
 	if pre != nil {
 		if pre.Result != nil {
 			return pre.Result, nil
 		}
 		if pre.Arguments != nil {
-			arguments = pre.Arguments
+			call.Arguments = pre.Arguments
 		}
 	}
-	result, err := d.composer.CallTool(ctx, req.consumer, params.Name, arguments)
+	result, err := d.composer.Invoke(ctx, req.consumer, target, call.Arguments)
 	if err != nil {
 		return nil, err
 	}
-	post, err := d.plugins.PreResponse(ctx, req.consumer, params.Name, arguments, result)
+	post, err := d.plugins.PreResponse(ctx, req.consumer, call, result)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +242,86 @@ func (d *RPCDispatcher) callTool(ctx context.Context, req dispatchRequest) (any,
 		result = post.Result
 	}
 	return result, nil
+}
+
+// clientToolCallID reads the tool_call_id a caller volunteered in
+// params._meta. Anything that is not a plain short token is dropped rather
+// than rejected: the id only ever suppresses a duplicate count, so a malformed
+// one costs the caller its correlation, not its call. Keeping the character set
+// closed also keeps the value safe to interpolate into a counter key, where a
+// separator smuggled inside the id could otherwise land it in another key's
+// namespace.
+func clientToolCallID(meta json.RawMessage) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		return ""
+	}
+	raw, ok := fields[toolCallIDMetaKey]
+	if !ok {
+		return ""
+	}
+	var id string
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return ""
+	}
+	if id == "" || len(id) > maxToolCallIDLen || !isToolCallIDToken(id) {
+		return ""
+	}
+	return id
+}
+
+func isToolCallIDToken(id string) bool {
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// planFor picks the stage plan for a resolved destination. Consumers without
+// precompiled MCP plans get nil, which makes the runner fall back to the
+// consumer-wide plan exactly as before scopes existed. With a span recording,
+// the same plan comes from Explain and the scope decision is stamped on the
+// span next to the upstream; without one, PlanFor runs and nothing is
+// allocated for a decision nobody would read.
+func planFor(ctx context.Context, rc *appconsumer.RoutableConsumer, target *ResolvedTool) *appplugins.StagePlan {
+	if rc == nil || rc.MCPPlans == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	span := trace.SpanFromContext(ctx)
+	if span == nil {
+		return rc.MCPPlans.PlanFor(target.Registry, target.Tool.Name, principal)
+	}
+	plan, decision := rc.MCPPlans.Explain(target.Registry, target.Tool.Name, principal)
+	span.SetMCPPolicyScope(policyScopeAttrs(decision))
+	return plan
+}
+
+func policyScopeAttrs(decision appconsumer.ScopeDecision) trace.MCPPolicyScope {
+	scope := trace.MCPPolicyScope{Evaluated: decision.Evaluated}
+	if len(decision.Matched) > 0 {
+		scope.Matched = make([]string, 0, len(decision.Matched))
+		for _, ref := range decision.Matched {
+			scope.Matched = append(scope.Matched, ref.ID)
+		}
+	}
+	if len(decision.Skipped) > 0 {
+		scope.Skipped = make([]trace.MCPSkippedPolicy, 0, len(decision.Skipped))
+		for _, skipped := range decision.Skipped {
+			scope.Skipped = append(scope.Skipped, trace.MCPSkippedPolicy{
+				ID: skipped.ID, Name: skipped.Name, Reason: string(skipped.Reason),
+			})
+		}
+	}
+	return scope
 }
 
 func (d *RPCDispatcher) listResources(ctx context.Context, req dispatchRequest) (any, error) {

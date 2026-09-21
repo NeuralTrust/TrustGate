@@ -58,6 +58,13 @@ func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
 	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
+// ScopeInertSafe reports true: the limit is measured on the request body and
+// resolves no tool or registry name, so it means the same thing on every
+// plane. With the group inert the ceiling applies to all of the consumer's
+// traffic rather than to that group's, which is a stricter bound, not a
+// widened one.
+func (p *Plugin) ScopeInertSafe() bool { return true }
+
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }

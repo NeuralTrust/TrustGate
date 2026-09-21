@@ -35,8 +35,28 @@ type PolicyResponse struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []string         `json:"stages,omitempty"`
 	Mode        string           `json:"mode"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	// MCPScope is echoed as stored: absent when the policy is consumer-wide,
+	// {} when a registry delete pruned every destination.
+	MCPScope *MCPScopeResponse `json:"mcp_scope,omitempty"`
+	// Warnings are non-blocking notes about the write that just succeeded,
+	// such as a consumer that already runs the same plugin without scope.
+	Warnings  []string  `json:"warnings,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MCPToolRefResponse names one upstream tool by registry and native name.
+type MCPToolRefResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Tool       string         `json:"tool"`
+}
+
+// MCPScopeResponse mirrors the stored mcp_scope of a policy.
+type MCPScopeResponse struct {
+	RegistryIDs  []ids.RegistryID     `json:"registry_ids,omitempty"`
+	Tools        []MCPToolRefResponse `json:"tools,omitempty"`
+	Groups       []string             `json:"groups,omitempty"`
+	ExceptGroups []string             `json:"except_groups,omitempty"`
 }
 
 func FromPolicy(p *domain.Policy) PolicyResponse {
@@ -54,9 +74,36 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		Settings:    p.Settings,
 		Stages:      fromStages(p.Stages),
 		Mode:        string(p.Mode.Normalize()),
+		MCPScope:    fromMCPScope(p.MCPScope),
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
+// write that produced p.
+func FromPolicyWithWarnings(p *domain.Policy, warnings []string) PolicyResponse {
+	out := FromPolicy(p)
+	out.Warnings = warnings
+	return out
+}
+
+func fromMCPScope(scope *domain.MCPScope) *MCPScopeResponse {
+	if scope == nil {
+		return nil
+	}
+	out := &MCPScopeResponse{
+		RegistryIDs:  scope.RegistryIDs,
+		Groups:       scope.Groups,
+		ExceptGroups: scope.ExceptGroups,
+	}
+	if len(scope.Tools) > 0 {
+		out.Tools = make([]MCPToolRefResponse, 0, len(scope.Tools))
+		for _, ref := range scope.Tools {
+			out.Tools = append(out.Tools, MCPToolRefResponse{RegistryID: ref.RegistryID, Tool: ref.Tool})
+		}
+	}
+	return out
 }
 
 func fromStages(stages []domain.Stage) []string {

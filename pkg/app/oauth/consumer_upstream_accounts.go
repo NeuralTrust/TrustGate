@@ -104,6 +104,12 @@ type ConsumerConnectLink struct {
 //go:generate mockery --name=ConsumerUpstreamAccounts --dir=. --output=./mocks --filename=oauth_consumer_upstream_accounts_mock.go --case=underscore --with-expecter
 type ConsumerUpstreamAccounts interface {
 	State(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (*ConsumerUpstreamState, error)
+	// PendingUpstreamAuth counts the upstream accounts this application still
+	// owes — never signed in, or signed in and since expired or revoked. It
+	// counts accounts rather than servers because two servers behind one
+	// provider are authorized together, which is the number an admin has to
+	// act on.
+	PendingUpstreamAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID) (int, error)
 	// Link mints the connect ticket. A nil registryID covers every server of the
 	// application that forwards a credential; naming one narrows the ticket to
 	// that server alone, which is how a row authorizes just itself.
@@ -175,6 +181,51 @@ func (s *consumerUpstreamAccounts) State(
 		PrincipalSub: principalSub,
 		Accounts:     accounts,
 	}, nil
+}
+
+// PendingUpstreamAuth counts what stands between this application and its
+// servers.
+//
+// The list calls it once per consumer, so it refuses to read the vault unless
+// it has to: a consumer whose servers all carry their own credential — every
+// LLM application, and most MCP ones — is answered from the consumer data the
+// finder already had. Only one with a server that forwards a stored credential
+// costs a read, and then one read covers all of them.
+func (s *consumerUpstreamAccounts) PendingUpstreamAuth(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	consumerID ids.ConsumerID,
+) (int, error) {
+	data, rc, err := s.resolve(ctx, gatewayID, consumerID)
+	if err != nil {
+		return 0, err
+	}
+	providers := forwardedProviderIDs(data.EffectiveRegistries(rc))
+	if len(providers) == 0 {
+		return 0, nil
+	}
+	statuses, err := s.connect.Statuses(
+		ctx,
+		gatewayID,
+		consumerdomain.AppSubject(rc.Consumer.ID),
+		appconsumer.MCPPath(rc.Consumer.Slug),
+	)
+	if err != nil {
+		return 0, err
+	}
+	linked := make(map[string]ProviderStatus, len(statuses))
+	for _, st := range statuses {
+		linked[st.Provider] = st
+	}
+	pending := 0
+	for _, provider := range providers {
+		st, known := linked[provider]
+		// Unknown to the connect service is a provider nobody has signed into.
+		if !known || !st.Linked || st.NeedsReconnect {
+			pending++
+		}
+	}
+	return pending, nil
 }
 
 func (s *consumerUpstreamAccounts) Link(

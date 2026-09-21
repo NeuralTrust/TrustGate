@@ -34,6 +34,7 @@ type ListFilter struct {
 	// RestrictToSlugs with empty Slugs means match nothing (ENG-1242).
 	RestrictToSlugs bool
 	Slugs           []string
+	RegistryID      *ids.RegistryID
 	Page            listing.Page
 	Sort            listing.Sort
 }
@@ -41,7 +42,11 @@ type ListFilter struct {
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=policy_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, p *Policy) error
-	Update(ctx context.Context, p *Policy) error
+	// Update persists every column of p. writeMCPScope false leaves
+	// policies.mcp_scope as stored: an update that did not ask to change the
+	// scope must not write back the value it read, or it would resurrect a
+	// registry a concurrent prune had just removed.
+	Update(ctx context.Context, p *Policy, writeMCPScope bool) error
 	SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error
 	FindByID(ctx context.Context, id ids.PolicyID) (*Policy, error)

@@ -21,11 +21,13 @@ const (
 	actionStripped    = "stripped"
 	actionPassThrough = "pass_through"
 	actionSkipped     = "skipped"
+	actionAllowed     = "allowed"
 )
 
 const (
 	errNoToolsAllowed    = "no_tools_allowed"
 	errInvalidToolsField = "invalid_tools_field"
+	errToolDenied        = "tool_denied"
 )
 
 type ToolAllowlistData struct {

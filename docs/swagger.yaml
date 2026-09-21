@@ -593,6 +593,13 @@ definitions:
       type:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse:
+    properties:
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AuthBindingResponse:
     properties:
       allowed_certificate_subjects:
@@ -653,6 +660,14 @@ definitions:
         type: array
       name:
         type: string
+      pending_upstream_auth:
+        description: |-
+          PendingUpstreamAuth counts the upstream accounts this application still
+          owes before it can call every server it is bound to: never signed in, or
+          signed in and since expired or revoked.
+          Absent when nothing is owed, and on a plane that cannot read the accounts
+          at all — a list must not claim everything is fine when it did not look.
+        type: integer
       registry_ids:
         items:
           type: string
@@ -1004,6 +1019,13 @@ definitions:
         type: string
       enabled:
         type: boolean
+      mcp_scope:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest'
+        description: |-
+          MCPScope narrows the policy to MCP destinations and principals. Omitted
+          (or null) keeps the policy consumer-wide; {} is rejected as it would
+          never match.
       mode:
         type: string
       name:
@@ -1022,12 +1044,45 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPScopeRequest:
+    properties:
+      except_groups:
+        items:
+          type: string
+        type: array
+      groups:
+        items:
+          type: string
+        type: array
+      registry_ids:
+        items:
+          type: string
+        type: array
+      tools:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.MCPToolRefRequest:
+    properties:
+      registry_id:
+        format: uuid
+        type: string
+      tool:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest:
     properties:
       description:
         type: string
       enabled:
         type: boolean
+      mcp_scope:
+        description: |-
+          MCPScope is tri-state: omitted leaves the stored scope untouched, null
+          clears it and an object replaces it. A pointer field could not tell
+          omitted from null, so the raw JSON is kept until ToMCPScope reads it.
+        type: object
       mode:
         type: string
       name:
@@ -1059,6 +1114,32 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse:
+    properties:
+      except_groups:
+        items:
+          type: string
+        type: array
+      groups:
+        items:
+          type: string
+        type: array
+      registry_ids:
+        items:
+          type: string
+        type: array
+      tools:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPToolRefResponse:
+    properties:
+      registry_id:
+        type: string
+      tool:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse:
     properties:
       consumer_ids:
@@ -1077,6 +1158,12 @@ definitions:
         type: boolean
       id:
         type: string
+      mcp_scope:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse'
+        description: |-
+          MCPScope is echoed as stored: absent when the policy is consumer-wide,
+          {} when a registry delete pruned every destination.
       mode:
         type: string
       name:
@@ -1096,6 +1183,13 @@ definitions:
         type: array
       updated_at:
         type: string
+      warnings:
+        description: |-
+          Warnings are non-blocking notes about the write that just succeeded,
+          such as a consumer that already runs the same plugin without scope.
+        items:
+          type: string
+        type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest:
     properties:
@@ -1840,6 +1934,8 @@ definitions:
           Reason is why the requester asked for the server, in their own words.
           Omitted when they gave none.
         type: string
+      requested_at:
+        type: string
       requester_groups:
         description: |-
           RequesterGroups are the groups the requester carried when they filed, and
@@ -1847,8 +1943,6 @@ definitions:
         items:
           type: string
         type: array
-      requested_at:
-        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_response.PendingRequests:
     properties:
@@ -2271,6 +2365,13 @@ definitions:
         items:
           type: string
         type: array
+      capabilities:
+        description: |-
+          Capabilities are the three “What you can do” lines the Employee Portal
+          shows. Seeded when curated; otherwise derived from Tools at catalog load.
+        items:
+          type: string
+        type: array
       category:
         type: string
       code:
@@ -2375,6 +2476,14 @@ definitions:
         type: string
       name:
         type: string
+      options:
+        description: |-
+          Options closes the value to a fixed set the vendor publishes — a region,
+          an edition. One entry then covers what would otherwise be a near-duplicate
+          entry per value. Empty means free text.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption'
+        type: array
       required:
         type: boolean
       secret:
@@ -2382,6 +2491,15 @@ definitions:
           Secret marks a variable that carries a credential (e.g. a token passed in
           the query string) so the UI/secret store treats it as sensitive.
         type: boolean
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariableOption:
+    properties:
+      label:
+        description: Label is what the operator picks by — "Europe", not "mcp.eu.vanta.com".
+        type: string
+      value:
+        description: Value is substituted into the template.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig:
     additionalProperties:
@@ -2615,6 +2733,8 @@ definitions:
         type: string
       operation:
         type: string
+      policy_scope:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope'
       prompt:
         type: string
       registry_id:
@@ -2636,6 +2756,28 @@ definitions:
       upstream_status:
         type: integer
       upstream_tool:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPPolicyScope:
+    properties:
+      evaluated:
+        type: integer
+      matched:
+        items:
+          type: string
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCPSkippedPolicy:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      reason:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry:
@@ -2781,6 +2923,41 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer'
         type: array
     type: object
+  pkg_api_handler_http_mcp.WhoAmIConsumer:
+    properties:
+      acts_for_users:
+        description: |-
+          ActsForUsers is false for a consumer that acts as the application
+          itself, which is the actor a batch runs as.
+        type: boolean
+      active:
+        type: boolean
+      identity_source:
+        description: IdentitySource names who its users are when it acts for them.
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      type:
+        description: 'Type is the plane this consumer belongs to: MCP, LLM or A2A.'
+        type: string
+      url:
+        description: |-
+          URL is where this consumer is served — the MCP endpoint for an MCP
+          consumer, the provider-compatible base URL for an LLM one. Empty when
+          the gateway has no public host configured for that plane.
+        type: string
+    type: object
+  pkg_api_handler_http_mcp.WhoAmIResponse:
+    properties:
+      consumers:
+        items:
+          $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer'
+        type: array
+      gateway:
+        type: string
+    type: object
   pkg_api_handler_http_oauth.EndUserConnectionResponse:
     properties:
       account_ref:
@@ -2798,11 +2975,17 @@ definitions:
     type: object
   pkg_api_handler_http_oauth.EndUserConnectionsResponse:
     properties:
+      actor:
+        description: |-
+          Actor names whose connections these are: "end_user" or "application".
+          Without it an empty end_user would read as an unnamed user.
+        type: string
       connections:
         items:
           $ref: '#/definitions/pkg_api_handler_http_oauth.EndUserConnectionResponse'
         type: array
       end_user:
+        description: EndUser is empty when the states are the application's own.
         type: string
     type: object
   pkg_api_handler_http_oauth.EndUserLinkRequest:
@@ -3083,11 +3266,37 @@ paths:
       summary: Proxy chat completion
       tags:
       - proxy
+  /whoami:
+    get:
+      description: Returns the consumers this API key is attached to, one per plane,
+        each with the URL it is served on. A key is attached to consumers and a consumer
+        has one type, so an agent that calls both tools and models holds an MCP consumer
+        and an LLM one behind the same key; this is how a client learns their slugs
+        and addresses instead of being configured with them. Carries no identifiers
+        and no credentials. An unknown, disabled or foreign key is refused without
+        saying which.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Describe what an API key reaches
+      tags:
+      - mcp
   /{slug}/connections:
     get:
-      description: For an MCP consumer whose application identifies its end users
-        (identity.source = app). Reports, per connectable server, whether the named
-        end user is connected, needs to reconnect, or has not connected. Authenticated
+      description: Reports, per connectable server, whether the actor is connected,
+        needs to reconnect, or has not connected. Naming end_user asks about that
+        end user, for an MCP consumer whose application identifies its own users
+        (identity.source = app). Omitting it asks about the application acting as
+        itself (app:<consumer_id>) — the preflight a batch runs before it starts,
+        since nobody is there to follow a connect link once it is running. Authenticated
         with the consumer's API key.
       parameters:
       - description: Consumer slug
@@ -3095,10 +3304,10 @@ paths:
         name: slug
         required: true
         type: string
-      - description: End-user id the application uses
+      - description: End-user id the application uses; omit to ask about the application
+          itself
         in: query
         name: end_user
-        required: true
         type: string
       produces:
       - application/json
@@ -3119,7 +3328,7 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      summary: Read an application's end-user connection states
+      summary: Read connection states for an end user or for the application itself
       tags:
       - connections
   /{slug}/connections/links:
@@ -3958,7 +4167,12 @@ paths:
       - consumers
     post:
       description: Associates a policy with a consumer (idempotent). Editing the policy
-        later affects every consumer it is attached to.
+        later affects every consumer it is attached to. An mcp_scope that names a
+        registry or a tool, or that is the empty object, only attaches to an MCP consumer;
+        a scope narrowing by group alone also attaches to a non-MCP consumer, where
+        the group is inert, provided the plugin runs under an inert scope. Answers
+        204, or 200 with a warnings body when the consumer already runs the same plugin
+        without scope.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3981,6 +4195,10 @@ paths:
       produces:
       - application/json
       responses:
+        "200":
+          description: Attached with non-blocking warnings
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.AttachPolicyResponse'
         "204":
           description: No Content
         "400":
@@ -3993,6 +4211,15 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The gateway already runs this plugin at one of the levels the
+            attach would take
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4240,6 +4467,12 @@ paths:
         in: query
         name: type
         type: string
+      - description: Only policies whose mcp_scope names this registry (in registry_ids
+          or tools)
+        format: uuid
+        in: query
+        name: registry_id
+        type: string
       - description: Sort field (name, created_at, updated_at, priority)
         in: query
         name: sort
@@ -4283,7 +4516,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new policy in a gateway.
+      description: Creates a new policy in a gateway. An optional mcp_scope narrows
+        it to MCP registries, tools and principals; the response echoes the stored
+        scope and may carry non-blocking warnings. The policy starts attached to no
+        consumer and not global, so it runs nowhere and holds no level until it is
+        attached or promoted.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4317,7 +4554,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: Conflict
+          description: A policy of this name already exists in the gateway
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4409,7 +4646,11 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing policy.
+      description: 'Updates an existing policy. mcp_scope is tri-state: omitted keeps
+        the stored scope, null clears it and an object replaces it. An update that
+        moves the policy onto a level another policy of the same plugin already holds
+        is refused with 409, and so is turning enabled back on when that is what takes
+        the level. The response may carry non-blocking warnings.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4449,7 +4690,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: Conflict
+          description: A policy of this name already exists, or the gateway already
+            runs this plugin at one of the levels the update would take
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4547,6 +4789,10 @@ paths:
       - policies
     post:
       description: Promotes a policy to gateway-wide scope (applies to every consumer).
+        Promoting moves the policy to the all-traffic level, so it answers 409 when
+        another policy of the same plugin already holds it. For a policy with mcp_scope
+        the response may carry non-blocking warnings about consumers that already
+        run the same plugin without scope.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4577,6 +4823,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The gateway already runs this plugin at the all-traffic level
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4826,9 +5076,11 @@ paths:
   /v1/gateways/{gateway_id}/registries/{id}/tools:
     get:
       description: Introspects the MCP server behind the registry and returns its
-        advertised tools. Each tool is passed through as the server declared it (name
-        plus whatever else it exposes, e.g. description and inputSchema). Returns
-        502 when the upstream MCP server is unreachable.
+        advertised tools under their native upstream names. Each tool is passed through
+        as the server declared it (name plus whatever else it exposes, e.g. description
+        and inputSchema). Returns 409 when the registry cannot be introspected from
+        the admin plane (per-principal auth or URL variables), and 502 when the upstream
+        MCP server is unreachable or its tools/list call fails.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4859,6 +5111,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "502":
@@ -5614,8 +5870,10 @@ paths:
         are checked against the AWS control plane (on-demand base models and system-defined
         inference profiles), and every other provider is checked against its authenticated
         models listing (so org-restricted API keys and Azure deployments are respected).
-        Malformed ids, providers without a listing, and unreachable provider endpoints
-        are ignored and yield the full catalog.'
+        A provider the catalog does not carry — a self-hosted openai_compatible endpoint
+        — is listed live from the registry itself instead of returning nothing. Malformed
+        ids, providers without a listing, and unreachable provider endpoints are ignored
+        and yield the full catalog.'
       parameters:
       - description: Filter by provider id
         in: query

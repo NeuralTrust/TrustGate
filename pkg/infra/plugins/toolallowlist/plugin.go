@@ -65,12 +65,18 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
+
+// ScopeInertSafe reports false: the plugin gates by tool name, and on a plane
+// where the mcp_scope does not gate there is no (registry, native tool)
+// binding to resolve those names against. A deny-all narrowed to a group would
+// widen to every function call of the consumer.
+func (p *Plugin) ScopeInertSafe() bool { return false }
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
@@ -81,6 +87,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: %w", err)
+	}
+	if in.Request != nil && in.Request.MCP {
+		return executeMCP(cfg, in)
 	}
 	if p.registry == nil || in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
@@ -143,6 +152,55 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	default:
 		return newRejectResult(http.StatusForbidden, errNoToolsAllowed, requested)
 	}
+}
+
+// executeMCP decides a single tools/call on the upstream-native tool name the
+// dispatcher stamped in the request metadata. The body carries the exposed
+// name, which on a federated consumer is a hash; policies are written against
+// the native one, so the body is never consulted. Without the metadata the
+// call is not a tools/call the plugin can judge (discovery, an unbound tool)
+// and it passes untouched. on_empty_after_filter has no meaning here: one
+// tool is either allowed or it is not.
+func executeMCP(cfg *config, in appplugins.ExecInput) (*appplugins.Result, error) {
+	if in.Stage != policy.StagePreRequest {
+		return okResult(), nil
+	}
+	tool := mcpNativeTool(in.Request)
+	if tool == "" {
+		return okResult(), nil
+	}
+	data := ToolAllowlistData{
+		Provider:       in.Request.Provider,
+		ToolsRequested: []string{tool},
+		ToolsAllowed:   []string{},
+		ToolsRemoved:   []string{},
+		Decision:       appplugins.DecisionForMode(in.Mode),
+	}
+	if keepTool(tool, cfg) {
+		data.ToolsAllowed = []string{tool}
+		data.Action = actionAllowed
+		setExtras(in.Event, data)
+		return okResult(), nil
+	}
+	data.ToolsRemoved = []string{tool}
+	data.Action = actionRejected
+	setExtras(in.Event, data)
+	if !appplugins.Blocks(in.Mode) {
+		appplugins.SetDecision(in.Event, in.Mode)
+		return okResult(), nil
+	}
+	return newRejectResult(http.StatusForbidden, errToolDenied, []string{tool})
+}
+
+// mcpNativeTool reads the binding the dispatcher fixed before the chain ran.
+// It deliberately ignores MetadataMCPTool: Metadata is merged back out of the
+// isolated requests of a parallel batch and shared across a sequential one, so
+// a plugin ordered ahead of this one could name a tool the call never reaches.
+func mcpNativeTool(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.MCPTool)
 }
 
 type toolKeyScan struct {

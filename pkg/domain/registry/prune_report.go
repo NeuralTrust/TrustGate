@@ -39,19 +39,29 @@ func (p ConsumerPrune) Changed() bool {
 	return len(p.Rewritten) > 0 || len(p.Nulled) > 0
 }
 
-// PruneReport lists every consumer a registry delete had to rewrite. The delete
-// answers 204 and no foreign key can cascade the routing JSONB, so this report
-// is the only account of what the gateway lost.
+// PolicyPrune records one policy whose mcp_scope lost the deleted registry.
+// Emptied reports that no destination survived and the scope was left as {},
+// so the policy matches nothing until an operator gives it a new destination.
+type PolicyPrune struct {
+	PolicyID ids.PolicyID
+	Emptied  bool
+}
+
+// PruneReport lists every consumer and policy a registry delete had to
+// rewrite. The delete answers 204 and no foreign key can cascade the JSONB
+// references, so this report is the only account of what the gateway lost.
 type PruneReport struct {
 	Consumers []ConsumerPrune
+	Policies  []PolicyPrune
 }
 
-// Empty reports whether the delete left every consumer untouched.
+// Empty reports whether the delete left every consumer and policy untouched.
 func (r PruneReport) Empty() bool {
-	return len(r.Consumers) == 0
+	return len(r.Consumers) == 0 && len(r.Policies) == 0
 }
 
-// Merge appends the consumers another report recorded.
+// Merge appends the consumers and policies another report recorded.
 func (r *PruneReport) Merge(other PruneReport) {
 	r.Consumers = append(r.Consumers, other.Consumers...)
+	r.Policies = append(r.Policies, other.Policies...)
 }

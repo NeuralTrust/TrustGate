@@ -81,6 +81,8 @@ type mcpRouterParams struct {
 	ConnectHandler             *oauthhttp.ConnectHandler
 	ConfigureHandler           *oauthhttp.ConfigureHandler
 	JWKSHandler                *oauthhttp.JWKSHandler
+	// WhoAmIHandler is absent on a plane without the consumer services.
+	WhoAmIHandler *mcphttp.WhoAmIHandler `optional:"true"`
 }
 
 type mcpServerParams struct {
@@ -116,6 +118,7 @@ func ServerMCP(c *container.Container) error {
 				p.ConnectHandler,
 				p.ConfigureHandler,
 				p.JWKSHandler,
+				p.WhoAmIHandler,
 				ops,
 			)
 		},

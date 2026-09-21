@@ -86,7 +86,10 @@ func TestScoperSingleConfiguredInstanceCarriesOverlay(t *testing.T) {
 	if got.MCPTarget.InstanceConfig["database"] != "analytics" {
 		t.Fatalf("single configured instance must carry its config overlay, got %+v", got.MCPTarget.InstanceConfig)
 	}
-	if got == shelf || shelf.MCPTarget.InstanceConfig != nil {
+	if got.InstanceOf != shelf.ID || got.ScopeKey() != shelf.ID {
+		t.Fatalf("a configured clone must point back at its shelf, got InstanceOf=%s", got.InstanceOf)
+	}
+	if got == shelf || shelf.MCPTarget.InstanceConfig != nil || !shelf.InstanceOf.IsNil() {
 		t.Fatal("the shared shelf registry must not be mutated")
 	}
 }
@@ -103,6 +106,9 @@ func TestScoperSingleUnconfiguredInstanceExposesShelfAsIs(t *testing.T) {
 	scoped, _ := sc.Scope(withOpenPrincipal("ana"), rc)
 	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
 		t.Fatal("an install without config exposes the shelf registry pointer unchanged")
+	}
+	if !shelf.InstanceOf.IsNil() || shelf.ScopeKey() != shelf.ID {
+		t.Fatal("a shelf exposed as-is is no clone: InstanceOf stays nil and ScopeKey is its own id")
 	}
 }
 

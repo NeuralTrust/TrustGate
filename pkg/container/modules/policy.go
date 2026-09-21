@@ -21,7 +21,10 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -36,19 +39,28 @@ func Policy(c *container.Container) error {
 }
 
 func providePolicyRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *policyrepo.Repository {
 		return policyrepo.NewRepository(conn, appender)
-	})
-}
-
-func providePolicyServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Creator {
-		return apppolicy.NewCreator(repo, registry, manager, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
-		return apppolicy.NewUpdater(repo, registry, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(r *policyrepo.Repository) apppolicy.LevelLock { return r }); err != nil {
+		return err
+	}
+	return c.Provide(func(r *policyrepo.Repository) domain.Repository { return r })
+}
+
+func providePolicyServices(c *container.Container) error {
+	if err := c.Provide(apppolicy.NewLevelGuard); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Creator {
+		return apppolicy.NewCreator(repo, levels, registryRepo, registry, manager, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
+		return apppolicy.NewUpdater(repo, consumers, levels, registryRepo, registry, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
@@ -60,12 +72,17 @@ func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Scoper {
-		return apppolicy.NewScoper(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Scoper {
+		return apppolicy.NewScoper(repo, levels, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(apppolicy.NewDuplicator); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, auths authdomain.Repository, registry appplugins.Registry) apppolicy.Warner {
+		return apppolicy.NewWarner(repo, consumers, auths, registry)
+	}); err != nil {
 		return err
 	}
 

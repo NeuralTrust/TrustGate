@@ -160,6 +160,12 @@ func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 		if reg.ID == shelf.ID {
 			t.Fatal("a multi-instance clone must not reuse the shelf registry id")
 		}
+		if reg.InstanceOf != shelf.ID || reg.ScopeKey() != shelf.ID {
+			t.Fatalf("instance %q must point back at the shelf so a scope naming the shelf reaches it, got InstanceOf=%s", reg.Name, reg.InstanceOf)
+		}
+		if !shelf.InstanceOf.IsNil() {
+			t.Fatal("the shared shelf registry must not gain InstanceOf")
+		}
 		if len(reg.MCPTarget.InstanceConfig) == 0 {
 			t.Fatalf("instance %q must carry its config overlay", reg.Name)
 		}
