@@ -42,11 +42,11 @@ func TestInspectNoMatch(t *testing.T) {
 func TestInspectSDPBlocksByDefault(t *testing.T) {
 	t.Parallel()
 	result := &SanitizationResult{FilterResults: FilterResults{
-		SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{
+		SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{
 			MatchState: matchStateMatchFound,
 			InfoTypes:  []string{"EMAIL_ADDRESS"},
 			Data:       &SDPData{Text: "redacted"},
-		}},
+		}}},
 	}}
 	res := inspect(result, allBlockOnSettings())
 	require.NotNil(t, res.block)
@@ -60,11 +60,11 @@ func TestInspectSDPAnonymizeWhenConfigured(t *testing.T) {
 	cfg := allBlockOnSettings()
 	cfg.SDPAction = sdpActionAnonymize
 	result := &SanitizationResult{FilterResults: FilterResults{
-		SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{
+		SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{
 			MatchState: matchStateMatchFound,
 			InfoTypes:  []string{"EMAIL_ADDRESS"},
 			Data:       &SDPData{Text: "redacted"},
-		}},
+		}}},
 	}}
 	res := inspect(result, cfg)
 	assert.Nil(t, res.block)
@@ -77,10 +77,10 @@ func TestInspectSDPAnonymizeConfiguredButNoDeidentifiedTextBlocks(t *testing.T) 
 	cfg := allBlockOnSettings()
 	cfg.SDPAction = sdpActionAnonymize
 	result := &SanitizationResult{FilterResults: FilterResults{
-		SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{
+		SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{
 			MatchState: matchStateMatchFound,
 			// No Data: Model Armor flagged it but returned no de-identified text.
-		}},
+		}}},
 	}}
 	res := inspect(result, cfg)
 	require.NotNil(t, res.block)
@@ -92,10 +92,10 @@ func TestInspectBlockWinsOverAnonymize(t *testing.T) {
 	cfg := allBlockOnSettings()
 	cfg.SDPAction = sdpActionAnonymize
 	result := &SanitizationResult{FilterResults: FilterResults{
-		SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{
+		SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{
 			MatchState: matchStateMatchFound,
 			Data:       &SDPData{Text: "redacted"},
-		}},
+		}}},
 		CSAM: &CSAMFilterResult{CSAMFilterFilterResult: &CSAMResult{MatchState: matchStateMatchFound}},
 	}}
 	res := inspect(result, cfg)

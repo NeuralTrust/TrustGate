@@ -32,20 +32,20 @@ func TestMaskedText(t *testing.T) {
 	}{
 		{"nil result", nil, "", false},
 		{"no sdp filter", &SanitizationResult{}, "", false},
-		{"no deidentify result", &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{}}}, "", false},
+		{"no deidentify result", &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{}}}}, "", false},
 		{
 			"no data",
-			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{}}}},
+			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{}}}}},
 			"", false,
 		},
 		{
 			"empty text",
-			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{Data: &SDPData{Text: ""}}}}},
+			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{Data: &SDPData{Text: ""}}}}}},
 			"", false,
 		},
 		{
 			"masked",
-			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{DeidentifyResult: &SDPDeidentifyResult{Data: &SDPData{Text: "hi {EMAIL}"}}}}},
+			&SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{DeidentifyResult: &SDPDeidentifyResult{Data: &SDPData{Text: "hi {EMAIL}"}}}}}},
 			"hi {EMAIL}", true,
 		},
 	}

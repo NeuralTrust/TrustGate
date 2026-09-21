@@ -145,7 +145,7 @@ const (
 func sdpAnonymizeResponse(masked string) string {
 	raw, _ := json.Marshal(masked)
 	return `{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{` +
-		`"sdp":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":` + string(raw) + `}}}}}}`
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":` + string(raw) + `}}}}}}}`
 }
 
 func assertPassThrough(t *testing.T, res *appplugins.Result, err error) {
@@ -419,9 +419,9 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 
 	sdpResultWithText := func(text string) *SanitizationResult {
-		return &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{
+		return &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{
 			DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: text}},
-		}}}
+		}}}}
 	}
 
 	tests := []struct {
@@ -480,9 +480,9 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 	span := rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(masked string) ([]byte, bool) {
 		return []byte(masked), true
 	}}
-	result := &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{
+	result := &SanitizationResult{FilterResults: FilterResults{SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{
 		DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: "masked-body"}},
-	}}}
+	}}}}
 
 	res, err := p.anonymizeEnforce(in, data, result, span, f)
 	if err != nil {

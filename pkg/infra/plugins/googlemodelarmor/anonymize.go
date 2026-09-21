@@ -20,10 +20,11 @@ import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 // filter, i.e. the text Model Armor itself returned with PII masked, not any
 // masking TrustGate computes on its own.
 func maskedText(result *SanitizationResult) (string, bool) {
-	if result == nil || result.FilterResults.SDP == nil || result.FilterResults.SDP.DeidentifyResult == nil {
+	sdp := result.sdp()
+	if sdp == nil || sdp.DeidentifyResult == nil {
 		return "", false
 	}
-	data := result.FilterResults.SDP.DeidentifyResult.Data
+	data := sdp.DeidentifyResult.Data
 	if data == nil || data.Text == "" {
 		return "", false
 	}

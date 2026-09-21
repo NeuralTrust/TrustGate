@@ -125,7 +125,7 @@ const modelArmorRAIBlockResponse = `{"sanitizationResult":{"filterMatchState":"M
 
 var modelArmorPIIAnonymizeResponse = fmt.Sprintf(
 	`{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{`+
-		`"sdp":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":%q}}}}}}`,
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":%q}}}}}}}`,
 	"my email is "+modelArmorPIIMasked+" please reply",
 )
 
