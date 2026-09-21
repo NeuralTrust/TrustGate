@@ -105,11 +105,17 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		return outcome, nil
 	}
 
+	spans := streamSpansFrom(ctx)
+	if seg.Final {
+		defer spans.publish()
+	}
+
 	for _, entry := range entries {
 		inspector, ok := entry.plugin.(StreamInspector)
 		if !ok {
 			continue
 		}
+		event := spans.eventFor(ctx, seg, entry)
 		verdict, err := inspector.InspectSegment(ctx, ExecInput{
 			Stage:    policy.StagePreResponse,
 			Mode:     entry.mode,
@@ -117,8 +123,10 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			Scope:    scopeFromRequest(in.Request, entry.global),
 			Request:  in.Request,
 			Response: in.Response,
+			Event:    event,
 		}, seg)
 		if err != nil {
+			event.SetError(err)
 			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
 		}
 		if verdict == nil {

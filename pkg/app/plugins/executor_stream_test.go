@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -291,6 +292,57 @@ func TestExecutor_RunStreamSegment_WrapsTheInspectorError(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 	assert.Nil(t, out, "the caller applies its own on_error policy; a partial outcome would hide the failure")
 	assert.Contains(t, err.Error(), "guard")
+}
+
+func TestExecutor_RunStreamSegment_OpensOneSpanPerStream(t *testing.T) {
+	exec, pols, _ := streamChain(t, entrySpec{slug: "guard", mode: policy.ModeObserve})
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	defer publish()
+	for seq := range 3 {
+		_, err := runner.RunStreamSegment(ctx, in, segment(seq, seq == 2))
+		require.NoError(t, err)
+	}
+
+	spans := rt.Spans()
+	require.Len(t, spans, 1, "three segments of one stream must share a single plugin span")
+	assert.Equal(t, trace.SpanPlugin, spans[0].Type)
+	assert.Equal(t, "guard", spans[0].Name)
+	require.NotNil(t, spans[0].Plugin)
+	assert.Equal(t, string(policy.StagePreResponse), spans[0].Plugin.Stage)
+	assert.Equal(t, string(policy.ModeObserve), spans[0].Plugin.Mode)
+	assert.False(t, spans[0].EndedAt().IsZero(), "the final segment ends the stream span")
+
+	twoExec, twoPols, _ := streamChain(t,
+		entrySpec{slug: "guard_a", mode: policy.ModeObserve},
+		entrySpec{slug: "guard_b", mode: policy.ModeObserve},
+	)
+	twoRunner, ok := twoExec.(*executor)
+	require.True(t, ok)
+	twoRT := trace.New("t", trace.Metadata{})
+	twoCtx, twoPublish := NewStreamSpanContext(trace.NewContext(context.Background(), twoRT))
+	defer twoPublish()
+	for seq := range 2 {
+		_, err := twoRunner.RunStreamSegment(twoCtx, StageInput{
+			Stage:    policy.StagePreResponse,
+			Policies: twoPols,
+			Response: &infracontext.ResponseContext{},
+		}, segment(seq, seq == 1))
+		require.NoError(t, err)
+	}
+	twoSpans := twoRT.Spans()
+	require.Len(t, twoSpans, 2, "two inspecting policies share the stream but never share a span")
+	assert.ElementsMatch(t, []string{"guard_a", "guard_b"}, []string{twoSpans[0].Name, twoSpans[1].Name},
+		"one span per policy id, and each policy carries its own plugin")
+
+	bare := trace.New("t", trace.Metadata{})
+	_, err := runner.RunStreamSegment(trace.NewContext(context.Background(), bare), in, segment(0, false))
+	require.NoError(t, err)
+	assert.Empty(t, bare.Spans(), "without a stream span context no span is opened per segment")
 }
 
 func TestExecutor_RunStreamSegment_UsesThePreResponsePlan(t *testing.T) {
