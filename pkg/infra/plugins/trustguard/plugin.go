@@ -16,6 +16,8 @@ package trustguard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -503,25 +505,35 @@ func guardOutcomeDecision(status string, mode policy.Mode) string {
 }
 
 func (p *Plugin) config(settings map[string]any) (Settings, error) {
-	key := configCacheKey(settings)
-	if v, ok := p.cfgCache.Load(key); ok {
-		return v.(Settings), nil
+	key, cacheable := configCacheKey(settings)
+	if cacheable {
+		if v, ok := p.cfgCache.Load(key); ok {
+			return v.(Settings), nil
+		}
 	}
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return Settings{}, err
 	}
-	p.cfgCache.Store(key, cfg)
+	if cacheable {
+		p.cfgCache.Store(key, cfg)
+	}
 	return cfg, nil
 }
 
-func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf(
-		"%v\x00%v\x00%v",
-		settings["direction"],
-		settings["collector_id"],
-		settings["on_error"],
-	)
+// configCacheKey digests the whole settings map, so a setting added to
+// Settings later is part of the key the day it is added. Naming individual
+// keys made every other one invisible on an already-parsed policy until the
+// process restarted. It reports false when the map does not marshal, in which
+// case the caller must bypass the cache rather than share an entry with a
+// different config.
+func configCacheKey(settings map[string]any) (string, bool) {
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), true
 }
 
 func gatewayTraceID(ctx context.Context) string {
