@@ -138,6 +138,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
 		meta.SessionID = sessionID
 	}
+	meta.EndUser = detectEndUser(c)
 	return meta
 }
 

@@ -56,6 +56,49 @@ type Event struct {
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
 
 	MCP *MCP `json:"mcp,omitempty"`
+
+	EndUser *EndUser `json:"end_user,omitempty"`
+}
+
+// EndUser is the person a client application declared it was serving, read from
+// the headers that application forwards (Open WebUI and the like). It is
+// telemetry only: unlike Principal*, it is asserted by whoever holds the
+// credential rather than verified by the gateway, so it attributes a request
+// without ever deciding anything about it. Source names the convention the
+// values came from, so a reader can weigh them.
+// Sources an end user can be declared through. They travel with the values so a
+// reader can weigh an attribution: a header a customer set deliberately, a
+// front-end's own convention, or the OpenAI API's `user` field.
+const (
+	EndUserSourceTrustGate  = "trustgate"
+	EndUserSourceOpenWebUI  = "open_webui"
+	EndUserSourceOpenAIUser = "openai_user"
+)
+
+type EndUser struct {
+	ID     string `json:"id,omitempty"`
+	Email  string `json:"email,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
+// Identifier is the one value that stands for this end user where only one
+// fits. The id comes first because it is what a client keeps stable across a
+// person's renames; the email and name are fallbacks for a client that sends
+// no id at all.
+func (e *EndUser) Identifier() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case e.ID != "":
+		return e.ID
+	case e.Email != "":
+		return e.Email
+	default:
+		return e.Name
+	}
 }
 
 // Retention is when this trace stops being the storage layer's problem, derived

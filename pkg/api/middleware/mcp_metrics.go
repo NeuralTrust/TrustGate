@@ -92,6 +92,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		meta.RetentionWindow = window
 		meta.RetentionPlan = gw.Entitlements.Tier
 	}
+	meta.EndUser = detectEndUser(c)
 	return meta
 }
 

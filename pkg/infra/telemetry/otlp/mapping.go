@@ -71,6 +71,12 @@ const (
 	attrPrincipalSubject     = "trustgate.principal.subject"
 	attrPrincipalMethod      = "trustgate.principal.method"
 	attrPrincipalEmail       = "trustgate.principal.email"
+	attrEndUser              = "trustgate.end_user"
+	attrEndUserID            = "trustgate.end_user.id"
+	attrEndUserEmail         = "trustgate.end_user.email"
+	attrEndUserName          = "trustgate.end_user.name"
+	attrEndUserRole          = "trustgate.end_user.role"
+	attrEndUserSource        = "trustgate.end_user.source"
 	attrSessionID            = "trustgate.session_id"
 	attrTurnID               = "trustgate.turn_id"
 	attrIP                   = "trustgate.ip"
@@ -196,6 +202,17 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	appendStr(attrPrincipalSubject, evt.PrincipalSubject)
 	appendStr(attrPrincipalMethod, evt.PrincipalMethod)
 	appendStr(attrPrincipalEmail, evt.PrincipalEmail)
+	if evt.EndUser != nil {
+		// The single-identifier attribute the events table has stored since its
+		// end-user column was added; the fields below carry the rest of what the
+		// client declared.
+		appendStr(attrEndUser, evt.EndUser.Identifier())
+		appendStr(attrEndUserID, evt.EndUser.ID)
+		appendStr(attrEndUserEmail, evt.EndUser.Email)
+		appendStr(attrEndUserName, evt.EndUser.Name)
+		appendStr(attrEndUserRole, evt.EndUser.Role)
+		appendStr(attrEndUserSource, evt.EndUser.Source)
+	}
 	appendStr(attrSessionID, evt.SessionID)
 	appendStr(attrTurnID, evt.TurnID)
 	appendStr(attrIP, evt.IP)
