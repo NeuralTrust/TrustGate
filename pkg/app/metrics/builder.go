@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -79,11 +80,22 @@ func (b *Builder) Build(
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
+		EndUser:          endUser(meta.EndUser),
 		Retention:        retention(meta, startTime),
 	}
 
 	if meta.Kind == events.KindMCP {
 		return b.buildMCP(evt, req, resp, requestTrace, startTime, endTime)
+	}
+
+	// Clients that send no identity headers may still name their end user the
+	// way the OpenAI API defines it, in the request body. Headers win when both
+	// are present: they carry a whole person (email, name, role) rather than one
+	// opaque identifier.
+	if evt.EndUser == nil {
+		if id := requestBodyUser(req); id != "" {
+			evt.EndUser = &events.EndUser{ID: id, Source: events.EndUserSourceOpenAIUser}
+		}
 	}
 
 	served, attempts := b.foldLLMSpans(requestTrace)
@@ -118,6 +130,52 @@ func (b *Builder) Build(
 // event's occurredOn, so a trace's expiry and its timestamp can never disagree.
 // Returns nil when the gateway carries no stamp — an absent expiry is a signal the
 // sink can act on, a zero one is a trace that expired at the epoch.
+// maxRequestBodyUserLen bounds the captured identifier, like the header path
+// does: it is caller-supplied and becomes a label in telemetry.
+const maxRequestBodyUserLen = 256
+
+// requestBodyUser reads the OpenAI API's `user` field — "a unique identifier
+// representing your end-user" — from the request body. Unlike the header
+// conventions this is a standard rather than one product's idea, so it covers
+// the clients people write themselves.
+//
+// It is read here, in the worker that builds the event, rather than in the
+// request path: the body is already buffered and nothing about this may cost a
+// request latency. Like everything else on this field it is declared by the
+// caller, never verified.
+func requestBodyUser(req *infracontext.RequestContext) string {
+	if req == nil || len(req.Body) == 0 {
+		return ""
+	}
+	var body struct {
+		User string `json:"user"`
+	}
+	if err := json.Unmarshal(req.Body, &body); err != nil {
+		return ""
+	}
+	user := strings.TrimSpace(body.User)
+	if len(user) > maxRequestBodyUserLen {
+		return user[:maxRequestBodyUserLen]
+	}
+	return user
+}
+
+// endUser copies the client-declared end user into the event. It is only ever
+// read into telemetry: nothing derives the principal, the consumer or any
+// policy input from it, because the values are asserted by the caller.
+func endUser(in *trace.EndUser) *events.EndUser {
+	if in == nil {
+		return nil
+	}
+	return &events.EndUser{
+		ID:     in.ID,
+		Email:  in.Email,
+		Name:   in.Name,
+		Role:   in.Role,
+		Source: in.Source,
+	}
+}
+
 func retention(meta trace.Metadata, startTime time.Time) *events.Retention {
 	if meta.RetentionWindow <= 0 {
 		return nil
