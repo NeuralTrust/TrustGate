@@ -336,12 +336,13 @@ func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}})
+	store := newMemConnectStore()
 	svc := oauth.NewConnectService(
-		newMemConnectStore(),
+		store,
 		&memVaultRepo{},
 		&stubDataFinder{data: data},
 		infraoauth.NewProviderClient(nil),
-		infraoauth.NewUpstreamRegistrar(newMemConnectStore(), nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
 		nil,
@@ -1439,5 +1440,76 @@ func TestConnectService_RegisteredClientFollowsTheCredentialNotTheRegistry(t *te
 	}
 	if otherRegistrations != 0 {
 		t.Fatalf("registrations against the other deployment = %d, want none", otherRegistrations)
+	}
+}
+
+// A link handed to an end user to connect one server is authority over that
+// server and nothing else. Unpinned, the same ticket reaches every forwarded
+// server of the consumer: whoever holds the "connect Notion" link could revoke
+// that user's Linear, and the page the callback lands on offers them the button.
+func TestConnectService_ProviderTicketReachesOnlyItsProvider(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	server := func(name, provider, upstream string) *registrydomain.Registry {
+		reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{
+			URL:  upstream,
+			Code: provider,
+			Auth: &registrydomain.MCPAuth{
+				Mode: registrydomain.MCPAuthModeForwarded, Provider: provider,
+				ClientID: "cid", ClientSecret: "csecret",
+				AuthorizeURL: "https://idp.example.com/authorize",
+				TokenURL:     "https://idp.example.com/token",
+			},
+		})
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		return reg
+	}
+	notion := server("Notion", "com.notion/mcp", "https://mcp.notion.com/mcp")
+	linear := server("Linear", "app.linear/mcp", "https://mcp.linear.app/mcp")
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{notion, linear},
+	}})
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(newMemConnectStore(), nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateProviderTicket(ctx, gw, "alice", "/dev/mcp", "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("CreateProviderTicket: %v", err)
+	}
+
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if len(page.Providers) != 1 || page.Providers[0].Provider != "com.notion/mcp" {
+		t.Fatalf("providers = %+v, want only the one the link was minted for", page.Providers)
+	}
+
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "app.linear/mcp", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
+		t.Fatalf("Start on another provider = %v, want ErrProviderNotFound", err)
+	}
+	if err := svc.Disconnect(ctx, ticket, "app.linear/mcp", ""); !errors.Is(err, oauth.ErrProviderNotFound) {
+		t.Fatalf("Disconnect on another provider = %v, want ErrProviderNotFound", err)
+	}
+
+	// Its own provider still works, or the pin would have cost the link its job.
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", ""); err != nil {
+		t.Fatalf("Start on its own provider: %v", err)
 	}
 }

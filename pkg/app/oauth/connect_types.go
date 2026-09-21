@@ -37,6 +37,12 @@ type ConnectTicket struct {
 	ConsumerID   string    `json:"consumer_id,omitempty"`
 	AuthID       string    `json:"auth_id,omitempty"`
 	Providers    *[]string `json:"providers,omitempty"`
+	// Provider pins a ticket to the one provider it may act on: connect it,
+	// revoke it, see it on the page. It is what a link minted for one server
+	// carries. Providers cannot serve that purpose - a non-nil Providers is what
+	// marks a ticket as an application's (see appConnectTicket), and an end
+	// user's link is not one.
+	Provider string `json:"provider,omitempty"`
 	// Code scopes a configure ticket to one catalog server whose per-user URL
 	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
 	Code string `json:"code,omitempty"`
@@ -115,6 +121,14 @@ type ConnectPage struct {
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
 type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	// CreateProviderTicket mints a connect ticket that can act on one provider
+	// and no other — the authority a link handed to an end user to connect one
+	// server should carry.
+	CreateProviderTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider string,
+	) (string, error)
 	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
 	// the connect page opens focused on that server (e.g. from a Store install).
 	// instanceID optionally pins the ticket to the exact installation instance

@@ -94,6 +94,26 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 	})
 }
 
+// CreateProviderTicket mints a ticket that can only act on one provider.
+//
+// A link handed to an end user to connect one server is authority over that
+// server and nothing else: unpinned, the same ticket reaches every forwarded
+// server of the consumer, and whoever holds it can revoke accounts nobody asked
+// them about. Pinning also narrows the page the callback lands on, which is
+// what makes it show the server the link was for.
+func (s *connectService) CreateProviderTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, provider string,
+) (string, error) {
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Provider:     strings.TrimSpace(provider),
+	})
+}
+
 func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
 	return s.mintTicket(ctx, ConnectTicket{
 		GatewayID:    gatewayID.String(),
@@ -527,6 +547,9 @@ func connectProviderAllowed(
 	rc *appconsumer.RoutableConsumer,
 	provider string,
 ) bool {
+	if pinned := strings.TrimSpace(ticket.Provider); pinned != "" && pinned != provider {
+		return false
+	}
 	if ticket.Providers == nil {
 		return providerRegistry(data.EffectiveRegistries(rc), provider) != nil
 	}

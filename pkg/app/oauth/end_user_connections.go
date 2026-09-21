@@ -102,6 +102,11 @@ type endUserConsumers interface {
 // endUserTickets is the slice of the connect service the end-user flow uses.
 type endUserTickets interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	CreateProviderTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, provider string,
+	) (string, error)
 	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
 }
 
@@ -158,10 +163,20 @@ func (s *endUserConnectionsService) Link(
 		}
 		return nil, fmt.Errorf("oauth end-user connections: check consumer rate limit: %w", err)
 	}
-	ticket, err := s.tickets.CreateTicket(ctx, gatewayID,
-		consumerdomain.EndUserSubject(target.Consumer.ID, endUser), appconsumer.MCPPath(slug))
-	if err != nil {
-		return nil, fmt.Errorf("oauth end-user connections: create ticket: %w", err)
+	// Naming a provider narrows the link, and narrowing it has to reach the
+	// ticket: it is the ticket, not the URL, that decides what the holder may
+	// connect, revoke and see on the page the callback lands on.
+	subject := consumerdomain.EndUserSubject(target.Consumer.ID, endUser)
+	path := appconsumer.MCPPath(slug)
+	var ticket string
+	var err2 error
+	if provider != "" {
+		ticket, err2 = s.tickets.CreateProviderTicket(ctx, gatewayID, subject, path, provider)
+	} else {
+		ticket, err2 = s.tickets.CreateTicket(ctx, gatewayID, subject, path)
+	}
+	if err2 != nil {
+		return nil, fmt.Errorf("oauth end-user connections: create ticket: %w", err2)
 	}
 	return &EndUserLink{Ticket: ticket, Provider: provider, ExpiresAt: s.now().UTC().Add(ConnectTicketTTL)}, nil
 }

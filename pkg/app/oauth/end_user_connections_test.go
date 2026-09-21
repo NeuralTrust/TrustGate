@@ -74,8 +74,10 @@ func TestEndUserConnections_LinkMintsNamespacedTicket(t *testing.T) {
 	apiKeys := appauthmocks.NewAPIKeyFinder(t)
 	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
 	tickets := oauthmocks.NewConnectService(t)
+	// Pinned to the provider the link names: the ticket, not the URL, is what
+	// decides what its holder may connect, revoke and see.
 	tickets.EXPECT().
-		CreateTicket(ctx, gatewayID, consumerdomain.EndUserSubject(target.Consumer.ID, "user_123"), appconsumer.MCPPath("assistant")).
+		CreateProviderTicket(ctx, gatewayID, consumerdomain.EndUserSubject(target.Consumer.ID, "user_123"), appconsumer.MCPPath("assistant"), "github").
 		Return("ticket-1", nil).Once()
 
 	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, tickets, oauth.NewNoopConnectAttemptLimiter())
