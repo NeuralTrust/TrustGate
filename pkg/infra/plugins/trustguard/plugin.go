@@ -308,6 +308,31 @@ func (p *Plugin) InspectSegment(
 	return p.inspectSegment(ctx, in, seg)
 }
 
+// StreamSettings reports whether these policy settings enable per-block
+// inspection of the response leg, and the options the caller must run the
+// stream under. Implementing InspectSegment is not the opt-in on its own: this
+// plugin is on every pre_response chain that names it, and streaming.enabled
+// defaults to false, so without this the head gate would be built for policies
+// that never asked for it.
+//
+// head_chars and streaming.on_error come back with the opt-in because this
+// settings map is this plugin's schema. Settings that fail to parse disable
+// the stream leg here; the buffered legs surface the same error where they
+// already do.
+func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+	cfg, err := p.config(settings)
+	if err != nil {
+		return false, appplugins.StreamOptions{}
+	}
+	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+		return false, appplugins.StreamOptions{}
+	}
+	return true, appplugins.StreamOptions{
+		HeadChars: cfg.Streaming.HeadChars,
+		OnError:   cfg.Streaming.OnError,
+	}
+}
+
 func (p *Plugin) inspectionPayload(
 	ctx context.Context,
 	in appplugins.ExecInput,

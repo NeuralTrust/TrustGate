@@ -382,27 +382,54 @@ func TestInertStagePlan_GroupScopeNeverReordersTheChain(t *testing.T) {
 	}
 }
 
-func TestStagePlan_HasStreamInspector(t *testing.T) {
+func streamPolicies(t *testing.T, settings map[string]any, specs ...polSpec) []*policy.Policy {
+	t.Helper()
+	pols := policies(t, specs...)
+	pols[0].Settings = settings
+	return pols
+}
+
+func TestStagePlan_StreamPlan(t *testing.T) {
 	pre := []policy.Stage{policy.StagePreResponse}
 	inspector := newStreamPlugin("guard", nil)
 	plain := &fakePlugin{name: "plain", stages: pre, result: &Result{}}
 	reg := newRegistry(t, inspector, plain)
 
-	withInspector := NewStagePlan(reg, policies(t,
-		polSpec{slug: "guard", enabled: true, priority: 10, stages: pre},
-		polSpec{slug: "plain", enabled: true, priority: 20, stages: pre},
+	guardSpec := polSpec{slug: "guard", enabled: true, priority: 10, stages: pre}
+	plainSpec := polSpec{slug: "plain", enabled: true, priority: 20, stages: pre}
+
+	enabled := NewStagePlan(reg, streamPolicies(t,
+		map[string]any{"enabled": true, "head_chars": 32, "on_error": "fail_closed"},
+		guardSpec, plainSpec,
+	), nil)
+	disabled := NewStagePlan(reg, streamPolicies(t,
+		map[string]any{"enabled": false, "head_chars": 32},
+		guardSpec, plainSpec,
 	), nil)
 	withoutInspector := NewStagePlan(reg, policies(t,
 		polSpec{slug: "plain", enabled: true, priority: 10, stages: pre},
 	), nil)
 
-	assert.True(t, withInspector.HasStreamInspector(policy.StagePreResponse))
-	assert.False(t, withInspector.HasStreamInspector(policy.StagePostResponse),
-		"the predicate answers per stage, and the policies only selected pre_response")
-	assert.False(t, withoutInspector.HasStreamInspector(policy.StagePreResponse),
-		"a stage whose entries do not implement StreamInspector does not participate")
+	ok, opts := enabled.StreamPlan(policy.StagePreResponse)
+	assert.True(t, ok)
+	assert.Equal(t, StreamOptions{HeadChars: 32, OnError: "fail_closed"}, opts,
+		"the opt-in carries the settings the plugin parsed, so the caller never re-reads them")
+
+	ok, opts = enabled.StreamPlan(policy.StagePostResponse)
+	assert.False(t, ok, "the predicate answers per stage, and the policies only selected pre_response")
+	assert.Zero(t, opts)
+
+	ok, opts = disabled.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok,
+		"a policy whose streaming block is disabled must not yield a guard, however the plugin is typed")
+	assert.Zero(t, opts)
+
+	ok, _ = withoutInspector.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok, "a stage whose entries do not implement StreamInspector does not participate")
 
 	var nilPlan *StagePlan
-	assert.False(t, nilPlan.HasStreamInspector(policy.StagePreResponse))
-	assert.False(t, NewStagePlan(reg, nil, nil).HasStreamInspector(policy.StagePreResponse))
+	ok, _ = nilPlan.StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok)
+	ok, _ = NewStagePlan(reg, nil, nil).StreamPlan(policy.StagePreResponse)
+	assert.False(t, ok)
 }

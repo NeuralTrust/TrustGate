@@ -111,7 +111,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	}
 
 	for _, entry := range entries {
-		inspector, ok := entry.plugin.(StreamInspector)
+		inspector, ok := streamInspector(entry.plugin)
 		if !ok {
 			continue
 		}
