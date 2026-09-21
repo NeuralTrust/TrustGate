@@ -232,6 +232,8 @@ Almost nothing, which is the point of §7.
    `GET /v1/gateways/:id/auths/:auth_id/consumers`. Without it the console cannot
    warn that revoking a key kills two planes, which is true today and unwarned.
    Worth doing on its own merits.
+2. **`include_synthetic` on the consumer list** (§9.1.1), so the analytics filter
+   can offer the Store without a second copy of its id.
 
 That is the whole change *in this repository*. Analytics needs one more,
 elsewhere: the metrics service's dashboard endpoints take a single `consumerId`
@@ -284,7 +286,7 @@ is that path twice over. If the rollup ever gains a consumer dimension it should
 gain this one too, which is where §7.3's "if one of them starts to hurt" is most
 likely to land first.
 
-### 9.1.1 "All applications" sends no filter, and should keep not sending one
+### 9.1.1 The unfiltered view, and the traffic that is not an application
 
 The obvious worry is that the default view becomes a list of every application's
 consumers. It does not. `useAnalyticsScreen` maps the sentinel to null
@@ -294,25 +296,44 @@ gateway-wide aggregate served by the hourly rollup. Nothing enumerates anything,
 and the fast path stays fast. An id list only exists when someone picks one
 application, and it is one or two values.
 
-What that does expose is a naming problem the model creates. Unfiltered means
-*everything this gateway served*, and that includes the **Store consumer** — the
-synthetic one (`consumerdomain.StoreConsumerID()`) carrying people browsing and
-calling through the Portal. Today "All applications" is a loose label over
-gateway traffic. Once an application is a real thing, traffic belonging to no
-application sitting inside a total called "all applications" is wrong.
+**Decided: the unfiltered total keeps counting everything, the Store included.**
+It is the whole picture of what the gateway served and it is the cheap query;
+carving the Store out would make the most-used view stop matching the rollup to
+fix a label.
 
-Three ways out, in order of how much they cost:
+So the label is what gives. Unfiltered includes the **Store consumer** — the
+synthetic one carrying people through the Portal, which belongs to no
+application — so the default entry cannot go on saying *All applications*. It
+becomes *All traffic*, and the dropdown groups what is under it:
 
-1. **Leave it**, and accept that the headline number is gateway traffic.
-2. **Exclude the Store consumer** from the unfiltered aggregate. Its id is a
-   well-known constant, so this is a `WHERE consumer_id != …` in the metrics
-   service, not a lookup — but it makes the unfiltered view stop matching the
-   rollup, which is the thing that made it cheap.
-3. **Make it a dimension**: Applications and Portal as two things the page can
-   show, since they are the two kinds of caller `consumers-identity-model.md` §1
-   names. The most honest and the most work.
+```
+  All traffic
+  ── Applications ─────────
+     sdk
+     support-agent
+  ── Portal ───────────────
+     MCP Store
+```
 
-Worth deciding before the filter's label becomes a promise.
+Which closes the real gap: today the Store is **in the total but not in the
+list**, so a number includes traffic nobody can isolate. You can see that the
+Portal is busy and never ask how busy.
+
+The selector cannot offer it on its own. It is built from `listConsumersAction`,
+which lists persisted consumers, and the Store consumer is never persisted —
+`dataFinder` hangs it off `data.StoreConsumer`, deliberately outside
+`data.Consumers`, which is also why `ForAPIKey` never resolves a key to it. Two
+ways to give the console the entry:
+
+1. **The console holds the id.** `StoreConsumerID()` is a well-known constant, so
+   a fixed option appended to the list costs nothing. It also copies a UUID into a
+   second repository, and a third if the metrics service ever needs it.
+2. **The consumer list endpoint offers it.** An opt-in — `include_synthetic=true`
+   — appending the Store consumer with a flag saying what it is. One more small
+   change in this repository (§8), and the constant stays in one place.
+
+Recommend the second, for the same reason §7 kept the application out of the
+gateway: put each fact in the one place that owns it.
 
 ### 9.2 Outside the console, a dimension synced from the rows
 
