@@ -479,9 +479,18 @@ Done, on `claude/applications-gateway-api` (this repo) and
   the wire format is unchanged for one consumer, which is every application in
   production today, so no number moves.
 
-Left: the screens (§5). They are the rest of this list, and they are one piece —
-a grouped list whose detail panel is still per-consumer is not half a feature,
-it is an incoherent one.
+- **Metrics service.** `consumer_ids` on the TrustGate dashboard endpoints, on
+  `claude/analytics-by-application` in DataCore. `consumer_id` is untouched and
+  one id keeps the equality it had, so the same SQL runs for every application
+  that exists.
+- **Applications page (§5, partly).** A page beside the consumers one, not a
+  replacement: the list, and the panel with both plane sections, each with its
+  endpoint, the empty one carrying the invitation that creates the plane. The
+  add modal's two tabs and the "acts as" control are built.
+
+Left: the rest of the panel — policies, connect and the keyring, which still
+live on the consumers page. The two pages coexist on purpose; this one grows
+into them rather than half-replacing them.
 
 
 
