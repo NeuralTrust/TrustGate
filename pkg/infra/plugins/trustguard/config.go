@@ -218,10 +218,6 @@ func (s StreamingSettings) guardTimeout() time.Duration {
 	return d
 }
 
-func (s StreamingSettings) failClosedOnTransport() bool {
-	return s.OnError == onErrorFailClosed
-}
-
 func (s Settings) failClosedOnTransport() bool {
 	return s.OnError == onErrorFailClosed
 }
