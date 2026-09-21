@@ -87,7 +87,8 @@ whether a team answers it once or once per plane.
 |---|---|---|
 | Name | Application | The thing a team says out loud |
 | Keys | Application | The reason for this memo: one secret, both planes |
-| Identity — who it acts for | **Application**, stored on the consumers | One answer, written as `acts_for_users` on the MCP consumer and `end_user_header` on the LLM one. Asking twice in two vocabularies is the bug, not the feature. It is not asked at creation and not held in the console's row: it defaults, and is edited once a plane exists (§5.1, §7) |
+| Who the tools are used as | **Plane** (MCP) | Corrected — see §5.3. It decides where upstream accounts live, which is a property of the tool plane and has no meaning without one |
+| Forwarding an end-user id for attribution | **Plane** (LLM) | `end_user_header`. Named like the above and unrelated to it |
 | Active / paused | Application, cascading | Pausing half an agent is not a state anyone wants |
 | Routing | **Plane** | Two different objects; see §2 |
 | Policies | **Plane**, for now | An MCP scope names registries, an LLM scope names models. An Application-level policy may be real, but nothing demands it yet — do not invent the level before a case for it |
@@ -124,8 +125,8 @@ serves nothing, and says so in the list.
 
 ### 5.2 The tabs
 
-**General** — name, identity ("who does this application act for?", asked once),
-active state, and a line per plane saying which exist.
+**General** — name, active state, and a line per plane saying which exist. No
+identity question: it moved to where its consequence is (§5.3).
 
 **Routing** — one tab, **both sections always**, because an absent plane is now an
 empty section with an invitation rather than something hidden. Each section
@@ -160,6 +161,55 @@ Two properties this has that a merged table does not:
 - **Every existing Application gains an empty second section.** That is a change
   to a screen that works today, made on purpose: it is the only place someone
   finds out that their tool application could route its models here too.
+
+Adding is **one button and one modal with two tabs** — *MCP servers* and *LLM
+providers* — rather than a button per section. The tabs are how the catalog is
+organised, not a question being asked: you go looking for what you want to add,
+and the plane follows from what you pick. It is the same principle as §5.1, one
+level down, and it is what makes "we never ask MCP or LLM" true in the only place
+it could have leaked.
+
+### 5.3 "Acts as", which is a property of the tools
+
+§4 first put identity at the Application level, on the grounds that a team
+answers it once. That was wrong, and worth saying plainly: the two fields it
+would have written are not one question.
+
+- `acts_for_users` (MCP) decides **where upstream accounts live** — once for the
+  application, or one set per end user. It changes the connect flow, the
+  principal a call runs as, and the shape the SDK hands back. It is consequential.
+- `end_user_header` (LLM) lets an application **forward an opaque id for
+  attribution** in traces, audit and rate limiting. It is a checkbox.
+
+They share a vocabulary and nothing else. So there is no Application-level
+identity, and the console never has to hold an answer before a consumer exists —
+which keeps §7's promise that the row is a grouping and a name.
+
+**It lives in the Tools section of Routing**, above the servers, because that is
+what it is about: the same list of servers, connected once or connected per
+person. One control, three states, mapping onto the two fields the gateway has:
+
+```
+  Accounts for these servers
+  ( ) The application's own           acts_for_users = false
+  ( ) Each end user, named by the     acts_for_users = true, source = app
+      application in a header
+  ( ) Each end user, signed in        acts_for_users = true, source = platform
+      through the platform
+```
+
+It defaults to the first, which is the common case and the one that holds no
+per-person credentials. An Application with no MCP plane never sees it.
+
+Changing it later is not a toggle, and the UI has to say so: moving from the
+application's own accounts to per-user ones strands whatever the application had
+connected, and moving back leaves every user's credentials unreachable. The
+gateway keys them by different principals (`app:<consumer_id>` versus
+`EndUserSubject(consumer, user)`), so nothing is lost — it is simply no longer
+what the application reads.
+
+On the Models side the LLM checkbox sits with the providers and says what it
+does: *forward an end-user id for attribution*. Nothing about accounts.
 
 **Policies** — same two sections, same rule.
 
