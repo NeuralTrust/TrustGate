@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -102,4 +103,156 @@ func TestCohere_DecodeStreamChunk_SkipsThinking(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, chunk)
 	assert.Equal(t, "hello", chunk.Delta)
+}
+
+func encodeCohereStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
+	t.Helper()
+	a := &CohereAdapter{}
+	var got []string
+	for _, chunk := range chunks {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		got = append(got, bytesLinesToStrings(lines)...)
+	}
+	return got
+}
+
+// message-end is the whole cut signal on Cohere: the streamed-response union
+// has no error member, so StreamBlockedEvent falls through to the OpenAI
+// default and never reaches a Cohere client. A cut that says COMPLETE here is
+// therefore a clean ending as far as the SDK can tell. The last case pins the
+// untouched shape of a normal finish.
+func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		chunks []*CanonicalStreamChunk
+		want   []string
+	}{
+		{
+			name: "cut after partial text",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				"event: content-delta",
+				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"Here is the "}}}}`,
+				"",
+				"event: content-delta",
+				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"recipe"}}}}`,
+				"",
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`,
+				"",
+			},
+		},
+		{
+			name: "cut carrying the usage of the stream it ends",
+			chunks: []*CanonicalStreamChunk{
+				{FinishReason: "content_filter", Usage: newCanonicalUsage(11, 7, 0)},
+			},
+			want: []string{
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"usage":{"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
+				"",
+			},
+		},
+		{
+			// An OpenAI-family upstream with include_usage sends the finish
+			// reason and the usage in two chunks. The trailing usage-only one
+			// must not assert a second, contradicting finish reason: the client
+			// reads the last message-end it receives.
+			name: "cut whose usage arrives in a separate chunk",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Here is the "},
+				{FinishReason: "content_filter"},
+				{Usage: newCanonicalUsage(11, 7, 0)},
+			},
+			want: []string{
+				"event: content-delta",
+				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"Here is the "}}}}`,
+				"",
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`,
+				"",
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"usage":{"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
+				"",
+			},
+		},
+		{
+			name: "normal finish",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "stop"},
+			},
+			want: []string{
+				"event: content-delta",
+				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"Here is the "}}}}`,
+				"",
+				"event: content-delta",
+				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"recipe"}}}}`,
+				"",
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"COMPLETE"}}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, encodeCohereStream(t, tc.chunks))
+		})
+	}
+}
+
+// Both encoders read the same mapping, so a cut cannot be ERROR on the stream
+// and COMPLETE on the buffered body. The two diverge on one input only: a
+// buffered response carries exactly one finish_reason and has to say something,
+// while a stream chunk with no finish reason is a trailing usage-only event and
+// must not claim the response ended.
+func TestCohereFinishReason_BufferedAndStreamedAgree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		finishReason string
+		wantBuffered string
+		wantStreamed string
+	}{
+		{name: "stop", finishReason: "stop", wantBuffered: "COMPLETE", wantStreamed: "COMPLETE"},
+		{name: "length", finishReason: "length", wantBuffered: "MAX_TOKENS", wantStreamed: "MAX_TOKENS"},
+		{name: "tool calls", finishReason: "tool_calls", wantBuffered: "TOOL_CALL", wantStreamed: "TOOL_CALL"},
+		{name: "content filter", finishReason: "content_filter", wantBuffered: "ERROR", wantStreamed: "ERROR"},
+		{name: "upstream refusal", finishReason: "refusal", wantBuffered: "ERROR", wantStreamed: "ERROR"},
+		{name: "empty", finishReason: "", wantBuffered: "COMPLETE", wantStreamed: ""},
+		{name: "unrecognised", finishReason: "something_else", wantBuffered: "COMPLETE", wantStreamed: "COMPLETE"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &CohereAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ID: "msg_1", Model: "command-a", Content: "hi", FinishReason: tc.finishReason,
+			})
+			require.NoError(t, err)
+			var buffered cohereResponse
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.Equal(t, tc.wantBuffered, buffered.FinishReason, "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{FinishReason: tc.finishReason, Usage: newCanonicalUsage(1, 1, 0)})
+			require.NoError(t, err)
+			require.Len(t, lines, 3)
+			var event cohereStreamEvent
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[1], []byte("data: ")), &event))
+			var delta cohereMessageEndDelta
+			require.NoError(t, json.Unmarshal(event.Delta, &delta))
+			assert.Equal(t, tc.wantStreamed, delta.FinishReason, "streamed")
+		})
+	}
 }

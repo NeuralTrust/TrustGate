@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -570,4 +571,123 @@ func TestAnthropic_ToolSchema_TypeArrayBecomesNullable(t *testing.T) {
 	params := geminiToolParameters(t, round)
 	assert.Equal(t, "OBJECT", params["type"])
 	assert.Equal(t, "STRING", params["properties"].(map[string]interface{})["q"].(map[string]interface{})["type"])
+}
+
+func encodeGeminiStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
+	t.Helper()
+	a := &GeminiAdapter{}
+	var got []string
+	for _, chunk := range chunks {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		got = append(got, bytesLinesToStrings(lines)...)
+	}
+	return got
+}
+
+// A cut used to put the canonical value straight on the wire, so a Gemini
+// client received a finishReason that is not in the enum at all. The last case
+// pins the untouched shape of a normal finish.
+func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		chunks []*CanonicalStreamChunk
+		want   []string
+	}{
+		{
+			name: "cut after partial text",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Here is the "}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}]}`,
+				"",
+			},
+		},
+		{
+			name: "cut carrying the usage of the stream it ends",
+			chunks: []*CanonicalStreamChunk{
+				{FinishReason: "content_filter", Usage: newCanonicalUsage(11, 7, 0)},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}],` +
+					`"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"totalTokenCount":18}}`,
+				"",
+			},
+		},
+		{
+			name: "normal finish",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "stop"},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Here is the "}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"STOP"}]}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, encodeGeminiStream(t, tc.chunks))
+		})
+	}
+}
+
+// The buffered and the streamed encode must agree on the cut, and neither may
+// move a reason the gateway already emits. They keep separate fallbacks: the
+// buffered candidate always carries a finishReason, the streamed one only
+// carries what the chunk brought.
+func TestGeminiFinishReason_BufferedAndStreamedAgree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		finishReason string
+		wantBuffered string
+		wantStreamed string
+	}{
+		{name: "stop", finishReason: "stop", wantBuffered: "STOP", wantStreamed: "STOP"},
+		{name: "length", finishReason: "length", wantBuffered: "MAX_TOKENS", wantStreamed: "MAX_TOKENS"},
+		{name: "tool calls", finishReason: "tool_calls", wantBuffered: "STOP", wantStreamed: "STOP"},
+		{name: "content filter", finishReason: "content_filter", wantBuffered: "SAFETY", wantStreamed: "SAFETY"},
+		{name: "upstream refusal", finishReason: "refusal", wantBuffered: "SAFETY", wantStreamed: "SAFETY"},
+		{name: "empty", finishReason: "", wantBuffered: "STOP", wantStreamed: ""},
+		{name: "unrecognised", finishReason: "something_else", wantBuffered: "STOP", wantStreamed: "something_else"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &GeminiAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ID: "resp_1", Model: "gemini-2.5-pro", Content: "hi", FinishReason: tc.finishReason,
+			})
+			require.NoError(t, err)
+			var buffered geminiResponse
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			require.Len(t, buffered.Candidates, 1)
+			assert.Equal(t, tc.wantBuffered, buffered.Candidates[0].FinishReason, "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Delta: "hi", FinishReason: tc.finishReason})
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			var streamed geminiResponse
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[0], []byte("data: ")), &streamed))
+			require.Len(t, streamed.Candidates, 1)
+			assert.Equal(t, tc.wantStreamed, streamed.Candidates[0].FinishReason, "streamed")
+		})
+	}
 }

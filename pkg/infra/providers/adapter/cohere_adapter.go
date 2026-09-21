@@ -140,6 +140,12 @@ func cohereFinishToCanonical(reason string) string {
 	}
 }
 
+// canonicalFinishToCohere maps a canonical finish reason onto the finish_reason
+// enum Cohere v2 defines on message-end. content_filter becomes ERROR, the only
+// member of that enum that is not a claim the response finished cleanly: a cut
+// returning COMPLETE is indistinguishable from a normal ending. ERROR also
+// carries the whole signal on its own, because Cohere's streamed-response union
+// has no error member for StreamBlockedEvent to use.
 func canonicalFinishToCohere(reason string) string {
 	switch reason {
 	case "stop":
@@ -148,6 +154,8 @@ func canonicalFinishToCohere(reason string) string {
 		return "MAX_TOKENS"
 	case "tool_calls":
 		return "TOOL_CALL"
+	case "content_filter", "refusal":
+		return "ERROR"
 	default:
 		return "COMPLETE"
 	}
@@ -468,7 +476,14 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		}
 	}
 	if chunk.FinishReason != "" || chunk.Usage != nil {
-		delta := cohereMessageEndDelta{FinishReason: canonicalFinishToCohere(chunk.FinishReason)}
+		// A trailing usage-only chunk must not assert a finish reason. Upstreams
+		// that send usage separately (OpenAI-family with include_usage) would
+		// otherwise emit a second message-end saying COMPLETE after the one that
+		// said ERROR, and the client reads the last one.
+		delta := cohereMessageEndDelta{}
+		if chunk.FinishReason != "" {
+			delta.FinishReason = canonicalFinishToCohere(chunk.FinishReason)
+		}
 		if chunk.Usage != nil {
 			delta.Usage = &cohereUsage{
 				Tokens: &cohereUsageTokens{
