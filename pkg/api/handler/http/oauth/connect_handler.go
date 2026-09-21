@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -114,8 +115,22 @@ func (h *ConnectHandler) connectBaseURL(c *fiber.Ctx) string {
 	return c.BaseURL()
 }
 
+// providerParam is the provider id from the wildcard route.
+//
+// A provider id carries a slash ("com.notion/mcp"), and both spellings of it
+// reach here: the connect page links it raw, and a client that builds the URL
+// properly percent-encodes it. Fiber matches the wildcard against the raw path
+// and does not unescape, so decoding is this function's job - without it an
+// escaped link resolves to a provider nothing is configured for.
 func providerParam(c *fiber.Ctx) string {
-	return strings.TrimPrefix(c.Params("*"), "/")
+	raw := strings.TrimPrefix(c.Params("*"), "/")
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		// A stray % is not an escape. Take the id as written rather than
+		// refusing a provider that may well be named that.
+		return raw
+	}
+	return decoded
 }
 
 func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
