@@ -79,6 +79,7 @@ func (b *Builder) Build(
 		PrincipalSubject: meta.PrincipalSubject,
 		PrincipalMethod:  meta.PrincipalMethod,
 		PrincipalEmail:   meta.PrincipalEmail,
+		EndUser:          endUser(meta.EndUser),
 		Retention:        retention(meta, startTime),
 	}
 
@@ -118,6 +119,22 @@ func (b *Builder) Build(
 // event's occurredOn, so a trace's expiry and its timestamp can never disagree.
 // Returns nil when the gateway carries no stamp — an absent expiry is a signal the
 // sink can act on, a zero one is a trace that expired at the epoch.
+// endUser copies the client-declared end user into the event. It is only ever
+// read into telemetry: nothing derives the principal, the consumer or any
+// policy input from it, because the values are asserted by the caller.
+func endUser(in *trace.EndUser) *events.EndUser {
+	if in == nil {
+		return nil
+	}
+	return &events.EndUser{
+		ID:     in.ID,
+		Email:  in.Email,
+		Name:   in.Name,
+		Role:   in.Role,
+		Source: in.Source,
+	}
+}
+
 func retention(meta trace.Metadata, startTime time.Time) *events.Retention {
 	if meta.RetentionWindow <= 0 {
 		return nil

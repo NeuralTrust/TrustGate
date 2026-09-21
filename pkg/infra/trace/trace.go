@@ -42,6 +42,24 @@ type Metadata struct {
 	PrincipalSubject string
 	PrincipalMethod  string
 	PrincipalEmail   string
+	// EndUser is the person a client application says it was serving, read
+	// from the headers that application forwards. It is telemetry only and
+	// deliberately separate from the Principal* fields above: the principal is
+	// who the gateway authenticated and is what authorizes the request, while
+	// this is an unverified claim by whoever holds the credential. Attributing
+	// a request to it is useful; deciding anything with it is not.
+	EndUser *EndUser
+}
+
+// EndUser is a client-declared end user. Every field is optional — front-ends
+// forward different subsets — and none of them is verified.
+type EndUser struct {
+	ID     string
+	Email  string
+	Name   string
+	Role   string
+	// Source names the convention the values were read from (e.g. "open_webui").
+	Source string
 }
 
 type RequestTrace struct {
