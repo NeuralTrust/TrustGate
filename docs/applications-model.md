@@ -233,7 +233,9 @@ Almost nothing, which is the point of §7.
    warn that revoking a key kills two planes, which is true today and unwarned.
    Worth doing on its own merits.
 
-That is the whole gateway change. Everything else is the console: an
+That is the whole change *in this repository*. Analytics needs one more,
+elsewhere: the metrics service's dashboard endpoints take a single `consumerId`
+and have to take a list (§9.1). Everything else is the console: an
 `Application` model (id, teamId, gatewayId, name, consumer ids), its CRUD, and
 the screens in §5. Routing, policy resolution, the connect flow and the MCP
 handler keep working on consumers, because that is still what a request resolves
@@ -246,14 +248,41 @@ carries `trustgate.consumer.id` and `trustgate.consumer.name` alongside the
 gateway and tenant (`docs/telemetry/otlp-metadata-contract.md`). Every chart that
 exists keeps working, because a request still resolves to a consumer.
 
-What changes is that people will want to ask questions about the **application**,
-and the gateway cannot answer them (§7.3). Three things make that cheap:
+### 9.0 The console already says "application" here
+
+Analytics has an **All applications** filter and tabs for Overview, Policy, Cost,
+LLM and MCP. Both are ahead of the model:
+
+- The label is `toolbar.allConsumers` rendered as *"All applications"*
+  (`messages/en/v2Analytics.json`). The word is already in front of people; the
+  thing behind it is a consumer.
+- The tabs already separate what §9.3 says must stay separate — Cost and LLM on
+  one side, MCP on the other, with Overview holding only what legitimately sums.
+
+So this is not a new page. It is the same page with the filter finally meaning
+what its label says.
 
 ### 9.1 An Application is at most two consumers
 
 So "group by application" is not a join, it is a filter expansion:
 `consumer_id IN (<mcp>, <llm>)`. The console builds its own queries and holds the
 mapping, so its pages need no new data anywhere.
+
+In code that means one thing threaded through one path. `AnalyticsContext`
+carries `consumerId: string | null`; every tab hook passes it to its action; each
+action puts it on the query string; `fetchTrustGateDashboard` sends it to the
+metrics service. Making it `consumerIds` is mechanical — and it does not stop at
+the console, because the last hop is another service's API
+(`/v1/residency/trustgate/dashboard/*`, or `/v1/gateway-metrics/dashboard/*`).
+That is a third repository, and §8 does not cover it.
+
+One thing to know before promising this on wide date ranges: filtering by
+consumer already takes the slow path. The console's own comment says why — *"the
+data plane recomputes from the flat per-request view (the hourly MV has no
+consumer dimension)"*. An application filter scans both of its consumers, so it
+is that path twice over. If the rollup ever gains a consumer dimension it should
+gain this one too, which is where §7.3's "if one of them starts to hurt" is most
+likely to land first.
 
 ### 9.2 Outside the console, a dimension synced from the rows
 
@@ -306,8 +335,10 @@ under a name nobody chose.
 
 ## 11. Slicing
 
-0. Analytics dimension (§9.2), whenever the console's rows exist — it is what
-   keeps the dashboards honest while the rest lands.
+0. Analytics: `consumerId` → `consumerIds` through the console and the metrics
+   service (§9.1), and the dimension for everything outside the console (§9.2).
+   Both can start before the rest and neither changes what a chart shows until
+   an Application groups two consumers.
 1. Gateway: the auth → consumers reverse lookup (§8), which stands alone.
 2. Console: the `Application` model and the derived Application-of-one read, with
    the consumers list becoming an Applications list. Nothing else changes yet.
