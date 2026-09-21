@@ -202,7 +202,6 @@ func TestStreamingDefaults(t *testing.T) {
 	assert.Equal(t, defaultStreamingGuardTimeout, cfg.Streaming.guardTimeout())
 	assert.Equal(t, onErrorFailClosed, cfg.Streaming.OnError,
 		"streaming.on_error inherits the policy on_error when unset")
-	assert.True(t, cfg.Streaming.failClosedOnTransport())
 }
 
 func TestStreamingExplicitValues(t *testing.T) {
@@ -233,7 +232,6 @@ func TestStreamingExplicitValues(t *testing.T) {
 	assert.Equal(t, 3*time.Second, cfg.Streaming.guardTimeout())
 	assert.Equal(t, onErrorFailOpen, cfg.Streaming.OnError,
 		"an explicit streaming.on_error overrides the policy on_error")
-	assert.False(t, cfg.Streaming.failClosedOnTransport())
 }
 
 func TestStreamingRanges(t *testing.T) {

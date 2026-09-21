@@ -83,7 +83,10 @@ const (
 
 const transformedInputKey = "input"
 
-var _ appplugins.Plugin = (*Plugin)(nil)
+var (
+	_ appplugins.Plugin          = (*Plugin)(nil)
+	_ appplugins.StreamInspector = (*Plugin)(nil)
+)
 
 type Plugin struct {
 	registry *adapter.Registry
@@ -276,6 +279,33 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
+}
+
+// InspectSegment evaluates one closed block of a streaming response leg and
+// returns the verdict for it. It is the streaming counterpart of Execute's
+// output leg and leaves Execute untouched: the buffered path keeps calling the
+// guard once per response.
+//
+// Ownership of streaming.on_error: the caller owns it, this plugin never reads
+// it. The setting decides what happens to text the caller is holding — release
+// it and degrade, or cut — and only the caller knows how much is held, whether
+// the head block is still uncommitted, and how many blocks in a row have
+// failed. Applying it here as well would apply it twice. So a failure whose
+// handling is configurable comes back as an error and the caller resolves it.
+//
+// The exception is a rejection the engine issued deliberately: 401/403, 429
+// and 503 come back as a blocking verdict, not an error, so no value of
+// streaming.on_error can turn them into a release. That mirrors Execute, where
+// the same three fail closed regardless of on_error.
+//
+// Mode is likewise not applied here. A block verdict is what the engine said;
+// the executor downgrades it to a report for an observe-mode entry.
+func (p *Plugin) InspectSegment(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentVerdict, error) {
+	return p.inspectSegment(ctx, in, seg)
 }
 
 func (p *Plugin) inspectionPayload(
@@ -576,12 +606,26 @@ func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {
 }
 
 func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
+	return p.guardWith(ctx, p.tokens.token, baseURL, collectorID, traceID, body, playground)
+}
+
+// guardWith runs one evaluate call, retrying once with a fresh token after a
+// 401. The token leg comes from the caller because the two legs are bounded
+// differently: a buffered call waits out a token fetch under the HTTP client
+// timeout, a streamed block holding bytes back cannot.
+func (p *Plugin) guardWith(
+	ctx context.Context,
+	fetchToken tokenSource,
+	baseURL, collectorID, traceID string,
+	body GuardRequest,
+	playground bool,
+) (*GuardResponse, error) {
 	params := tokenParams{
 		baseURL:     baseURL,
 		collectorID: collectorID,
 		gatewayID:   body.GatewayID,
 	}
-	token, err := p.tokens.token(ctx, params)
+	token, err := fetchToken(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +637,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 		return nil, err
 	}
 	p.tokens.invalidate(params)
-	token, err = p.tokens.token(ctx, params)
+	token, err = fetchToken(ctx, params)
 	if err != nil {
 		return nil, err
 	}

@@ -17,15 +17,99 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const streamIDSeparator = ":"
+
+func (p *Plugin) inspectSegment(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentVerdict, error) {
+	cfg, err := p.config(in.Config.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("trustguard: %w", err)
+	}
+	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+		return segmentAllow(), nil
+	}
+	if p.baseURL == "" || !p.tokens.configured() || p.registry == nil {
+		return segmentAllow(), nil
+	}
+	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
+		return segmentAllow(), nil
+	}
+
+	payload, ok := p.segmentPayload(ctx, in, seg)
+	if !ok {
+		return segmentAllow(), nil
+	}
+	traceID := gatewayTraceID(ctx)
+	body := GuardRequest{
+		OriginalRequest: requestmeta.FromContext(ctx),
+		Payload:         payload,
+		Direction:       directionOutput,
+		Protocol:        protocolFor(in.Request.ConsumerType),
+		GatewayID:       in.Request.GatewayID,
+		SessionID:       in.Request.SessionID,
+		ConsumerID:      in.Request.ConsumerID,
+		Attributes: GuardAttributes{
+			ContentType: contentTypeJSON,
+			Model: GuardModel{
+				Name:     in.Request.RequestedModel,
+				Provider: in.Request.Provider,
+			},
+			User:   principalUser(ctx),
+			Stream: segmentStream(traceID, seg),
+		},
+	}
+
+	// The deadline covers the token leg as well as the evaluate call, which is
+	// why the call goes through guardWith and tokenWithin rather than guard: a
+	// block that has to wait for a cold token still has to answer inside
+	// streaming.guard_timeout, because the caller is holding bytes for it.
+	blockCtx, cancel := context.WithTimeout(ctx, cfg.Streaming.guardTimeout())
+	defer cancel()
+	resp, err := p.guardWith(
+		blockCtx,
+		p.tokens.tokenWithin,
+		p.baseURL,
+		cfg.CollectorID,
+		traceID,
+		body,
+		requestHasPlaygroundToken(in.Request),
+	)
+	if err != nil {
+		return p.segmentFailure(ctx, in, seg, err)
+	}
+	return segmentVerdict(seg, resp), nil
+}
+
+// segmentStream places the block in its stream. An id is what the engine
+// correlates a stream's calls on, and an empty one is not a missing id but a
+// shared one, so without an id the envelope is left off entirely.
+func segmentStream(traceID string, seg appplugins.StreamSegment) *GuardStream {
+	id := segmentStreamID(traceID, seg)
+	if id == "" {
+		return nil
+	}
+	return &GuardStream{
+		ID:        id,
+		Seq:       seg.Seq,
+		Final:     seg.Final,
+		Truncated: seg.Truncated,
+	}
+}
 
 // segmentStreamID derives the wire id from the gateway trace id and the
 // response leg. A trace spans one gateway request, so the id is stable for
@@ -79,6 +163,11 @@ func (p *Plugin) segmentPayload(
 	}
 	payload, err := llmResponsePayload(cresp, tools)
 	if err != nil {
+		// The block goes uninspected, exactly as the buffered leg's own
+		// payload failure does, so it belongs in the same counter. transport
+		// is the closest of the two reasons the counter knows; the per-block
+		// breakdown arrives with the stream aggregate.
+		recordEvaluateFailure(ctx, failureReasonTransport)
 		p.warn(ctx, "trustguard stream segment payload build failed, skipping block",
 			slog.String("plugin", PluginName),
 			slog.Int("seq", seg.Seq),
@@ -102,6 +191,47 @@ func (p *Plugin) requestTools(req *infracontext.RequestContext) []adapter.Canoni
 		return nil
 	}
 	return request.Tools
+}
+
+// segmentFailure splits the guard's failures into the ones the caller may
+// weigh against streaming.on_error and the ones it may not. A rejection the
+// engine issued deliberately — 401/403, 429, 503 — comes back as a blocking
+// verdict, which no configuration can relax, matching what Execute does on the
+// buffered path. Everything else is returned as an error for the caller to
+// resolve.
+func (p *Plugin) segmentFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+	err error,
+) (*appplugins.SegmentVerdict, error) {
+	var limited *rateLimitedError
+	if errors.As(err, &limited) {
+		return segmentBlock(typeRateLimited, rateLimitMessage), nil
+	}
+	var unavailable *entitlementsUnavailableError
+	if errors.As(err, &unavailable) {
+		return segmentBlock(typeUnavailable, unavailableMessage), nil
+	}
+	var auth *authRejectedError
+	if errors.As(err, &auth) || errors.Is(err, errUnauthorized) {
+		recordEvaluateFailure(ctx, failureReasonUnauthorized)
+		p.error(ctx, "trustguard stream auth/config rejected, failing closed",
+			slog.String("plugin", PluginName),
+			slog.String("direction", directionOutput),
+			slog.Int("seq", seg.Seq),
+			slog.Any("error", err),
+		)
+		return segmentBlock(typeUnauthorized, unauthorizedMessage), nil
+	}
+	recordEvaluateFailure(ctx, failureReasonTransport)
+	p.warn(ctx, "trustguard stream segment call failed",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.Int("seq", seg.Seq),
+		slog.Any("error", err),
+	)
+	return nil, fmt.Errorf("trustguard: inspecting stream segment %d: %w", seg.Seq, err)
 }
 
 func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) *appplugins.SegmentVerdict {

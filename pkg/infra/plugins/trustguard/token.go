@@ -90,13 +90,54 @@ func (m *tokenManager) configured() bool {
 	return strings.TrimSpace(m.clientID) != "" && strings.TrimSpace(m.clientSecret) != ""
 }
 
+// tokenSource resolves the bearer token for one guard call. The buffered path
+// passes token and the streaming path tokenWithin; they differ only in how
+// long the caller is prepared to wait, never in how the fetch itself runs.
+type tokenSource func(context.Context, tokenParams) (string, error)
+
 func (m *tokenManager) token(ctx context.Context, params tokenParams) (string, error) {
 	key := params.cacheKey()
 	if tok, ok := m.cachedToken(key); ok {
 		return tok, nil
 	}
+	v, err, _ := m.group.Do(key, m.fetchOnce(ctx, key, params))
+	if err != nil {
+		return "", err
+	}
+	return v.(string), nil
+}
+
+// tokenWithin is token bounded by ctx. The fetch still runs cancellation-free,
+// so a caller that walks away does not poison the shared singleflight result
+// for the callers still waiting on it: what ctx bounds is this caller's wait,
+// not the round trip. A streamed block needs that bound. It holds bytes back
+// under streaming.guard_timeout, and on a cold or expired token an unbounded
+// wait would stretch the hold to the whole TRUSTGUARD_TIMEOUT — twice over,
+// since a 401 makes guard invalidate and fetch again.
+func (m *tokenManager) tokenWithin(ctx context.Context, params tokenParams) (string, error) {
+	key := params.cacheKey()
+	if tok, ok := m.cachedToken(key); ok {
+		return tok, nil
+	}
+	ch := m.group.DoChan(key, m.fetchOnce(ctx, key, params))
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		tok, _ := res.Val.(string)
+		return tok, nil
+	case <-ctx.Done():
+		return "", fmt.Errorf("trustguard: token fetch: %w", ctx.Err())
+	}
+}
+
+// fetchOnce is the singleflight body both entry points share. ctx contributes
+// its values only: context.WithoutCancel keeps one caller's deadline off a
+// fetch every caller on the key is sharing.
+func (m *tokenManager) fetchOnce(ctx context.Context, key string, params tokenParams) func() (any, error) {
 	fetchCtx := context.WithoutCancel(ctx)
-	v, err, _ := m.group.Do(key, func() (any, error) {
+	return func() (any, error) {
 		if tok, ok := m.cachedToken(key); ok {
 			return tok, nil
 		}
@@ -108,11 +149,7 @@ func (m *tokenManager) token(ctx context.Context, params tokenParams) (string, e
 		m.cache[key] = entry
 		m.mu.Unlock()
 		return entry.token, nil
-	})
-	if err != nil {
-		return "", err
 	}
-	return v.(string), nil
 }
 
 func (m *tokenManager) cachedToken(key string) (string, bool) {
