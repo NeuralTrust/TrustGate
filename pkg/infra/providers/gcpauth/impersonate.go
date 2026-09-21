@@ -32,7 +32,7 @@ const (
 	// iamCredentialsEndpoint is GCP's IAM Credentials API host. There is only
 	// one, unlike Model Armor's per-region hosts: generateAccessToken is a
 	// control-plane call, not a data-plane one.
-	iamCredentialsEndpoint = "https://iamcredentials.googleapis.com/v1"
+	iamCredentialsEndpoint = "https://iamcredentials.googleapis.com/v1" // #nosec G101 -- public API host, not a credential value
 
 	maxImpersonateResponseBytes = 1 << 16
 )
