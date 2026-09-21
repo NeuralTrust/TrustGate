@@ -53,9 +53,29 @@ type GuardAttachment struct {
 }
 
 type GuardAttributes struct {
-	ContentType string     `json:"content_type"`
-	Model       GuardModel `json:"model"`
-	User        *GuardUser `json:"user,omitempty"`
+	ContentType string       `json:"content_type"`
+	Model       GuardModel   `json:"model"`
+	User        *GuardUser   `json:"user,omitempty"`
+	Stream      *GuardStream `json:"stream,omitempty"`
+}
+
+// GuardStream correlates the evaluate calls of a single streamed response so
+// the engine can make side effects idempotent. It is not needed for detection:
+// the cumulative payload already carries the context. It hangs off attributes
+// rather than the request root because the engine's strict decoder rejects
+// unknown top-level fields but leaves attributes free-form.
+type GuardStream struct {
+	// ID is derived from the gateway trace id plus the response leg, so it is
+	// distinct from SessionID, which spans the whole conversation.
+	ID  string `json:"id"`
+	Seq int    `json:"seq"`
+	// Final marks the last evaluate of the stream and is the engine's cue to
+	// settle whatever it deferred across the earlier blocks.
+	Final bool `json:"final"`
+	// Truncated says the accumulation cap swapped the payload from a full
+	// prefix to a tail window, so the engine can tell the two apart instead of
+	// reading a window as the whole response.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type GuardModel struct {
@@ -119,6 +139,31 @@ type guardData struct {
 	// are omitempty, so events that did inspect are unchanged.
 	Skipped    bool   `json:"skipped,omitempty"`
 	SkipReason string `json:"skip_reason,omitempty"`
+	// Streaming carries the per-stream aggregate for a response inspected
+	// block by block. It is a pointer so the buffered path, which has nothing
+	// to say about streaming, keeps emitting an identical event.
+	Streaming *streamData `json:"streaming,omitempty"`
+}
+
+// streamData is the per-stream aggregate of one streamed response leg. The
+// whole block is written once, at the end: Span.SetExtras overwrites rather
+// than merges, so a per-block write would destroy the previous one. Its fields
+// carry no omitempty on purpose — once the block is present, a zero is an
+// answer ("no cut", "no degradation") and dropping it would make the absent
+// key ambiguous with a leg that never reported.
+type streamData struct {
+	Enabled             bool   `json:"enabled"`
+	StreamID            string `json:"stream_id"`
+	EvalsTotal          int    `json:"evals_total"`
+	CutAtEval           int    `json:"cut_at_eval"`
+	CutOffsetChars      int    `json:"cut_offset_chars"`
+	FinalPass           bool   `json:"final_pass"`
+	GuardCalls          int    `json:"guard_calls"`
+	GuardLatencyMsTotal int64  `json:"guard_latency_ms_total"`
+	GuardLatencyMsMax   int64  `json:"guard_latency_ms_max"`
+	AddedLatencyMs      int64  `json:"added_latency_ms"`
+	DegradedReason      string `json:"degraded_reason"`
+	FallbackReason      string `json:"fallback_reason"`
 }
 
 func setExtras(event *metrics.EventContext, data guardData) {
