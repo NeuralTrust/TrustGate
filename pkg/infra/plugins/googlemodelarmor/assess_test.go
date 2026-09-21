@@ -168,3 +168,84 @@ func TestInspectFirstMatchInCanonicalOrderNames(t *testing.T) {
 	require.NotNil(t, res.block)
 	assert.Equal(t, filterRAI, res.block.filter, "rai is evaluated before csam")
 }
+
+func TestInspectPIAndJailbreakCarriesConfidence(t *testing.T) {
+	t.Parallel()
+
+	f := inspectPIAndJailbreak(&PIAndJailbreakFilterResult{
+		PiAndJailbreakFilterResult: &PIAndJailbreakResult{
+			MatchState: matchStateMatchFound, ConfidenceLevel: "HIGH",
+		},
+	})
+	if f == nil {
+		t.Fatal("expected a finding")
+	}
+	if f.confidence != "HIGH" {
+		t.Errorf("confidence = %q, want HIGH", f.confidence)
+	}
+	if f.category != "" {
+		t.Errorf("pi_and_jailbreak has no sub-category, got %q", f.category)
+	}
+}
+
+// RAI carries its confidence on the sub-category, not the overall result, so
+// a finding that reported only "rai" would carry a confidence belonging to
+// nothing in particular.
+func TestInspectRAINamesTheMatchedCategoryAndItsConfidence(t *testing.T) {
+	t.Parallel()
+
+	f := inspectRAI(&RAIFilterResult{RaiFilterResult: &RAIResult{
+		MatchState: matchStateMatchFound,
+		RaiFilterTypeResults: map[string]RAIFilterTypeResult{
+			"sexually_explicit": {MatchState: "NO_MATCH_FOUND"},
+			"hate_speech":       {MatchState: matchStateMatchFound, ConfidenceLevel: "MEDIUM"},
+			"harassment":        {MatchState: "NO_MATCH_FOUND"},
+			"dangerous":         {MatchState: "NO_MATCH_FOUND"},
+		},
+	}})
+	if f == nil {
+		t.Fatal("expected a finding")
+	}
+	if f.category != "hate_speech" {
+		t.Errorf("category = %q, want hate_speech", f.category)
+	}
+	if f.confidence != "MEDIUM" {
+		t.Errorf("confidence = %q, want MEDIUM", f.confidence)
+	}
+}
+
+// Map iteration order is random in Go, so without a tiebreak the same
+// response could name a different category on each call and nobody tuning
+// thresholds could trust what they were reading.
+func TestInspectRAIBreaksTiesDeterministically(t *testing.T) {
+	t.Parallel()
+
+	in := &RAIFilterResult{RaiFilterResult: &RAIResult{
+		MatchState: matchStateMatchFound,
+		RaiFilterTypeResults: map[string]RAIFilterTypeResult{
+			"hate_speech": {MatchState: matchStateMatchFound, ConfidenceLevel: "HIGH"},
+			"dangerous":   {MatchState: matchStateMatchFound, ConfidenceLevel: "LOW"},
+			"harassment":  {MatchState: matchStateMatchFound, ConfidenceLevel: "MEDIUM"},
+		},
+	}}
+	for i := 0; i < 50; i++ {
+		f := inspectRAI(in)
+		if f.category != "dangerous" || f.confidence != "LOW" {
+			t.Fatalf("iteration %d picked %q/%q, want dangerous/LOW every time", i, f.category, f.confidence)
+		}
+	}
+}
+
+// An overall RAI match with no per-category breakdown must still be a
+// finding; some responses carry only the overall state.
+func TestInspectRAIWithoutCategoryBreakdownStillMatches(t *testing.T) {
+	t.Parallel()
+
+	f := inspectRAI(&RAIFilterResult{RaiFilterResult: &RAIResult{MatchState: matchStateMatchFound}})
+	if f == nil {
+		t.Fatal("expected a finding even with no category breakdown")
+	}
+	if f.category != "" || f.confidence != "" {
+		t.Errorf("nothing to report, got category=%q confidence=%q", f.category, f.confidence)
+	}
+}

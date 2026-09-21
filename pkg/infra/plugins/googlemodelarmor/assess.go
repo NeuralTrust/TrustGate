@@ -73,6 +73,15 @@ func unevaluatedFilter(result *SanitizationResult, on map[string]bool) string {
 type finding struct {
 	filter    string
 	infoTypes []string
+	// confidence is Model Armor's own confidence in the match, for the
+	// filters that report one. Empty for those that do not (SDP, malicious
+	// URIs and CSAM answer matched or not, with no degree).
+	confidence string
+	// category names the RAI sub-filter that matched — hate_speech,
+	// dangerous, harassment, sexually_explicit. RAI reports confidence per
+	// category rather than overall, so a confidence without the category it
+	// belongs to would say nothing.
+	category string
 }
 
 type assessmentResult struct {
@@ -149,18 +158,37 @@ func inspectSDP(f *SDPFilterResult, action string) (*finding, bool) {
 	return nil, false
 }
 
+// RAI reports an overall match plus a per-category breakdown, and the
+// confidence lives on the category rather than on the overall result. Pick
+// the category that actually matched so "blocked by rai" becomes "blocked by
+// rai/hate_speech at HIGH", which is the difference between a number someone
+// can act on and one they cannot. Categories iterate in map order, so ties
+// are broken by name to keep the same response naming the same category.
 func inspectRAI(f *RAIFilterResult) *finding {
 	if f == nil || f.RaiFilterResult == nil || f.RaiFilterResult.MatchState != matchStateMatchFound {
 		return nil
 	}
-	return &finding{filter: filterRAI}
+	found := &finding{filter: filterRAI}
+	for name, cat := range f.RaiFilterResult.RaiFilterTypeResults {
+		if cat.MatchState != matchStateMatchFound {
+			continue
+		}
+		if found.category == "" || name < found.category {
+			found.category = name
+			found.confidence = cat.ConfidenceLevel
+		}
+	}
+	return found
 }
 
 func inspectPIAndJailbreak(f *PIAndJailbreakFilterResult) *finding {
 	if f == nil || f.PiAndJailbreakFilterResult == nil || f.PiAndJailbreakFilterResult.MatchState != matchStateMatchFound {
 		return nil
 	}
-	return &finding{filter: filterPIAndJailbreak}
+	return &finding{
+		filter:     filterPIAndJailbreak,
+		confidence: f.PiAndJailbreakFilterResult.ConfidenceLevel,
+	}
 }
 
 func inspectMaliciousURIs(f *MaliciousURIsFilterResult) *finding {
