@@ -169,6 +169,21 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
+// HasStreamInspector reports whether any entry of the stage opted into
+// per-segment inspection. The stream guard is built only when it returns true,
+// so a gateway whose policies do not participate pays nothing for the feature.
+func (p *StagePlan) HasStreamInspector(stage policy.Stage) bool {
+	if p == nil {
+		return false
+	}
+	for _, entry := range p.byStage[stage] {
+		if streamInspector(entry.plugin) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
 	if p == nil {
 		return nil

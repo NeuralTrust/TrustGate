@@ -381,3 +381,28 @@ func TestInertStagePlan_GroupScopeNeverReordersTheChain(t *testing.T) {
 		assert.Equal(t, uint8(0), entry.specificity, "every entry of an inert plan scores zero specificity")
 	}
 }
+
+func TestStagePlan_HasStreamInspector(t *testing.T) {
+	pre := []policy.Stage{policy.StagePreResponse}
+	inspector := newStreamPlugin("guard", nil)
+	plain := &fakePlugin{name: "plain", stages: pre, result: &Result{}}
+	reg := newRegistry(t, inspector, plain)
+
+	withInspector := NewStagePlan(reg, policies(t,
+		polSpec{slug: "guard", enabled: true, priority: 10, stages: pre},
+		polSpec{slug: "plain", enabled: true, priority: 20, stages: pre},
+	), nil)
+	withoutInspector := NewStagePlan(reg, policies(t,
+		polSpec{slug: "plain", enabled: true, priority: 10, stages: pre},
+	), nil)
+
+	assert.True(t, withInspector.HasStreamInspector(policy.StagePreResponse))
+	assert.False(t, withInspector.HasStreamInspector(policy.StagePostResponse),
+		"the predicate answers per stage, and the policies only selected pre_response")
+	assert.False(t, withoutInspector.HasStreamInspector(policy.StagePreResponse),
+		"a stage whose entries do not implement StreamInspector does not participate")
+
+	var nilPlan *StagePlan
+	assert.False(t, nilPlan.HasStreamInspector(policy.StagePreResponse))
+	assert.False(t, NewStagePlan(reg, nil, nil).HasStreamInspector(policy.StagePreResponse))
+}
