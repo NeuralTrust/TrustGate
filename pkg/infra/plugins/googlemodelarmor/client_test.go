@@ -17,13 +17,19 @@ package googlemodelarmor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func staticTokenSource(token string, err error) tokenSource {
@@ -579,4 +585,253 @@ func TestSanitizeDecodesLiveInspectResultBranch(t *testing.T) {
 	if got := unevaluatedFilter(result, on); got != "" {
 		t.Errorf("every filter reported EXECUTION_SUCCESS, got unevaluated %q", got)
 	}
+}
+
+// --- per-policy credentials: fingerprint, credential selection, client cache ---
+
+func baseModelArmorCredentials() modelArmorCredentials {
+	return modelArmorCredentials{
+		impersonateServiceAccount: "modelarmor@customer.iam.gserviceaccount.com",
+		serviceAccountJSON:        `{"type":"service_account"}`,
+	}
+}
+
+func TestModelArmorFingerprintStableForIdenticalCredentials(t *testing.T) {
+	t.Parallel()
+	a := baseModelArmorCredentials()
+	b := baseModelArmorCredentials()
+	assert.Equal(t, a.fingerprint(), b.fingerprint())
+}
+
+func TestModelArmorFingerprintDiffersPerField(t *testing.T) {
+	t.Parallel()
+	base := baseModelArmorCredentials()
+	mutators := map[string]func(*modelArmorCredentials){
+		"impersonateServiceAccount": func(c *modelArmorCredentials) { c.impersonateServiceAccount = "other@customer.iam.gserviceaccount.com" },
+		"serviceAccountJSON":        func(c *modelArmorCredentials) { c.serviceAccountJSON = `{"type":"other"}` },
+	}
+	baseFP := base.fingerprint()
+	for name, mutate := range mutators {
+		t.Run(name, func(t *testing.T) {
+			mutated := base
+			mutate(&mutated)
+			assert.NotEqual(t, baseFP, mutated.fingerprint(), "expected fingerprint to change when %s differs", name)
+		})
+	}
+}
+
+// TestModelArmorFingerprintAvoidsFieldBoundaryCollision proves the two
+// credential fields cannot be concatenated into an identical byte stream by
+// shifting a boundary between them — the whole cache's correctness rests on
+// this, since a collision here would mean two different customers'
+// credentials silently sharing one cached client.
+func TestModelArmorFingerprintAvoidsFieldBoundaryCollision(t *testing.T) {
+	t.Parallel()
+	a := modelArmorCredentials{impersonateServiceAccount: "ab", serviceAccountJSON: "c"}
+	b := modelArmorCredentials{impersonateServiceAccount: "a", serviceAccountJSON: "bc"}
+	assert.NotEqual(t, a.fingerprint(), b.fingerprint())
+}
+
+func TestCredentialsFromConfigMapsAllFields(t *testing.T) {
+	t.Parallel()
+	cfg := Credentials{
+		ImpersonateServiceAccount: "  modelarmor@customer.iam.gserviceaccount.com  ",
+		ServiceAccountJSON:        `{"type":"service_account"}`,
+	}
+	got := credentialsFromConfig(cfg)
+	want := modelArmorCredentials{
+		impersonateServiceAccount: "modelarmor@customer.iam.gserviceaccount.com",
+		serviceAccountJSON:        `{"type":"service_account"}`,
+	}
+	assert.Equal(t, want, got, "the target email is trimmed; the service-account JSON is passed through verbatim")
+}
+
+func TestModelArmorClientCacheSingleFlight(t *testing.T) {
+	t.Parallel()
+	var builds atomic.Int64
+	cache := &clientCache{
+		build: func(modelArmorCredentials) (*client, error) {
+			builds.Add(1)
+			return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("t", nil)), nil
+		},
+	}
+
+	const goroutines = 64
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	creds := baseModelArmorCredentials()
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			c, err := cache.get(creds)
+			assert.NoError(t, err)
+			assert.NotNil(t, c)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int64(1), builds.Load(), "expected build to be called exactly once across concurrent callers")
+}
+
+func TestModelArmorClientCacheDoesNotCacheFailedBuild(t *testing.T) {
+	t.Parallel()
+	var builds atomic.Int64
+	buildErr := errors.New("boom")
+	cache := &clientCache{
+		build: func(modelArmorCredentials) (*client, error) {
+			if builds.Add(1) == 1 {
+				return nil, buildErr
+			}
+			return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("t", nil)), nil
+		},
+	}
+
+	creds := baseModelArmorCredentials()
+	_, err := cache.get(creds)
+	require.ErrorIs(t, err, buildErr)
+
+	c, err := cache.get(creds)
+	require.NoError(t, err)
+	assert.NotNil(t, c)
+	assert.Equal(t, int64(2), builds.Load(), "expected the retry after a failed build to build again")
+}
+
+func TestNewModelArmorClientCacheWiresBuildSeam(t *testing.T) {
+	t.Parallel()
+	cache := newModelArmorClientCache("", time.Second, newCredentialSources())
+	require.NotNil(t, cache)
+	require.NotNil(t, cache.build)
+}
+
+// TestCredentialSourcesPrecedence proves tokenSourceFor picks the documented
+// order — impersonation, then explicit service-account JSON, then ADC — by
+// wiring each of the three funcs to a distinct, recognisable token and
+// checking which one comes back for every combination of fields set.
+func TestCredentialSourcesPrecedence(t *testing.T) {
+	t.Parallel()
+	sources := &credentialSources{
+		impersonate: func(_ context.Context, email, _ string) (string, error) {
+			return "impersonate:" + email, nil
+		},
+		serviceAcct: func(_ context.Context, json, _ string) (string, error) {
+			return "service_account:" + json, nil
+		},
+		adc: func(context.Context, string) (string, error) {
+			return "adc", nil
+		},
+	}
+
+	tests := []struct {
+		name  string
+		creds modelArmorCredentials
+		want  string
+	}{
+		{
+			name:  "neither set uses ADC",
+			creds: modelArmorCredentials{},
+			want:  "adc",
+		},
+		{
+			name:  "service account json alone",
+			creds: modelArmorCredentials{serviceAccountJSON: `{"type":"service_account"}`},
+			want:  `service_account:{"type":"service_account"}`,
+		},
+		{
+			name:  "impersonation alone",
+			creds: modelArmorCredentials{impersonateServiceAccount: "sa@customer.iam.gserviceaccount.com"},
+			want:  "impersonate:sa@customer.iam.gserviceaccount.com",
+		},
+		{
+			name: "both set: impersonation wins",
+			creds: modelArmorCredentials{
+				impersonateServiceAccount: "sa@customer.iam.gserviceaccount.com",
+				serviceAccountJSON:        `{"type":"service_account"}`,
+			},
+			want: "impersonate:sa@customer.iam.gserviceaccount.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ts := sources.tokenSourceFor(tt.creds)
+			got, err := ts(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestClientCacheSeparatesCredentialFingerprints is the test the whole
+// feature rests on: two policies with different credentials must never share
+// a cached client, and each cached client must go on authorizing every call
+// with its own credential's token, not the other policy's. A test that only
+// checks "two different *client pointers came back" would not catch a bug
+// where the fingerprint collided and both pointers wrapped the same token
+// source; this asserts on the bearer token actually sent on the wire.
+func TestClientCacheSeparatesCredentialFingerprints(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var gotAuths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuths = append(gotAuths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"sanitizationResult":{"filterMatchState":"NO_MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{}}}`)
+	}))
+	defer srv.Close()
+
+	sources := &credentialSources{
+		impersonate: func(_ context.Context, email, _ string) (string, error) {
+			return "impersonated-token-for:" + email, nil
+		},
+		serviceAcct: func(_ context.Context, json, _ string) (string, error) {
+			return "sa-token-for:" + json, nil
+		},
+		adc: func(context.Context, string) (string, error) {
+			return "adc-token", nil
+		},
+	}
+
+	var builds atomic.Int64
+	cache := &clientCache{
+		build: func(creds modelArmorCredentials) (*client, error) {
+			builds.Add(1)
+			return newClientWithTokenSource(srv.URL, time.Second, sources.tokenSourceFor(creds)), nil
+		},
+	}
+
+	credsA := modelArmorCredentials{impersonateServiceAccount: "tenant-a@customer.iam.gserviceaccount.com"}
+	credsB := modelArmorCredentials{impersonateServiceAccount: "tenant-b@customer.iam.gserviceaccount.com"}
+	require.NotEqual(t, credsA.fingerprint(), credsB.fingerprint(), "precondition: the two credential sets must be distinct")
+
+	clientA, err := cache.get(credsA)
+	require.NoError(t, err)
+	clientB, err := cache.get(credsB)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), builds.Load(), "two distinct credential sets must each build their own client")
+
+	// Re-fetching credsA must reuse the cached client rather than building a
+	// third one — this is "do not mint a new token source per request".
+	again, err := cache.get(credsA)
+	require.NoError(t, err)
+	assert.Same(t, clientA, again)
+	assert.Equal(t, int64(2), builds.Load())
+
+	_, err = clientA.SanitizeUserPrompt(context.Background(), "proj", "us-central1", "tmpl", "hi")
+	require.NoError(t, err)
+	_, err = clientB.SanitizeUserPrompt(context.Background(), "proj", "us-central1", "tmpl", "hi")
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, gotAuths, 2)
+	assert.Equal(t, "Bearer impersonated-token-for:tenant-a@customer.iam.gserviceaccount.com", gotAuths[0])
+	assert.Equal(t, "Bearer impersonated-token-for:tenant-b@customer.iam.gserviceaccount.com", gotAuths[1])
+	assert.NotEqual(t, gotAuths[0], gotAuths[1],
+		"the fingerprint must actually separate two credential sets: each cached client keeps authorizing with its own token")
 }

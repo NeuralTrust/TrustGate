@@ -25,11 +25,14 @@ package googlemodelarmor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -391,4 +394,131 @@ func (c *client) url(project, location, template, action string) string {
 	}
 	return fmt.Sprintf("%s/%s/projects/%s/locations/%s/templates/%s:%s",
 		base, apiVersion, project, location, template, action)
+}
+
+// modelArmorCredentials is Settings.Credentials flattened for fingerprinting,
+// mirroring bedrock_guardrail's awsCredentials.
+type modelArmorCredentials struct {
+	impersonateServiceAccount string
+	serviceAccountJSON        string
+}
+
+func credentialsFromConfig(c Credentials) modelArmorCredentials {
+	return modelArmorCredentials{
+		impersonateServiceAccount: strings.TrimSpace(c.ImpersonateServiceAccount),
+		serviceAccountJSON:        c.ServiceAccountJSON,
+	}
+}
+
+// fingerprint identifies one credential set so a client (and the token
+// source it wraps) is built once per distinct credential set rather than
+// once per plugin, exactly like bedrock_guardrail.awsCredentials.fingerprint.
+func (c modelArmorCredentials) fingerprint() string {
+	h := sha256.New()
+	for _, field := range []string{
+		c.impersonateServiceAccount,
+		c.serviceAccountJSON,
+	} {
+		h.Write([]byte(field))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// credentialSources bundles the token-minting funcs used to turn a policy's
+// Credentials into a tokenSource: Application Default Credentials for the
+// no-credentials-block path, an explicit service-account JSON cache, and an
+// impersonation cache for the keyless path. Each field is a gcpauth cache's
+// Token method value, not the cache itself, so tests can substitute a stub
+// without touching gcpauth's public API, while production wiring
+// (newCredentialSources) still shares one long-lived instance of each cache
+// across every policy — gcpauth's own caches are already keyed internally (by
+// json+scope or email+scope), so sharing them here costs nothing and lets
+// unrelated policies that happen to name the same target service account
+// share one minted token instead of minting two.
+type credentialSources struct {
+	adc         func(ctx context.Context, scope string) (string, error)
+	serviceAcct func(ctx context.Context, serviceAccountJSON, scope string) (string, error)
+	impersonate func(ctx context.Context, email, scope string) (string, error)
+}
+
+func newCredentialSources() *credentialSources {
+	adc := gcpauth.NewApplicationDefaultCache()
+	return &credentialSources{
+		adc:         adc.Token,
+		serviceAcct: gcpauth.NewServiceAccountCache().Token,
+		impersonate: gcpauth.NewImpersonationCache(adc).Token,
+	}
+}
+
+// tokenSourceFor picks the credential path per the precedence documented on
+// Credentials: impersonation first, then an explicit service-account JSON,
+// then Application Default Credentials.
+func (s *credentialSources) tokenSourceFor(creds modelArmorCredentials) tokenSource {
+	switch {
+	case creds.impersonateServiceAccount != "":
+		email := creds.impersonateServiceAccount
+		return func(ctx context.Context) (string, error) {
+			return s.impersonate(ctx, email, gcpauth.CloudPlatformScope)
+		}
+	case creds.serviceAccountJSON != "":
+		serviceAccountJSON := creds.serviceAccountJSON
+		return func(ctx context.Context) (string, error) {
+			return s.serviceAcct(ctx, serviceAccountJSON, gcpauth.CloudPlatformScope)
+		}
+	default:
+		return func(ctx context.Context) (string, error) {
+			return s.adc(ctx, gcpauth.CloudPlatformScope)
+		}
+	}
+}
+
+// cacheEntry and clientCache mirror bedrock_guardrail's per-credential client
+// cache: a *client (and the token source closed over inside it) is built at
+// most once per distinct credential fingerprint, via sync.Once, and a failed
+// build is not cached so the next call retries rather than getting stuck.
+// Unlike bedrock's build (which loads AWS config and can hit the network),
+// building a Model Armor *client here is pure in-memory wiring — no I/O — so
+// there is no ctx to thread through.
+type cacheEntry struct {
+	once   sync.Once
+	client *client
+	err    error
+}
+
+type clientCache struct {
+	entries sync.Map
+	build   func(creds modelArmorCredentials) (*client, error)
+}
+
+func (c *clientCache) get(creds modelArmorCredentials) (*client, error) {
+	key := creds.fingerprint()
+	for {
+		v, _ := c.entries.LoadOrStore(key, &cacheEntry{})
+		entry, ok := v.(*cacheEntry)
+		if !ok {
+			return nil, fmt.Errorf("google_model_armor: invalid cache entry type")
+		}
+		entry.once.Do(func() {
+			entry.client, entry.err = c.build(creds)
+		})
+		if entry.err == nil {
+			return entry.client, nil
+		}
+		if c.entries.CompareAndDelete(key, v) {
+			return nil, entry.err
+		}
+	}
+}
+
+// newModelArmorClientCache wires a clientCache whose build func resolves the
+// right token source for a credential set via sources and wraps it in a
+// *client pointed at baseURL/timeout, without minting any token yet — that
+// only happens lazily, inside sanitize(), on the first real call.
+func newModelArmorClientCache(baseURL string, timeout time.Duration, sources *credentialSources) *clientCache {
+	return &clientCache{
+		build: func(creds modelArmorCredentials) (*client, error) {
+			return newClientWithTokenSource(baseURL, timeout, sources.tokenSourceFor(creds)), nil
+		},
+	}
 }
