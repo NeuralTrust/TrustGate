@@ -21,6 +21,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,6 +102,73 @@ func TestBuilder_KeepsPrincipalAndEndUserApart(t *testing.T) {
 	assert.Equal(t, "api_key", evt.PrincipalMethod)
 	require.NotNil(t, evt.EndUser)
 	assert.Equal(t, "ana@acme.test", evt.EndUser.Email)
+}
+
+// The OpenAI API's own way of naming an end user. It covers the clients people
+// write themselves, which send no vendor headers at all.
+func TestBuilder_ReadsTheOpenAIUserFieldFromTheBody(t *testing.T) {
+	rt := trace.New("trace-end-user", trace.Metadata{GatewayID: "gw-1"})
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions",
+		Body: []byte(`{"model":"gpt-4o","user":"ana@acme.test","messages":[]}`),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(1_000_000)
+
+	evt := newBuilder(appcatalog.Pricing{}).
+		Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.EndUser)
+	assert.Equal(t, "ana@acme.test", evt.EndUser.ID)
+	assert.Equal(t, events.EndUserSourceOpenAIUser, evt.EndUser.Source)
+	// Still only telemetry, whichever way it was declared.
+	assert.Empty(t, evt.PrincipalSubject)
+	assert.Empty(t, evt.PrincipalEmail)
+}
+
+// Headers carry a whole person; the body field carries one opaque identifier.
+func TestBuilder_HeadersOutrankTheOpenAIUserField(t *testing.T) {
+	rt := trace.New("trace-end-user", trace.Metadata{
+		GatewayID: "gw-1",
+		EndUser:   &trace.EndUser{Email: "ana@acme.test", Name: "Ana", Source: "open_webui"},
+	})
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions",
+		Body: []byte(`{"model":"gpt-4o","user":"someone-else"}`),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(1_000_000)
+
+	evt := newBuilder(appcatalog.Pricing{}).
+		Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.EndUser)
+	assert.Equal(t, "ana@acme.test", evt.EndUser.Email)
+	assert.Equal(t, "open_webui", evt.EndUser.Source)
+}
+
+func TestBuilder_IgnoresAnUnusableUserField(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent":       `{"model":"gpt-4o"}`,
+		"blank":        `{"model":"gpt-4o","user":"   "}`,
+		"not a string": `{"model":"gpt-4o","user":{"id":"u-42"}}`,
+		"not json":     `not json at all`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt := trace.New("trace-end-user", trace.Metadata{GatewayID: "gw-1"})
+			req := &infracontext.RequestContext{
+				GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions",
+				Body: []byte(body),
+			}
+			resp := &infracontext.ResponseContext{StatusCode: 200}
+			start := time.UnixMilli(1_000_000)
+
+			evt := newBuilder(appcatalog.Pricing{}).
+				Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+			assert.Nil(t, evt.EndUser)
+		})
+	}
 }
 
 func TestBuilder_NoEndUserWhenNoneDeclared(t *testing.T) {

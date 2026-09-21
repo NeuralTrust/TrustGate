@@ -17,6 +17,7 @@ package middleware
 import (
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -54,8 +55,19 @@ type endUserHeaderSet struct {
 
 var endUserHeaderSets = []endUserHeaderSet{
 	{
+		// Our own namespace, first because it is the one a customer sets
+		// deliberately: any client we do not know by name can attribute its
+		// users with these, and a request carrying both these and a vendor's
+		// own headers meant these.
+		source: events.EndUserSourceTrustGate,
+		id:     "X-TG-User-Id",
+		email:  "X-TG-User-Email",
+		name:   "X-TG-User-Name",
+		role:   "X-TG-User-Role",
+	},
+	{
 		// Open WebUI sends these when ENABLE_FORWARD_USER_INFO_HEADERS is on.
-		source: "open_webui",
+		source: events.EndUserSourceOpenWebUI,
 		id:     "X-OpenWebUI-User-Id",
 		email:  "X-OpenWebUI-User-Email",
 		name:   "X-OpenWebUI-User-Name",

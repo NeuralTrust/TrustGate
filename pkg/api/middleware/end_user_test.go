@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,46 @@ func TestDetectEndUser_AcceptsAPartialSet(t *testing.T) {
 	assert.Equal(t, "ana@acme.test", got.Email)
 	assert.Empty(t, got.ID)
 	assert.Equal(t, "open_webui", got.Source)
+}
+
+// Our own namespace covers every client we do not know by name.
+func TestDetectEndUser_ReadsTrustGateHeaders(t *testing.T) {
+	got := detected(t, map[string]string{
+		"X-TG-User-Id":    "u-42",
+		"X-TG-User-Email": "ana@acme.test",
+		"X-TG-User-Name":  "Ana",
+		"X-TG-User-Role":  "admin",
+	})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "ana@acme.test", got.Email)
+	assert.Equal(t, "admin", got.Role)
+	assert.Equal(t, events.EndUserSourceTrustGate, got.Source)
+}
+
+// A customer setting our header did so on purpose; a vendor's own header is
+// whatever its product happened to send.
+func TestDetectEndUser_TrustGateHeadersOutrankAVendorConvention(t *testing.T) {
+	got := detected(t, map[string]string{
+		"X-TG-User-Email":        "configured@acme.test",
+		"X-OpenWebUI-User-Email": "forwarded@acme.test",
+	})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "configured@acme.test", got.Email)
+	assert.Equal(t, events.EndUserSourceTrustGate, got.Source)
+}
+
+// A set that contributed nothing is not a match, so a later one still gets read.
+func TestDetectEndUser_FallsThroughAnEmptySet(t *testing.T) {
+	got := detected(t, map[string]string{
+		"X-TG-User-Email":        "   ",
+		"X-OpenWebUI-User-Email": "ana@acme.test",
+	})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "ana@acme.test", got.Email)
+	assert.Equal(t, events.EndUserSourceOpenWebUI, got.Source)
 }
 
 func TestDetectEndUser_NilWithoutKnownHeaders(t *testing.T) {

@@ -160,6 +160,13 @@ func TestSession_FromKnownChatHeader(t *testing.T) {
 	require.False(t, capt.generated)
 }
 
+func TestSession_FromTrustGateSessionHeader(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(nil))
+	doRequest(t, app, `{}`, map[string]string{"X-TG-Session-Id": "sess-tg"})
+	require.Equal(t, "sess-tg", capt.sessionID)
+	require.False(t, capt.generated)
+}
+
 // An explicit configuration is a deliberate choice and outranks a guess.
 func TestSession_ConfiguredHeaderBeatsKnownChatHeader(t *testing.T) {
 	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), HeaderName: "X-Custom-Session"}))
