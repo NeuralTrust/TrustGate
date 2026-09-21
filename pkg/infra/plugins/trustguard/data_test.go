@@ -16,6 +16,7 @@ package trustguard
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -214,5 +215,175 @@ func TestRecordGuardOutcomeAllowedHasNoScoreLabel(t *testing.T) {
 	}
 	if attrs.Score != nil {
 		t.Fatalf("Score = %v, want nil", attrs.Score)
+	}
+}
+
+// marshalKeys returns the top-level keys of v's JSON encoding, sorted.
+func marshalKeys(t *testing.T, v any) []string {
+	t.Helper()
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	keys := make([]string, 0, len(decoded))
+	for k := range decoded {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func hasKey(keys []string, want string) bool {
+	return slices.Contains(keys, want)
+}
+
+func TestGuardAttributesStreamOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		attrs      GuardAttributes
+		wantStream bool
+	}{
+		{
+			name:       "nil stream is absent",
+			attrs:      GuardAttributes{ContentType: "text", Model: GuardModel{Name: "gpt-4o", Provider: "openai"}},
+			wantStream: false,
+		},
+		{
+			name:       "zero-value stream is still present",
+			attrs:      GuardAttributes{ContentType: "text", Stream: &GuardStream{}},
+			wantStream: true,
+		},
+		{
+			name:       "populated stream is present",
+			attrs:      GuardAttributes{ContentType: "text", Stream: &GuardStream{ID: "trace-1:response", Seq: 3, Final: true}},
+			wantStream: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			keys := marshalKeys(t, tc.attrs)
+			if got := hasKey(keys, "stream"); got != tc.wantStream {
+				t.Fatalf("stream present = %v, want %v (keys %v)", got, tc.wantStream, keys)
+			}
+			for _, always := range []string{"content_type", "model"} {
+				if !hasKey(keys, always) {
+					t.Fatalf("missing %q in %v", always, keys)
+				}
+			}
+		})
+	}
+}
+
+func TestGuardStreamJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		stream   GuardStream
+		wantKeys []string
+	}{
+		{
+			name:     "truncated omitted when false",
+			stream:   GuardStream{ID: "trace-1:response", Seq: 0, Final: false},
+			wantKeys: []string{"final", "id", "seq"},
+		},
+		{
+			name:     "truncated omitted on the zero value",
+			stream:   GuardStream{},
+			wantKeys: []string{"final", "id", "seq"},
+		},
+		{
+			name:     "truncated present when true",
+			stream:   GuardStream{ID: "trace-1:response", Seq: 7, Final: true, Truncated: true},
+			wantKeys: []string{"final", "id", "seq", "truncated"},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := marshalKeys(t, tc.stream); !slices.Equal(got, tc.wantKeys) {
+				t.Fatalf("keys = %v, want %v", got, tc.wantKeys)
+			}
+		})
+	}
+}
+
+func TestGuardStreamJSONValues(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(GuardAttributes{
+		ContentType: "text",
+		Model:       GuardModel{Name: "gpt-4o", Provider: "openai"},
+		Stream:      &GuardStream{ID: "trace-1:response", Seq: 4, Final: true, Truncated: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `{"content_type":"text","model":{"name":"gpt-4o","provider":"openai"},"stream":{"id":"trace-1:response","seq":4,"final":true,"truncated":true}}`
+	if string(encoded) != want {
+		t.Fatalf("encoded = %s, want %s", encoded, want)
+	}
+}
+
+func TestGuardDataStreamingBlock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		data          guardData
+		wantStreaming bool
+	}{
+		{
+			name:          "buffered leg carries no streaming block",
+			data:          guardData{Direction: "output", Decision: decisionAllowed},
+			wantStreaming: false,
+		},
+		{
+			name:          "streamed leg carries the aggregate",
+			data:          guardData{Direction: "output", Streaming: &streamData{Enabled: true, StreamID: "trace-1:response"}},
+			wantStreaming: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hasKey(marshalKeys(t, tc.data), "streaming"); got != tc.wantStreaming {
+				t.Fatalf("streaming present = %v, want %v", got, tc.wantStreaming)
+			}
+		})
+	}
+}
+
+func TestStreamDataJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"added_latency_ms",
+		"cut_at_eval",
+		"cut_offset_chars",
+		"degraded_reason",
+		"enabled",
+		"evals_total",
+		"fallback_reason",
+		"final_pass",
+		"guard_calls",
+		"guard_latency_ms_max",
+		"guard_latency_ms_total",
+		"stream_id",
+	}
+	// The zero value is marshalled on purpose: every key must survive it, or
+	// an absent key would be ambiguous with a leg that never reported.
+	if got := marshalKeys(t, streamData{}); !slices.Equal(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
 	}
 }
