@@ -121,9 +121,32 @@ func newClientWithTokenSource(baseURL string, timeout time.Duration, ts tokenSou
 // SanitizationResult is the decoded `sanitizationResult` object common to
 // both sanitize endpoints.
 type SanitizationResult struct {
-	FilterMatchState string        `json:"filterMatchState"`
-	InvocationResult string        `json:"invocationResult"`
-	FilterResults    FilterResults `json:"filterResults"`
+	FilterMatchState string                `json:"filterMatchState"`
+	InvocationResult string                `json:"invocationResult"`
+	FilterResults    FilterResults         `json:"filterResults"`
+	Metadata         *SanitizationMetadata `json:"sanitizationMetadata,omitempty"`
+}
+
+// SanitizationMetadata carries which filter version produced this verdict.
+// Worth recording: a template pinned to an alias silently changes behaviour
+// when Google promotes a new version, so "this used to block and now does
+// not" is otherwise unanswerable from our side.
+type SanitizationMetadata struct {
+	FilterVersionConfig *FilterVersionConfig `json:"filterVersionConfig,omitempty"`
+}
+
+// FilterVersionConfig names the filter version and the alias it came from.
+type FilterVersionConfig struct {
+	FilterVersion      string `json:"filterVersion,omitempty"`
+	FilterVersionAlias string `json:"filterVersionAlias,omitempty"`
+}
+
+// filterVersion returns the filter version behind this verdict, or "".
+func (r *SanitizationResult) filterVersion() string {
+	if r == nil || r.Metadata == nil || r.Metadata.FilterVersionConfig == nil {
+		return ""
+	}
+	return r.Metadata.FilterVersionConfig.FilterVersion
 }
 
 // sdp walks the two levels of nesting to the SDP payload, returning nil when
@@ -170,19 +193,22 @@ type SDPResult struct {
 // SDPInspectResult is what an inspect-only template returns: sensitive data
 // was found and named, but no rewritten text was produced.
 type SDPInspectResult struct {
-	MatchState string   `json:"matchState"`
-	InfoTypes  []string `json:"infoTypes,omitempty"`
+	ExecutionState string   `json:"executionState,omitempty"`
+	MatchState     string   `json:"matchState"`
+	InfoTypes      []string `json:"infoTypes,omitempty"`
 }
 
 // SDPRedactResult is the redaction outcome, modelled so the union decodes
 // completely; the plugin does not act on it today.
 type SDPRedactResult struct {
-	MatchState string `json:"matchState"`
+	ExecutionState string `json:"executionState,omitempty"`
+	MatchState     string `json:"matchState"`
 }
 
 // SDPDeidentifyResult carries the de-identified text Model Armor produced
 // (Data.Text) when it rewrote rather than merely flagged sensitive data.
 type SDPDeidentifyResult struct {
+	ExecutionState   string   `json:"executionState,omitempty"`
 	MatchState       string   `json:"matchState"`
 	Data             *SDPData `json:"data,omitempty"`
 	InfoTypes        []string `json:"infoTypes,omitempty"`
@@ -201,6 +227,7 @@ type PIAndJailbreakFilterResult struct {
 
 // PIAndJailbreakResult reports the match state and Model Armor's confidence in it.
 type PIAndJailbreakResult struct {
+	ExecutionState  string `json:"executionState,omitempty"`
 	MatchState      string `json:"matchState"`
 	ConfidenceLevel string `json:"confidenceLevel"`
 }
@@ -214,6 +241,7 @@ type RAIFilterResult struct {
 // RAIResult reports the overall RAI match state plus a per-category
 // breakdown (e.g. hate_speech, dangerous, harassment, sexually_explicit).
 type RAIResult struct {
+	ExecutionState       string                         `json:"executionState,omitempty"`
 	MatchState           string                         `json:"matchState"`
 	RaiFilterTypeResults map[string]RAIFilterTypeResult `json:"raiFilterTypeResults,omitempty"`
 }
@@ -231,8 +259,9 @@ type MaliciousURIsFilterResult struct {
 
 // MaliciousURIResult reports the match state and the URIs Model Armor flagged.
 type MaliciousURIResult struct {
-	MatchState   string                    `json:"matchState"`
-	MatchedItems []MaliciousURIMatchedItem `json:"maliciousUriMatchedItems,omitempty"`
+	ExecutionState string                    `json:"executionState,omitempty"`
+	MatchState     string                    `json:"matchState"`
+	MatchedItems   []MaliciousURIMatchedItem `json:"maliciousUriMatchedItems,omitempty"`
 }
 
 // MaliciousURIMatchedItem is one URI Model Armor flagged as malicious.
@@ -247,7 +276,8 @@ type CSAMFilterResult struct {
 
 // CSAMResult reports the CSAM filter's match state.
 type CSAMResult struct {
-	MatchState string `json:"matchState"`
+	ExecutionState string `json:"executionState,omitempty"`
+	MatchState     string `json:"matchState"`
 }
 
 // VirusScanFilterResult is the malware/virus scan outcome, the sixth member
@@ -261,7 +291,8 @@ type VirusScanFilterResult struct {
 
 // VirusScanResult reports the virus scan's match state.
 type VirusScanResult struct {
-	MatchState string `json:"matchState"`
+	ExecutionState string `json:"executionState,omitempty"`
+	MatchState     string `json:"matchState"`
 }
 
 type sanitizeResponse struct {
