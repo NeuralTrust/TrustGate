@@ -59,8 +59,8 @@ func providePolicyServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
-		return apppolicy.NewUpdater(repo, levels, registryRepo, registry, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, consumers consumerdomain.Reader, levels apppolicy.LevelGuard, registryRepo registrydomain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
+		return apppolicy.NewUpdater(repo, consumers, levels, registryRepo, registry, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}

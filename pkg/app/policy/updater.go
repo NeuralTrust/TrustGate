@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -62,6 +63,7 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo         domain.Repository
+	consumers    consumerdomain.Reader
 	levels       LevelGuard
 	registryRepo registrydomain.Repository
 	registry     appplugins.Registry
@@ -73,6 +75,7 @@ type updater struct {
 
 func NewUpdater(
 	repo domain.Repository,
+	consumers consumerdomain.Reader,
 	levels LevelGuard,
 	registryRepo registrydomain.Repository,
 	registry appplugins.Registry,
@@ -83,6 +86,7 @@ func NewUpdater(
 ) Updater {
 	return &updater{
 		repo:         repo,
+		consumers:    consumers,
 		levels:       levels,
 		registryRepo: registryRepo,
 		registry:     registry,
@@ -170,10 +174,50 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 // delete had already pruned to {}.
 func (u *updater) validateScopeAfterPatch(ctx context.Context, in UpdateInput, existing *domain.Policy) error {
 	if in.MCPScope.Set {
-		return validateMCPScope(ctx, u.registryRepo, u.registry, existing.GatewayID, existing.Slug, existing.MCPScope)
+		if err := validateMCPScope(ctx, u.registryRepo, u.registry, existing.GatewayID, existing.Slug, existing.MCPScope); err != nil {
+			return err
+		}
+		return u.validateScopeReachesConsumers(ctx, existing)
 	}
 	if in.Slug == nil || existing.MCPScope == nil {
 		return nil
 	}
-	return validateMCPScopePlugin(u.registry, existing.Slug)
+	if err := validateMCPScopePlugin(u.registry, existing.Slug); err != nil {
+		return err
+	}
+	// A new slug is a new plugin, and the plugin is half of the inert-plane
+	// rule, so the scope has to be weighed against the consumers again.
+	return u.validateScopeReachesConsumers(ctx, existing)
+}
+
+// validateScopeReachesConsumers applies to the consumers the policy is already
+// attached to the same rule the attach applies to a consumer being added.
+//
+// Without it the rule has a back door: attaching a tool-scoped policy to an LLM
+// consumer is refused, but attaching it unscoped and then setting the scope is
+// not — the same end state, and a policy that runs nowhere on that consumer
+// while its screen says otherwise.
+func (u *updater) validateScopeReachesConsumers(ctx context.Context, p *domain.Policy) error {
+	if p.MCPScope == nil || len(p.ConsumerIDs) == 0 || u.consumers == nil {
+		return nil
+	}
+	inertSafe := appplugins.IsInertSafe(u.registry, p.Slug)
+	for _, id := range p.ConsumerIDs {
+		cons, err := u.consumers.FindByID(ctx, id)
+		if err != nil {
+			// A consumer that cannot be read is not a scope problem, and refusing
+			// the write over it would make an unrelated outage look like invalid
+			// input. The attach path is still the gate for anything new.
+			u.logger.WarnContext(ctx, "policy scope not checked against consumer",
+				slog.String("policy_id", p.ID.String()),
+				slog.String("consumer_id", id.String()),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if err := consumerdomain.ScopeRefusal(cons, p, inertSafe); err != nil {
+			return err
+		}
+	}
+	return nil
 }
