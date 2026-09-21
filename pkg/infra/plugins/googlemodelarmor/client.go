@@ -32,11 +32,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 )
 
 const (
-	defaultTimeout   = 10 * time.Second
+	// defaultTimeout is a fallback for direct construction in tests. The
+	// authoritative value is MODEL_ARMOR_TIMEOUT in pkg/config, which the
+	// container always resolves before calling New; the two are kept equal so
+	// there is never a second answer to the same question.
+	defaultTimeout   = 15 * time.Second
 	maxResponseBytes = 1 << 20
 
 	hostTemplate = "https://modelarmor.%s.rep.googleapis.com"
@@ -50,9 +55,23 @@ const (
 // injectable so tests never need real GCP credentials.
 type tokenSource func(ctx context.Context) (string, error)
 
+// errModelArmor reports a non-2xx from Model Armor. It deliberately carries
+// only the status: an error body can echo back SDP findings and de-identified
+// text, and an error string ends up in logs. Surfacing the very data this
+// guardrail exists to contain would defeat the point of running it.
+type errModelArmor struct {
+	action string
+	status int
+}
+
+func (e *errModelArmor) Error() string {
+	return fmt.Sprintf("model_armor: %s unexpected status %d", e.action, e.status)
+}
+
 type client struct {
 	http        *http.Client
 	baseURL     string
+	timeout     time.Duration
 	tokenSource tokenSource
 }
 
@@ -81,14 +100,27 @@ func newClient(baseURL string, timeout time.Duration) *client {
 }
 
 func newClientWithTokenSource(baseURL string, timeout time.Duration, ts tokenSource) *client {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	// Borrow the pool's tuned transport (dial timeout, per-host connection
+	// limits) keyed to this plugin, so our connections stay isolated from the
+	// rest of the gateway. The pooled *http.Client itself is shared under that
+	// key, so rather than mutating it we wrap its transport in our own client:
+	// CheckRedirect must stay ours, to stop the bearer token following a
+	// redirect off-host, and writing that field on a shared client would be a
+	// data race.
+	pooled := providers.NewHTTPClientPool().Get(PluginName, timeout)
 	return &client{
 		http: &http.Client{
-			Timeout: timeout,
+			Transport: pooled.Transport,
+			Timeout:   timeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
 		baseURL:     strings.TrimRight(baseURL, "/"),
+		timeout:     timeout,
 		tokenSource: ts,
 	}
 }
@@ -99,6 +131,15 @@ type SanitizationResult struct {
 	FilterMatchState string        `json:"filterMatchState"`
 	InvocationResult string        `json:"invocationResult"`
 	FilterResults    FilterResults `json:"filterResults"`
+}
+
+// sdp walks the two levels of nesting to the SDP payload, returning nil when
+// the filter did not run or reported nothing.
+func (r *SanitizationResult) sdp() *SDPResult {
+	if r == nil || r.FilterResults.SDP == nil {
+		return nil
+	}
+	return r.FilterResults.SDP.SdpFilterResult
 }
 
 // FilterResults holds every filter outcome Model Armor can return for a
@@ -112,9 +153,37 @@ type FilterResults struct {
 	CSAM           *CSAMFilterResult           `json:"csam,omitempty"`
 }
 
-// SDPFilterResult is the sensitive-data-protection filter outcome.
+// SDPFilterResult is the sensitive-data-protection filter outcome. Like every
+// other entry in FilterResults it wraps its payload in a per-filter key, here
+// sdpFilterResult: the wire shape is
+// filterResults -> sdp -> sdpFilterResult -> {inspect,deidentify,redact}Result.
 type SDPFilterResult struct {
+	SdpFilterResult *SDPResult `json:"sdpFilterResult,omitempty"`
+}
+
+// SDPResult holds the three mutually exclusive outcomes Model Armor can
+// return for the SDP filter. Which one arrives is decided by the template,
+// not by us: a template configured with only an inspect template reports
+// InspectResult, and only one that also names a de-identify template fills
+// DeidentifyResult with rewritten text. Both count as a sensitive-data match
+// for blocking; only the second gives us anything to reinject.
+type SDPResult struct {
+	InspectResult    *SDPInspectResult    `json:"inspectResult,omitempty"`
 	DeidentifyResult *SDPDeidentifyResult `json:"deidentifyResult,omitempty"`
+	RedactResult     *SDPRedactResult     `json:"redactResult,omitempty"`
+}
+
+// SDPInspectResult is what an inspect-only template returns: sensitive data
+// was found and named, but no rewritten text was produced.
+type SDPInspectResult struct {
+	MatchState string   `json:"matchState"`
+	InfoTypes  []string `json:"infoTypes,omitempty"`
+}
+
+// SDPRedactResult is the redaction outcome, modelled so the union decodes
+// completely; the plugin does not act on it today.
+type SDPRedactResult struct {
+	MatchState string `json:"matchState"`
 }
 
 // SDPDeidentifyResult carries the de-identified text Model Armor produced
@@ -227,6 +296,12 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	if strings.TrimSpace(project) == "" || strings.TrimSpace(location) == "" || strings.TrimSpace(template) == "" {
 		return nil, fmt.Errorf("model_armor: project, location and template are required")
 	}
+	// Bound the whole call, not just the HTTP round trip. The token is acquired
+	// before http.Do, so an http.Client.Timeout alone would leave credential
+	// resolution unbounded on the request path.
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("model_armor: marshal request: %w", err)
@@ -246,14 +321,22 @@ func (c *client) sanitize(ctx context.Context, project, location, template, acti
 	if err != nil {
 		return nil, fmt.Errorf("model_armor: %s call: %w", action, err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	// DrainBody rather than a bare Close: with the LimitReader below, an
+	// oversized response would otherwise leave unread bytes on the wire and
+	// hand a dirty connection back to the pool.
+	defer providers.DrainBody(res.Body)
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("model_armor: read response: %w", err)
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("model_armor: unexpected status %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, &errModelArmor{action: action, status: res.StatusCode}
+	}
+	// Say "too large" rather than letting a truncated payload surface as a
+	// decode failure and send whoever debugs it hunting for malformed JSON.
+	if len(raw) >= maxResponseBytes {
+		return nil, fmt.Errorf("model_armor: %s response exceeds %d bytes", action, maxResponseBytes)
 	}
 	var out sanitizeResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

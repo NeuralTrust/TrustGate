@@ -54,7 +54,7 @@ func TestSanitizeUserPromptRoundTrip(t *testing.T) {
 			"filterMatchState":"MATCH_FOUND",
 			"invocationResult":"SUCCESS",
 			"filterResults":{
-				"sdp":{"deidentifyResult":{"matchState":"MATCH_FOUND","data":{"text":"redacted"},"infoTypes":["EMAIL_ADDRESS"],"transformedBytes":"24"}},
+				"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","data":{"text":"redacted"},"infoTypes":["EMAIL_ADDRESS"],"transformedBytes":"24"}}},
 				"pi_and_jailbreak":{"piAndJailbreakFilterResult":{"matchState":"NO_MATCH_FOUND","confidenceLevel":"LOW"}}
 			}
 		}}`)
@@ -87,13 +87,13 @@ func TestSanitizeUserPromptRoundTrip(t *testing.T) {
 	if result.InvocationResult != "SUCCESS" {
 		t.Errorf("invocationResult = %q, want SUCCESS", result.InvocationResult)
 	}
-	if result.FilterResults.SDP == nil || result.FilterResults.SDP.DeidentifyResult == nil {
+	if result.FilterResults.SDP == nil || result.FilterResults.SDP.SdpFilterResult.DeidentifyResult == nil {
 		t.Fatal("expected sdp.deidentifyResult to be decoded")
 	}
-	if got := result.FilterResults.SDP.DeidentifyResult.Data.Text; got != "redacted" {
+	if got := result.FilterResults.SDP.SdpFilterResult.DeidentifyResult.Data.Text; got != "redacted" {
 		t.Errorf("sdp deidentified text = %q, want %q", got, "redacted")
 	}
-	if got := result.FilterResults.SDP.DeidentifyResult.InfoTypes; len(got) != 1 || got[0] != "EMAIL_ADDRESS" {
+	if got := result.FilterResults.SDP.SdpFilterResult.DeidentifyResult.InfoTypes; len(got) != 1 || got[0] != "EMAIL_ADDRESS" {
 		t.Errorf("sdp infoTypes = %v, want [EMAIL_ADDRESS]", got)
 	}
 	if result.FilterResults.PIAndJailbreak == nil || result.FilterResults.PIAndJailbreak.PiAndJailbreakFilterResult == nil {
@@ -318,5 +318,71 @@ func TestSanitizeDecodesRAIMaliciousURIsAndCSAM(t *testing.T) {
 	}
 	if got := result.FilterResults.CSAM.CSAMFilterFilterResult.MatchState; got != "MATCH_FOUND" {
 		t.Errorf("csam matchState = %q, want MATCH_FOUND", got)
+	}
+}
+
+// TestSanitizeDecodesInspectOnlySDP pins the shape a template configured with
+// an inspect template but no de-identify template returns. Model Armor then
+// reports inspectResult and never deidentifyResult, so a decoder that only
+// models the latter sees no sensitive-data match at all — detection silently
+// off, not merely anonymization.
+func TestSanitizeDecodesInspectOnlySDP(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"sanitizationResult":{
+			"filterMatchState":"MATCH_FOUND",
+			"invocationResult":"SUCCESS",
+			"filterResults":{
+				"sdp":{"sdpFilterResult":{"inspectResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"]}}}
+			}
+		}}`)
+	}))
+	defer srv.Close()
+
+	c := newClientWithTokenSource(srv.URL, time.Second, staticTokenSource("minted-token", nil))
+	result, err := c.SanitizeUserPrompt(context.Background(), "proj", "europe-southwest1", "tmpl", "mail me at a@b.com")
+	if err != nil {
+		t.Fatalf("SanitizeUserPrompt returned error: %v", err)
+	}
+
+	sdp := result.sdp()
+	if sdp == nil || sdp.InspectResult == nil {
+		t.Fatal("expected sdp.sdpFilterResult.inspectResult to be decoded")
+	}
+	if got := sdp.InspectResult.MatchState; got != matchStateMatchFound {
+		t.Errorf("inspectResult matchState = %q, want %q", got, matchStateMatchFound)
+	}
+	if got := sdp.InspectResult.InfoTypes; len(got) != 1 || got[0] != "EMAIL_ADDRESS" {
+		t.Errorf("inspectResult infoTypes = %v, want [EMAIL_ADDRESS]", got)
+	}
+	if sdp.DeidentifyResult != nil {
+		t.Error("inspect-only template must not produce a deidentifyResult")
+	}
+}
+
+// TestSanitizeErrorOmitsResponseBody guards the containment property the
+// guardrail exists for: a Model Armor error body can echo back SDP findings
+// and de-identified text, and an error string ends up in logs.
+func TestSanitizeErrorOmitsResponseBody(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "sergi.vidal@example.com"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad template, found `+leaked+`"}}`)
+	}))
+	defer srv.Close()
+
+	c := newClientWithTokenSource(srv.URL, time.Second, staticTokenSource("minted-token", nil))
+	_, err := c.SanitizeUserPrompt(context.Background(), "proj", "europe-southwest1", "tmpl", "hi")
+	if err == nil {
+		t.Fatal("expected an error for a 400 response")
+	}
+	if strings.Contains(err.Error(), leaked) {
+		t.Errorf("error leaks the upstream body: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "400") {
+		t.Errorf("error should still name the status, got %q", err.Error())
 	}
 }

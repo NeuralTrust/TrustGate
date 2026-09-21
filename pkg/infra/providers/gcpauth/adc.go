@@ -17,6 +17,7 @@ package gcpauth
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"golang.org/x/oauth2"
@@ -35,6 +36,12 @@ import (
 type ApplicationDefaultCache struct {
 	mu      sync.RWMutex
 	sources map[string]oauth2.TokenSource
+	// httpClient bounds ADC resolution and every later token refresh.
+	// google.DefaultTokenSource otherwise falls back to http.DefaultClient,
+	// which has no timeout: a hung metadata server would block forever, and
+	// because ReuseTokenSource serialises refreshes behind a mutex, every
+	// concurrent caller would queue up behind the stuck one.
+	httpClient *http.Client
 	// find is overridden in tests to avoid touching the real ADC file/metadata lookup.
 	find func(ctx context.Context, scope string) (oauth2.TokenSource, error)
 }
@@ -42,8 +49,9 @@ type ApplicationDefaultCache struct {
 // NewApplicationDefaultCache builds an empty ApplicationDefaultCache.
 func NewApplicationDefaultCache() *ApplicationDefaultCache {
 	return &ApplicationDefaultCache{
-		sources: make(map[string]oauth2.TokenSource),
-		find:    findDefaultTokenSource,
+		sources:    make(map[string]oauth2.TokenSource),
+		httpClient: &http.Client{Timeout: tokenRequestTimeout},
+		find:       findDefaultTokenSource,
 	}
 }
 
@@ -57,7 +65,7 @@ func (c *ApplicationDefaultCache) Token(ctx context.Context, scope string) (stri
 		return "", err
 	}
 
-	source, err := c.source(ctx, scope)
+	source, err := c.source(scope)
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +77,16 @@ func (c *ApplicationDefaultCache) Token(ctx context.Context, scope string) (stri
 	return token.AccessToken, nil
 }
 
-func (c *ApplicationDefaultCache) source(ctx context.Context, scope string) (oauth2.TokenSource, error) {
+// source deliberately takes no request context. A cached source outlives the
+// request that created it, so resolving ADC under a request context would tie
+// every later refresh to a context that died in milliseconds. That does not
+// fail uniformly: the compute token source behind Workload Identity ignores
+// the context, but authorized_user credentials (a local `gcloud auth
+// application-default login`) and external_account do propagate it, so once
+// the access token expired every refresh would fail with context canceled
+// until the process restarted. The one environment where it would not bite is
+// production on GKE, which means staging would not surface it either.
+func (c *ApplicationDefaultCache) source(scope string) (oauth2.TokenSource, error) {
 	c.mu.RLock()
 	cached, ok := c.sources[scope]
 	c.mu.RUnlock()
@@ -77,7 +94,7 @@ func (c *ApplicationDefaultCache) source(ctx context.Context, scope string) (oau
 		return cached, nil
 	}
 
-	source, err := c.find(ctx, scope)
+	source, err := c.find(c.resolveContext(), scope)
 	if err != nil {
 		return nil, fmt.Errorf("resolving application default credentials: %w", err)
 	}
@@ -89,6 +106,18 @@ func (c *ApplicationDefaultCache) source(ctx context.Context, scope string) (oau
 	}
 	c.sources[scope] = source
 	return source, nil
+}
+
+// resolveContext is the context ADC resolution and every later refresh run
+// under: background, so it outlives the request that first triggered it, and
+// carrying a bounded HTTP client so neither the lookup nor a refresh can hang
+// forever. Mirrors ServiceAccountCache.
+func (c *ApplicationDefaultCache) resolveContext() context.Context {
+	client := c.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: tokenRequestTimeout}
+	}
+	return context.WithValue(context.Background(), oauth2.HTTPClient, client)
 }
 
 func findDefaultTokenSource(ctx context.Context, scope string) (oauth2.TokenSource, error) {

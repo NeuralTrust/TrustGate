@@ -79,19 +79,25 @@ func inspect(result *SanitizationResult, cfg Settings) assessmentResult {
 // candidate rather than a block: SDP only anonymizes when the caller asked
 // for it (sdp_action=anonymize) and Model Armor actually returned
 // de-identified text to reinject.
+// A template configured with only an inspect template reports inspectResult
+// and never deidentifyResult, so reading deidentifyResult alone would miss
+// the match entirely and let sensitive data through unflagged. Both shapes
+// count as a match; only de-identified text can be anonymized.
 func inspectSDP(f *SDPFilterResult, action string) (*finding, bool) {
-	if f == nil || f.DeidentifyResult == nil {
+	if f == nil || f.SdpFilterResult == nil {
 		return nil, false
 	}
-	d := f.DeidentifyResult
-	if d.MatchState != matchStateMatchFound {
-		return nil, false
+	if d := f.SdpFilterResult.DeidentifyResult; d != nil && d.MatchState == matchStateMatchFound {
+		find := &finding{filter: filterSDP, infoTypes: d.InfoTypes}
+		if action == sdpActionAnonymize && d.Data != nil && d.Data.Text != "" {
+			return find, true
+		}
+		return find, false
 	}
-	find := &finding{filter: filterSDP, infoTypes: d.InfoTypes}
-	if action == sdpActionAnonymize && d.Data != nil && d.Data.Text != "" {
-		return find, true
+	if i := f.SdpFilterResult.InspectResult; i != nil && i.MatchState == matchStateMatchFound {
+		return &finding{filter: filterSDP, infoTypes: i.InfoTypes}, false
 	}
-	return find, false
+	return nil, false
 }
 
 func inspectRAI(f *RAIFilterResult) *finding {
