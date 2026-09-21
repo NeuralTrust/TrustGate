@@ -74,9 +74,9 @@ person.
 
 ## 3. The model
 
-> An **Application** is what a team builds. It holds **at least one** consumer and
-> **at most one per plane**: an MCP consumer, an LLM consumer, or both. It holds
-> one keyring, and every key on it reaches every consumer it has.
+> An **Application** is what a team builds. It holds **at most one consumer per
+> plane** — an MCP consumer, an LLM consumer, both, or neither yet. It holds one
+> keyring, and every key on it reaches every consumer it has.
 
 Everything else follows from asking, of each thing the console shows today,
 whether a team answers it once or once per plane.
@@ -87,7 +87,7 @@ whether a team answers it once or once per plane.
 |---|---|---|
 | Name | Application | The thing a team says out loud |
 | Keys | Application | The reason for this memo: one secret, both planes |
-| Identity — who it acts for | **Application** | One answer, written as `acts_for_users` on the MCP consumer and `end_user_header` on the LLM one. Asking twice in two vocabularies is the bug, not the feature |
+| Identity — who it acts for | **Application**, stored on the consumers | One answer, written as `acts_for_users` on the MCP consumer and `end_user_header` on the LLM one. Asking twice in two vocabularies is the bug, not the feature. It is not asked at creation and not held in the console's row: it defaults, and is edited once a plane exists (§5.1, §7) |
 | Active / paused | Application, cascading | Pausing half an agent is not a state anyone wants |
 | Routing | **Plane** | Two different objects; see §2 |
 | Policies | **Plane**, for now | An MCP scope names registries, an LLM scope names models. An Application-level policy may be real, but nothing demands it yet — do not invent the level before a case for it |
@@ -97,12 +97,40 @@ whether a team answers it once or once per plane.
 
 ## 5. The screens
 
+### 5.1 Creating one asks for a name
+
+Nothing else. Not "MCP or LLM?" — a team knows what it is building, not which of
+our planes it lands on, and it is a question we can stop asking because the
+answer is visible the moment they route something.
+
+**A plane is born when the first thing is added to it.** Add a server under Tools
+and the MCP consumer comes into existence; add a provider under Models and the
+LLM one does. The console does it in one call — `CreateConsumerRequest` takes
+`registries`, and the slug is generated — then attaches the Application's keys.
+
+The keyring does not wait for either. An `Auth` belongs to the gateway, not to a
+consumer (`POST /v1/gateways/:id/auths`), so an Application can hold keys with no
+consumer under it at all, and each plane inherits them as it is born. A key
+issued on day one keeps working when the model plane appears in month three.
+
+**Birth is inferred; death is deliberate.** Removing the last server does not
+delete the MCP consumer: its slug is in somebody's configuration, its URL is in
+somebody's client, and its keys are attached. An empty plane is a plane with
+nothing routed, which is a state the gateway has always allowed. Removing a plane
+is its own action, and it says what it breaks.
+
+An Application with no consumers at all is a draft. It has a name and maybe keys,
+serves nothing, and says so in the list.
+
+### 5.2 The tabs
+
 **General** — name, identity ("who does this application act for?", asked once),
 active state, and a line per plane saying which exist.
 
-**Routing** — one tab, two sections, each present only when that plane is. Each
-section carries its own endpoint in the header, because that is what differs per
-plane and what people copy:
+**Routing** — one tab, **both sections always**, because an absent plane is now an
+empty section with an invitation rather than something hidden. Each section
+carries its own endpoint in the header once it has one, since that is what
+differs per plane and what people copy:
 
 ```
 Routing
@@ -124,12 +152,14 @@ Routing
 
 Two properties this has that a merged table does not:
 
-- **A single-plane Application shows one section**, which is today's screen. No
-  migration is visible to anyone who never wanted the second plane.
 - **The empty state is how a plane is added.** With no LLM consumer, Models is one
   line — *"This application calls no models through the gateway."* — and a button.
-  Pressing it creates the consumer and attaches the Application's keys. This is
-  where the model earns its keep: nobody learns the word "consumer".
+  Pressing it is what creates the consumer (§5.1). This is where the model earns
+  its keep: nobody learns the word "consumer", and nobody was asked to predict
+  which planes they would need.
+- **Every existing Application gains an empty second section.** That is a change
+  to a screen that works today, made on purpose: it is the only place someone
+  finds out that their tool application could route its models here too.
 
 **Policies** — same two sections, same rule.
 
@@ -191,7 +221,8 @@ know the grouping exists. The console must, and it can: **the console is the onl
 writer of groupings**, so nothing behind its back can produce a second MCP
 consumer inside one Application. The rules it owns:
 
-- At most one consumer per plane in an Application; at least one in total.
+- At most one consumer per plane in an Application. Zero is allowed: a draft
+  (§5.1).
 - Every consumer of an Application belongs to the same gateway and the same team.
 - A consumer belongs to at most one Application.
 
@@ -395,5 +426,6 @@ under a name nobody chose.
    the consumers list becoming an Applications list. Nothing else changes yet.
 3. Console: General with identity asked once; Routing and Policies as two
    sections; the keyring in Auth, attaching each key to every consumer.
-4. Console: adding a plane from the Routing empty state, keys attached
-   automatically. This is the step the whole memo is for.
+4. Console: creating an Application from a name alone, and a plane coming into
+   existence when the first server or provider is added to it (§5.1). This is the
+   step the whole memo is for.
