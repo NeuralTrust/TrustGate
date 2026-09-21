@@ -66,6 +66,15 @@ type Event struct {
 // credential rather than verified by the gateway, so it attributes a request
 // without ever deciding anything about it. Source names the convention the
 // values came from, so a reader can weigh them.
+// Sources an end user can be declared through. They travel with the values so a
+// reader can weigh an attribution: a header a customer set deliberately, a
+// front-end's own convention, or the OpenAI API's `user` field.
+const (
+	EndUserSourceTrustGate  = "trustgate"
+	EndUserSourceOpenWebUI  = "open_webui"
+	EndUserSourceOpenAIUser = "openai_user"
+)
+
 type EndUser struct {
 	ID     string `json:"id,omitempty"`
 	Email  string `json:"email,omitempty"`

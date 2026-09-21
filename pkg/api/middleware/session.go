@@ -35,6 +35,9 @@ const defaultSessionHeader = "X-Session-Id"
 // configuration always wins. Without them a chat client's every message looks
 // like a fresh session, because the generated fallback below is per request.
 var knownSessionHeaders = []string{
+	// Our own namespace, for clients we do not know by name. It pairs with the
+	// X-TG-User-* headers detectEndUser reads.
+	"X-TG-Session-Id",
 	// Open WebUI, alongside the user headers detectEndUser reads.
 	"X-OpenWebUI-Chat-Id",
 }
