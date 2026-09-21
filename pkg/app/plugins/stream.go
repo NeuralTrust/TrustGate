@@ -16,8 +16,12 @@ package plugins
 
 import (
 	"context"
+	"sync"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 // StreamSegment is one closed block of a streaming response, handed to a
@@ -78,4 +82,79 @@ type SegmentOutcome struct {
 func streamInspector(d PluginDescriptor) bool {
 	_, ok := d.(StreamInspector)
 	return ok
+}
+
+type streamSpansKey struct{}
+
+type streamSpans struct {
+	mu     sync.Mutex
+	events map[string]*metrics.EventContext
+}
+
+// NewStreamSpanContext derives a context carrying the plugin spans of a single
+// stream, and the func that ends them. A stream is inspected once per block, so
+// without this holder a long response would publish one span per block instead
+// of one per participating policy. A context without it opens no span at all.
+//
+// It takes an async hold on the request trace, as the post_response stage does:
+// the trace emits on its last Done, so a span ended after that point is dropped
+// or lands with zero latency. The returned func publishes the spans and
+// releases the hold, and is safe to call more than once.
+func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
+	spans := &streamSpans{events: make(map[string]*metrics.EventContext)}
+	rt := trace.FromContext(ctx)
+	if rt != nil {
+		rt.AddAsync()
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			spans.publish()
+			if rt != nil {
+				rt.Done()
+			}
+		})
+	}
+	return context.WithValue(ctx, streamSpansKey{}, spans), release
+}
+
+func streamSpansFrom(ctx context.Context) *streamSpans {
+	if ctx == nil {
+		return nil
+	}
+	spans, _ := ctx.Value(streamSpansKey{}).(*streamSpans)
+	return spans
+}
+
+func (s *streamSpans) eventFor(ctx context.Context, seg StreamSegment, entry chainEntry) *metrics.EventContext {
+	if s == nil {
+		return nil
+	}
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return nil
+	}
+	key := seg.StreamID + "\x00" + entry.config.ID
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event, ok := s.events[key]; ok {
+		return event
+	}
+	span := rt.StartSpan(trace.SpanPlugin, entry.plugin.Name())
+	span.SetStage(string(policy.StagePreResponse))
+	event := metrics.NewEventContext(span)
+	event.SetMode(string(entry.mode))
+	s.events[key] = event
+	return event
+}
+
+func (s *streamSpans) publish() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, event := range s.events {
+		event.Publish()
+	}
 }
