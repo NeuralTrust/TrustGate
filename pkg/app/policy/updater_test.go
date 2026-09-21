@@ -21,6 +21,8 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
@@ -67,7 +69,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), validUpdateInput(existing.ID))
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -95,7 +97,7 @@ func TestUpdater_Update_Partial(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -130,7 +132,7 @@ func TestUpdater_Update_PreservesModeWhenOmitted(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -155,7 +157,7 @@ func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Mode: ptr(domain.ModeThrottle)})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -173,7 +175,7 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	in := validUpdateInput(existing.ID)
 	in.GatewayID = ids.New[ids.GatewayKind]()
 	_, err := updater.Update(context.Background(), in)
@@ -191,7 +193,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := apppolicy.NewUpdater(repo, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), validUpdateInput(id))
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -211,7 +213,7 @@ func TestUpdater_Update_SlugChangeRevalidatesTheStoredScope(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
 	updater := apppolicy.NewUpdater(
-		repo, freeLevels(t), registrymocks.NewRepository(t),
+		repo, nil, freeLevels(t), registrymocks.NewRepository(t),
 		newScopedRegistryMock(t, appplugins.ProtocolLLM),
 		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
 	)
@@ -266,7 +268,7 @@ func TestUpdater_Update_SlugChangeOnPrunedScopeIsAllowed(t *testing.T) {
 
 func newScopeUpdater(t *testing.T, repo *repomocks.Repository, registryRepo *registrymocks.Repository, publisher *cachemocks.EventPublisher) apppolicy.Updater {
 	t.Helper()
-	return apppolicy.NewUpdater(repo, freeLevels(t), registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), publisher, newTestLogger(), nil)
+	return apppolicy.NewUpdater(repo, nil, freeLevels(t), registryRepo, newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP), newCacheManager(), publisher, newTestLogger(), nil)
 }
 
 func expectInvalidation(t *testing.T, gwID ids.GatewayID) *cachemocks.EventPublisher {
@@ -416,4 +418,81 @@ func TestUpdater_Update_RejectsScopeWithForeignRegistry(t *testing.T) {
 	}
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
+
+// Attaching a destination-scoped policy to an LLM consumer is refused: the
+// scope names a registry, and none exists outside MCP. Attaching it unscoped
+// and then setting the scope used to reach the same end state, because the
+// rule lived in the attach alone. Now the update applies it to the consumers
+// the policy already holds.
+func TestUpdater_Update_RefusesAScopeThatDoesNotReachAnAttachedConsumer(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	consumerID := ids.New[ids.ConsumerKind]()
+	existing.ConsumerIDs = []ids.ConsumerID{consumerID}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	jira := ids.New[ids.RegistryKind]()
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, existing.GatewayID, sameRegistryIDs(jira)).
+		Return([]*registrydomain.Registry{mcpRegistry(existing.GatewayID, jira)}, nil).
+		Once()
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().
+		FindByID(mock.Anything, consumerID).
+		Return(&consumerdomain.Consumer{ID: consumerID, Type: consumerdomain.TypeLLM}, nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(
+		repo, consumers, freeLevels(t), registryRepo,
+		newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP),
+		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
+	)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:       existing.ID,
+		MCPScope: apppolicy.MCPScopePatch{Set: true, Value: &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}}},
+	})
+	if !errors.Is(err, consumerdomain.ErrPolicyScopeDoesNotCross) {
+		t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross", err)
+	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// The same scope on an MCP consumer is exactly what the field is for.
+func TestUpdater_Update_KeepsAScopeThatReachesItsConsumer(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	consumerID := ids.New[ids.ConsumerKind]()
+	existing.ConsumerIDs = []ids.ConsumerID{consumerID}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, true).Return(nil).Once()
+
+	jira := ids.New[ids.RegistryKind]()
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, existing.GatewayID, sameRegistryIDs(jira)).
+		Return([]*registrydomain.Registry{mcpRegistry(existing.GatewayID, jira)}, nil).
+		Once()
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().
+		FindByID(mock.Anything, consumerID).
+		Return(&consumerdomain.Consumer{ID: consumerID, Type: consumerdomain.TypeMCP}, nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(
+		repo, consumers, freeLevels(t), registryRepo,
+		newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP),
+		newCacheManager(), expectInvalidation(t, existing.GatewayID), newTestLogger(), nil,
+	)
+	if _, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:       existing.ID,
+		MCPScope: apppolicy.MCPScopePatch{Set: true, Value: &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}}},
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
 }
