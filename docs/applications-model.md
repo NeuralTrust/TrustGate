@@ -284,6 +284,36 @@ is that path twice over. If the rollup ever gains a consumer dimension it should
 gain this one too, which is where §7.3's "if one of them starts to hurt" is most
 likely to land first.
 
+### 9.1.1 "All applications" sends no filter, and should keep not sending one
+
+The obvious worry is that the default view becomes a list of every application's
+consumers. It does not. `useAnalyticsScreen` maps the sentinel to null
+(`url.consumer === ALL_CONSUMERS_VALUE ? null : url.consumer`) and each action
+omits the parameter entirely when it is null, so the unfiltered view is a
+gateway-wide aggregate served by the hourly rollup. Nothing enumerates anything,
+and the fast path stays fast. An id list only exists when someone picks one
+application, and it is one or two values.
+
+What that does expose is a naming problem the model creates. Unfiltered means
+*everything this gateway served*, and that includes the **Store consumer** — the
+synthetic one (`consumerdomain.StoreConsumerID()`) carrying people browsing and
+calling through the Portal. Today "All applications" is a loose label over
+gateway traffic. Once an application is a real thing, traffic belonging to no
+application sitting inside a total called "all applications" is wrong.
+
+Three ways out, in order of how much they cost:
+
+1. **Leave it**, and accept that the headline number is gateway traffic.
+2. **Exclude the Store consumer** from the unfiltered aggregate. Its id is a
+   well-known constant, so this is a `WHERE consumer_id != …` in the metrics
+   service, not a lookup — but it makes the unfiltered view stop matching the
+   rollup, which is the thing that made it cheap.
+3. **Make it a dimension**: Applications and Portal as two things the page can
+   show, since they are the two kinds of caller `consumers-identity-model.md` §1
+   names. The most honest and the most work.
+
+Worth deciding before the filter's label becomes a promise.
+
 ### 9.2 Outside the console, a dimension synced from the rows
 
 Grafana and anything querying the event store directly do not have the console's
