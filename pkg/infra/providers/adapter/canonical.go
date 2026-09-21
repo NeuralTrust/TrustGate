@@ -237,4 +237,14 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	// ContentBlockIndex is the index of the content block this chunk belongs
+	// to, for the dialects that number blocks on the wire. Only Anthropic does;
+	// every other encoder ignores it. The zero value is the first block, so a
+	// caller that does not track blocks keeps the single-block shape.
+	//
+	// Decoders leave it alone: it describes the block of the stream being
+	// written, which is the upstream's numbering only when that stream is
+	// passed through unchanged. A caller synthesising a terminator sets it to
+	// the block it last saw on the wire.
+	ContentBlockIndex int `json:"content_block_index,omitempty"`
 }
