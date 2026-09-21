@@ -17,7 +17,56 @@ package googlemodelarmor
 const (
 	matchStateMatchFound    = "MATCH_FOUND"
 	invocationResultFailure = "FAILURE"
+	executionStateSuccess   = "EXECUTION_SUCCESS"
 )
+
+// unevaluatedFilter names the first filter selected in block_on that reported
+// an executionState other than EXECUTION_SUCCESS, or "" when every selected
+// filter ran.
+//
+// This matters because a filter that failed to run and a filter that found
+// nothing are otherwise indistinguishable to us: both arrive with no match,
+// and the envelope's own invocationResult can still say SUCCESS. Treating the
+// two alike would mean a guardrail quietly not guarding, which is the failure
+// mode with no symptom.
+//
+// An empty executionState is treated as success: the field is absent on older
+// filter versions, and inventing a failure from silence would fail every call
+// closed against them.
+func unevaluatedFilter(result *SanitizationResult, on map[string]bool) string {
+	if result == nil {
+		return ""
+	}
+	failed := func(state string) bool { return state != "" && state != executionStateSuccess }
+
+	if on[filterSDP] {
+		if sdp := result.sdp(); sdp != nil {
+			switch {
+			case sdp.DeidentifyResult != nil && failed(sdp.DeidentifyResult.ExecutionState),
+				sdp.InspectResult != nil && failed(sdp.InspectResult.ExecutionState),
+				sdp.RedactResult != nil && failed(sdp.RedactResult.ExecutionState):
+				return filterSDP
+			}
+		}
+	}
+	if f := result.FilterResults.RAI; on[filterRAI] && f != nil && f.RaiFilterResult != nil &&
+		failed(f.RaiFilterResult.ExecutionState) {
+		return filterRAI
+	}
+	if f := result.FilterResults.PIAndJailbreak; on[filterPIAndJailbreak] && f != nil &&
+		f.PiAndJailbreakFilterResult != nil && failed(f.PiAndJailbreakFilterResult.ExecutionState) {
+		return filterPIAndJailbreak
+	}
+	if f := result.FilterResults.MaliciousURIs; on[filterMaliciousURIs] && f != nil &&
+		f.MaliciousURIFilterResult != nil && failed(f.MaliciousURIFilterResult.ExecutionState) {
+		return filterMaliciousURIs
+	}
+	if f := result.FilterResults.CSAM; on[filterCSAM] && f != nil && f.CSAMFilterFilterResult != nil &&
+		failed(f.CSAMFilterFilterResult.ExecutionState) {
+		return filterCSAM
+	}
+	return ""
+}
 
 // finding names the single filter that decided the outcome, plus the SDP
 // info types when the match came from the sensitive-data-protection filter.

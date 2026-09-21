@@ -231,9 +231,18 @@ func (p *Plugin) runGuardrail(
 	if result.InvocationResult == invocationResultFailure {
 		return p.failClosed(ctx, in, cfg, latency, fmt.Errorf("google_model_armor: invocationResult FAILURE"))
 	}
+	// A filter we were told to block on that did not actually run reports no
+	// match, exactly like a filter that ran and found nothing — and the
+	// envelope can still say SUCCESS overall. Take the same path as an
+	// outright failure rather than mistake silence for safety.
+	if f := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
+		return p.failClosed(ctx, in, cfg, latency,
+			fmt.Errorf("google_model_armor: filter %q did not execute", f))
+	}
 
 	res := inspect(result, cfg)
 	data := newData(in, cfg, latency)
+	data.FilterVersion = result.filterVersion()
 
 	if res.block != nil {
 		applyFinding(data, res.block)

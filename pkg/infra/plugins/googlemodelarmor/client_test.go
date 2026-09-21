@@ -392,3 +392,121 @@ func TestSanitizeErrorOmitsResponseBody(t *testing.T) {
 		t.Errorf("error should still name the status, got %q", err.Error())
 	}
 }
+
+// capturedLiveResponse is an actual sanitizeUserPrompt response from Model
+// Armor, taken verbatim from a real template in europe-southwest1 on
+// 2026-09-21 (filter version v3, STABLE). It is here rather than a
+// hand-written fixture for one reason: fixtures written from the struct agree
+// with the struct, including when the struct is wrong. This one is the
+// service's own words.
+const capturedLiveResponse = `{
+  "sanitizationResult": {
+    "filterMatchState": "MATCH_FOUND",
+    "filterResults": {
+      "csam": {"csamFilterFilterResult": {"executionState": "EXECUTION_SUCCESS", "matchState": "NO_MATCH_FOUND"}},
+      "malicious_uris": {"maliciousUriFilterResult": {"executionState": "EXECUTION_SUCCESS", "matchState": "NO_MATCH_FOUND"}},
+      "rai": {"raiFilterResult": {"executionState": "EXECUTION_SUCCESS", "matchState": "NO_MATCH_FOUND",
+        "raiFilterTypeResults": {
+          "sexually_explicit": {"matchState": "NO_MATCH_FOUND"},
+          "hate_speech": {"matchState": "NO_MATCH_FOUND"},
+          "harassment": {"matchState": "NO_MATCH_FOUND"},
+          "dangerous": {"matchState": "NO_MATCH_FOUND"}}}},
+      "pi_and_jailbreak": {"piAndJailbreakFilterResult": {"executionState": "EXECUTION_SUCCESS", "matchState": "NO_MATCH_FOUND"}},
+      "sdp": {"sdpFilterResult": {"deidentifyResult": {
+        "executionState": "EXECUTION_SUCCESS",
+        "matchState": "MATCH_FOUND",
+        "data": {"text": "mi correo es [EMAIL_ADDRESS], escribeme"},
+        "transformedBytes": "22",
+        "infoTypes": ["EMAIL_ADDRESS"]}}}
+    },
+    "sanitizationMetadata": {
+      "filterVersionConfig": {
+        "filterVersion": "v3",
+        "filterVersionAlias": "FILTER_VERSION_ALIAS_STABLE",
+        "releaseDate": {"year": 2026, "month": 5, "day": 25},
+        "projectedDeprecationDate": {}}
+    },
+    "invocationResult": "SUCCESS"
+  }
+}`
+
+func TestSanitizeDecodesCapturedLiveResponse(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, capturedLiveResponse)
+	}))
+	defer srv.Close()
+
+	c := newClientWithTokenSource(srv.URL, time.Second, staticTokenSource("minted-token", nil))
+	result, err := c.SanitizeUserPrompt(context.Background(), "neuraltrust-demo", "europe-southwest1", "trustgate-guardrail", "mi correo es juan.perez@ejemplo.com, escribeme")
+	if err != nil {
+		t.Fatalf("SanitizeUserPrompt returned error: %v", err)
+	}
+
+	// The de-identified text is the whole point of the anonymize path, and it
+	// only reaches us through the sdpFilterResult wrapper.
+	sdp := result.sdp()
+	if sdp == nil || sdp.DeidentifyResult == nil || sdp.DeidentifyResult.Data == nil {
+		t.Fatal("expected sdp.sdpFilterResult.deidentifyResult.data to be decoded")
+	}
+	if got, want := sdp.DeidentifyResult.Data.Text, "mi correo es [EMAIL_ADDRESS], escribeme"; got != want {
+		t.Errorf("de-identified text = %q, want %q", got, want)
+	}
+
+	// Every filter reports whether it actually ran; a filter that did not is
+	// not the same as a filter that found nothing.
+	if got := sdp.DeidentifyResult.ExecutionState; got != executionStateSuccess {
+		t.Errorf("sdp executionState = %q, want %q", got, executionStateSuccess)
+	}
+	for name, state := range map[string]string{
+		"rai":              result.FilterResults.RAI.RaiFilterResult.ExecutionState,
+		"pi_and_jailbreak": result.FilterResults.PIAndJailbreak.PiAndJailbreakFilterResult.ExecutionState,
+		"malicious_uris":   result.FilterResults.MaliciousURIs.MaliciousURIFilterResult.ExecutionState,
+		"csam":             result.FilterResults.CSAM.CSAMFilterFilterResult.ExecutionState,
+	} {
+		if state != executionStateSuccess {
+			t.Errorf("%s executionState = %q, want %q", name, state, executionStateSuccess)
+		}
+	}
+
+	if got := result.filterVersion(); got != "v3" {
+		t.Errorf("filterVersion = %q, want v3", got)
+	}
+}
+
+// TestUnevaluatedFilterFailsSelectedFilterThatDidNotRun is the property the
+// captured response cannot show, because in it every filter ran.
+func TestUnevaluatedFilterFailsSelectedFilterThatDidNotRun(t *testing.T) {
+	t.Parallel()
+
+	result := &SanitizationResult{
+		InvocationResult: "SUCCESS",
+		FilterResults: FilterResults{
+			RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{
+				ExecutionState: "EXECUTION_SKIPPED", MatchState: "NO_MATCH_FOUND",
+			}},
+		},
+	}
+
+	if got := unevaluatedFilter(result, map[string]bool{filterRAI: true}); got != filterRAI {
+		t.Errorf("selected filter that did not run should be reported, got %q", got)
+	}
+	if got := unevaluatedFilter(result, map[string]bool{filterSDP: true}); got != "" {
+		t.Errorf("a filter nobody selected must not fail the call, got %q", got)
+	}
+
+	ran := &SanitizationResult{FilterResults: FilterResults{
+		RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{ExecutionState: executionStateSuccess}},
+	}}
+	if got := unevaluatedFilter(ran, map[string]bool{filterRAI: true}); got != "" {
+		t.Errorf("a filter that ran must not be reported, got %q", got)
+	}
+
+	absent := &SanitizationResult{FilterResults: FilterResults{
+		RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{MatchState: "NO_MATCH_FOUND"}},
+	}}
+	if got := unevaluatedFilter(absent, map[string]bool{filterRAI: true}); got != "" {
+		t.Errorf("an absent executionState must be treated as success, got %q", got)
+	}
+}

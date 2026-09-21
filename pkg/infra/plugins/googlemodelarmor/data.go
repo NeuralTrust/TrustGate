@@ -28,6 +28,12 @@ type Data struct {
 	LatencyMS      int64    `json:"latency_ms,omitempty"`
 	Degraded       bool     `json:"degraded,omitempty"`
 	DegradedReason string   `json:"degraded_reason,omitempty"`
+	// FilterVersion is the Model Armor filter version that produced the
+	// verdict. A template pointed at an alias rather than a pinned version
+	// changes behaviour when Google promotes a new one, with no deploy on our
+	// side, so without this "it used to block this and now it does not" has
+	// no answer anyone can reach from our telemetry.
+	FilterVersion string `json:"filter_version,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {
