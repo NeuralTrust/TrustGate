@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -367,4 +368,46 @@ func TestCanonical_OpenAI_Completions_CustomToolIsNamedForPlugins(t *testing.T) 
 	require.NoError(t, json.Unmarshal(encoded, &out))
 	require.Len(t, out.Tools, 1)
 	assert.Equal(t, "custom", out.Tools[0]["type"])
+}
+
+func TestCompletionsTerminalStreamChunk(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		first     *CanonicalStreamChunk
+		wantID    string
+		wantModel string
+	}{
+		{
+			name:      "carries id and model from the first chunk",
+			first:     &CanonicalStreamChunk{ID: "chatcmpl-123", Model: "gpt-4o-mini", Role: "assistant", Delta: "hi"},
+			wantID:    "chatcmpl-123",
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name:  "tolerates a stream cut before the first chunk",
+			first: nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			terminal := CompletionsTerminalStreamChunk(tc.first, "content_filter")
+			require.Equal(t, tc.wantID, terminal.ID)
+			require.Equal(t, tc.wantModel, terminal.Model)
+			require.Equal(t, "content_filter", terminal.FinishReason)
+			assert.Empty(t, terminal.Delta)
+
+			lines, err := encodeCompletionsStreamChunk(terminal)
+			require.NoError(t, err)
+			require.Len(t, lines, 2)
+			payload, ok := bytes.CutPrefix(lines[0], []byte("data: "))
+			require.True(t, ok)
+
+			decoded, err := decodeCompletionsStreamChunk(payload)
+			require.NoError(t, err)
+			require.NotNil(t, decoded)
+			assert.Equal(t, terminal, decoded)
+		})
+	}
 }
