@@ -98,11 +98,18 @@ whether a team answers it once or once per plane.
 
 ## 5. The screens
 
-### 5.1 Creating one asks for a name
+### 5.1 Creating one is editing one
 
-Nothing else. Not "MCP or LLM?" — a team knows what it is building, not which of
-our planes it lands on, and it is a question we can stop asking because the
-answer is visible the moment they route something.
+There is no separate step. **New application** opens the panel it would have
+opened anyway, on General, where the name is already a field and both planes are
+already sections. Nothing is written until there is a name and somewhere to
+serve, and then both are written together.
+
+The question we do not ask is "MCP or LLM?" — a team knows what it is building,
+not which of our planes it lands on, and the answer is visible the moment they
+route something. An earlier draft of this document asked for the name on its own
+instead, which bought nothing: it produced an application that served nothing,
+and then a status to describe what that was.
 
 **A plane is born when the first thing is added to it.** Add a server under Tools
 and the MCP consumer comes into existence; add a provider under Models and the
@@ -120,8 +127,13 @@ somebody's client, and its keys are attached. An empty plane is a plane with
 nothing routed, which is a state the gateway has always allowed. Removing a plane
 is its own action, and it says what it breaks.
 
-An Application with no consumers at all is a draft. It has a name and maybe keys,
-serves nothing, and says so in the list.
+**An Application with no consumers cannot be created.** It is not a thing a team
+built, it is a row nobody can act on, and both the panel and `createApplication`
+refuse it. The list therefore has no "draft" state to show.
+
+It can still *become* empty, because the gateway is free to delete the consumers
+a row names. That is not a draft — it is an application whose endpoints are gone,
+and the list says exactly that (§7.1).
 
 ### 5.2 The tabs
 
@@ -271,8 +283,8 @@ know the grouping exists. The console must, and it can: **the console is the onl
 writer of groupings**, so nothing behind its back can produce a second MCP
 consumer inside one Application. The rules it owns:
 
-- At most one consumer per plane in an Application. Zero is allowed: a draft
-  (§5.1).
+- At most one consumer per plane in an Application, and at least one across the
+  two: an Application with nothing under it is refused at creation (§5.1).
 - Every consumer of an Application belongs to the same gateway and the same team.
 - A consumer belongs to at most one Application.
 
