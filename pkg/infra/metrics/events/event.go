@@ -83,6 +83,24 @@ type EndUser struct {
 	Source string `json:"source,omitempty"`
 }
 
+// Identifier is the one value that stands for this end user where only one
+// fits. The id comes first because it is what a client keeps stable across a
+// person's renames; the email and name are fallbacks for a client that sends
+// no id at all.
+func (e *EndUser) Identifier() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case e.ID != "":
+		return e.ID
+	case e.Email != "":
+		return e.Email
+	default:
+		return e.Name
+	}
+}
+
 // Retention is when this trace stops being the storage layer's problem, derived
 // from the plan stamped on the gateway. Absent when the gateway carries no stamp:
 // the sink then applies its own fallback instead of being handed a guess.

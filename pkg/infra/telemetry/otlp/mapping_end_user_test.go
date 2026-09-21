@@ -48,6 +48,9 @@ func TestEventToRecord_EndUserAttributes(t *testing.T) {
 
 	attrs := attrsOf(eventToRecord(evt))
 
+	// The events table has stored a single identifier under this attribute
+	// since its end_user column was added; the fields below widen it.
+	assert.Equal(t, "u-42", attrs[attrEndUser].AsString())
 	assert.Equal(t, "u-42", attrs[attrEndUserID].AsString())
 	assert.Equal(t, "ana@acme.test", attrs[attrEndUserEmail].AsString())
 	assert.Equal(t, "Ana", attrs[attrEndUserName].AsString())
@@ -64,9 +67,49 @@ func TestEventToRecord_OmitsEndUserAttributesWhenAbsent(t *testing.T) {
 	attrs := attrsOf(eventToRecord(baseEndUserEvent()))
 
 	for _, attr := range []string{
-		attrEndUserID, attrEndUserEmail, attrEndUserName, attrEndUserRole, attrEndUserSource,
+		attrEndUser, attrEndUserID, attrEndUserEmail, attrEndUserName, attrEndUserRole, attrEndUserSource,
 	} {
 		_, present := attrs[attr]
 		assert.False(t, present, "%s must be absent when no end user was declared", attr)
 	}
+}
+
+// A client that declares only an email or only a name still has to land in the
+// single-identifier attribute, or those requests attribute to nobody.
+func TestEventToRecord_EndUserIdentifierFallsBack(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		endUser events.EndUser
+		want    string
+	}{
+		{"id wins", events.EndUser{ID: "u-42", Email: "ana@acme.test", Name: "Ana"}, "u-42"},
+		{"email without id", events.EndUser{Email: "ana@acme.test", Name: "Ana"}, "ana@acme.test"},
+		{"name alone", events.EndUser{Name: "Ana"}, "Ana"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			evt := baseEndUserEvent()
+			endUser := tc.endUser
+			evt.EndUser = &endUser
+
+			attrs := attrsOf(eventToRecord(evt))
+
+			assert.Equal(t, tc.want, attrs[attrEndUser].AsString())
+		})
+	}
+}
+
+// Only a role is not an end user: it names nobody, so it must not create an
+// attribution that a query would then group by.
+func TestEventToRecord_EndUserIdentifierOmittedWhenNobodyIsNamed(t *testing.T) {
+	t.Parallel()
+	evt := baseEndUserEvent()
+	evt.EndUser = &events.EndUser{Role: "admin", Source: "open_webui"}
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, present := attrs[attrEndUser]
+	assert.False(t, present, "%s must be absent when no id, email or name was declared", attrEndUser)
+	assert.Equal(t, "admin", attrs[attrEndUserRole].AsString())
 }
