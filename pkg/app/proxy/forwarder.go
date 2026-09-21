@@ -88,8 +88,21 @@ type forwarder struct {
 	resolver   approuting.Resolver
 	listing    appcatalog.ModelListing
 	limiter    ratelimitapp.Checker
+	codec      streamCodec
 	maxRetries int
 	logger     *slog.Logger
+}
+
+// ForwarderOption configures an optional forwarder capability.
+type ForwarderOption func(*forwarder)
+
+// WithStreamCodec attaches the codec the stream guard segments SSE events
+// with. Omitting it leaves the guard unbuilt, which is what keeps tests that do
+// not exercise streaming inspection off the path entirely.
+func WithStreamCodec(codec streamCodec) ForwarderOption {
+	return func(f *forwarder) {
+		f.codec = codec
+	}
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -105,11 +118,12 @@ func NewForwarder(
 	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
+	opts ...ForwarderOption,
 ) Forwarder {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	return &forwarder{
+	fwd := &forwarder{
 		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
@@ -120,6 +134,10 @@ func NewForwarder(
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(fwd)
+	}
+	return fwd
 }
 
 func maxRetriesFromConfig(cfg *config.Config) int {
@@ -544,7 +562,16 @@ func (f *forwarder) finalizeStream(
 		f.drainAsync(providerResp.Stream)
 		return pluginErrorResult(pe)
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	stream := providerResp.Stream
+	if guard := f.newStreamGuard(dto, pluginResp); guard != nil {
+		remaining, pe := guard.Run(ctx, stream)
+		if pe != nil {
+			f.drainAsync(remaining)
+			return pluginErrorResult(pe)
+		}
+		stream = remaining
+	}
+	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
@@ -552,6 +579,45 @@ func (f *forwarder) finalizeStream(
 		Headers:    pluginResp.Headers,
 		Stream:     out,
 	}
+}
+
+// newStreamGuard builds the head gate, and returns nil when no policy enabled
+// per-segment inspection. A gateway whose policies do not participate keeps the
+// streaming path it has today: not a wrapper that passes through, no wrapper at
+// all, so not one extra allocation or indirection sits between the provider and
+// the client.
+//
+// head_chars and on_error come from StreamPlan rather than from a literal, so
+// a policy that sets on_error to fail_closed is not silently run as fail_open.
+func (f *forwarder) newStreamGuard(
+	dto *forwardRequestDTO,
+	resp *infracontext.ResponseContext,
+) *streamGuard {
+	if f.executor == nil || f.codec == nil {
+		return nil
+	}
+	enabled, opts := dto.plan.StreamPlan(policydomain.StagePreResponse)
+	if !enabled {
+		return nil
+	}
+	runner, ok := f.executor.(segmentRunner)
+	if !ok {
+		return nil
+	}
+	return newStreamGuard(
+		runner,
+		f.codec,
+		sourceFormatFromRequest(dto.request),
+		appplugins.StageInput{
+			Stage:    policydomain.StagePreResponse,
+			Policies: dto.policies,
+			Plan:     dto.plan,
+			Request:  dto.request,
+			Response: resp,
+		},
+		streamGuardConfig{headChars: opts.HeadChars, onError: streamOnError(opts.OnError)},
+		f.logger,
+	)
 }
 
 // retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the

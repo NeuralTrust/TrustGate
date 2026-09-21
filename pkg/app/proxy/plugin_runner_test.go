@@ -17,9 +17,11 @@ package proxy_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
@@ -31,6 +33,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -66,7 +69,12 @@ func (s *stubPlugin) Execute(_ context.Context, in appplugins.ExecInput) (*apppl
 	return s.result, s.err
 }
 
-func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p appplugins.Plugin) appproxy.Forwarder {
+func forwarderWithPlugin(
+	t *testing.T,
+	invoker appproxy.ProviderInvoker,
+	p appplugins.Plugin,
+	opts ...appproxy.ForwarderOption,
+) appproxy.Forwarder {
 	t.Helper()
 	reg := appplugins.NewRegistry()
 	require.NoError(t, reg.Register(p))
@@ -75,6 +83,7 @@ func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p apppl
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
+		opts...,
 	)
 }
 
@@ -230,6 +239,136 @@ func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
 	assert.Nil(t, res.Stream, "rejected stream must not be relayed to the client")
 	assert.Equal(t, 451, res.StatusCode)
 	assert.Contains(t, string(res.Body), "blocked")
+}
+
+// streamInspectorPlugin is a plugin that opted into per-segment inspection and
+// answers StreamSettings from the policy, which is what makes StreamPlan yield
+// a head gate.
+type streamInspectorPlugin struct {
+	stubPlugin
+	verdict *appplugins.SegmentVerdict
+}
+
+func (s *streamInspectorPlugin) InspectSegment(
+	context.Context,
+	appplugins.ExecInput,
+	appplugins.StreamSegment,
+) (*appplugins.SegmentVerdict, error) {
+	return s.verdict, nil
+}
+
+func (s *streamInspectorPlugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+	enabled, _ := settings["enabled"].(bool)
+	return enabled, appplugins.StreamOptions{}
+}
+
+// streamingPolicy wires a consumer with the precompiled plan the forwarder
+// reads. StreamPlan is a plan predicate, and the consumer plan is never nil in
+// production (app/consumer/consumer_data.go).
+func streamingPolicy(t *testing.T, gatewayID ids.GatewayID, p appplugins.Plugin) *appconsumer.RoutableConsumer {
+	t.Helper()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai"))
+	rc.Policies = []*policy.Policy{{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     p.Name(),
+		Enabled:  true,
+		Priority: 1,
+		Settings: map[string]any{"enabled": true},
+	}}
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	rc.PolicyPlan = appplugins.NewStagePlan(reg, rc.Policies, newTestLogger())
+	return rc
+}
+
+func sseLinesStream(lines [][]byte) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		for _, l := range lines {
+			if !yield(l, nil) {
+				return
+			}
+		}
+	}
+}
+
+// TestForward_HeadGateBlockIsARealStatus is the property the whole slice exists
+// for: the head verdict lands before finalizeStream returns, so the rejection
+// is a status code and a body rather than a terminator, and not one byte of
+// the upstream response is relayed.
+func TestForward_HeadGateBlockIsARealStatus(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"secret"}}]}`), {},
+		[]byte("data: [DONE]"), {},
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: sseLinesStream(lines)}, nil).
+		Once()
+
+	p := &streamInspectorPlugin{
+		stubPlugin: stubPlugin{
+			name:   "guardrail",
+			stages: []policy.Stage{policy.StagePreResponse},
+			result: &appplugins.Result{StatusCode: 200},
+		},
+		verdict: &appplugins.SegmentVerdict{Block: true, Type: "guardrail_violation", Message: "blocked in the head"},
+	}
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, res.Stream, "a head-gate block must write nothing")
+	assert.Equal(t, 403, res.StatusCode)
+	assert.Contains(t, string(res.Body), "blocked in the head")
+	assert.NotContains(t, string(res.Body), "secret")
+}
+
+// TestForward_StreamIsUntouchedWithoutAnInspector is the wiring AC. A policy
+// that never opted in must see the stream it sees today, byte for byte.
+func TestForward_StreamIsUntouchedWithoutAnInspector(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"hi"}}]}`), {},
+		[]byte("data: [DONE]"), {},
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: sseLinesStream(lines)}, nil).
+		Once()
+
+	p := &stubPlugin{
+		name:   "guardrail",
+		stages: []policy.Stage{policy.StagePreResponse},
+		result: &appplugins.Result{StatusCode: 200},
+	}
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+
+	var got [][]byte
+	for line, lineErr := range res.Stream {
+		require.NoError(t, lineErr)
+		got = append(got, line)
+	}
+	assert.Equal(t, lines, got)
 }
 
 func TestForward_PreResponseInfrastructureErrorBlocksEnforce(t *testing.T) {
