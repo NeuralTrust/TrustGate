@@ -161,12 +161,18 @@ func TestClientTrimsTrailingSlashFromBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewClientAppliesDefaultTimeout(t *testing.T) {
+// The plugin holds no timeout default of its own — MODEL_ARMOR_TIMEOUT in
+// pkg/config is the single owner — so what matters here is that the value it
+// is handed reaches both the HTTP client and the per-call context budget.
+func TestNewClientCarriesTheTimeoutItIsGiven(t *testing.T) {
 	t.Parallel()
 
-	c := newClient("", 0)
-	if c.http.Timeout != defaultTimeout {
-		t.Errorf("timeout = %s, want default %s", c.http.Timeout, defaultTimeout)
+	c := newClient("", 7*time.Second)
+	if c.http.Timeout != 7*time.Second {
+		t.Errorf("http timeout = %s, want %s", c.http.Timeout, 7*time.Second)
+	}
+	if c.timeout != 7*time.Second {
+		t.Errorf("context budget = %s, want %s", c.timeout, 7*time.Second)
 	}
 }
 
