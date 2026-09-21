@@ -1,6 +1,6 @@
 # Applications — one thing a team builds, across both planes
 
-Status: design, nothing implemented · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-21
+Status: design agreed, nothing implemented · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-21
 
 Companion to `consumers-identity-model.md`, which established that *a consumer is
 an application*. That held while an application did one thing. It stops holding
@@ -151,48 +151,93 @@ and infer they are one application.** The endpoint belongs in the section header
 of the plane it serves, next to a copy button, and nowhere else. The Application
 is identified by its name.
 
-## 7. Where the Application lives — the decision this memo needs
+## 7. Where the Application lives (decided)
 
-Three places it could exist, and they are not equivalent.
+**In the console's own database, not in the gateway.** An `Application` row owns a
+name and the ids of the one or two consumers it groups; the gateway keeps
+knowing only about consumers, and nothing in the data plane learns a new word.
 
-**(a) A thin entity in the gateway.** An `applications` table (id, gateway_id,
-name) and a nullable `application_id` on consumers. Nothing else moves: routing,
-policies, identity and connect stay exactly where they are. The gateway can then
-name the application in `/whoami`, in traces and in audit, and the SDK can say
-"this key reaches your application on both planes" rather than "two consumers".
-Cost: one migration, one CRUD, and the config snapshot carries one more field.
+The alternative was a thin `applications` table in the gateway with an
+`application_id` on the consumer. It buys one thing — the gateway could name the
+application in `/whoami`, in traces and in audit — at the price of a schema
+change, a CRUD, a field in the config snapshot and a migration for every existing
+consumer. That is a lot of moving parts for a grouping that only the console
+draws. Rejected on cost, not on principle; §7.3 says what it would have bought.
 
-**(b) A grouping in the console's own database.** Zero gateway change. But the
-gateway never learns it, so `/whoami` keeps returning two consumers with nothing
-relating them, telemetry cannot group by application, and the grouping is lost to
-anyone using the admin API directly.
+A third option, deriving the Application from the keyring, was rejected outright:
+it makes an identity out of a credential, so detaching a key splits an
+application in two and attaching one key to two real applications merges them.
 
-**(c) Derived from the keyring** — an Application is the set of consumers sharing
-a key. No storage anywhere. It makes an identity out of a credential: detach a key
-and the application splits in two; attach one key to two real applications and
-they merge. Rejected.
+### 7.1 An Application of one, derived
 
-**Recommendation: (a), kept thin.** The Application is a grouping and a name, not
-a new configuration surface — the moment it starts owning routing or policies it
-has become a second consumer and we are back here. Migration is trivial: every
-existing consumer gets an Application named after it, and single-plane
-Applications are what everyone has on day one.
+The console does not need a row for every application. A consumer that belongs to
+no `Application` row **is** an Application — of one, named after itself. Grouping
+is what creates a row.
+
+This is what makes the decision cheap:
+
+- **No migration.** The table starts empty. Every consumer that exists today
+  keeps working and reads as a single-plane Application on day one.
+- **No orphans by construction.** A consumer created through the admin API, by a
+  script or by another tool, appears in the console immediately as an Application
+  of one rather than disappearing from a list that only knows about rows.
+- **Grouping is reversible.** Deleting the row ungroups; it does not delete
+  anything the gateway holds.
+
+### 7.2 The invariants, and who holds them
+
+The gateway cannot enforce "at most one consumer per plane" because it does not
+know the grouping exists. The console must, and it can: **the console is the only
+writer of groupings**, so nothing behind its back can produce a second MCP
+consumer inside one Application. The rules it owns:
+
+- At most one consumer per plane in an Application; at least one in total.
+- Every consumer of an Application belongs to the same gateway and the same team.
+- A consumer belongs to at most one Application.
+
+Two states it has to tolerate rather than prevent, because the gateway is free to
+change underneath:
+
+- **A consumer named by a row is gone.** Deleted through the admin API. The
+  Application shows the plane as missing and offers to forget it; it must not
+  fail the page.
+- **A consumer belongs to no row.** The normal case (§7.1), not an error state.
+
+Deleting an Application in the console deletes its consumers in the gateway —
+otherwise the "remove this application" a person expects leaves the endpoints
+serving. That is the one place the console's delete is not just a row.
+
+### 7.3 What this costs, stated plainly
+
+- **`/whoami` cannot name the application.** It answers with the gateway and the
+  consumers a key reaches, which is all the SDK needs to resolve both planes —
+  the one-secret story works untouched. What it cannot say is *which application
+  those two consumers are*. The SDK talks about consumers, and that stays true.
+- **Telemetry cannot group by application at the gateway.** Traces carry the
+  consumer, so a per-application view is a join the console does from its own
+  rows. Fine for a dashboard, unavailable to anyone querying the gateway
+  directly.
+- **The admin API does not show the grouping.** A team automating against the
+  gateway sees consumers, as it does today.
+
+None of these blocks the work. If one of them starts to hurt — most likely the
+telemetry one — the gateway-side entity from §7 is still there to be added, and
+`application_id` can be backfilled from the console's rows.
 
 ## 8. What the backend needs
 
-Small, and two of the three are worth doing whichever way §7 goes.
+Almost nothing, which is the point of §7.
 
 1. **Reverse lookup, auth → consumers.** Either a field on `AuthResponse` or
    `GET /v1/gateways/:id/auths/:auth_id/consumers`. Without it the console cannot
    warn that revoking a key kills two planes, which is true today and unwarned.
-2. **`application_id` on the consumer** plus the `applications` CRUD, if (a).
-3. **`application` in `/whoami`** (name and id per consumer), so the SDK and the
-   examples can name the thing the user named. Not required for the console;
-   required for the story to be true end to end.
+   Worth doing on its own merits.
 
-Nothing in the data plane changes. Routing, policy resolution, the connect flow
-and the MCP handler all keep working on consumers, because that is still what a
-request resolves to.
+That is the whole gateway change. Everything else is the console: an
+`Application` model (id, teamId, gatewayId, name, consumer ids), its CRUD, and
+the screens in §5. Routing, policy resolution, the connect flow and the MCP
+handler keep working on consumers, because that is still what a request resolves
+to.
 
 ## 9. Still open
 
@@ -204,13 +249,15 @@ request resolves to.
 - **A2A.** The model says "at most one per plane" and A2A is a plane. Nothing here
   assumes two, but the screens above name only Tools and Models.
 - **Store consumer.** It is synthetic (`BuildStoreConsumer`) and belongs to no
-  application. It must stay out of these lists.
+  application. It must stay out of these lists — and note that §7.1 would
+  otherwise show it as an Application of one.
 
-## 10. Slicing, once §7 is decided
+## 10. Slicing
 
-1. Backend: applications CRUD + `application_id`, and the auth reverse lookup.
-2. Console: Applications list and detail replacing the consumers list; General
-   with identity asked once; Routing and Policies as two sections; the keyring in
-   Auth.
-3. Adding a plane from the Routing empty state, keys attached automatically.
-4. `/whoami` carries the application; SDK and examples stop explaining the split.
+1. Gateway: the auth → consumers reverse lookup (§8), which stands alone.
+2. Console: the `Application` model and the derived Application-of-one read, with
+   the consumers list becoming an Applications list. Nothing else changes yet.
+3. Console: General with identity asked once; Routing and Policies as two
+   sections; the keyring in Auth, attaching each key to every consumer.
+4. Console: adding a plane from the Routing empty state, keys attached
+   automatically. This is the step the whole memo is for.
