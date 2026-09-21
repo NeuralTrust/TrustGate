@@ -571,3 +571,46 @@ func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 		})
 	}
 }
+
+// TestStreamSettingsIsTheOptIn pins the half of the contract the caller cannot
+// do for itself: the plugin is on every pre_response chain that names it, so
+// the settings — not the type — decide whether a head gate exists, and the
+// options come back with the answer so the caller never re-reads them.
+func TestStreamSettingsIsTheOptIn(t *testing.T) {
+	t.Parallel()
+	p := newTestPlugin(t, adapter.NewRegistry(), "http://guard.local")
+
+	requestLeg := streamingSettings(nil)
+	requestLeg["direction"] = legRequest
+
+	enabled, opts := p.StreamSettings(streamingSettings(map[string]any{
+		"head_chars": 1024,
+		"on_error":   onErrorFailClosed,
+	}))
+	assert.True(t, enabled)
+	assert.Equal(t, appplugins.StreamOptions{HeadChars: 1024, OnError: onErrorFailClosed}, opts)
+
+	inherited := streamingSettings(nil)
+	inherited["on_error"] = onErrorFailClosed
+	enabled, opts = p.StreamSettings(inherited)
+	assert.True(t, enabled)
+	assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars)
+	assert.Equal(t, onErrorFailClosed, opts.OnError,
+		"streaming.on_error inherits the policy on_error, and the caller must be given what it inherited")
+
+	for _, tt := range []struct {
+		name     string
+		settings map[string]any
+	}{
+		{"streaming disabled", map[string]any{"collector_id": testCollectorID}},
+		{"policy excludes the response leg", requestLeg},
+		{"settings that do not parse", map[string]any{"collector_id": "not-a-uuid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			enabled, opts := p.StreamSettings(tt.settings)
+			assert.False(t, enabled)
+			assert.Zero(t, opts)
+		})
+	}
+}

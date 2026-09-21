@@ -49,6 +49,20 @@ func (p *streamPlugin) InspectSegment(_ context.Context, in ExecInput, seg Strea
 	return p.verdict, nil
 }
 
+// StreamSettings answers from the settings map the way a real plugin does, so
+// the plan can tell an enabled policy from a disabled one without knowing any
+// plugin's schema.
+func (p *streamPlugin) StreamSettings(settings map[string]any) (bool, StreamOptions) {
+	enabled, _ := settings["enabled"].(bool)
+	if !enabled {
+		return false, StreamOptions{}
+	}
+	var opts StreamOptions
+	opts.HeadChars, _ = settings["head_chars"].(int)
+	opts.OnError, _ = settings["on_error"].(string)
+	return true, opts
+}
+
 func newStreamPlugin(name string, verdict *SegmentVerdict) *streamPlugin {
 	return &streamPlugin{
 		fakePlugin: fakePlugin{
@@ -100,8 +114,10 @@ func runSegment(t *testing.T, exec Executor, in StageInput, seg StreamSegment) (
 
 func TestStreamInspector_DefaultsToDenyWithoutTheInterface(t *testing.T) {
 	plain := &fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreResponse}, result: &Result{}}
-	assert.False(t, streamInspector(plain), "a descriptor that does not implement StreamInspector must be denied")
-	assert.True(t, streamInspector(newStreamPlugin("guard", nil)))
+	_, plainOK := streamInspector(plain)
+	assert.False(t, plainOK, "a descriptor that does not implement StreamInspector must be denied")
+	_, guardOK := streamInspector(newStreamPlugin("guard", nil))
+	assert.True(t, guardOK)
 }
 
 func TestExecutor_RunStreamSegment_EmptyChain(t *testing.T) {

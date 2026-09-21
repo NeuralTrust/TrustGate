@@ -57,12 +57,27 @@ type SegmentVerdict struct {
 	Fingerprints []string
 }
 
+// StreamOptions is the streaming configuration of the entry that opted in.
+// HeadChars and OnError live in the plugin's own settings schema, so they
+// travel with the opt-in rather than being re-read by a caller that cannot
+// parse them: an operator who sets streaming.on_error to fail_closed must not
+// silently get fail_open.
+type StreamOptions struct {
+	HeadChars int
+	OnError   string
+}
+
 // StreamInspector is the opt-in a plugin declares to be consulted per block of
 // a streaming response. A plugin that does not implement it is absent from the
 // stream chain and still runs at the fixed stages, so the capability extends
 // one plugin at a time, the way ScopeInertSafe does.
+//
+// Implementing the interface is not by itself the opt-in: StreamSettings reads
+// the policy's settings and decides. A plugin whose streaming block is
+// disabled yields no stream chain at all, so an existing policy costs nothing.
 type StreamInspector interface {
 	InspectSegment(ctx context.Context, in ExecInput, seg StreamSegment) (*SegmentVerdict, error)
+	StreamSettings(settings map[string]any) (bool, StreamOptions)
 }
 
 // SegmentOutcome is the executor's consolidated answer across the chain for one
@@ -76,12 +91,12 @@ type SegmentOutcome struct {
 	Fingerprints []string
 }
 
-// streamInspector reports whether the descriptor opted in. A descriptor that
-// does not implement StreamInspector is denied, so no plugin joins the stream
-// chain by omission.
-func streamInspector(d PluginDescriptor) bool {
-	_, ok := d.(StreamInspector)
-	return ok
+// streamInspector reports whether the descriptor opted in, and hands back the
+// interface. A descriptor that does not implement StreamInspector is denied,
+// so no plugin joins the stream chain by omission.
+func streamInspector(d PluginDescriptor) (StreamInspector, bool) {
+	insp, ok := d.(StreamInspector)
+	return insp, ok
 }
 
 type streamSpansKey struct{}
