@@ -1,6 +1,6 @@
 # Applications — one thing a team builds, across both planes
 
-Status: design agreed, nothing implemented · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-21
+Status: design agreed · §8, §9.1 and §7.1 implemented; the screens are not · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-21
 
 Companion to `consumers-identity-model.md`, which established that *a consumer is
 an application*. That held while an application did one thing. It stops holding
@@ -466,6 +466,24 @@ under a name nobody chose.
   reach the dashboards without anyone rebuilding anything.
 
 ## 11. Slicing
+
+Done, on `claude/applications-gateway-api` (this repo) and
+`claude/applications-model` (the console):
+
+- **Gateway (§8).** Auth responses carry the consumers holding each key;
+  `include_synthetic` lists the consumers the gateway serves without storing.
+- **Console model (§7.1).** The `Application` row, its migration, the grouping
+  read with an application-of-one derived for every consumer nobody grouped, and
+  the create / rename / group / delete actions.
+- **Analytics (§9).** The filter narrows to applications and offers the Portal;
+  the wire format is unchanged for one consumer, which is every application in
+  production today, so no number moves.
+
+Left: the screens (§5). They are the rest of this list, and they are one piece —
+a grouped list whose detail panel is still per-consumer is not half a feature,
+it is an incoherent one.
+
+
 
 0. Analytics: `consumerId` → `consumerIds` through the console and the metrics
    service (§9.1), and the dimension for everything outside the console (§9.2).
