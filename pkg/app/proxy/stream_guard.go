@@ -54,6 +54,13 @@ const (
 	// "the guard rejected it" on the wire, which are different incidents for
 	// a client deciding whether to retry.
 	streamUnverifiableType = "guardrail_unverifiable"
+
+	streamMaskedMessage = "Response blocked: guardrail masking is not available on a streamed response."
+	// streamMaskedType marks a block the policy did not ask for: the guard
+	// returned a mask, which the head gate cannot apply yet, so it escalated.
+	// A client seeing this is being denied something a buffered call would
+	// have received with the sensitive span masked.
+	streamMaskedType = "guardrail_masked_unsupported"
 )
 
 // maxHeadHeldBytes bounds what the head gate holds. head_chars does not: an
@@ -251,6 +258,13 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	}
 	if outcome != nil && outcome.Block {
 		return blockedHeadError(g.source, outcome)
+	}
+	// A transform escalates to a block until the buffer rewrite lands. Releasing
+	// the head unmasked would turn a masking policy into a no-op on every
+	// streamed response, and at the head nothing is committed yet, so escalating
+	// costs a status code rather than a truncated body.
+	if outcome != nil && outcome.HasTransform {
+		return streamError(g.source, streamMaskedType, streamMaskedMessage)
 	}
 	g.clearedIdx = len(g.produced)
 	return nil

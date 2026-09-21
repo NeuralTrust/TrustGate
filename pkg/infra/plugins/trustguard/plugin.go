@@ -320,6 +320,12 @@ func (p *Plugin) InspectSegment(
 // the stream leg here; the buffered legs surface the same error where they
 // already do.
 func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+	// The opt-in has to cost nothing for the policies that did not take it.
+	// This runs on every streamed request, and p.config digests the whole
+	// settings map to key its cache, which is not free.
+	if _, ok := settings["streaming"]; !ok {
+		return false, appplugins.StreamOptions{}
+	}
 	cfg, err := p.config(settings)
 	if err != nil {
 		return false, appplugins.StreamOptions{}
