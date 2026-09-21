@@ -101,13 +101,15 @@ type SanitizationResult struct {
 	FilterResults    FilterResults `json:"filterResults"`
 }
 
-// FilterResults holds the filter outcomes Model Armor documents today. Other
-// block_on categories (rai, malicious_uris, csam) are not yet modeled here;
-// json.Unmarshal drops unknown keys, so adding fields for them later is
-// forward-compatible and does not require a client rewrite.
+// FilterResults holds every filter outcome Model Armor can return for a
+// sanitize call. json.Unmarshal drops unknown keys, so a template that only
+// evaluates a subset of these filters simply leaves the rest nil.
 type FilterResults struct {
 	SDP            *SDPFilterResult            `json:"sdp,omitempty"`
+	RAI            *RAIFilterResult            `json:"rai,omitempty"`
 	PIAndJailbreak *PIAndJailbreakFilterResult `json:"pi_and_jailbreak,omitempty"`
+	MaliciousURIs  *MaliciousURIsFilterResult  `json:"malicious_uris,omitempty"`
+	CSAM           *CSAMFilterResult           `json:"csam,omitempty"`
 }
 
 // SDPFilterResult is the sensitive-data-protection filter outcome.
@@ -138,6 +140,51 @@ type PIAndJailbreakFilterResult struct {
 type PIAndJailbreakResult struct {
 	MatchState      string `json:"matchState"`
 	ConfidenceLevel string `json:"confidenceLevel"`
+}
+
+// RAIFilterResult is the responsible-AI (hate speech, harassment, dangerous
+// content, sexually explicit content) filter outcome.
+type RAIFilterResult struct {
+	RaiFilterResult *RAIResult `json:"raiFilterResult,omitempty"`
+}
+
+// RAIResult reports the overall RAI match state plus a per-category
+// breakdown (e.g. hate_speech, dangerous, harassment, sexually_explicit).
+type RAIResult struct {
+	MatchState           string                         `json:"matchState"`
+	RaiFilterTypeResults map[string]RAIFilterTypeResult `json:"raiFilterTypeResults,omitempty"`
+}
+
+// RAIFilterTypeResult is one RAI category's match state and confidence.
+type RAIFilterTypeResult struct {
+	MatchState      string `json:"matchState"`
+	ConfidenceLevel string `json:"confidenceLevel,omitempty"`
+}
+
+// MaliciousURIsFilterResult is the malicious-URI filter outcome.
+type MaliciousURIsFilterResult struct {
+	MaliciousURIFilterResult *MaliciousURIResult `json:"maliciousUriFilterResult,omitempty"`
+}
+
+// MaliciousURIResult reports the match state and the URIs Model Armor flagged.
+type MaliciousURIResult struct {
+	MatchState   string                    `json:"matchState"`
+	MatchedItems []MaliciousURIMatchedItem `json:"maliciousUriMatchedItems,omitempty"`
+}
+
+// MaliciousURIMatchedItem is one URI Model Armor flagged as malicious.
+type MaliciousURIMatchedItem struct {
+	URI string `json:"uri"`
+}
+
+// CSAMFilterResult is the CSAM (child sexual abuse material) filter outcome.
+type CSAMFilterResult struct {
+	CSAMFilterFilterResult *CSAMResult `json:"csamFilterFilterResult,omitempty"`
+}
+
+// CSAMResult reports the CSAM filter's match state.
+type CSAMResult struct {
+	MatchState string `json:"matchState"`
 }
 
 type sanitizeResponse struct {

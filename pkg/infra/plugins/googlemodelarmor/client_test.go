@@ -261,3 +261,62 @@ func TestSanitizeContextCanceled(t *testing.T) {
 		t.Fatal("expected context error, got nil")
 	}
 }
+
+// TestSanitizeDecodesRAIMaliciousURIsAndCSAM round-trips real Model Armor
+// JSON (field names verified against Google's REST reference) through
+// json.Unmarshal, unlike the assess_test.go table tests which construct Go
+// structs directly and so never exercise the `json:"..."` tags themselves.
+func TestSanitizeDecodesRAIMaliciousURIsAndCSAM(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"sanitizationResult":{
+			"filterMatchState":"MATCH_FOUND",
+			"invocationResult":"SUCCESS",
+			"filterResults":{
+				"rai":{"raiFilterResult":{"matchState":"MATCH_FOUND","raiFilterTypeResults":{"hate_speech":{"matchState":"MATCH_FOUND","confidenceLevel":"HIGH"}}}},
+				"malicious_uris":{"maliciousUriFilterResult":{"matchState":"MATCH_FOUND","maliciousUriMatchedItems":[{"uri":"http://evil.example/payload"}]}},
+				"csam":{"csamFilterFilterResult":{"matchState":"MATCH_FOUND"}}
+			}
+		}}`)
+	}))
+	defer srv.Close()
+
+	c := newClientWithTokenSource(srv.URL, time.Second, staticTokenSource("t", nil))
+	result, err := c.SanitizeUserPrompt(context.Background(), "proj", "us-central1", "tmpl", "text")
+	if err != nil {
+		t.Fatalf("SanitizeUserPrompt returned error: %v", err)
+	}
+
+	if result.FilterResults.RAI == nil || result.FilterResults.RAI.RaiFilterResult == nil {
+		t.Fatal("expected rai.raiFilterResult to be decoded")
+	}
+	if got := result.FilterResults.RAI.RaiFilterResult.MatchState; got != "MATCH_FOUND" {
+		t.Errorf("rai matchState = %q, want MATCH_FOUND", got)
+	}
+	hate, ok := result.FilterResults.RAI.RaiFilterResult.RaiFilterTypeResults["hate_speech"]
+	if !ok {
+		t.Fatal("expected raiFilterTypeResults[hate_speech] to be decoded")
+	}
+	if hate.ConfidenceLevel != "HIGH" {
+		t.Errorf("hate_speech confidenceLevel = %q, want HIGH", hate.ConfidenceLevel)
+	}
+
+	if result.FilterResults.MaliciousURIs == nil || result.FilterResults.MaliciousURIs.MaliciousURIFilterResult == nil {
+		t.Fatal("expected malicious_uris.maliciousUriFilterResult to be decoded")
+	}
+	mu := result.FilterResults.MaliciousURIs.MaliciousURIFilterResult
+	if mu.MatchState != "MATCH_FOUND" {
+		t.Errorf("malicious_uris matchState = %q, want MATCH_FOUND", mu.MatchState)
+	}
+	if len(mu.MatchedItems) != 1 || mu.MatchedItems[0].URI != "http://evil.example/payload" {
+		t.Errorf("maliciousUriMatchedItems = %+v, want one item with the stub URI", mu.MatchedItems)
+	}
+
+	if result.FilterResults.CSAM == nil || result.FilterResults.CSAM.CSAMFilterFilterResult == nil {
+		t.Fatal("expected csam.csamFilterFilterResult to be decoded")
+	}
+	if got := result.FilterResults.CSAM.CSAMFilterFilterResult.MatchState; got != "MATCH_FOUND" {
+		t.Errorf("csam matchState = %q, want MATCH_FOUND", got)
+	}
+}

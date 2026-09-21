@@ -1135,6 +1135,62 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"google_model_armor": {
+		name:        "Google Model Armor",
+		group:       groupGuardrails,
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streaming responses pass through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "project",
+					Label:       "Project",
+					Type:        FieldTypeString,
+					Description: "GCP project ID that owns the Model Armor template.",
+					Required:    true,
+				},
+				{
+					Key:         "location",
+					Label:       "Location",
+					Type:        FieldTypeString,
+					Description: "Model Armor is regional; this names the template's region (e.g. us-central1) and picks the regional API host.",
+					Required:    true,
+				},
+				{
+					Key:         "template",
+					Label:       "Template ID",
+					Type:        FieldTypeString,
+					Description: "Model Armor template identifier to evaluate against.",
+					Required:    true,
+				},
+				{
+					Key:         "block_on",
+					Label:       "Block On",
+					Type:        FieldTypeArray,
+					Description: "Filters that reject the call when they return MATCH_FOUND. Defaults to all five when left empty.",
+					Item: &Field{
+						Key:   "filter",
+						Label: "Filter",
+						Type:  FieldTypeEnum,
+						Enum:  enumOptions("sdp", "rai", "pi_and_jailbreak", "malicious_uris", "csam"),
+					},
+				},
+				{
+					Key:         "sdp_action",
+					Label:       "SDP Action",
+					Type:        FieldTypeEnum,
+					Description: "How TrustGate reacts when the sensitive-data-protection filter fires: block the call, or reinject the de-identified text Model Armor itself returned. Only applies when sdp is in Block On.",
+					Enum:        enumOptions("block", "anonymize"),
+					Default:     "block",
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional operator message; the 403 body always carries the filter that fired.",
+				},
+			},
+		},
+	},
 	"regex_replace": {
 		name:        "Regex Replace",
 		group:       groupGuardrails,
