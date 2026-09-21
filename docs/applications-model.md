@@ -239,7 +239,57 @@ the screens in §5. Routing, policy resolution, the connect flow and the MCP
 handler keep working on consumers, because that is still what a request resolves
 to.
 
-## 9. Still open
+## 9. Analytics
+
+Nothing breaks, and that is worth saying first: every product event already
+carries `trustgate.consumer.id` and `trustgate.consumer.name` alongside the
+gateway and tenant (`docs/telemetry/otlp-metadata-contract.md`). Every chart that
+exists keeps working, because a request still resolves to a consumer.
+
+What changes is that people will want to ask questions about the **application**,
+and the gateway cannot answer them (§7.3). Three things make that cheap:
+
+### 9.1 An Application is at most two consumers
+
+So "group by application" is not a join, it is a filter expansion:
+`consumer_id IN (<mcp>, <llm>)`. The console builds its own queries and holds the
+mapping, so its pages need no new data anywhere.
+
+### 9.2 Outside the console, a dimension synced from the rows
+
+Grafana and anything querying the event store directly do not have the console's
+database. They need a small dimension table — `consumer_id → application_id,
+application_name` — synced from it. Applied at read time, which has two
+properties worth having: **history works** without a backfill, and **regrouping
+is retroactive** — pair two consumers today and last month's events read as that
+application too.
+
+The alternative, stamping the application onto each event, would mean the gateway
+knowing about applications, which is the thing §7 decided against. It also freezes
+the grouping at write time, so a rename or a regroup leaves the past reading
+wrong.
+
+### 9.3 The two planes do not measure the same thing
+
+This is the part that is design rather than plumbing. An MCP event is a tool call
+— latency, policy outcome, no tokens and no cost. An LLM event is a model call —
+tokens, cost, model label. Summing them into one number is wrong more often than
+it is right:
+
+| Measure | Sums across the application? |
+|---|---|
+| Requests, errors, latency | Yes |
+| Tokens, cost, model mix | LLM only |
+| Tool calls, policy blocks, consent prompts, upstream connections | MCP only |
+
+So an Application analytics page is not one chart with a wider filter. It is two
+halves with a shared header, mirroring §5's Routing: *this application served N
+requests, E of them failed*, then a Tools half and a Models half. What the
+application level genuinely adds over today is attribution — "this agent's model
+spend" instead of "the consumer sdk-llm's model spend", which is the same number
+under a name nobody chose.
+
+## 10. Still open
 
 - **Policies at Application level.** Left per plane on purpose (§4). Revisit when
   a rule appears that genuinely spans both — a spend cap might be the first.
@@ -251,9 +301,13 @@ to.
 - **Store consumer.** It is synthetic (`BuildStoreConsumer`) and belongs to no
   application. It must stay out of these lists — and note that §7.1 would
   otherwise show it as an Application of one.
+- **Who syncs the analytics dimension** (§9.2), and how often. A rename should
+  reach the dashboards without anyone rebuilding anything.
 
-## 10. Slicing
+## 11. Slicing
 
+0. Analytics dimension (§9.2), whenever the console's rows exist — it is what
+   keeps the dashboards honest while the rest lands.
 1. Gateway: the auth → consumers reverse lookup (§8), which stands alone.
 2. Console: the `Application` model and the derived Application-of-one read, with
    the consumers list becoming an Applications list. Nothing else changes yet.
