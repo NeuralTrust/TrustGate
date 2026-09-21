@@ -110,3 +110,47 @@ func TestSettingsBlockOnSet(t *testing.T) {
 	assert.True(t, set[filterCSAM])
 	assert.False(t, set[filterRAI])
 }
+
+func TestParseConfigCredentialsDefaultToEmpty(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseConfig(validSettings())
+	require.NoError(t, err)
+	assert.Equal(t, Credentials{}, cfg.Credentials,
+		"a policy with no credentials block must keep today's ADC-only behaviour untouched")
+}
+
+func TestParseConfigCredentialsImpersonation(t *testing.T) {
+	t.Parallel()
+	settings := validSettings()
+	settings["credentials"] = map[string]any{
+		"impersonate_service_account": "modelarmor@customer.iam.gserviceaccount.com",
+	}
+	cfg, err := parseConfig(settings)
+	require.NoError(t, err)
+	assert.Equal(t, "modelarmor@customer.iam.gserviceaccount.com", cfg.Credentials.ImpersonateServiceAccount)
+	assert.Empty(t, cfg.Credentials.ServiceAccountJSON)
+}
+
+func TestParseConfigCredentialsServiceAccountJSON(t *testing.T) {
+	t.Parallel()
+	settings := validSettings()
+	settings["credentials"] = map[string]any{
+		"service_account_json": `{"type":"service_account"}`,
+	}
+	cfg, err := parseConfig(settings)
+	require.NoError(t, err)
+	assert.Equal(t, `{"type":"service_account"}`, cfg.Credentials.ServiceAccountJSON)
+	assert.Empty(t, cfg.Credentials.ImpersonateServiceAccount)
+}
+
+func TestParseConfigRejectsBothCredentialPaths(t *testing.T) {
+	t.Parallel()
+	settings := validSettings()
+	settings["credentials"] = map[string]any{
+		"impersonate_service_account": "modelarmor@customer.iam.gserviceaccount.com",
+		"service_account_json":        `{"type":"service_account"}`,
+	}
+	_, err := parseConfig(settings)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set only one of")
+}
