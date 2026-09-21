@@ -66,6 +66,11 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// Previewable reports true: Execute reads only the plugin settings, the request
+// body and the request headers, and touches no database, cache or network, so
+// running it against a pasted sample answers exactly what real traffic would get.
+func (p *Plugin) Previewable() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
