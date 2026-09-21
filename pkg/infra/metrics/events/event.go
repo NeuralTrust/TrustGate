@@ -56,6 +56,22 @@ type Event struct {
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
 
 	MCP *MCP `json:"mcp,omitempty"`
+
+	EndUser *EndUser `json:"end_user,omitempty"`
+}
+
+// EndUser is the person a client application declared it was serving, read from
+// the headers that application forwards (Open WebUI and the like). It is
+// telemetry only: unlike Principal*, it is asserted by whoever holds the
+// credential rather than verified by the gateway, so it attributes a request
+// without ever deciding anything about it. Source names the convention the
+// values came from, so a reader can weigh them.
+type EndUser struct {
+	ID     string `json:"id,omitempty"`
+	Email  string `json:"email,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 // Retention is when this trace stops being the storage layer's problem, derived

@@ -150,6 +150,32 @@ func TestSession_FromCustomHeader(t *testing.T) {
 	require.Equal(t, "sess-header", resp.Header.Get(defaultSessionHeader))
 }
 
+// A chat front-end already sends a conversation id under its own name. Reading
+// the ones we know keeps every message of a conversation on one session
+// instead of each landing on a freshly generated id.
+func TestSession_FromKnownChatHeader(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(nil))
+	doRequest(t, app, `{}`, map[string]string{"X-OpenWebUI-Chat-Id": "chat-abc"})
+	require.Equal(t, "chat-abc", capt.sessionID)
+	require.False(t, capt.generated)
+}
+
+// An explicit configuration is a deliberate choice and outranks a guess.
+func TestSession_ConfiguredHeaderBeatsKnownChatHeader(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), HeaderName: "X-Custom-Session"}))
+	doRequest(t, app, `{}`, map[string]string{
+		"X-Custom-Session":    "sess-configured",
+		"X-OpenWebUI-Chat-Id": "chat-abc",
+	})
+	require.Equal(t, "sess-configured", capt.sessionID)
+}
+
+func TestSession_KnownChatHeaderBeatsBody(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), BodyParamName: "session_id"}))
+	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{"X-OpenWebUI-Chat-Id": "chat-abc"})
+	require.Equal(t, "chat-abc", capt.sessionID)
+}
+
 func TestSession_FromBody(t *testing.T) {
 	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), BodyParamName: "session_id"}))
 	doRequest(t, app, `{"session_id":"sess-body"}`, nil)
