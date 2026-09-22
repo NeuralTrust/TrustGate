@@ -169,13 +169,9 @@ func TestStreamBlockedEvent(t *testing.T) {
 			},
 		},
 		{
-			name:   "anthropic",
+			name:   "anthropic emits nothing: its SDKs raise on a trailing error event",
 			source: FormatAnthropic,
-			want: []string{
-				"event: error",
-				`data: {"type":"error","error":{"type":"permission_error","message":"blocked"}}`,
-				"",
-			},
+			want:   nil,
 		},
 		{
 			name:   "gemini",
@@ -207,7 +203,7 @@ func TestStreamBlockedEvent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := StreamBlockedEvent(tc.source, "content_filter", "blocked")
-			lines := make([]string, 0, len(got))
+			var lines []string
 			for _, line := range got {
 				lines = append(lines, string(line))
 			}
@@ -216,10 +212,12 @@ func TestStreamBlockedEvent(t *testing.T) {
 	}
 }
 
+// Anthropic is absent on purpose: it emits nothing at all, which
+// TestStreamBlockedEvent_AnthropicEmitsNothing covers instead.
 func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 	t.Parallel()
 	sources := []Format{
-		FormatOpenAI, FormatAzure, FormatGroq, FormatAnthropic, FormatGemini,
+		FormatOpenAI, FormatAzure, FormatGroq, FormatGemini,
 		FormatVertex, FormatCohere, FormatOpenAIResponses, Format("something-else"),
 	}
 	for _, source := range sources {
@@ -237,4 +235,18 @@ func TestStreamBlockedEvent_FramingIsUniform(t *testing.T) {
 			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(data, []byte("data: ")), &decoded))
 		})
 	}
+}
+
+// anthropic-sdk-python raises on any SSE whose event is "error", and
+// _make_status_error dispatches on response.status_code — 200 on our stream, so
+// it lands on the base APIStatusError that no dialect-specific except clause
+// catches. get_final_message() then raises on a message that is complete. The
+// message_delta terminator carries stop_reason "refusal" and the accumulator
+// puts it on the final Message, so nothing is lost by staying silent here.
+func TestStreamBlockedEvent_AnthropicEmitsNothing(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []string{"", "content_filter", "some_plugin_name"} {
+		assert.Empty(t, StreamBlockedEvent(FormatAnthropic, reason, "blocked"))
+	}
+	assert.Empty(t, StreamBlockedEvent(FormatAnthropic, "content_filter", ""))
 }
