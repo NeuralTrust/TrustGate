@@ -33,17 +33,9 @@ import (
 const ConnectTicketTTL = 15 * time.Minute
 
 var (
-	// ErrEndUserConnectionsUnsupported: the consumer does not identify its end
-	// users (identity.source is not app), so there are no per-user connections
-	// to link through the application.
-	ErrEndUserConnectionsUnsupported = fmt.Errorf("oauth end-user connections: consumer does not identify its end users: %w", commonerrors.ErrConflict)
 	// ErrUnknownConnectProvider: the requested provider is not a forwarded-auth
 	// server of the consumer.
 	ErrUnknownConnectProvider = fmt.Errorf("oauth end-user connections: unknown provider: %w", commonerrors.ErrValidation)
-	// ErrAppConnectionsUnsupported: the consumer acts for users rather than as
-	// itself, so it holds no accounts of its own to report. Naming a user is
-	// how its connections are read.
-	ErrAppConnectionsUnsupported = fmt.Errorf("oauth connections: consumer acts for its users, not as itself: %w", commonerrors.ErrConflict)
 )
 
 // Connection states reported to the application, the equivalent of Composio's

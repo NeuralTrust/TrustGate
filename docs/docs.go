@@ -4050,7 +4050,7 @@ const docTemplate = `{
         },
         "/{slug}/connections": {
             "get": {
-                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:\u003cconsumer_id\u003e) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.",
+                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that person, under this application. Omitting it asks about the application acting as itself (app:\u003cconsumer_id\u003e) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Both actors belong to every MCP consumer, so neither form is ever refused for being the wrong one. Authenticated with the consumer's API key.",
                 "produces": [
                     "application/json"
                 ],
@@ -4091,19 +4091,13 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
                     }
                 }
             }
         },
         "/{slug}/connections/links": {
             "post": {
-                "description": "For an MCP consumer whose application identifies its end users (identity.source = app). Returns the URL the application shows that user to connect their own account on one of the consumer's servers (or on any of them when provider is omitted). Authenticated with the consumer's API key.",
+                "description": "Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted). Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4147,12 +4141,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
