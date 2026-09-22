@@ -748,65 +748,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"prompt_compression": {
 		name:        "Prompt Compression",
 		group:       groupPromptManagement,
-		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "compress_json",
-					Label:       "Compress JSON",
-					Type:        FieldTypeBoolean,
-					Description: "Minify standalone JSON message content, ```json fenced blocks and tool-call arguments. At least one transform must stay enabled.",
-					Default:     true,
-				},
-				{
-					Key:         "normalize_whitespace",
-					Label:       "Normalize Whitespace",
-					Type:        FieldTypeBoolean,
-					Description: "Trim trailing spaces per line, keeping Markdown hard line breaks, and collapse runs of blank lines.",
-					Default:     true,
-				},
-				{
-					Key:         "strip_ansi",
-					Label:       "Strip ANSI Escapes",
-					Type:        FieldTypeBoolean,
-					Description: "Remove ANSI colour and cursor sequences, common in captured terminal and CI logs.",
-					Default:     true,
-				},
-				{
-					Key:         "max_consecutive_blank_lines",
-					Label:       "Max Consecutive Blank Lines",
-					Type:        FieldTypeInteger,
-					Description: "Longest run of blank lines kept when whitespace is normalized. Between 1 and 1000.",
-					Default:     1,
-				},
-				{
-					Key:         "min_length",
-					Label:       "Minimum Content Length",
-					Type:        FieldTypeInteger,
-					Description: "Skip message content shorter than this many bytes; 0 compresses everything. Leaving small messages byte-identical protects provider prompt-cache prefixes.",
-					Default:     256,
-				},
-				{
-					Key:         "max_body_bytes",
-					Label:       "Max Body Bytes",
-					Type:        FieldTypeInteger,
-					Description: "Skip the whole pipeline for request bodies larger than this, bounding per-request CPU cost; 0 disables the cap.",
-					Default:     1048576,
-				},
-				{
-					Key:         "target_roles",
-					Label:       "Target Roles",
-					Type:        FieldTypeArray,
-					Description: "Restrict compression to messages with these roles. Empty compresses every role.",
-					Item: &Field{
-						Key:   "role",
-						Label: "Role",
-						Type:  FieldTypeEnum,
-						Enum:  enumOptions("system", "user", "assistant", "tool"),
-					},
-				},
-			},
-		},
+		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable. Runs with fixed defaults; there is nothing to configure.",
+		// No operator-facing fields. The transforms are safe on every prompt and the
+		// thresholds (256-byte minimum, 1 MiB body cap, every role) are the ones that
+		// keep provider prompt caches stable, so exposing them only invited settings
+		// that made the policy worse. The plugin still honours explicit settings sent
+		// over the API; the console has nothing to render.
+		schema: SettingsSchema{},
 	},
 	"tool_injection": {
 		name:        "Tool Injection",
