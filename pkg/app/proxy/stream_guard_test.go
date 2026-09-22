@@ -1258,12 +1258,10 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 				"event: content_block_stop",
 				`data: {"type":"content_block_stop","index":0}`, "",
 				"event: message_delta",
-				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},` +
-					`"usage":{"input_tokens":0,"output_tokens":0}}`, "",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},"usage":{"input_tokens":0,"output_tokens":0}}`, "",
 				"event: message_stop",
 				`data: {"type":"message_stop"}`, "",
-				"event: error",
-				`data: {"type":"error","error":{"type":"permission_error","message":"nope"}}`, "",
 			},
 		},
 		{
@@ -1272,7 +1270,7 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			lines:        geminiStreamLines(),
 			wantReleased: 2,
 			wantTail: []string{
-				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}]}`, "",
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`, "",
 				`data: {"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED"}}`, "",
 			},
 		},
