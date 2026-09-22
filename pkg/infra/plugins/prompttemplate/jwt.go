@@ -35,6 +35,19 @@ func bearerToken(req *infracontext.RequestContext) string {
 	return strings.TrimSpace(token)
 }
 
+// unverifiedClaim reads a claim WITHOUT checking the token's signature.
+//
+// The value is only as trustworthy as the caller's authentication method. The
+// auth chain resolves identity from mTLS, then a bearer token, then an api key
+// (middleware/auth_chain.go), so a consumer authenticating by api key or mTLS can
+// send any Authorization header it likes and this will read whatever it put
+// there. Claims are trustworthy only when bearer auth is what admitted the
+// caller, and a claim must not be used for an authorization decision otherwise.
+//
+// Verifying here is not an option: signature checks need the gateway's auth
+// configuration and, for a remote JWKS, the network, neither of which a plugin
+// reading a header has. The honest fix is to carry already-verified claims on
+// the request context.
 func unverifiedClaim(token, claimName string) (string, bool) {
 	if token == "" || claimName == "" {
 		return "", false

@@ -4060,6 +4060,32 @@
                 ]
             }
         },
+        "/whoami": {
+            "get": {
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Describe what an API key reaches",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
                 "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
@@ -4156,35 +4182,9 @@
                 }
             }
         },
-        "/whoami": {
-                "get": {
-                    "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.",
-                    "produces": [
-                        "application/json"
-                    ],
-                    "tags": [
-                        "mcp"
-                    ],
-                    "summary": "Describe what an API key reaches",
-                    "responses": {
-                        "200": {
-                            "description": "OK",
-                            "schema": {
-                                "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse"
-                            }
-                        },
-                        "401": {
-                            "description": "Unauthorized",
-                            "schema": {
-                                "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                            }
-                        }
-                    }
-                }
-            },
         "/{slug}/connections": {
             "get": {
-                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.",
+                "description": "Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:\u003cconsumer_id\u003e) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.",
                 "produces": [
                     "application/json"
                 ],
@@ -7844,8 +7844,7 @@
             "additionalProperties": {
                 "type": "array",
                 "items": {
-                    "type": "integer",
-                    "format": "int32"
+                    "type": "integer"
                 }
             }
         },
@@ -8459,49 +8458,49 @@
             }
         },
         "pkg_api_handler_http_mcp.WhoAmIConsumer": {
-                "type": "object",
-                "properties": {
-                    "acts_for_users": {
-                        "description": "ActsForUsers is false for a consumer that acts as the application\nitself, which is the actor a batch runs as.",
-                        "type": "boolean"
-                    },
-                    "active": {
-                        "type": "boolean"
-                    },
-                    "identity_source": {
-                        "description": "IdentitySource names who its users are when it acts for them.",
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "slug": {
-                        "type": "string"
-                    },
-                    "type": {
-                        "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
-                        "type": "string"
-                    },
-                    "url": {
-                        "description": "URL is where this consumer is served \u2014 the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
-                        "type": "string"
-                    }
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "acts_for_users": {
+                    "description": "ActsForUsers is false for a consumer that acts as the application\nitself, which is the actor a batch runs as.",
+                    "type": "boolean"
+                },
+                "identity_source": {
+                    "description": "IdentitySource names who its users are when it acts for them.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                    "type": "string"
                 }
-            },
-            "pkg_api_handler_http_mcp.WhoAmIResponse": {
-                "type": "object",
-                "properties": {
-                    "consumers": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer"
-                        }
-                    },
-                    "gateway": {
-                        "type": "string"
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIResponse": {
+            "type": "object",
+            "properties": {
+                "consumers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer"
                     }
+                },
+                "gateway": {
+                    "type": "string"
                 }
-            },
+            }
+        },
         "pkg_api_handler_http_oauth.EndUserConnectionResponse": {
             "type": "object",
             "properties": {

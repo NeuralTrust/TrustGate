@@ -19,16 +19,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type ListAuthHandler struct {
 	finder appauth.Finder
+	// reach answers which consumers hold each auth, in one read for the page.
+	// Optional, as on the single read.
+	reach appconsumer.AuthConsumers
 }
 
-func NewListAuthHandler(finder appauth.Finder) *ListAuthHandler {
-	return &ListAuthHandler{finder: finder}
+func NewListAuthHandler(finder appauth.Finder, reach appconsumer.AuthConsumers) *ListAuthHandler {
+	return &ListAuthHandler{finder: finder, reach: reach}
 }
 
 // Handle godoc
@@ -101,8 +106,34 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 		Size:  req.Page.Size,
 		Total: total,
 	}
+	held, err := h.heldBy(c, gatewayID, items)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	for _, a := range items {
-		out.Items = append(out.Items, response.FromAuth(a))
+		if held == nil {
+			out.Items = append(out.Items, response.FromAuth(a))
+			continue
+		}
+		out.Items = append(out.Items, response.FromAuthWithConsumers(a, held[a.ID]))
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// heldBy reads the consumers of every auth on the page at once, since they all
+// come from the same gateway and that read is cached. Nil when this deployment
+// wires no reverse lookup.
+func (h *ListAuthHandler) heldBy(
+	c *fiber.Ctx,
+	gatewayID ids.GatewayID,
+	items []*domain.Auth,
+) (map[ids.AuthID][]appconsumer.AuthConsumer, error) {
+	if h.reach == nil || len(items) == 0 {
+		return nil, nil
+	}
+	authIDs := make([]ids.AuthID, 0, len(items))
+	for _, a := range items {
+		authIDs = append(authIDs, a.ID)
+	}
+	return h.reach.ForAuths(c.UserContext(), gatewayID, authIDs)
 }

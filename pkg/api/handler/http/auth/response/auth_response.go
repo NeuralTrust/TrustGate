@@ -17,6 +17,7 @@ package response
 import (
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -37,6 +38,19 @@ type AuthResponse struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// Consumers are the consumers this auth reaches, which is what a caller
+	// needs before revoking one: a key can be attached to several, so
+	// disabling it stops more than the endpoint the reader was looking at.
+	// Empty means it reaches none, which is an answer rather than a gap.
+	Consumers []AuthConsumerResponse `json:"consumers"`
+}
+
+// AuthConsumerResponse names one consumer an auth reaches.
+type AuthConsumerResponse struct {
+	ID   ids.ConsumerID `json:"id"`
+	Name string         `json:"name"`
+	Slug string         `json:"slug"`
+	Type string         `json:"type"`
 }
 
 type ConfigResponse struct {
@@ -68,8 +82,24 @@ type MTLSConfigResponse struct {
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
+// FromAuthWithConsumers is FromAuth with the consumers the auth reaches.
+func FromAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuth(a)
+	res.Consumers = make([]AuthConsumerResponse, 0, len(held))
+	for _, c := range held {
+		res.Consumers = append(res.Consumers, AuthConsumerResponse{
+			ID:   c.ID,
+			Name: c.Name,
+			Slug: c.Slug,
+			Type: string(c.Type),
+		})
+	}
+	return res
+}
+
 func FromAuth(a *domain.Auth) AuthResponse {
 	return AuthResponse{
+		Consumers: []AuthConsumerResponse{},
 		ID:        a.ID,
 		GatewayID: a.GatewayID,
 		Name:      a.Name,
@@ -86,6 +116,15 @@ func FromAuth(a *domain.Auth) AuthResponse {
 
 func FromCreatedAuth(a *domain.Auth) AuthResponse {
 	res := FromAuth(a)
+	res.APIKey = a.RawKey
+	return res
+}
+
+// FromCreatedAuthWithConsumers carries the one-time secret and the consumers
+// the auth reaches. Rotation needs both: the secret because it is the only time
+// it is readable, and the consumers because they are what the rotation cut off.
+func FromCreatedAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuthWithConsumers(a, held)
 	res.APIKey = a.RawKey
 	return res
 }

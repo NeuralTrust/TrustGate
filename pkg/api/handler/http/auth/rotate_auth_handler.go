@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -28,10 +29,14 @@ import (
 
 type RotateAuthHandler struct {
 	rotator appauth.Rotator
+	// reach answers which consumers hold this auth, as it does on get and list.
+	// It matters more here than anywhere else: rotating cuts off whatever holds
+	// the old secret, and this is the list of what that is.
+	reach appconsumer.AuthConsumers
 }
 
-func NewRotateAuthHandler(rotator appauth.Rotator) *RotateAuthHandler {
-	return &RotateAuthHandler{rotator: rotator}
+func NewRotateAuthHandler(rotator appauth.Rotator, reach appconsumer.AuthConsumers) *RotateAuthHandler {
+	return &RotateAuthHandler{rotator: rotator, reach: reach}
 }
 
 // Handle godoc
@@ -73,5 +78,12 @@ func (h *RotateAuthHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromCreatedAuth(a))
+	if h.reach == nil {
+		return httpio.WriteOK(c, response.FromCreatedAuth(a))
+	}
+	held, err := h.reach.ForAuths(c.UserContext(), gatewayID, []ids.AuthID{a.ID})
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+	return httpio.WriteOK(c, response.FromCreatedAuthWithConsumers(a, held[a.ID]))
 }

@@ -94,6 +94,26 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 	})
 }
 
+// CreateProviderTicket mints a ticket that can only act on one provider.
+//
+// A link handed to an end user to connect one server is authority over that
+// server and nothing else: unpinned, the same ticket reaches every forwarded
+// server of the consumer, and whoever holds it can revoke accounts nobody asked
+// them about. Pinning also narrows the page the callback lands on, which is
+// what makes it show the server the link was for.
+func (s *connectService) CreateProviderTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, provider string,
+) (string, error) {
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Provider:     strings.TrimSpace(provider),
+	})
+}
+
 func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
 	return s.mintTicket(ctx, ConnectTicket{
 		GatewayID:    gatewayID.String(),
@@ -168,13 +188,44 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	return &ConnectPage{
+	page := &ConnectPage{
 		ConsumerPath: ticket.ConsumerPath,
 		ResumeURL:    ticket.ResumeURL,
 		Providers:    providers,
 		Code:         ticket.Code,
 		Instance:     ticket.InstanceID,
-	}, nil
+	}
+	// A ticket pinned to one provider is the one-server case, so it gets the
+	// focused card rather than a picker with a single entry in it: the user was
+	// sent here to connect that server, and a grid of one is a picker with
+	// nothing to pick.
+	if page.Code == "" {
+		page.Code = pinnedPageCode(ticket, providers)
+	}
+	return page, nil
+}
+
+// pinnedPageCode is the catalog code a provider-pinned ticket's page is focused
+// on, or empty when there is not exactly one.
+//
+// The pin is by provider and the page focuses by code, which are the same thing
+// for a server whose provider is its code and not in general — so this asks the
+// rows rather than assuming, and stands down when they disagree.
+func pinnedPageCode(ticket *ConnectTicket, providers []ProviderStatus) string {
+	if strings.TrimSpace(ticket.Provider) == "" {
+		return ""
+	}
+	code := ""
+	for _, status := range providers {
+		if status.Provider != ticket.Provider {
+			continue
+		}
+		if status.Code == "" || (code != "" && status.Code != code) {
+			return ""
+		}
+		code = status.Code
+	}
+	return code
 }
 
 func (s *connectService) Statuses(
@@ -544,6 +595,9 @@ func connectProviderAllowed(
 	rc *appconsumer.RoutableConsumer,
 	provider string,
 ) bool {
+	if pinned := strings.TrimSpace(ticket.Provider); pinned != "" && pinned != provider {
+		return false
+	}
 	if ticket.Providers == nil {
 		return providerRegistry(data.EffectiveRegistries(rc), provider) != nil
 	}

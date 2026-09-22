@@ -15,6 +15,8 @@
 package consumer
 
 import (
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -42,7 +44,7 @@ func NewListConsumerHandler(
 
 // Handle godoc
 // @Summary      List consumers
-// @Description  Returns a paginated list of consumers in a gateway.
+// @Description  Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.
 // @Tags         consumers
 // @Produce      json
 // @Security     BearerAuth
@@ -52,6 +54,7 @@ func NewListConsumerHandler(
 // @Param        type        query     string  false  "Filter by consumer type (LLM, MCP, A2A)"
 // @Param        active      query     bool    false  "Filter by active flag"
 // @Param        auth_id     query     string  false  "Filter consumers linked to this auth id"  format(uuid)
+// @Param        include_synthetic  query  bool  false  "Also list the consumers the gateway serves without storing (the MCP Store). They carry synthetic=true, appear on the first page only, and cannot be edited, deleted or given a key"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -92,6 +95,10 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 			return httpio.WriteError(c, httpio.ErrInvalidFilter)
 		}
 	}
+	includeSynthetic, err := httpio.ParseOptionalBool(c, "include_synthetic")
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
 	req := request.ListConsumerRequest{
 		Search: httpio.ParseSearch(c),
 		Type:   consumerType,
@@ -120,12 +127,54 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 		Size:  req.Page.Size,
 		Total: total,
 	}
+	if store := storeEntry(gatewayID, req, includeSynthetic); store != nil {
+		out.Items = append(out.Items, response.FromConsumer(store))
+		out.Total++
+	}
 	for _, cons := range items {
 		item := response.FromConsumer(cons)
 		h.stampPendingUpstreamAuth(c, gatewayID, cons, &item)
 		out.Items = append(out.Items, item)
 	}
 	return httpio.WriteOK(c, out)
+}
+
+// storeEntry is the synthetic MCP Store, when the caller asked for it and the
+// filters do not rule it out.
+//
+// It is served without being stored, so it is in no listing that reads the
+// table — and a caller building a picker over "everything this gateway serves"
+// has no other way to reach it. It is opt-in because every caller that manages
+// consumers wants the opposite: there is nothing here to edit, delete or give a
+// key to.
+//
+// It goes on the first page only, since it belongs to no page of a table it is
+// not in, and it is counted, because it is a thing the gateway serves.
+func storeEntry(
+	gatewayID ids.GatewayID,
+	req request.ListConsumerRequest,
+	include *bool,
+) *domain.Consumer {
+	if include == nil || !*include || req.Page.Number > 1 {
+		return nil
+	}
+	// No auth holds it, so any filter by key excludes it.
+	if !req.AuthID.IsNil() {
+		return nil
+	}
+	store := domain.BuildStoreConsumer(gatewayID)
+	if req.Type != "" && req.Type != store.Type {
+		return nil
+	}
+	if req.Active != nil && *req.Active != store.Active {
+		return nil
+	}
+	if search := strings.ToLower(strings.TrimSpace(req.Search)); search != "" &&
+		!strings.Contains(strings.ToLower(store.Name), search) &&
+		!strings.Contains(strings.ToLower(store.Slug), search) {
+		return nil
+	}
+	return store
 }
 
 // stampPendingUpstreamAuth tells the listing which applications cannot yet call
