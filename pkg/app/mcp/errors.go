@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 var (
@@ -74,13 +75,17 @@ func (e *ApplicationNotConnectedError) Error() string {
 	}
 	if e.Shared {
 		return fmt.Sprintf(
-			"mcp: %q is set to use one shared account and none is connected; an administrator connects it on the server's instance",
+			"mcp: %q uses one shared account for every caller and nobody has connected it; "+
+				"an administrator connects it in the console, on the server's instance in Registry",
 			server,
 		)
 	}
+	// Every MCP client reads this, not only the SDK, so the remedy is the header
+	// itself rather than a call in one language.
 	return fmt.Sprintf(
-		"mcp: %q uses a per-user account and this request runs as the application itself; "+
-			"name the end user it acts for, or have an administrator switch the server's instance to a shared account",
-		server,
+		"mcp: %q keeps one account per user, and this request carries only the application's key, "+
+			"so it has no account there. Send the %s header with the id of the end user it acts for, "+
+			"or have an administrator set the server's instance to a shared account",
+		server, consumerdomain.EndUserHeader,
 	)
 }
