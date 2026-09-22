@@ -47,9 +47,10 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 }
 
 // NewPoolConfig builds a pgxpool.Config from discrete DatabaseConfig fields,
-// including the IAM BeforeConnect hook when Login is "aws". Callers that need
-// a pool without the boot-time Ping of NewConnection (for example a telemetry
-// sink) should use this and open the pool themselves.
+// including the BeforeConnect hook for logins that authenticate with a
+// short-lived token instead of DB_PASSWORD. Callers that need a pool without
+// the boot-time Ping of NewConnection (for example a telemetry sink) should
+// use this and open the pool themselves.
 func NewPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
 	return buildPoolConfig(ctx, cfg)
 }
@@ -68,7 +69,7 @@ func (c *Connection) HealthCheck(ctx context.Context) error {
 
 func buildPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
 	password := cfg.Password
-	if cfg.Login == "aws" {
+	if cfg.Login.UsesTokenAuth() {
 		password = ""
 	}
 	// Omit empty password= from the DSN. pgx keyword parsing treats
@@ -98,7 +99,7 @@ func buildPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.
 	conf.MaxConnIdleTime = cfg.MaxConnIdleTime
 	conf.HealthCheckPeriod = cfg.HealthCheckPeriod
 	conf.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
-	strategy, err := newPoolAuthStrategy(ctx, cfg.Login, defaultAuthDependencies())
+	strategy, err := newPoolAuthStrategy(ctx, cfg, defaultAuthDependencies())
 	if err != nil {
 		return nil, fmt.Errorf("configure database authentication: %w", err)
 	}
