@@ -50,6 +50,10 @@ type scriptedRunner struct {
 	calls    int
 	segments []appplugins.StreamSegment
 	stages   []policy.Stage
+	// closings captures the segments that ask for no verdict, so calls and
+	// segments keep meaning "blocks the guard wanted inspected" and the
+	// single-write guarantee is assertable as len(closings) == 1.
+	closings []appplugins.StreamSegment
 }
 
 func (r *scriptedRunner) RunStreamSegment(
@@ -57,6 +61,10 @@ func (r *scriptedRunner) RunStreamSegment(
 	in appplugins.StageInput,
 	seg appplugins.StreamSegment,
 ) (*appplugins.SegmentOutcome, error) {
+	if seg.Closing {
+		r.closings = append(r.closings, seg)
+		return &appplugins.SegmentOutcome{}, nil
+	}
 	r.calls++
 	r.segments = append(r.segments, seg)
 	r.stages = append(r.stages, in.Stage)
@@ -1713,4 +1721,138 @@ func TestStreamGuard_CutClosesTheItemOnlyWhileTheClientHasItOpen(t *testing.T) {
 					`"status":"incomplete","content":[]}}`)
 		})
 	}
+}
+
+// The aggregate is written from the closing segment, so the guard owes exactly
+// one of those on every path a stream can end on — including the paths that
+// never reach a final block, which are precisely the ones worth measuring. One
+// too few and a cut is invisible; one too many and SetExtras overwrites a
+// complete account with a partial one.
+func TestStreamGuard_ClosesTheStreamExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	block := &appplugins.SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut"}
+
+	tests := []struct {
+		name     string
+		lines    []string
+		cfg      streamGuardConfig
+		outcome  *appplugins.SegmentOutcome
+		runErr   error
+		stopAt   int
+		wantCut  int
+		wantFall string
+		wantFin  bool
+	}{
+		{
+			name:    "a stream that ends on its own",
+			lines:   openAIStreamLines(),
+			wantFin: true,
+		},
+		{
+			name:    "a head-gate block, where nothing was ever written",
+			lines:   openAIStreamLines(),
+			outcome: block,
+			wantCut: 1,
+			wantFin: true,
+		},
+		{
+			name:    "a mid-stream cut, which never reaches a final block",
+			lines:   textStreamLines("alpha", "bravo", "charlie", "delta", "echo", "foxtrot"),
+			cfg:     streamGuardConfig{headChars: 1, minChars: 1},
+			outcome: block,
+			wantCut: 1,
+		},
+		{
+			name:     "a client that stopped pulling",
+			lines:    textStreamLines("alpha", "bravo", "charlie", "delta", "echo", "foxtrot"),
+			cfg:      streamGuardConfig{headChars: 1, minChars: 1},
+			stopAt:   1,
+			wantFall: fallbackClientDisconnected,
+		},
+		{
+			name:     "a block loop retired by consecutive failures",
+			lines:    textStreamLines("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"),
+			cfg:      streamGuardConfig{headChars: 1, minChars: 1},
+			runErr:   errors.New("guard unreachable"),
+			wantFall: fallbackSegmentationUnavail,
+			wantFin:  false,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{outcome: tc.outcome, err: tc.runErr}
+			g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI,
+				stageInputFixture(), tc.cfg, newGuardLogger())
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			if pe == nil {
+				drainUpTo(out, tc.stopAt)
+			} else {
+				drainUpTo(out, 0)
+			}
+
+			require.Len(t, runner.closings, 1, "the aggregate is written once, on every path")
+			report := runner.closings[0].Report
+			require.Equal(t, g.streamID, runner.closings[0].StreamID)
+			require.Equal(t, runner.calls, report.Evals, "every block handed to the chain is an eval")
+			require.Equal(t, tc.wantCut, report.CutAtEval)
+			require.Equal(t, tc.wantFall, report.FallbackReason)
+			require.Equal(t, tc.wantFin, report.FinalPass)
+			if tc.runErr != nil {
+				require.Zero(t, report.GuardCalls, "a call that never answered is not a guard call")
+				require.Equal(t, degradeGuardTimeout, report.DegradedReason)
+			} else {
+				require.Equal(t, report.Evals, report.GuardCalls)
+			}
+			require.GreaterOrEqual(t, report.GuardLatency, report.GuardLatencyMax)
+			if tc.wantCut == 0 && tc.wantFall == "" {
+				require.GreaterOrEqual(t, report.AddedLatency, report.GuardLatency,
+					"bytes were held for at least as long as the chain took to clear them")
+			}
+		})
+	}
+}
+
+// drainUpTo consumes the sequence, stopping after stop lines when stop is
+// positive. Stopping early is the only disconnect signal there is: propagation
+// is pull-based, so a consumer that walks away is a yield that returns false.
+func drainUpTo(out iter.Seq2[[]byte, error], stop int) {
+	n := 0
+	for range out {
+		n++
+		if stop > 0 && n >= stop {
+			return
+		}
+	}
+}
+
+// The cut offset is what the client had already read, not what the provider had
+// produced. It is the exposure a cut did not prevent, and the number an
+// operator sets min_chars_between_evals against, so it must never be read off
+// the accumulated buffer.
+func TestStreamGuard_CutOffsetCountsReleasedTextOnly(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls >= 3 {
+			runner.outcome = &appplugins.SegmentOutcome{Block: true, Type: "jailbreak"}
+		}
+	}
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, textStreamLines("alpha", "bravo", "charlie", "delta", "echo", "foxtrot"), nil))
+	require.Nil(t, pe)
+	_, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.Len(t, runner.closings, 1)
+	report := runner.closings[0].Report
+	require.Equal(t, 3, report.CutAtEval)
+	require.Equal(t, g.releasedChars, report.CutOffsetChars)
+	require.Less(t, report.CutOffsetChars, len(g.text.String()),
+		"the client saw less than the provider produced, or the cut prevented nothing")
 }

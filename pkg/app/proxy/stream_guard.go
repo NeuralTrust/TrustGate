@@ -117,13 +117,13 @@ const (
 
 // Why a stream stopped being inspected the way the policy asked. A degrade is
 // per block and recoverable; a fallback retires the block loop for the rest of
-// the stream. Telemetry publishes them in a later slice — they are recorded
-// here so that no degradation is silent.
+// the stream. They are aliases of the shared tokens so the strings the guard
+// records and the strings the plugin publishes cannot drift.
 const (
-	degradeAccumulationCap      = "accumulation_cap"
-	degradeGuardTimeout         = "guard_timeout"
-	fallbackSegmentationUnavail = "segmentation_unavailable"
-	fallbackClientDisconnected  = "client_disconnected"
+	degradeAccumulationCap      = appplugins.StreamDegradeAccumulationCap
+	degradeGuardTimeout         = appplugins.StreamDegradeGuardTimeout
+	fallbackSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
+	fallbackClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )
 
 type streamGuardConfig struct {
@@ -211,6 +211,21 @@ type streamGuard struct {
 	cutMessage     string
 	degradedReason string
 	fallbackReason string
+
+	// What the stream cost, handed to the chain once on the closing segment.
+	// holdStart is the moment the oldest unreleased event arrived, so the added
+	// latency it accumulates is what the client waited for held bytes rather
+	// than what the chain spent: the first is always the larger, and it is the
+	// one the response leg makes client-visible for the first time.
+	callFailures  int
+	guardTotal    time.Duration
+	guardMax      time.Duration
+	addedLatency  time.Duration
+	holdStart     time.Time
+	releasedChars int
+	cutAtEval     int
+	cutOffset     int
+	closed        bool
 }
 
 func newStreamGuard(
@@ -262,6 +277,7 @@ func (g *streamGuard) Run(
 		}
 	}()
 	if pe := g.head(spanCtx); pe != nil {
+		g.close(spanCtx)
 		release()
 		handed = true
 		return g.remainder(), pe
@@ -323,6 +339,9 @@ func (g *streamGuard) admit(ev *streamEvent, err error) bool {
 	if ev == nil {
 		return false
 	}
+	if g.releasedIdx == len(g.produced) && g.holdStart.IsZero() {
+		g.holdStart = g.now()
+	}
 	g.produced = append(g.produced, ev)
 	g.chars += ev.chars()
 	g.text.WriteString(ev.text)
@@ -351,11 +370,12 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	if g.clearedIdx == len(g.produced) {
 		return nil
 	}
-	outcome, err := g.runner.RunStreamSegment(ctx, g.in, g.nextSegment())
+	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
 		return g.headFailure(err)
 	}
 	if outcome != nil && outcome.Block {
+		g.markCut()
 		return blockedHeadError(g.source, outcome)
 	}
 	// A transform escalates to a block until the buffer rewrite lands. Releasing
@@ -363,6 +383,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	// streamed response, and at the head nothing is committed yet, so escalating
 	// costs a status code rather than a truncated body.
 	if outcome != nil && outcome.HasTransform {
+		g.markCut()
 		return streamError(g.source, streamMaskedType, streamMaskedMessage)
 	}
 	g.clearedIdx = len(g.produced)
@@ -430,6 +451,12 @@ func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]by
 			}
 		}()
 		defer cancel()
+		// Registered last so it runs first: the closing segment is the only
+		// write of the per-stream aggregate, and it has to be issued while the
+		// stream context is still live, whatever ended the stream — the end of
+		// the source, a cut, a retired block loop, or a client that stopped
+		// pulling.
+		defer g.close(streamCtx)
 		if !g.flush(yield) {
 			return
 		}
@@ -504,7 +531,7 @@ func (g *streamGuard) inspect(ctx context.Context) {
 		g.retire(fallbackClientDisconnected)
 		return
 	}
-	outcome, err := g.runner.RunStreamSegment(ctx, g.in, g.nextSegment())
+	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
 		g.blockFailure(err)
 		return
@@ -552,6 +579,78 @@ func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 
 func (g *streamGuard) final() bool {
 	return g.terminal || g.exhausted || g.srcErr != nil
+}
+
+// call is the one place a verdict is asked for, so it is the one place the cost
+// of asking is measured. The clock covers the whole chain rather than the
+// engine RTT alone: what the response leg newly makes client-visible is the
+// hold, and the hold lasts as long as the call the guard is waiting on.
+func (g *streamGuard) call(
+	ctx context.Context,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentOutcome, error) {
+	started := g.now()
+	outcome, err := g.runner.RunStreamSegment(ctx, g.in, seg)
+	elapsed := g.now().Sub(started)
+	g.guardTotal += elapsed
+	if elapsed > g.guardMax {
+		g.guardMax = elapsed
+	}
+	if err != nil {
+		g.callFailures++
+		return nil, err
+	}
+	return outcome, nil
+}
+
+// The offset is what the client had already received, not what the provider had
+// produced: it is the exposure the cut did not prevent, which is the number an
+// operator sets min_chars_between_evals against.
+func (g *streamGuard) markCut() {
+	if g.cutAtEval != 0 {
+		return
+	}
+	g.cutAtEval = g.seq
+	g.cutOffset = g.releasedChars
+}
+
+// report is the guard's account of the stream, handed to the chain once. It is
+// built here and published by the inspector because only the guard sees every
+// path the stream can end on, and only the inspector owns an event to write to.
+func (g *streamGuard) report() appplugins.StreamReport {
+	return appplugins.StreamReport{
+		Evals:           g.seq,
+		GuardCalls:      g.seq - g.callFailures,
+		GuardLatency:    g.guardTotal,
+		GuardLatencyMax: g.guardMax,
+		AddedLatency:    g.addedLatency,
+		CutAtEval:       g.cutAtEval,
+		CutOffsetChars:  g.cutOffset,
+		FinalPass:       g.finalSent,
+		DegradedReason:  g.degradedReason,
+		FallbackReason:  g.fallbackReason,
+	}
+}
+
+// close issues the closing segment. It asks for no verdict and carries no text:
+// it exists so the aggregate is written exactly once, on every path a stream can
+// end on, including the ones that never reach a final block. Its own cost is
+// deliberately outside the report it carries.
+func (g *streamGuard) close(ctx context.Context) {
+	if g.closed {
+		return
+	}
+	g.closed = true
+	if _, err := g.runner.RunStreamSegment(ctx, g.in, appplugins.StreamSegment{
+		StreamID: g.streamID,
+		Seq:      g.seq,
+		Closing:  true,
+		Report:   g.report(),
+	}); err != nil && g.logger != nil {
+		g.logger.Warn("stream aggregate was not published",
+			slog.String("format", string(g.source)),
+			slog.String("error", err.Error()))
+	}
 }
 
 // budget spends max_accumulated_bytes across everything one call carries, as a
@@ -673,6 +772,7 @@ func (g *streamGuard) retire(reason string) {
 
 func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 	g.stopped = true
+	g.markCut()
 	g.cutMessage = cutMessage(outcome)
 	if g.logger == nil {
 		return
@@ -914,12 +1014,23 @@ func (g *streamGuard) degrade(reason string) {
 // cut forward works on produced[releasedIdx:], the tail, which this never
 // touches. g.text keeps growing — Accumulated and sentChars are built from it.
 func (g *streamGuard) flush(yield func([]byte, error) bool) bool {
+	released := g.releasedIdx
 	for _, ev := range g.produced[g.releasedIdx:g.clearedIdx] {
 		for _, line := range ev.lines {
 			if !yield(line, nil) {
+				// A consumer that stops pulling is the only disconnect signal
+				// there is, and it is worth a token of its own: the stream was
+				// inspected as configured right up to the point nobody was
+				// reading it any more. It is the least serious of the reasons,
+				// though, so a loop that had already retired keeps the reason
+				// it retired for.
+				if g.fallbackReason == "" {
+					g.retire(fallbackClientDisconnected)
+				}
 				return false
 			}
 		}
+		g.releasedChars += ev.chars()
 		// The anchor advances here and only here, because this is where an
 		// event becomes something the client has seen. A yield that comes back
 		// false stops before the mark is applied, which is correct: those lines
@@ -928,9 +1039,22 @@ func (g *streamGuard) flush(yield func([]byte, error) bool) bool {
 		ev.lines = nil
 		g.releasedIdx++
 	}
+	// The hold clock is charged only where it ends, which is an event reaching
+	// the client. A flush the verdict gave nothing to release has not ended
+	// anyone's wait, and charging it would count the same wait once per block.
+	if released == g.releasedIdx {
+		return true
+	}
+	if !g.holdStart.IsZero() {
+		g.addedLatency += g.now().Sub(g.holdStart)
+		g.holdStart = time.Time{}
+	}
 	if g.releasedIdx == len(g.produced) {
 		g.held = 0
+		return true
 	}
+	// Whatever the verdict did not cover starts waiting again from here.
+	g.holdStart = g.now()
 	return true
 }
 

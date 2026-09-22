@@ -60,10 +60,18 @@ var _ Executor = (*executor)(nil)
 type executor struct {
 	registry Registry
 	logger   *slog.Logger
+	now      func() time.Time
 }
 
 func NewExecutor(registry Registry, logger *slog.Logger) Executor {
-	return &executor{registry: registry, logger: logger}
+	return &executor{registry: registry, logger: logger, now: time.Now}
+}
+
+func (e *executor) clock() time.Time {
+	if e.now == nil {
+		return time.Now()
+	}
+	return e.now()
 }
 
 func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, error) {
@@ -95,6 +103,11 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 // there is nothing left to cancel, and every later call would rediscover the
 // same finding over the same cumulative text.
 //
+// A closing segment is the exception: it asks for no verdict, so every entry is
+// visited whatever the ones before it answered, and an error from one is
+// recorded on its own span rather than denying the rest of the chain the only
+// point at which it can publish.
+//
 // StageInput.Stage is ignored: a stream is a pre_response concern, so the chain
 // is always the pre_response one and ExecInput.Stage is always
 // policy.StagePreResponse whatever the caller passed.
@@ -106,7 +119,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	}
 
 	spans := streamSpansFrom(ctx)
-	if seg.Final {
+	var reporter string
+	if seg.Closing {
+		// Finality and closure are mutually exclusive, and only one caller
+		// builds both flags: a segment that carries no text cannot also be the
+		// block that covered the end of the response.
+		seg.Final = false
+		reporter = spans.reporter(seg, entries)
 		defer spans.publish()
 	}
 
@@ -116,6 +135,12 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			continue
 		}
 		event := spans.eventFor(ctx, seg, entry)
+		call := seg
+		if seg.Closing {
+			call.Report = spans.entryReport(seg, entry)
+			call.ReportsStream = spanKey(seg, entry) == reporter
+		}
+		started := e.clock()
 		verdict, err := inspector.InspectSegment(ctx, ExecInput{
 			Stage:    policy.StagePreResponse,
 			Mode:     entry.mode,
@@ -124,15 +149,26 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			Request:  in.Request,
 			Response: in.Response,
 			Event:    event,
-		}, seg)
+		}, call)
+		if !seg.Closing {
+			spans.charge(seg, entry, e.clock().Sub(started))
+		}
 		if err != nil {
 			event.SetError(err)
+			if seg.Closing {
+				continue
+			}
 			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
 		}
-		if verdict == nil {
+		if seg.Closing || verdict == nil {
 			continue
 		}
-		if e.mergeVerdict(outcome, verdict, entry) {
+		transformed := outcome.HasTransform
+		stop := e.mergeVerdict(outcome, verdict, entry)
+		if stop || (!transformed && outcome.HasTransform) {
+			spans.markCut(seg, entry)
+		}
+		if stop {
 			break
 		}
 	}
