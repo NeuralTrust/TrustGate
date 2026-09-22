@@ -33,18 +33,20 @@ import (
 func TestNewPoolAuthStrategy(t *testing.T) {
 	loadErr := errors.New("load failed")
 	tests := []struct {
-		name, login, region string
-		loadErr, wantErr    error
-		wantLoads           int
+		name, region     string
+		login            appconfig.PostgresLogin
+		loadErr, wantErr error
+		wantLoads        int
 	}{
-		{name: "default parity", login: "default"},
+		{name: "default parity", login: appconfig.PostgresLoginDefault},
+		{name: "empty login parity", login: ""},
 		{name: "load error", login: "aws", loadErr: loadErr, wantErr: loadErr, wantLoads: 1},
 		{name: "empty region", login: "aws", wantErr: errAWSRegionRequired, wantLoads: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			loads := 0
-			strategy, err := newPoolAuthStrategy(t.Context(), tt.login, authDependencies{
+			strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: tt.login}, authDependencies{
 				loadConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
 					loads++
 					return aws.Config{Region: tt.region}, tt.loadErr
@@ -63,6 +65,19 @@ func TestNewPoolAuthStrategy(t *testing.T) {
 		})
 	}
 }
+func TestNewPoolAuthStrategyRejectsUnsupportedLogin(t *testing.T) {
+	loads := 0
+	strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: "gcp"}, authDependencies{
+		loadConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
+			loads++
+			return aws.Config{Region: "eu-west-1"}, nil
+		},
+	})
+	require.ErrorIs(t, err, errUnsupportedDBLogin)
+	require.ErrorContains(t, err, "gcp")
+	require.Nil(t, strategy)
+	require.Zero(t, loads)
+}
 func TestAWSAuthStrategyHookBehavior(t *testing.T) {
 	type tokenCall struct {
 		ctx                    context.Context
@@ -72,7 +87,7 @@ func TestAWSAuthStrategyHookBehavior(t *testing.T) {
 	provider := aws.AnonymousCredentials{}
 	var mutex sync.Mutex
 	var calls []tokenCall
-	strategy, err := newPoolAuthStrategy(t.Context(), "aws", authDependencies{
+	strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: appconfig.PostgresLoginAWS}, authDependencies{
 		loadConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
 			return aws.Config{Region: "eu-west-1", Credentials: provider}, nil
 		},
@@ -142,7 +157,7 @@ func TestAWSAuthStrategyErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			builderCalls := 0
-			strategy, err := newPoolAuthStrategy(t.Context(), "aws", authDependencies{
+			strategy, err := newPoolAuthStrategy(t.Context(), &appconfig.DatabaseConfig{Login: appconfig.PostgresLoginAWS}, authDependencies{
 				loadConfig: func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
 					return aws.Config{Region: "us-east-1", Credentials: aws.AnonymousCredentials{}}, nil
 				},
