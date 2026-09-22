@@ -68,7 +68,9 @@ func TestRotateAuth_RefusesAnIdentityProvider(t *testing.T) {
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/%s/rotate", AdminURL, gwID, authID), nil, nil,
 	)
-	require.Equal(t, http.StatusBadRequest, status, "only api keys carry a secret to rotate, body=%v", body)
+	// 422, like every other validation refusal on this API: the request is
+	// well-formed, what it asks for is not allowed.
+	require.Equal(t, http.StatusUnprocessableEntity, status, "only api keys carry a secret to rotate, body=%v", body)
 }
 
 func TestRotateAuth_NotFound(t *testing.T) {
@@ -123,5 +125,5 @@ func TestCreateAuth_RefusesAnExpiryInThePast(t *testing.T) {
 			"expires_at": time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
 		},
 	)
-	require.Equal(t, http.StatusBadRequest, status, "a key that is already expired is never what was meant, body=%v", body)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "a key that is already expired is never what was meant, body=%v", body)
 }
