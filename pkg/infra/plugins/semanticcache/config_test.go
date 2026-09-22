@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +142,21 @@ func TestParseConfig_EmptyDefaults(t *testing.T) {
 	assert.True(t, cfg.skipIfTools())
 	assert.True(t, cfg.cacheableStatus(200))
 	assert.False(t, cfg.cacheableStatus(500))
+}
+
+// TestCredentialPaths pins the RUN-1646 declaration: the embedding
+// provider's api_key, nested under "embedding" — there is no top-level
+// alias for it (unlike embedding_provider/embedding_model, which do have
+// one; see provider()/model() above).
+func TestCredentialPaths(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	var _ appplugins.CredentialSettings = p // opts in
+	assert.Equal(t, []string{"embedding.api_key"}, p.CredentialPaths())
+
+	settings := map[string]any{"embedding": map[string]any{"provider": "openai", "api_key": "sk-real-value"}}
+	cfg, err := parseConfig(settings)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-real-value", cfg.embeddingDomainConfig().Credentials.APIKey,
+		"declared path embedding.api_key must resolve against the same field the plugin actually reads")
 }

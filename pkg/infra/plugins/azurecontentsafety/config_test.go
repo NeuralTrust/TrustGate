@@ -17,6 +17,7 @@ package azurecontentsafety
 import (
 	"testing"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -234,4 +235,18 @@ func TestThresholdFor(t *testing.T) {
 	cfg := Settings{CategorySeverity: map[string]int{CategoryHate: 4}}
 	assert.Equal(t, 4, cfg.thresholdFor(CategoryHate))
 	assert.Equal(t, 0, cfg.thresholdFor(CategoryViolence))
+}
+
+// TestCredentialPaths pins the RUN-1646 declaration: api_key is a top-level
+// field of Settings, not nested.
+func TestCredentialPaths(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	var _ appplugins.CredentialSettings = p // opts in
+	assert.Equal(t, []string{"api_key"}, p.CredentialPaths())
+
+	settings := map[string]any{"api_key": "az-real-value", "endpoint": "https://example.cognitiveservices.azure.com"}
+	if _, ok := settings["api_key"]; !ok {
+		t.Fatal("declared path api_key does not resolve against a real settings payload")
+	}
 }

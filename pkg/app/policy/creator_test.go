@@ -45,12 +45,17 @@ func newCacheManager() *cache.TTLMapManager {
 // newRegistryMock returns a plugin registry mock whose ValidateStages yields
 // stagesErr. It is marked Maybe() so tests where validation is never reached
 // (e.g. domain validation fails first) do not fail on an unmet expectation.
+// Get resolves nothing, matching a plugin that never opted into
+// appplugins.CredentialSettings (see PluginCredentialPaths): the RUN-1646
+// resolve/reject path is a no-op for every test using this helper unless it
+// overrides Get itself.
 func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Get(mock.Anything).Return(nil, false).Maybe()
 	return reg
 }
 
@@ -62,11 +67,19 @@ func newRegistryRepo(t *testing.T) *registrymocks.Repository {
 	return registrymocks.NewRepository(t)
 }
 
-// newScopedRegistryMock is newRegistryMock plus a Get that resolves every slug
-// to a plugin declaring the given protocols, which validateMCPScope consults.
+// newScopedRegistryMock is like newRegistryMock, plus a Get that resolves
+// every slug to a plugin declaring the given protocols, which
+// validateMCPScope consults. It does not delegate to newRegistryMock: that
+// helper's own Get stub (unscoped, "no credential paths") is registered
+// first and, per testify's mock matching, a later stub for the same method
+// signature never overrides an earlier one — so this builds its own
+// registry with the scoped Get as the only registration for that method.
 func newScopedRegistryMock(t *testing.T, protocols ...appplugins.Protocol) *pluginmocks.Registry {
 	t.Helper()
-	reg := newRegistryMock(t, nil)
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
 	plugin := pluginmocks.NewPlugin(t)
 	plugin.EXPECT().SupportedProtocols().Return(protocols).Maybe()
 	reg.EXPECT().Get(mock.Anything).Return(plugin, true).Maybe()
@@ -168,6 +181,7 @@ func TestCreator_Create_RejectsUnsupportedMode(t *testing.T) {
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(sentinel).Once()
+	reg.EXPECT().Get(mock.Anything).Return(nil, false).Maybe()
 	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))

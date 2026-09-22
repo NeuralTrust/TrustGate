@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
@@ -120,5 +121,19 @@ func TestSelectsStage(t *testing.T) {
 			assert.Equal(t, tt.wantPreRequest, s.selectsStage(policy.StagePreRequest))
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 		})
+	}
+}
+
+// TestCredentialPaths pins the RUN-1646 declaration: api_key is a top-level
+// field of Settings, not nested.
+func TestCredentialPaths(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	var _ appplugins.CredentialSettings = p // opts in
+	assert.Equal(t, []string{"api_key"}, p.CredentialPaths())
+
+	settings := map[string]any{"api_key": "sk-real-value"}
+	if _, ok := settings["api_key"]; !ok {
+		t.Fatal("declared path api_key does not resolve against a real settings payload")
 	}
 }

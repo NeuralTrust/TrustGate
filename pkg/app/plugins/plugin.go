@@ -84,6 +84,42 @@ func IsInertSafe(reg Registry, slug string) bool {
 	return inertSafe(p)
 }
 
+// CredentialSettings is the opt-in a plugin declares to mark which
+// dot-separated paths in its settings hold secrets. Settings is untyped
+// (map[string]any), so nothing outside the plugin knows its shape; inferring
+// secrecy from field names (anything matching key|secret|token|password) was
+// rejected because it fails silently, and fails toward exposure rather than
+// away from it. The declaration lives with the plugin that owns the shape.
+//
+// A path walks nested settings objects: "credentials.access_key_id" reaches
+// settings["credentials"].(map[string]any)["access_key_id"]. A plugin that
+// implements this is opted into masking on every policy response and
+// resolve-on-update (see api/handler/http/policy/response and app/policy);
+// a plugin that does not is unaffected — the interface is opt-in like
+// ScopeInertSafe, never inferred, and covers no plugin until it says so.
+type CredentialSettings interface {
+	CredentialPaths() []string
+}
+
+// PluginCredentialPaths returns the settings paths slug declared as
+// credential-bearing, or nil when the plugin carries none (including an
+// absent registry or an unknown slug — the same "unaffected by default"
+// posture as a plugin that never implemented the interface).
+func PluginCredentialPaths(reg Registry, slug string) []string {
+	if reg == nil {
+		return nil
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return nil
+	}
+	c, ok := p.(CredentialSettings)
+	if !ok {
+		return nil
+	}
+	return c.CredentialPaths()
+}
+
 // Plugin is a single unit of request/response processing. Each plugin declares
 // the fixed stages it runs on via Stages; the executor drives it only at those
 // stages and ignores the stage recorded in the policy configuration.

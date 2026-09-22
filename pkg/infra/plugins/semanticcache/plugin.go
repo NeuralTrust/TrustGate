@@ -138,6 +138,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths opts this plugin into settings masking (RUN-1646): the
+// embedding provider's api_key, nested under "embedding" in Settings (see
+// embeddingConfig in config.go). There is no top-level alias for it — only
+// embedding_provider/embedding_model have top-level aliases.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"embedding.api_key"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

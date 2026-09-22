@@ -17,18 +17,20 @@ package policy
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type GlobalPolicyHandler struct {
-	scoper apppolicy.Scoper
-	warner apppolicy.Warner
+	scoper   apppolicy.Scoper
+	warner   apppolicy.Warner
+	registry appplugins.Registry
 }
 
-func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *GlobalPolicyHandler {
-	return &GlobalPolicyHandler{scoper: scoper, warner: warner}
+func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, registry appplugins.Registry) *GlobalPolicyHandler {
+	return &GlobalPolicyHandler{scoper: scoper, warner: warner, registry: registry}
 }
 
 // SetGlobal godoc
@@ -54,7 +56,7 @@ func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p), h.registry))
 }
 
 // UnsetGlobal godoc
@@ -79,5 +81,5 @@ func (h *GlobalPolicyHandler) UnsetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicy(p, h.registry))
 }

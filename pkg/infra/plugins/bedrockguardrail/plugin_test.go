@@ -535,3 +535,36 @@ func TestValidateConfigRejectsMissingGuardrailID(t *testing.T) {
 		t.Fatal("expected validation error for missing guardrail_id")
 	}
 }
+
+// TestCredentialPaths pins the RUN-1646 declaration against config.go's own
+// mapstructure tags for Credentials (access_key_id, secret_access_key,
+// session_token nested under "credentials"), and checks the two mandatory
+// ones resolve against a real settings payload.
+func TestCredentialPaths(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	var _ appplugins.CredentialSettings = p // opts in
+	want := []string{"credentials.access_key_id", "credentials.secret_access_key", "credentials.session_token"}
+	if got := p.CredentialPaths(); !equalStrings(got, want) {
+		t.Fatalf("CredentialPaths() = %v, want %v", got, want)
+	}
+	creds := bedrockSettings(piiActionBlock)["credentials"].(map[string]any)
+	if _, ok := creds["access_key_id"]; !ok {
+		t.Fatal("declared path credentials.access_key_id does not resolve against a real settings payload")
+	}
+	if _, ok := creds["secret_access_key"]; !ok {
+		t.Fatal("declared path credentials.secret_access_key does not resolve against a real settings payload")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
