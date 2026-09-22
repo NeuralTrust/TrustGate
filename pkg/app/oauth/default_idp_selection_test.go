@@ -79,7 +79,7 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
 	})
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true, nil)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
@@ -113,7 +113,7 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
 		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
 	})
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true, nil)
 	require.NoError(t, err)
 	mtls := &authdomain.Auth{
 		ID:        ids.New[ids.AuthKind](),
