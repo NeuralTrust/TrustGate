@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -26,10 +27,12 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	"go.uber.org/dig"
 )
 
 func Consumer(c *container.Container) error {
@@ -91,7 +94,7 @@ func provideConsumerServices(c *container.Container) error {
 	}
 	// What an api key reaches, which is how a client learns its own consumers
 	// instead of being configured with their slugs.
-	if err := c.Provide(appconsumer.NewAPIKeyConsumers); err != nil {
+	if err := c.Provide(provideAPIKeyConsumers); err != nil {
 		return err
 	}
 	// The same question backwards: which consumers hold a given key, which is
@@ -123,10 +126,20 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(consumerhttp.NewAssociationHandler); err != nil {
 		return err
 	}
-	// The upstream-accounts handler needs the connect service, which only the
-	// planes that serve MCP provide; the admin router takes it as optional.
-	if err := c.Provide(consumerhttp.NewUpstreamAccountsHandler); err != nil {
-		return err
-	}
 	return nil
+}
+
+// apiKeyConsumersParams takes the vault as optional because a plane can be
+// built without one. The answer then leaves the upstream accounts out rather
+// than claiming everything is connected — a gateway that did not look must not
+// say it did.
+type apiKeyConsumersParams struct {
+	dig.In
+	Consumers appconsumer.DataFinder
+	APIKeys   appauth.APIKeyFinder
+	Vault     vaultdomain.Repository `optional:"true"`
+}
+
+func provideAPIKeyConsumers(p apiKeyConsumersParams) (appconsumer.APIKeyConsumers, error) {
+	return appconsumer.NewAPIKeyConsumers(p.Consumers, p.APIKeys, p.Vault)
 }

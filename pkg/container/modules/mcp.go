@@ -122,13 +122,7 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideConfigureService); err != nil {
 		return err
 	}
-	if err := c.Provide(provideAPIKeyConnectService); err != nil {
-		return err
-	}
 	if err := c.Provide(provideEndUserConnectionsService); err != nil {
-		return err
-	}
-	if err := c.Provide(provideConsumerUpstreamAccounts); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
@@ -434,15 +428,6 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 	), nil
 }
 
-func provideAPIKeyConnectService(
-	apiKeys appauth.APIKeyFinder,
-	consumers appconsumer.DataFinder,
-	connect appoauth.ConnectService,
-	limiter appoauth.ConnectAttemptLimiter,
-) appoauth.APIKeyConnectService {
-	return appoauth.NewAPIKeyConnectService(apiKeys, consumers, connect, limiter)
-}
-
 func provideConnectAttemptLimiter(
 	cfg *config.Config,
 	cc cache.Client,
@@ -484,16 +469,6 @@ func MCPVaultRedis(c *container.Container) error {
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
-}
-
-// provideConsumerUpstreamAccounts serves the console's "connect this
-// application's upstream accounts": an admin holds no api key, only its hash, so
-// the self-service page at /{slug}/connect is not reachable from the console.
-func provideConsumerUpstreamAccounts(
-	consumers appconsumer.DataFinder,
-	connect appoauth.ConnectService,
-) (appoauth.ConsumerUpstreamAccounts, error) {
-	return appoauth.NewConsumerUpstreamAccounts(consumers, connect)
 }
 
 // provideRegistrySharedAccounts serves the account an MCP instance holds for

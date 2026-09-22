@@ -26,7 +26,7 @@ func TestEndUserPrincipal(t *testing.T) {
 	cons := &consumerdomain.Consumer{
 		ID:       ids.New[ids.ConsumerKind](),
 		Type:     consumerdomain.TypeMCP,
-		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
+		Identity: consumerdomain.Identity{},
 	}
 	app := &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey}
 
@@ -112,4 +112,49 @@ func TestAppPrincipal(t *testing.T) {
 		bare.Method != identity.MethodAPIKey {
 		t.Fatalf("unexpected bare principal %+v", bare)
 	}
+}
+
+// The inference, stated as the table it is. The consumer declares nothing; the
+// request decides, and the three answers are: the person their token names, the
+// person the application names, or the application itself.
+func TestWhoARequestRunsAs(t *testing.T) {
+	t.Parallel()
+	cons := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP}
+
+	t.Run("a machine credential naming nobody is the application", func(t *testing.T) {
+		t.Parallel()
+		p := appPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey})
+		if p.Subject != consumerdomain.AppSubject(cons.ID) {
+			t.Fatalf("subject = %q, want the application's own subject", p.Subject)
+		}
+		// Which key called survives the swap, or an audit trail loses it.
+		if p.Claims[identity.ClaimCredentialSubject] != "backend-key" {
+			t.Fatalf("claims = %v, want the credential's subject kept", p.Claims)
+		}
+	})
+
+	t.Run("a machine credential naming someone is that person, under this application", func(t *testing.T) {
+		t.Parallel()
+		p := endUserPrincipal(cons, &identity.Principal{Subject: "backend-key", Method: identity.MethodAPIKey}, "user_123")
+		if p.Subject != consumerdomain.EndUserSubject(cons.ID, "user_123") {
+			t.Fatalf("subject = %q, want the end user namespaced by the application", p.Subject)
+		}
+		// Namespaced because the name is asserted, not verified: two
+		// applications naming user_123 must never share an account.
+		other := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP}
+		if endUserPrincipal(other, nil, "user_123").Subject == p.Subject {
+			t.Fatal("two applications naming the same end user must not collide")
+		}
+	})
+
+	// A verified person keeps their own subject, which is what makes their
+	// upstream accounts follow them across applications: the swap above is for
+	// credentials that prove an application and nothing about a person.
+	t.Run("a verified person is left alone", func(t *testing.T) {
+		t.Parallel()
+		token := &identity.Principal{Subject: "person@corp.com", Method: identity.MethodExternalJWT}
+		if machineCredential(token) {
+			t.Fatal("a token an identity provider signed is not the application's own credential")
+		}
+	})
 }

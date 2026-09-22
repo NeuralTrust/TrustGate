@@ -4,7 +4,7 @@ package functional_test
 
 import (
 	"encoding/json"
-	"io"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -235,24 +234,6 @@ func mcpForwardedRegistryPayload(name, upstreamURL, provider string, idp *oauthP
 	}
 }
 
-func mcpHostOf(t *testing.T, gatewayID string) string {
-	t.Helper()
-	host, ok := mcpHosts.Load(gatewayID)
-	require.True(t, ok, "mcp host missing for %s", gatewayID)
-	return host.(string)
-}
-
-func mcpConnectFormPost(t *testing.T, path, host string, form url.Values) *http.Response {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, MCPURL+path, strings.NewReader(form.Encode()))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Host = host
-	resp, err := noRedirectClient().Do(req)
-	require.NoError(t, err)
-	return resp
-}
-
 func doRedacted(t *testing.T, target, stage string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, target, nil)
@@ -264,18 +245,6 @@ func doRedacted(t *testing.T, target, stage string) *http.Response {
 		t.Fatalf("%s request failed", stage)
 	}
 	return resp
-}
-
-func connectTicketFrom(t *testing.T, resp *http.Response, slug string) string {
-	t.Helper()
-	defer func() { _ = resp.Body.Close() }()
-	require.Equal(t, http.StatusSeeOther, resp.StatusCode)
-	loc, err := resp.Location()
-	require.NoError(t, err)
-	require.Equal(t, "/"+slug+"/mcp/connect", loc.Path)
-	ticket := loc.Query().Get("ticket")
-	require.NotEmpty(t, ticket)
-	return ticket
 }
 
 func driveProviderConsent(t *testing.T, idp *oauthProviderStub, provider, ticket string) {
@@ -309,14 +278,6 @@ func requireBearerMatches(t *testing.T, want, got string) {
 		"upstream bearer must equal the token minted by the provider stub (want len=%d, got len=%d)", len(want), len(got))
 }
 
-func requireConsentRequired(t *testing.T, status int, body map[string]any) {
-	t.Helper()
-	require.Equal(t, http.StatusOK, status)
-	rpcErr, ok := body["error"].(map[string]any)
-	require.True(t, ok, "expected a consent-required rpc error")
-	require.Equal(t, float64(-32003), rpcErr["code"])
-}
-
 func requireRPCSucceeded(t *testing.T, status int, body map[string]any) map[string]any {
 	t.Helper()
 	require.Equal(t, http.StatusOK, status)
@@ -326,13 +287,48 @@ func requireRPCSucceeded(t *testing.T, status int, body map[string]any) map[stri
 	return result
 }
 
-func requireConnectPageReachable(t *testing.T, path, host string) {
+// mcpSharedRegistryPayload is the same forwarded instance, set to hold one
+// account for every caller instead of one per caller.
+func mcpSharedRegistryPayload(name, upstreamURL, provider string, idp *oauthProviderStub) map[string]any {
+	payload := mcpForwardedRegistryPayload(name, upstreamURL, provider, idp)
+	target, _ := payload["mcp_target"].(map[string]any)
+	auth, _ := target["auth"].(map[string]any)
+	auth["account"] = "shared"
+	return payload
+}
+
+// sharedAccountConnectLink is the admin's side of the link: the ticket is minted
+// against the instance, not against whoever will call it.
+func sharedAccountConnectLink(t *testing.T, gatewayID, registryID string) string {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		resp := mcpRequestWithHost(t, http.MethodGet, path, host, nil, nil)
-		defer func() { _ = resp.Body.Close() }()
-		return resp.StatusCode == http.StatusOK
-	}, 5*time.Second, 100*time.Millisecond, "the api-key connect page must become reachable once the consumer propagates")
+	target := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/shared-account/connect-link", AdminURL, gatewayID, registryID)
+	status, body := sendRequest(t, http.MethodPost, target, nil, nil)
+	require.Equal(t, http.StatusOK, status, "mint shared-account connect link failed: %v", body)
+	ticket, _ := body["ticket"].(string)
+	require.NotEmpty(t, ticket, "the connect link must carry a ticket: %v", body)
+	return ticket
+}
+
+func sharedAccountStatus(t *testing.T, gatewayID, registryID string) map[string]any {
+	t.Helper()
+	target := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/shared-account", AdminURL, gatewayID, registryID)
+	status, body := sendRequest(t, http.MethodGet, target, nil, nil)
+	require.Equal(t, http.StatusOK, status, "read shared account failed: %v", body)
+	return body
+}
+
+// requireNotConnected is the refusal a machine caller gets instead of a connect
+// ticket: it carries no capability, because nobody calling could redeem one.
+func requireNotConnected(t *testing.T, status int, body map[string]any) string {
+	t.Helper()
+	require.Equal(t, http.StatusOK, status)
+	rpcErr, ok := body["error"].(map[string]any)
+	require.True(t, ok, "expected a refusal, got %v", body)
+	require.Equal(t, float64(-32003), rpcErr["code"])
+	message, _ := rpcErr["message"].(string)
+	require.NotContains(t, message, "ticket=", "a refusal must not hand out a connect ticket")
+	require.Nil(t, rpcErr["data"], "a refusal carries no connect url")
+	return message
 }
 
 type forwardedFixture struct {
@@ -345,43 +341,48 @@ func (fx forwardedFixture) echoToolCall() map[string]any {
 	return map[string]any{"name": exposedToolName(fx.registryID, "echo"), "arguments": map[string]any{"message": "hola"}}
 }
 
-func newForwardedFixture(t *testing.T) forwardedFixture {
+func newForwardedFixture(t *testing.T, shared bool) forwardedFixture {
 	t.Helper()
 	idp := newOAuthProviderStub(t)
 	upstream, capture := startCapturingMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
 	gatewayID, provider := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")}), uniqueName("prov")
-	registryID := CreateRegistry(t, gatewayID, mcpForwardedRegistryPayload(uniqueName("mcp-reg"), upstream.URL, provider, idp))
+	name := uniqueName("mcp-reg")
+	payload := mcpForwardedRegistryPayload(name, upstream.URL, provider, idp)
+	if shared {
+		payload = mcpSharedRegistryPayload(name, upstream.URL, provider, idp)
+	}
+	registryID := CreateRegistry(t, gatewayID, payload)
 	return forwardedFixture{idp: idp, capture: capture, gatewayID: gatewayID, provider: provider, registryID: registryID}
 }
 
-func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
-	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
-
-	fx := newForwardedFixture(t)
+// The account belongs to the instance: an admin connects it once, out of band,
+// and every call the gateway forwards to that server rides on it.
+func TestMCPSharedAccount_ForwardedFlowEndToEnd(t *testing.T) {
+	fx := newForwardedFixture(t, true)
 	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 
-	slug := ConsumerSlug(t, consumerID)
-	host := mcpHostOf(t, fx.gatewayID)
-	connectPath := "/" + slug + "/connect"
-	var ticket string
-
-	t.Run("connect page is reachable through the running MCP plane", func(t *testing.T) {
-		requireConnectPageReachable(t, connectPath, host)
+	t.Run("before the admin connects it, the call is refused and says who fixes it", func(t *testing.T) {
+		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
+		message := requireNotConnected(t, status, body)
+		require.Contains(t, message, "administrator")
+		_, seen := fx.capture.observed()
+		require.Zero(t, seen, "an unconnected instance must not reach the upstream")
 	})
 
-	t.Run("api key is exchanged for a ticket", func(t *testing.T) {
-		ticket = connectTicketFrom(t, mcpConnectFormPost(t, connectPath, host, url.Values{"api_key": {key}}), slug)
-	})
-
-	t.Run("consent completes against the fake provider", func(t *testing.T) {
-		driveProviderConsent(t, fx.idp, fx.provider, ticket)
+	t.Run("the admin walks the connect page with the ticket pinned to the instance", func(t *testing.T) {
+		driveProviderConsent(t, fx.idp, fx.provider, sharedAccountConnectLink(t, fx.gatewayID, fx.registryID))
 		params, authorized := fx.idp.authorizeParams()
 		require.True(t, authorized, "the provider authorize endpoint must be reached")
 		require.Equal(t, "S256", params.Get("code_challenge_method"))
 		require.NotEmpty(t, params.Get("code_challenge"))
+
+		account := sharedAccountStatus(t, fx.gatewayID, fx.registryID)
+		require.Equal(t, true, account["connected"], "the instance must report its account: %v", account)
+		require.Equal(t, fx.provider, account["provider"])
 	})
 
-	t.Run("stored credential is injected into the upstream call", func(t *testing.T) {
+	t.Run("the stored credential is injected into the upstream call", func(t *testing.T) {
+		fx.capture.reset()
 		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
 		raw, err := json.Marshal(requireRPCSucceeded(t, status, body))
 		require.NoError(t, err)
@@ -394,110 +395,59 @@ func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
 	})
 }
 
-// The linked upstream account belongs to the application, not to the key that
-// linked it: every credential of one consumer reaches it, and no credential of
-// another consumer does. That is the whole point of keying the vault by
-// app:<consumer_id> — rotating or adding a key must not strand the account, and
-// two applications must never cross.
-func TestMCPAPIKeyConnect_GrantBelongsToTheApplicationNotTheKey(t *testing.T) {
-	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
-
-	fx := newForwardedFixture(t)
+// One account, every application: that is what "shared" means, and it is the
+// difference from the per-caller account the same instance holds when it is set
+// to `user`. Two applications bound to one shared instance both reach the
+// upstream on the account the admin connected, without a second consent.
+func TestMCPSharedAccount_ServesEveryApplication(t *testing.T) {
+	fx := newForwardedFixture(t, true)
 	consumerA, keyA := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 	consumerB, keyB := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 	secondAuthID, secondKeyOfA := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-key"))
 	AttachAuth(t, fx.gatewayID, consumerA, secondAuthID)
 
-	host := mcpHostOf(t, fx.gatewayID)
-	slugA := ConsumerSlug(t, consumerA)
-	connectA := "/" + slugA + "/connect"
-	requireConnectPageReachable(t, connectA, host)
+	driveProviderConsent(t, fx.idp, fx.provider, sharedAccountConnectLink(t, fx.gatewayID, fx.registryID))
 
-	ticket := connectTicketFrom(t, mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {keyA}}), slugA)
-	driveProviderConsent(t, fx.idp, fx.provider, ticket)
-
-	status, body := mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", fx.echoToolCall())
-	requireRPCSucceeded(t, status, body)
-
-	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(keyA), "tools/call", fx.echoToolCall())
-	requireRPCSucceeded(t, status, body)
-	sharedBearer, seen := fx.capture.observed()
-	require.GreaterOrEqual(t, seen, 1, "a second client sharing the api key must reach the upstream")
-	requireBearerMatches(t, fx.idp.bearer(), sharedBearer)
-	require.Equal(t, 1, fx.idp.tokenExchanges(), "reusing the stored grant must not run consent again")
-
-	// A different key of the same application — what a rotation leaves behind —
-	// reaches the same account without a second consent.
-	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerA, apiKeyHeaders(secondKeyOfA), "tools/call", fx.echoToolCall())
-	requireRPCSucceeded(t, status, body)
-	rotatedBearer, seenRotated := fx.capture.observed()
-	require.GreaterOrEqual(t, seenRotated, 1, "another credential of the same application must reach the upstream")
-	requireBearerMatches(t, fx.idp.bearer(), rotatedBearer)
-	require.Equal(t, 1, fx.idp.tokenExchanges(), "the account is the application's: no new consent, no refresh exchange")
-
-	// Another application bound to the same server has its own account, and has
-	// not linked one, so it is asked to connect instead of borrowing this grant.
-	fx.capture.reset()
-	status, body = mcpRPC(t, fx.gatewayID, consumerB, apiKeyHeaders(keyB), "tools/call", fx.echoToolCall())
-	requireConsentRequired(t, status, body)
-	_, seenB := fx.capture.observed()
-	require.Zero(t, seenB, "a second application must not reach the upstream on the first one's grant")
-
-	rejected := mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {keyB}})
-	defer func() { _ = rejected.Body.Close() }()
-	require.Equal(t, http.StatusUnauthorized, rejected.StatusCode)
-}
-
-func TestMCPAPIKeyConnect_RejectsCredentialsWithoutLeaking(t *testing.T) {
-	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
-
-	fx := newForwardedFixture(t)
-	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
-	unboundID, unboundKey := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-unbound"))
-	require.NotEmpty(t, unboundID)
-
-	host := mcpHostOf(t, fx.gatewayID)
-	slug := ConsumerSlug(t, consumerID)
-	connectPath := "/" + slug + "/connect"
-	requireConnectPageReachable(t, connectPath, host)
-
-	// Every rejection collapses into the same opaque 401 so the endpoint cannot
-	// be used to tell apart which keys, consumers or gateways exist.
-	for _, tc := range []struct {
-		name string
-		form url.Values
+	for _, caller := range []struct {
+		name       string
+		consumerID string
+		key        string
 	}{
-		{name: "unknown key", form: url.Values{"api_key": {"nt-" + uniqueName("nope")}}},
-		{name: "key not bound to the consumer", form: url.Values{"api_key": {unboundKey}}},
-		{name: "empty key", form: url.Values{"api_key": {""}}},
-		{name: "missing field", form: url.Values{}},
+		{name: "the application the admin had in mind", consumerID: consumerA, key: keyA},
+		{name: "another credential of that application", consumerID: consumerA, key: secondKeyOfA},
+		{name: "a different application on the same instance", consumerID: consumerB, key: keyB},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := mcpConnectFormPost(t, connectPath, host, tc.form)
-			defer func() { _ = resp.Body.Close() }()
-			require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-
-			raw, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			require.Empty(t, resp.Header.Get("Location"), "a rejected attempt must not redirect to the provider page")
-			for _, secret := range tc.form["api_key"] {
-				if secret != "" {
-					require.NotContains(t, string(raw), secret, "the rejected credential must not be reflected")
-				}
-			}
+		t.Run(caller.name, func(t *testing.T) {
+			fx.capture.reset()
+			status, body := mcpRPC(t, fx.gatewayID, caller.consumerID, apiKeyHeaders(caller.key), "tools/call", fx.echoToolCall())
+			requireRPCSucceeded(t, status, body)
+			bearer, seen := fx.capture.observed()
+			require.GreaterOrEqual(t, seen, 1, "the caller must reach the upstream")
+			requireBearerMatches(t, fx.idp.bearer(), bearer)
+			require.Equal(t, 1, fx.idp.tokenExchanges(), "the instance's account is connected once, for everyone")
 		})
 	}
+}
 
-	t.Run("an unknown consumer slug is indistinguishable from a bad key", func(t *testing.T) {
-		resp := mcpConnectFormPost(t, "/"+uniqueName("ghost")+"/connect", host, url.Values{"api_key": {key}})
-		defer func() { _ = resp.Body.Close() }()
-		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	})
+// The other half of the rule: an instance whose accounts are per caller has
+// nothing for a request that runs as the application itself, because there is
+// no person behind it to walk a consent page. It is told so, with both remedies,
+// and is never handed a ticket it could not redeem.
+func TestMCPUserInstance_RefusesARequestThatRunsAsTheApplication(t *testing.T) {
+	fx := newForwardedFixture(t, false)
+	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 
-	t.Run("a valid key still mints a ticket after the rejections", func(t *testing.T) {
-		ticket := connectTicketFrom(t, mcpConnectFormPost(t, connectPath, host, url.Values{"api_key": {key}}), slug)
-		require.NotEmpty(t, ticket)
-	})
+	status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
+	message := requireNotConnected(t, status, body)
+	require.Contains(t, message, "end user")
+	require.Contains(t, message, "shared account")
+
+	_, seen := fx.capture.observed()
+	require.Zero(t, seen, "a refused call must not reach the upstream")
+
+	// And there is no shared account to read on it either: whose account this
+	// instance uses is answered per caller, so the question does not apply.
+	target := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/shared-account", AdminURL, fx.gatewayID, fx.registryID)
+	status, body = sendRequest(t, http.MethodGet, target, nil, nil)
+	require.Equal(t, http.StatusConflict, status, "a user instance has no shared account: %v", body)
 }
