@@ -142,7 +142,7 @@ func (h *RequestsHandler) History(c *fiber.Ctx) error {
 // @Success      204         "Approved"
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody  "Server is not on the shelf; connect it first"
+// @Failure      409         {object}  httpio.ErrorBody  "Server is not on the shelf, or needs admin setup; connect it first"
 // @Router       /v1/gateways/{gateway_id}/store/requests/approve [post]
 func (h *RequestsHandler) Approve(c *fiber.Ctx) error {
 	gatewayID, req, err := h.parseDecide(c)

@@ -282,6 +282,14 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 		if a.ensurer == nil {
 			return fmt.Errorf("%w: %q", ErrNotShelved, code)
 		}
+		// A server whose shared registry needs a credential only an admin can
+		// give (a manual OAuth client, an API key) cannot be materialised from
+		// the catalog alone — the installer and the admin materialiser refuse it
+		// the same way. Said as that, before anything is written, rather than as
+		// the registry validation failing underneath (ENG-1594).
+		if entry, ok := a.catalog.GetByCode(code); ok && catalogNeedsAdminCredential(entry) {
+			return fmt.Errorf("%w: %q", ErrNeedsAdminSetup, code)
+		}
 		if err := a.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
 			return fmt.Errorf("store: materialise registry: %w", err)
 		}
