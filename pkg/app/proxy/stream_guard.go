@@ -15,12 +15,15 @@
 package proxy
 
 import (
+	"cmp"
 	"context"
 	"iter"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -80,19 +83,35 @@ const maxHeadHeldBytes = 256 << 10
 const (
 	defaultMinCharsBetweenEvals = 2048
 	defaultMaxHold              = 800 * time.Millisecond
+	defaultMaxAccumulatedBytes  = 256 << 10
+	// maxAccumulatedCeiling bounds what any configuration can put in front of
+	// the engine. detectAll returns nil above 1 MiB and says nothing, so a
+	// payload that crosses it is not inspected at all and looks clean.
+	maxAccumulatedCeiling = 1 << 20
+	// maxConsecutiveFailures is how many failing calls in a row retire the
+	// block loop. Past that they are latency spent on held text for a verdict
+	// that is not arriving, and the buffered post_response pass still audits
+	// the whole response.
+	maxConsecutiveFailures = 3
 )
 
-// degradeGuardTimeout is why a stream stopped being inspected the way the
-// policy asked: a degrade is per block and recoverable, and fail_open answers
-// a failing call with one. Telemetry publishes it in a later slice — it is
-// recorded here so that no degradation is silent.
-const degradeGuardTimeout = "guard_timeout"
+// Why a stream stopped being inspected the way the policy asked. A degrade is
+// per block and recoverable; a fallback retires the block loop for the rest of
+// the stream. Telemetry publishes them in a later slice — they are recorded
+// here so that no degradation is silent.
+const (
+	degradeAccumulationCap      = "accumulation_cap"
+	degradeGuardTimeout         = "guard_timeout"
+	fallbackSegmentationUnavail = "segmentation_unavailable"
+	fallbackClientDisconnected  = "client_disconnected"
+)
 
 type streamGuardConfig struct {
-	headChars int
-	onError   streamOnError
-	minChars  int
-	maxHold   time.Duration
+	headChars     int
+	onError       streamOnError
+	minChars      int
+	maxHold       time.Duration
+	maxAccumBytes int
 }
 
 func (c streamGuardConfig) withDefaults() streamGuardConfig {
@@ -107,6 +126,12 @@ func (c streamGuardConfig) withDefaults() streamGuardConfig {
 	}
 	if c.maxHold <= 0 {
 		c.maxHold = defaultMaxHold
+	}
+	if c.maxAccumBytes <= 0 {
+		c.maxAccumBytes = defaultMaxAccumulatedBytes
+	}
+	if c.maxAccumBytes > maxAccumulatedCeiling {
+		c.maxAccumBytes = maxAccumulatedCeiling
 	}
 	return c
 }
@@ -149,8 +174,11 @@ type streamGuard struct {
 	seq            int
 	sentChars      int
 	finalSent      bool
+	failures       int
+	silenced       bool
 	stopped        bool
 	degradedReason string
+	fallbackReason string
 }
 
 func newStreamGuard(
@@ -313,6 +341,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 // guard knows that at the head nothing is committed, which is what makes
 // fail_closed a clean status code instead of a truncated body.
 func (g *streamGuard) headFailure(err error) *appplugins.PluginError {
+	g.failures++
 	if g.logger != nil {
 		g.logger.Warn("stream head inspection failed",
 			slog.String("on_error", string(g.cfg.onError)),
@@ -349,14 +378,22 @@ func streamError(source adapter.Format, errType, message string) *appplugins.Plu
 // loop over the rest of the source. Nothing is re-encoded: a re-encode would
 // reorder usage, provider extensions and comments on a wire that is byte-exact
 // by contract.
+//
+// The per-stream context is owned here and cancelled on the way out, which is
+// the only disconnect signal there is: c.UserContext() is not cancelled when a
+// client leaves and fasthttp's RequestCtx.Done() fires only on shutdown, so
+// propagation is pull-based. A client that leaves during a call is therefore
+// noticed when yield next reports false, not while the call is in flight.
 func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
+		streamCtx, cancel := context.WithCancel(ctx)
 		defer release()
 		defer g.stop()
+		defer cancel()
 		if !g.flush(yield) {
 			return
 		}
-		g.blockLoop(ctx, yield)
+		g.blockLoop(streamCtx, yield)
 	}
 }
 
@@ -414,8 +451,12 @@ func (g *streamGuard) inspect(ctx context.Context) {
 	// OpenAI emitting the finish-reason chunk and then data: [DONE], Anthropic
 	// message_stop after message_delta. Once the final block has been
 	// inspected every later terminal event is released without a new call.
-	if g.finalSent {
+	if g.silenced || g.finalSent {
 		g.clearedIdx = len(g.produced)
+		return
+	}
+	if ctx.Err() != nil {
+		g.retire(fallbackClientDisconnected)
 		return
 	}
 	outcome, err := g.runner.RunStreamSegment(ctx, g.in, g.nextSegment())
@@ -423,6 +464,7 @@ func (g *streamGuard) inspect(ctx context.Context) {
 		g.blockFailure(err)
 		return
 	}
+	g.failures = 0
 	// A transform escalates to a block for the same reason it does at the
 	// head: releasing the text unmasked would turn a masking policy into a
 	// no-op on every streamed response.
@@ -442,6 +484,10 @@ func (g *streamGuard) inspect(ctx context.Context) {
 // block being inspected would otherwise be read by no call at all.
 func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 	produced := g.text.String()
+	accumulated, reasoning, calls, capped := g.budget(produced, g.reasoning.String(), g.tools.calls())
+	if capped {
+		g.degrade(degradeAccumulationCap)
+	}
 	final := g.final() && !g.finalSent
 	g.finalSent = g.finalSent || final
 	g.seq++
@@ -451,10 +497,11 @@ func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 		StreamID:    g.streamID,
 		Seq:         g.seq,
 		Final:       final,
+		Truncated:   capped,
 		Text:        text,
-		Accumulated: produced,
-		Reasoning:   g.reasoning.String(),
-		ToolCalls:   g.tools.calls(),
+		Accumulated: accumulated,
+		Reasoning:   reasoning,
+		ToolCalls:   calls,
 	}
 }
 
@@ -462,12 +509,93 @@ func (g *streamGuard) final() bool {
 	return g.terminal || g.exhausted || g.srcErr != nil
 }
 
+// budget spends max_accumulated_bytes across everything one call carries, as a
+// sum. The engine reads the three fields as a single CanonicalResponse —
+// segmentPayload puts text, reasoning and every tool call into one of them
+// (trustguard/stream_segment.go) — and detectAll returns nil above 1 MiB
+// without saying so. Capping each field on its own, and tool calls not at all,
+// therefore bounds nothing: at the configuration ceiling a reasoning model
+// sends 2 MiB, and at the 256 KiB default an agentic stream crosses 1 MiB on
+// tool-call arguments alone. Both are valid configurations, and both land in
+// the silence B7.4 exists to keep the guard out of.
+//
+// The split is max-min fair: a field shorter than its equal share is carried
+// whole and the slack widens the share of the fields still short, so a one-line
+// answer beside a long reasoning trace is never dropped to make room for it and
+// no field can starve another. What a field cannot fit is its oldest bytes —
+// each grant is that field's tail, last in wins — advanced to the next rune
+// boundary so the engine never reads a payload that opens mid-character.
+//
+// calls is the digest's own copy, so windowing arguments in place does not
+// shorten what the next block accumulates.
+func (g *streamGuard) budget(
+	text, reasoning string,
+	calls []adapter.CanonicalToolCall,
+) (string, string, []adapter.CanonicalToolCall, bool) {
+	carried := len(text) + len(reasoning)
+	for _, call := range calls {
+		carried += len(call.Arguments)
+	}
+	if carried <= g.cfg.maxAccumBytes {
+		return text, reasoning, calls, false
+	}
+	sizes := make([]int, 0, len(calls)+2)
+	sizes = append(sizes, len(text), len(reasoning))
+	for _, call := range calls {
+		sizes = append(sizes, len(call.Arguments))
+	}
+	grants := shareBudget(g.cfg.maxAccumBytes, sizes)
+	accumulated, capped := tailWithin(text, grants[0])
+	windowed, reasoningCapped := tailWithin(reasoning, grants[1])
+	capped = capped || reasoningCapped
+	for i := range calls {
+		args, argsCapped := tailWithin(calls[i].Arguments, grants[i+2])
+		calls[i].Arguments = args
+		capped = capped || argsCapped
+	}
+	return accumulated, windowed, calls, capped
+}
+
+// shareBudget divides total across sizes so that no field starves another. The
+// shortest field is served first out of an equal share of what is left, and
+// whatever it leaves behind widens the share of every field after it, so the
+// grants sum to at most total and a field is cut only once every shorter one
+// has been carried whole.
+func shareBudget(total int, sizes []int) []int {
+	order := make([]int, len(sizes))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(sizes[a], sizes[b]) })
+	grants := make([]int, len(sizes))
+	remaining, unserved := total, len(sizes)
+	for _, i := range order {
+		grants[i] = min(sizes[i], remaining/unserved)
+		remaining -= grants[i]
+		unserved--
+	}
+	return grants
+}
+
+// tailWithin keeps the last limit bytes of s, advanced to the next rune
+// boundary, and reports whether anything was dropped.
+func tailWithin(s string, limit int) (string, bool) {
+	if len(s) <= limit {
+		return s, false
+	}
+	tail := s[len(s)-limit:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail, true
+}
+
 // blockFailure resolves streaming.on_error for a block the client is already
-// reading. Past the head the status is committed, so fail_closed can no longer
-// be a clean status code and is the same stop a block verdict is; fail_open
-// releases the block and records the degrade, because a guard that is failing
-// is not a reason to hold text the client is already waiting on.
+// reading. fail_closed can no longer be a clean status code, so it is the same
+// stop a block verdict is; fail_open releases and counts, because a guard that
+// is failing is not a reason to hold text indefinitely.
 func (g *streamGuard) blockFailure(err error) {
+	g.failures++
 	if g.cfg.onError == streamFailClosed {
 		g.stopStream(nil)
 		return
@@ -476,7 +604,25 @@ func (g *streamGuard) blockFailure(err error) {
 	g.clearedIdx = len(g.produced)
 	if g.logger != nil {
 		g.logger.Warn("stream block inspection failed; releasing the block",
+			slog.Int("consecutive_failures", g.failures),
 			slog.String("error", err.Error()))
+	}
+	if g.failures >= maxConsecutiveFailures {
+		g.retire(fallbackSegmentationUnavail)
+	}
+}
+
+// retire stops calling for the rest of the stream and releases what is held.
+// The buffered post_response pass still runs over the whole response, so the
+// audit trail survives even though enforcement no longer does.
+func (g *streamGuard) retire(reason string) {
+	g.silenced = true
+	g.fallbackReason = reason
+	g.clearedIdx = len(g.produced)
+	if g.logger != nil {
+		g.logger.Warn("stream segmentation retired",
+			slog.String("fallback_reason", reason),
+			slog.String("format", string(g.source)))
 	}
 }
 

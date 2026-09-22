@@ -338,6 +338,7 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 		OnError:              cfg.Streaming.OnError,
 		MinCharsBetweenEvals: cfg.Streaming.MinCharsBetweenEvals,
 		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
+		MaxAccumulatedBytes:  cfg.Streaming.MaxAccumulatedBytes,
 	}
 }
 

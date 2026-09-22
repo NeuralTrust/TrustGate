@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -514,12 +515,20 @@ func recordAdmitted(g *streamGuard, runner *scriptedRunner) *[]string {
 // block behind and a finding split across the block in flight and the block
 // being inspected is read by no call at all. The equality against admitted is
 // what closes that axis; the last one states it for the whole stream.
+//
+// The cap is the one thing this cannot be combined with: once window returns a
+// tail, payload[i] stops being a prefix of payload[i+1] and the payload stops
+// being everything admitted. That is by design — overlapping tails still expose
+// cross-block findings within max_accumulated_bytes, which is what Truncated
+// and degraded_reason: accumulation_cap announce — so a capped payload gets a
+// message here rather than an unexplained failure.
 func assertContiguousPrefixes(t *testing.T, segs []appplugins.StreamSegment, admitted []string) {
 	t.Helper()
 	require.NotEmpty(t, segs)
 	require.Len(t, admitted, len(segs), "one admitted snapshot per guard call")
 	for i := range segs {
 		require.Equal(t, i+1, segs[i].Seq, "seq must number the calls in order")
+		require.False(t, segs[i].Truncated, "prefix contiguity does not survive the cap")
 		require.Equal(t, admitted[i], segs[i].Accumulated,
 			"payload %d omits text the guard had already admitted when it was issued", i+1)
 		if i == 0 {
@@ -643,6 +652,141 @@ func TestStreamGuard_FinalityIsLatchedAcrossRepeatedTerminals(t *testing.T) {
 	}
 }
 
+// TestStreamGuard_AccumulationCapWindowsOnARuneBoundary pins B7.4. Above the
+// cap the payload stops being the whole prefix, so it must say so — and it
+// must never open mid-character, which a plain byte cut of CJK text does on
+// two bytes out of three.
+func TestStreamGuard_AccumulationCapWindowsOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("日本語", "日本語", "日本語", "日本語")
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{
+		minChars:      1,
+		maxAccumBytes: 10,
+	})
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, lines, got, "a capped payload degrades the inspection, never the wire")
+
+	require.Equal(t, degradeAccumulationCap, g.degradedReason, "the degrade is recorded, never silent")
+	truncated := 0
+	for i, seg := range runner.segments {
+		require.LessOrEqual(t, payloadBytes(seg), 10, "payload %d exceeded the cap", i)
+		require.True(t, utf8.ValidString(seg.Accumulated), "payload %d opens mid-rune", i)
+		if seg.Truncated {
+			truncated++
+			require.True(t, strings.HasSuffix("日本語日本語日本語日本語", seg.Accumulated),
+				"a capped payload is the tail of the produced text")
+		}
+	}
+	require.Positive(t, truncated, "the envelope must carry the truncation the engine cannot infer")
+	require.Equal(t, maxAccumulatedCeiling,
+		streamGuardConfig{maxAccumBytes: 4 << 20}.withDefaults().maxAccumBytes,
+		"no configuration may send more than 1 MiB: the engine's detectAll returns nil above it, silently")
+}
+
+// payloadBytes is everything one call puts in front of the engine.
+// segmentPayload folds the three fields into a single CanonicalResponse, so
+// this sum, not any one field, is what max_accumulated_bytes has to bound.
+func payloadBytes(seg appplugins.StreamSegment) int {
+	n := len(seg.Accumulated) + len(seg.Reasoning)
+	for _, call := range seg.ToolCalls {
+		n += len(call.Arguments)
+	}
+	return n
+}
+
+// TestStreamGuard_AccumulationCapIsASumAcrossThePayload is the other half of
+// B7.4's AC, and the one a per-field cap silently fails. The text, the
+// reasoning and every tool call reach the engine as one CanonicalResponse, so
+// capping each field on its own — and tool calls not at all — bounds nothing:
+// at max_accumulated_bytes' own configuration ceiling a reasoning model sends
+// 2 MiB, and at the 256 KiB default an agentic stream crosses 1 MiB on
+// arguments alone. Above 1 MiB detectAll returns nil and says nothing, so the
+// payload is never inspected and the response looks clean.
+func TestStreamGuard_AccumulationCapIsASumAcrossThePayload(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		text      int
+		reasoning int
+		arguments []int
+	}{
+		{
+			name:      "a reasoning model at the configuration ceiling",
+			text:      1 << 20,
+			reasoning: 1 << 20,
+		},
+		{
+			name:      "an agentic stream whose tool calls carry the bulk",
+			text:      4 << 10,
+			arguments: []int{600 << 10, 600 << 10},
+		},
+		{
+			name:      "all three at once",
+			text:      1 << 20,
+			reasoning: 1 << 20,
+			arguments: []int{1 << 20, 1 << 20},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newStreamGuard(&scriptedRunner{}, adapter.NewRegistry(), adapter.FormatOpenAI,
+				stageInputFixture(), streamGuardConfig{maxAccumBytes: maxAccumulatedCeiling}, newGuardLogger())
+			g.text.WriteString(strings.Repeat("a", tc.text))
+			g.reasoning.WriteString(strings.Repeat("r", tc.reasoning))
+			for i, n := range tc.arguments {
+				g.tools.merge([]adapter.StreamToolCallDelta{
+					{Index: i, Name: "lookup", ArgumentsDelta: strings.Repeat("x", n)},
+				})
+			}
+
+			seg := g.nextSegment()
+
+			require.LessOrEqual(t, payloadBytes(seg), maxAccumulatedCeiling,
+				"the whole payload is what the engine's 1 MiB silence measures, not one field of it")
+			require.True(t, seg.Truncated, "the envelope must carry the truncation the engine cannot infer")
+			require.Equal(t, degradeAccumulationCap, g.degradedReason, "the degrade is recorded, never silent")
+			require.NotEmpty(t, seg.Accumulated, "the produced text is never starved to make room for the rest")
+			require.True(t, strings.HasSuffix(g.text.String(), seg.Accumulated),
+				"a capped payload is the tail of the produced text")
+			require.Len(t, seg.ToolCalls, len(tc.arguments))
+			for i, call := range seg.ToolCalls {
+				require.NotEmpty(t, call.Arguments, "tool call %d was starved to nothing", i)
+			}
+		})
+	}
+}
+
+// TestStreamGuard_ThreeConsecutiveFailuresRetireTheLoop pins B7.5. fail_open
+// releases each failed block, and once the guard has failed three times in a
+// row the loop stops paying the latency: it releases everything and leaves the
+// audit to the buffered post_response pass.
+func TestStreamGuard_ThreeConsecutiveFailuresRetireTheLoop(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3", "d4", "e5")
+	runner := &scriptedRunner{err: errors.New("guard timeout")}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{
+		minChars: 1,
+		onError:  streamFailOpen,
+	})
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, lines, got, "fail_open keeps streaming")
+
+	require.Equal(t, maxConsecutiveFailures, runner.calls, "the loop stops calling after three failures in a row")
+	require.Equal(t, degradeGuardTimeout, g.degradedReason)
+	require.Equal(t, fallbackSegmentationUnavail, g.fallbackReason)
+	require.Equal(t, len(g.produced), g.releasedIdx)
+}
+
 // TestStreamGuard_DisconnectStopsCalling pins B7.6. There is no cancellation
 // on disconnect — c.UserContext() is not cancelled and fasthttp's
 // RequestCtx.Done() fires only on shutdown — so propagation is pull-based and
@@ -679,6 +823,28 @@ func TestStreamGuard_DisconnectStopsCalling(t *testing.T) {
 		"the head and one call per block the loop closed, and none for what the consumer never pulled")
 	require.Less(t, g.releasedIdx, len(g.produced), "the consumer left with the stream unfinished")
 	require.False(t, g.final(), "the loop stopped well before the terminal event")
+}
+
+// TestStreamGuard_ACancelledParentRetiresTheLoop is the other half of B7.6:
+// the per-stream context is checked immediately before each call, so a
+// request whose context is already gone releases what it holds instead of
+// spending a round trip on a verdict nobody will read.
+func TestStreamGuard_ACancelledParentRetiresTheLoop(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3")
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out, pe := g.Run(ctx, invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	cancel()
+
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, lines, got)
+	require.Equal(t, 1, runner.calls, "only the head call, issued before the cancellation")
+	require.Equal(t, fallbackClientDisconnected, g.fallbackReason)
 }
 
 // TestStreamGuard_ClassificationFailureInTheLoopStillReleases carries B5.4's

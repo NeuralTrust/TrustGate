@@ -617,10 +617,11 @@ func (f *forwarder) newStreamGuard(
 			Response: resp,
 		},
 		streamGuardConfig{
-			headChars: opts.HeadChars,
-			onError:   streamOnError(opts.OnError),
-			minChars:  opts.MinCharsBetweenEvals,
-			maxHold:   time.Duration(opts.MaxHoldMS) * time.Millisecond,
+			headChars:     opts.HeadChars,
+			onError:       streamOnError(opts.OnError),
+			minChars:      opts.MinCharsBetweenEvals,
+			maxHold:       time.Duration(opts.MaxHoldMS) * time.Millisecond,
+			maxAccumBytes: opts.MaxAccumulatedBytes,
 		},
 		f.logger,
 	)
