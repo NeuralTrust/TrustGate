@@ -514,7 +514,15 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		role = "model" // Gemini stream expects "model"
 	}
 
-	var parts []geminiPart
+	// @google/genai does not distinguish a null parts from an absent one:
+	// chats.ts guards with `parts === undefined || parts.length === 0`, so a JSON
+	// null falls through to `null.length` and throws a TypeError inside
+	// sendMessageStream before the first chunk is yielded. A chunk that carries
+	// only a role or only a finish reason has no parts, so it has to encode as an
+	// empty array. omitempty on geminiContent.Parts would also work here, but the
+	// struct is shared with the buffered response encoder, where it would drop
+	// the key from a response that legitimately has no parts.
+	parts := []geminiPart{}
 	if chunk.Delta != "" {
 		parts = append(parts, geminiPart{Text: chunk.Delta})
 	}
