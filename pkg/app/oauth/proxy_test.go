@@ -491,11 +491,11 @@ func mcpConsumer(gatewayID ids.GatewayID, identity consumerdomain.Identity) *con
 }
 
 func platformUsersIdentity() consumerdomain.Identity {
-	return consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform}
+	return consumerdomain.Identity{}
 }
 
 func appUsersIdentity() consumerdomain.Identity {
-	return consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp}
+	return consumerdomain.Identity{}
 }
 
 // enabledOAuth2Auth builds an Auth entry that passes the Enabled/Type filters

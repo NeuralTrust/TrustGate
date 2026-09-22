@@ -89,7 +89,7 @@ func TestAPIKeyConsumers_ReportWhichActorTheConsumerIs(t *testing.T) {
 	authID := ids.New[ids.AuthKind]()
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		consumerWith(gatewayID, "assistant", domain.TypeMCP,
-			domain.Identity{ActsForUsers: true, Source: domain.IdentitySourceApp}, authID),
+			domain.Identity{}, authID),
 	})
 
 	consumers := appconsumermocks.NewDataFinder(t)
@@ -101,8 +101,7 @@ func TestAPIKeyConsumers_ReportWhichActorTheConsumerIs(t *testing.T) {
 	got, err := service.ForAPIKey(ctx, gatewayID, "ag_secret")
 
 	require.NoError(t, err)
-	require.True(t, got[0].ActsForUsers)
-	require.Equal(t, string(domain.IdentitySourceApp), got[0].IdentitySource)
+	require.Equal(t, "assistant", got[0].Slug)
 }
 
 // A key that verified but reaches nothing is not a failure: the holder proved

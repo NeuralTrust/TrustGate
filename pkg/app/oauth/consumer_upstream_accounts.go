@@ -289,7 +289,7 @@ func (s *consumerUpstreamAccounts) resolve(
 	if rc == nil {
 		return nil, nil, fmt.Errorf("consumer %s not found: %w", consumerID, commonerrors.ErrNotFound)
 	}
-	if rc.Consumer.Type != consumerdomain.TypeMCP || rc.Consumer.Identity.ActsForUsers {
+	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, nil, ErrUpstreamAccountsNotMachine
 	}
 	return data, rc, nil

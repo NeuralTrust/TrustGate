@@ -324,12 +324,16 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	}
 }
 
-// endUserAttribution returns the end-user id an LLM consumer that opted in
-// forwarded, validated; empty when the consumer did not opt in (the header is
-// ignored) or the application sent none. A malformed value on an opted-in
-// consumer is rejected rather than silently dropped from the audit trail.
+// endUserAttribution returns the end-user id the application named, validated;
+// empty when it named none. A malformed value is rejected rather than silently
+// dropped from the audit trail.
+//
+// No opt-in: naming the person a call is for is the application's to decide,
+// per call, and a consumer flag only ever meant the header was thrown away for
+// everyone. What it is worth is attribution — traces, audit, rate limiting —
+// which is the same whether or not anybody turned a switch on.
 func endUserAttribution(rc *appconsumer.RoutableConsumer, header string) (string, error) {
-	if rc == nil || rc.Consumer == nil || !rc.Consumer.Identity.EndUserHeader {
+	if rc == nil || rc.Consumer == nil {
 		return "", nil
 	}
 	endUser := strings.TrimSpace(header)

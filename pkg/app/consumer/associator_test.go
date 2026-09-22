@@ -137,7 +137,14 @@ func intPtr(i int) *int { return &i }
 // so it holds no config and no vault entries, and there is no admin-level place
 // to supply them. The binding used to be accepted and every call then died at
 // dial time on a missing placeholder.
-func TestAssociator_AttachRegistry_RefusesPerUserURLOnAMachineConsumer(t *testing.T) {
+// Binding a server whose URL is completed per user is no longer refused here.
+//
+// It used to be, on a consumer that declared it had no users: the values live
+// on a caller's own Store installation and the call would die at dial time with
+// a placeholder nobody could fill. Nothing declares that any more — the same
+// application serves a person on one request and nobody on the next — so the
+// only place that can still tell the truth is the dial, per caller.
+func TestAssociator_AttachRegistry_AllowsPerUserURL(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	consumerID := ids.New[ids.ConsumerKind]()
@@ -156,17 +163,15 @@ func TestAssociator_AttachRegistry_RefusesPerUserURLOnAMachineConsumer(t *testin
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, mock.Anything).Return(nil).Once()
 	registryRepo := backendmocks.NewRepository(t)
 	registryRepo.EXPECT().FindByID(mock.Anything, registryID).Return(perUser, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t),
-		cachemocks.NewEventPublisher(t))
-	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
-	if !errors.Is(err, appconsumer.ErrPerUserURLOnMachineConsumer) {
-		t.Fatalf("want ErrPerUserURLOnMachineConsumer, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "account_url") {
-		t.Fatalf("the refusal must name the variables, got %v", err)
+	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
+	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1)); err != nil {
+		t.Fatalf("AttachRegistry: %v", err)
 	}
 }
 
@@ -191,7 +196,7 @@ func TestAssociator_AttachRegistry_AllowsPerUserURLWhenActingForUsers(t *testing
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).Return(&domain.Consumer{
 		ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP,
-		Identity: domain.Identity{ActsForUsers: true, Source: domain.IdentitySourcePlatform},
+		Identity: domain.Identity{},
 	}, nil).Once()
 	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, intPtr(1)).Return(nil).Once()
 	registryRepo := backendmocks.NewRepository(t)

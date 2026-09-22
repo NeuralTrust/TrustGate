@@ -65,6 +65,8 @@ func BuildStoreConsumer(gatewayID ids.GatewayID) *Consumer {
 		Type:      TypeMCP,
 		Slug:      StoreSlug,
 		Active:    true,
-		Identity:  Identity{ActsForUsers: true, Source: IdentitySourcePlatform},
+		// Nothing declared: the Store is entered by people signing in, which
+		// IsStoreConsumer says on its own (see WantsSignIn).
+		Identity: Identity{},
 	}
 }

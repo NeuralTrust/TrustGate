@@ -115,26 +115,6 @@ func TestWhoAmI_PrefersTheGatewaysOwnDomainForTheLLMPlane(t *testing.T) {
 	require.Equal(t, "https://ai.acme.com/support-llm/v1", body.Consumers[0].URL)
 }
 
-// The actor decides which handle a client gets, so it travels with the
-// consumer rather than being discovered later.
-func TestWhoAmI_SaysWhichActorEachConsumerIs(t *testing.T) {
-	t.Parallel()
-	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{
-		{Slug: "batch", Type: consumerdomain.TypeMCP, Active: true},
-		{
-			Slug: "assistant", Type: consumerdomain.TypeMCP, Active: true,
-			ActsForUsers: true, IdentitySource: "app",
-		},
-	}}
-	app := whoAmIApp(service, &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"})
-
-	_, body := callWhoAmI(t, app, "ag_secret")
-
-	require.False(t, body.Consumers[0].ActsForUsers)
-	require.True(t, body.Consumers[1].ActsForUsers)
-	require.Equal(t, "app", body.Consumers[1].IdentitySource)
-}
-
 // One refusal, whatever is wrong with the key: the endpoint takes no slug, so
 // a talkative answer here would enumerate a gateway's consumers to anyone.
 func TestWhoAmI_RefusesAKeyItDoesNotKnow(t *testing.T) {

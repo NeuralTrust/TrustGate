@@ -263,15 +263,12 @@ func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
 	return m
 }
 
+// signInConsumer is the one consumer the built-in identity provider may still
+// rescue: the MCP Store, which is entered by people signing in and carries no
+// credential to attach one to. Every other consumer is entered by what is
+// attached to it, so a consumer with nothing attached is entered by nobody.
 func signInConsumer() *consumerdomain.Consumer {
-	return &consumerdomain.Consumer{
-		ID:       ids.New[ids.ConsumerKind](),
-		Name:     "sign-in",
-		Slug:     "sign-in",
-		Type:     consumerdomain.TypeMCP,
-		Active:   true,
-		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
-	}
+	return consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())
 }
 
 // machineConsumer authenticates as the application itself: the built-in

@@ -276,14 +276,14 @@ func (s *endUserConnectionsService) authenticate(
 	if !validAPIKeyAuth(auth, target.Consumer, gatewayID) {
 		return nil, nil, ErrAPIKeyConnectUnauthorized
 	}
-	if !target.Consumer.Identity.AppUsers() {
-		return nil, nil, ErrEndUserConnectionsUnsupported
-	}
 	return data, target, nil
 }
 
-// authenticateApp is authenticate for the other actor: same slug, same key,
-// and the opposite identity check.
+// authenticateApp is authenticate for the other actor: same slug, same key.
+//
+// There is no opposite check any more. Every MCP consumer has both actors —
+// the application itself, and whoever it names on a request — so asking about
+// one never means the other is unavailable.
 func (s *endUserConnectionsService) authenticateApp(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -306,9 +306,6 @@ func (s *endUserConnectionsService) authenticateApp(
 	}
 	if !validAPIKeyAuth(auth, target.Consumer, gatewayID) {
 		return nil, ErrAPIKeyConnectUnauthorized
-	}
-	if target.Consumer.Identity.ActsForUsers {
-		return nil, ErrAppConnectionsUnsupported
 	}
 	return target, nil
 }

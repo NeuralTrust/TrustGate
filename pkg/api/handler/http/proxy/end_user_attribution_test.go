@@ -25,24 +25,20 @@ import (
 )
 
 func TestEndUserAttribution(t *testing.T) {
-	optedOut := &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{Type: domainconsumer.TypeLLM}}
-	optedIn := &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{
-		Type: domainconsumer.TypeLLM, Identity: domainconsumer.Identity{EndUserHeader: true},
-	}}
+	rc := &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{Type: domainconsumer.TypeLLM}}
 
-	if got, err := endUserAttribution(optedOut, "user_123"); err != nil || got != "" {
-		t.Fatalf("a consumer that did not opt in ignores the header, got %q %v", got, err)
+	// No opt-in any more: naming the person a call is for is the application's
+	// to decide, per call.
+	if got, err := endUserAttribution(rc, " user_123 "); err != nil || got != "user_123" {
+		t.Fatalf("a named end user is recorded, trimmed, got %q %v", got, err)
 	}
-	if got, err := endUserAttribution(optedIn, " user_123 "); err != nil || got != "user_123" {
-		t.Fatalf("an opted-in consumer records the trimmed id, got %q %v", got, err)
-	}
-	if got, err := endUserAttribution(optedIn, ""); err != nil || got != "" {
+	if got, err := endUserAttribution(rc, ""); err != nil || got != "" {
 		t.Fatalf("a missing header is not an error, got %q %v", got, err)
 	}
-	if _, err := endUserAttribution(optedIn, strings.Repeat("x", domainconsumer.MaxEndUserLength+1)); !errors.Is(err, appproxy.ErrInvalidRequestPayload) {
-		t.Fatalf("a malformed id on an opted-in consumer is rejected as a bad request, got %v", err)
+	if _, err := endUserAttribution(rc, strings.Repeat("x", domainconsumer.MaxEndUserLength+1)); !errors.Is(err, appproxy.ErrInvalidRequestPayload) {
+		t.Fatalf("a malformed id is rejected as a bad request, got %v", err)
 	}
 	if got, err := endUserAttribution(nil, "user"); err != nil || got != "" {
-		t.Fatalf("nil consumer is a no-op, got %q %v", got, err)
+		t.Fatalf("no consumer, nothing to attribute, got %q %v", got, err)
 	}
 }

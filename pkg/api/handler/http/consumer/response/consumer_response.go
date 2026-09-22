@@ -296,19 +296,14 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 	}
 }
 
-// IdentityResponse says who the consumer acts for.
-type IdentityResponse struct {
-	ActsForUsers  bool   `json:"acts_for_users"`
-	Source        string `json:"source,omitempty"`
-	EndUserHeader bool   `json:"end_user_header,omitempty"`
-}
+// IdentityResponse is what the consumer declares about its callers, which is
+// nothing: who a request runs as is read from the request. The object stays so
+// a client parsing it does not break, and is empty.
+type IdentityResponse struct{}
 
 func fromIdentity(i domain.Identity) IdentityResponse {
-	return IdentityResponse{
-		ActsForUsers:  i.ActsForUsers,
-		Source:        string(i.Source),
-		EndUserHeader: i.EndUserHeader,
-	}
+	_ = i
+	return IdentityResponse{}
 }
 
 // AuthBindingResponse narrows which callers of a shared auth may enter the
