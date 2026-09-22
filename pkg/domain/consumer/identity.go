@@ -19,6 +19,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -69,8 +70,10 @@ func (c *Consumer) WantsSignIn() bool {
 const MaxEndUserLength = 256
 
 // appSubjectPrefix namespaces an application and the end users it names, so
-// neither can collide with a platform user's token subject.
-const appSubjectPrefix = "app:"
+// neither can collide with a platform user's token subject. The reservation is
+// enforced where a token becomes a principal (identity.ReservedSubject); this
+// is the other half, the minting.
+const appSubjectPrefix = identity.AppSubjectPrefix
 
 // ValidateEndUser checks an end-user id from the end-user header: present,
 // bounded and printable. The gateway never interprets it.

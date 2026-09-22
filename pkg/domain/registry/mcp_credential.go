@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -35,7 +36,7 @@ const forwardedResourceFingerprintLen = 12
 // sharedAccountSubjectPrefix namespaces the account an instance holds for
 // everyone, so it can never collide with a person's token subject or with an
 // application's own (app:<consumer_id>).
-const sharedAccountSubjectPrefix = "instance:"
+const sharedAccountSubjectPrefix = identity.InstanceSubjectPrefix
 
 // Shared reports whether one connected account serves every caller of this
 // instance, rather than each caller connecting their own.
