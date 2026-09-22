@@ -473,29 +473,16 @@ func (f *fakePathResolver) Match(_ context.Context, _, path string) ([]appconsum
 	return f.byPath[path], nil
 }
 
-// mcpConsumer takes the identity whole rather than an acts_for_users bool:
-// Normalize forces the platform source whenever that bool is set, so a bool
-// parameter can never produce an app-source consumer and the identity source
-// — the axis that decides whether a login may be brokered — stays untested
-// (RUN-1501).
-func mcpConsumer(gatewayID ids.GatewayID, identity consumerdomain.Identity) *consumerdomain.Consumer {
-	c := &consumerdomain.Consumer{
+// mcpConsumer takes no identity: a consumer declares nothing about its callers
+// any more, and what a request runs as is read from the request. What decides
+// whether a login may be brokered here is what is attached to the consumer.
+func mcpConsumer(gatewayID ids.GatewayID) *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
 		ID:        ids.New[ids.ConsumerKind](),
 		GatewayID: gatewayID,
 		Type:      consumerdomain.TypeMCP,
 		Active:    true,
-		Identity:  identity,
 	}
-	c.Identity.Normalize(c.Type)
-	return c
-}
-
-func platformUsersIdentity() consumerdomain.Identity {
-	return consumerdomain.Identity{}
-}
-
-func appUsersIdentity() consumerdomain.Identity {
-	return consumerdomain.Identity{}
 }
 
 // enabledOAuth2Auth builds an Auth entry that passes the Enabled/Type filters

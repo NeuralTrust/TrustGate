@@ -82,7 +82,7 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true, nil)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw), Auths: []*authdomain.Auth{apiKey}}},
 		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
 		"/bare/mcp":     {{GatewayID: gw}},
 	}}
@@ -138,7 +138,6 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 	// holding none, both keep the default out.
 	tests := []struct {
 		name        string
-		identity    consumerdomain.Identity
 		store       bool
 		auths       []*authdomain.Auth
 		wantDefault bool
@@ -160,7 +159,7 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cons := mcpConsumer(gw, tt.identity)
+			cons := mcpConsumer(gw)
 			if tt.store {
 				cons = consumerdomain.BuildStoreConsumer(gw)
 			}
