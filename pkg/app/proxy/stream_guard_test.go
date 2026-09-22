@@ -21,6 +21,7 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -261,7 +262,7 @@ func TestStreamGuard_HeadGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			runner := &scriptedRunner{outcome: tc.outcome, err: tc.runErr, latency: tc.latency}
-			var codec streamCodec = adapter.NewRegistry()
+			var codec guardCodec = adapter.NewRegistry()
 			if tc.failCodec {
 				codec = failingCodec{}
 			}
@@ -451,8 +452,15 @@ func (c *fakeStreamClock) Now() time.Time {
 // classification failure can be placed inside the block loop rather than at
 // the head gate.
 type flakyCodec struct {
-	inner streamCodec
+	inner guardCodec
 	ok    int
+}
+
+func (c *flakyCodec) EncodeStreamChunkFor(
+	canonical *adapter.CanonicalStreamChunk,
+	source adapter.Format,
+) ([][]byte, error) {
+	return c.inner.EncodeStreamChunkFor(canonical, source)
 }
 
 func (c *flakyCodec) DecodeStreamChunkFor(
@@ -476,7 +484,7 @@ func textStreamLines(chunks ...string) []string {
 
 // loopGuard builds a guard whose head closes on the first text event, so every
 // case below exercises the block loop rather than the gate B5 already covers.
-func loopGuard(t *testing.T, runner segmentRunner, codec streamCodec, cfg streamGuardConfig) *streamGuard {
+func loopGuard(t *testing.T, runner segmentRunner, codec guardCodec, cfg streamGuardConfig) *streamGuard {
 	t.Helper()
 	cfg.headChars = 1
 	return newStreamGuard(runner, codec, adapter.FormatOpenAI, stageInputFixture(), cfg, newGuardLogger())
@@ -871,19 +879,42 @@ func TestStreamGuard_ClassificationFailureInTheLoopStillReleases(t *testing.T) {
 // and B8 starts. A verdict that says block, a transform the buffer rewrite
 // cannot yet apply, and a fail_closed policy are the three things the loop
 // cannot answer by releasing text, so the held events are not written and no
-// further call is issued. The honest per-format terminator for that stop is
-// B8; until it lands the stream simply ends.
+// further call is issued.
+//
+// Each of the three ends the stream on the same terminator, and each says why
+// on the error channel: they are different incidents to a client deciding
+// whether to retry, and the finish reason — the one slot every dialect
+// has — is not where that difference fits.
 func TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		outcome *appplugins.SegmentOutcome
-		err     error
-		onError streamOnError
+		name        string
+		outcome     *appplugins.SegmentOutcome
+		err         error
+		onError     streamOnError
+		wantMessage string
 	}{
-		{name: "block verdict", outcome: &appplugins.SegmentOutcome{Block: true, Type: "guardrail_violation"}},
-		{name: "transform escalates to a block", outcome: &appplugins.SegmentOutcome{HasTransform: true, Transformed: "x"}},
-		{name: "fail_closed on a failing call", err: errors.New("guard timeout"), onError: streamFailClosed},
+		{
+			name:        "block verdict",
+			outcome:     &appplugins.SegmentOutcome{Block: true, Type: "guardrail_violation", Message: "nope"},
+			wantMessage: "nope",
+		},
+		{
+			name:        "block verdict without a message of its own",
+			outcome:     &appplugins.SegmentOutcome{Block: true, Type: "guardrail_violation"},
+			wantMessage: streamBlockMessage,
+		},
+		{
+			name:        "transform escalates to a block",
+			outcome:     &appplugins.SegmentOutcome{HasTransform: true, Transformed: "x"},
+			wantMessage: streamMaskedMessage,
+		},
+		{
+			name:        "fail_closed on a failing call",
+			err:         errors.New("guard timeout"),
+			onError:     streamFailClosed,
+			wantMessage: streamUnverifiableMessage,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -901,12 +932,169 @@ func TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade(t *testing.T) {
 			require.Nil(t, pe, "past the head the status is already committed")
 			got, err := collectGuardOutput(t, g, out)
 			require.NoError(t, err)
-			require.Equal(t, lines[:2], got, "only the block the head cleared reaches the client")
+			require.Equal(t, lines[:2], got[:2], "only the block the head cleared reaches the client")
+			require.Equal(t, openAICutLines(tc.wantMessage), got[2:], "every stop ends on the same terminator")
 			require.Equal(t, 2, runner.calls, "a stop issues no further calls")
 			require.True(t, g.stopped)
 			checkInvariant(t, g)
 		})
 	}
+}
+
+// openAICutLines is what a cut puts on an OpenAI-chat wire: the finish-reason
+// chunk, then the blocked event, then the [DONE] sentinel an OpenAI-wire client
+// reads end-of-stream from and from nothing else. The chunk carries the id of
+// the stream it ends because strict client validators reject one without it.
+func openAICutLines(message string) []string {
+	return []string{
+		`data: {"id":"c1","object":"chat.completion.chunk","choices":` +
+			`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
+		`data: {"error":{"message":` + strconv.Quote(message) + `,"type":"content_filter"}}`, "",
+		"data: [DONE]", "",
+	}
+}
+
+// TestStreamGuard_CutRegimeIsDecidedBySeq is the boundary between the two
+// regimes. The same verdict over the same stream is a real 403 with an empty
+// body while it lands on the head block, and a 200 that ends on a terminator
+// once a byte has been released — because by then the status is on the wire
+// and the only honest ending left is one the dialect can express.
+func TestStreamGuard_CutRegimeIsDecidedBySeq(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		blockOn  int
+		wantCut  bool
+		wantHead bool
+	}{
+		{name: "the head block is a status code", blockOn: 1, wantHead: true},
+		{name: "a later block is a terminator", blockOn: 2, wantCut: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines := textStreamLines("a1", "b2", "c3")
+			runner := &scriptedRunner{}
+			g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+			runner.probe = func() {
+				if runner.calls == tc.blockOn {
+					runner.outcome = &appplugins.SegmentOutcome{Block: true, Message: "nope"}
+				}
+			}
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			got, _ := collectGuardOutput(t, g, out)
+
+			if tc.wantHead {
+				require.NotNil(t, pe)
+				require.Equal(t, http.StatusForbidden, pe.StatusCode)
+				require.Zero(t, g.releasedIdx, "a head-gate block writes nothing at all")
+				return
+			}
+			require.Nil(t, pe)
+			require.True(t, tc.wantCut)
+			require.Equal(t, lines[:2], got[:2])
+			require.Equal(t, openAICutLines("nope"), got[2:])
+			require.Equal(t, tc.blockOn, runner.calls)
+		})
+	}
+}
+
+// TestStreamGuard_CutGoesForwardAtTheReleasePointer pins B8.3. The payload is
+// cumulative, so the verdict that stops the stream can name text released two
+// blocks ago; there is no retraction on a wire the client has read, so the cut
+// goes forward. What it must not do is release the block it was inspecting when
+// the verdict landed — that is the text the verdict was about.
+func TestStreamGuard_CutGoesForwardAtTheReleasePointer(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3", "d4", "e5")
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls == 3 {
+			runner.outcome = &appplugins.SegmentOutcome{Block: true, Message: "nope"}
+		}
+	}
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.Equal(t, lines[:4], got[:4], "the two cleared blocks are released byte for byte")
+	require.Equal(t, openAICutLines("nope"), got[4:])
+	require.Equal(t, 2, g.releasedIdx, "the block under inspection is never released")
+	require.Less(t, g.releasedIdx, len(g.produced))
+	require.Equal(t, g.releasedIdx, g.clearedIdx, "a cut clears nothing it did not already release")
+	for i, ev := range g.produced[g.releasedIdx:] {
+		require.Nil(t, ev.lines, "held event %d kept its wire bytes after the cut", i)
+	}
+}
+
+// TestStreamGuard_CutDrainsTheRestOfTheUpstream pins B8.4. Usage rides the last
+// chunk and observeChunk runs inside adaptStream, upstream of the guard, so a
+// line that is read is a line that is accounted even though the client will
+// never see it: the drain is what keeps req.Metadata["usage"] populated and the
+// token_rate_limiter charging a cut stream.
+func TestStreamGuard_CutDrainsTheRestOfTheUpstream(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3", "d4", "e5")
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls == 2 {
+			runner.outcome = &appplugins.SegmentOutcome{Block: true}
+		}
+	}
+
+	pulled := 0
+	source := func(yield func([]byte, error) bool) {
+		for _, line := range lines {
+			pulled++
+			if !yield([]byte(line), nil) {
+				return
+			}
+		}
+	}
+	var drained iter.Seq2[[]byte, error]
+	g.drain = func(rest iter.Seq2[[]byte, error]) { drained = rest }
+
+	out, pe := g.Run(context.Background(), source)
+	require.Nil(t, pe)
+	_, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.NotNil(t, drained, "a cut must hand the rest of the upstream to the drain")
+	require.True(t, g.handedOff, "the pull coroutine belongs to the drain, and stopping it twice truncates it")
+	require.Less(t, pulled, len(lines), "the cut left the upstream unfinished")
+
+	// Consumed the way drainStream consumes it, which stops at the first line
+	// it is handed: the drain has to do its reading rather than yield it.
+	for range drained {
+		break
+	}
+	require.Equal(t, len(lines), pulled,
+		"the drain must reach the end of the stream, where the usage chunk is")
+}
+
+// TestStreamGuard_CutWithoutADrainStillCuts keeps the drain optional. It is an
+// accounting concern; a guard built without one enforces exactly the same.
+func TestStreamGuard_CutWithoutADrainStillCuts(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls == 2 {
+			runner.outcome = &appplugins.SegmentOutcome{Block: true, Message: "nope"}
+		}
+	}
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, textStreamLines("a1", "b2", "c3"), nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, openAICutLines("nope"), got[2:])
+	require.False(t, g.handedOff, "with no drain the guard keeps the coroutine and closes it itself")
 }
 
 // TestStreamGuard_WorstCaseBlockHoldFitsTheWriteDeadline states the constraint
@@ -923,4 +1111,275 @@ func TestStreamGuard_WorstCaseBlockHoldFitsTheWriteDeadline(t *testing.T) {
 	require.Equal(t, maxConfiguredHold, cfg.maxHold)
 	require.Less(t, cfg.maxHold+maxGuardTimeout, serverWriteTimeout/3,
 		"one block's worst case is a full hold plus a full guard timeout, and the client trails by one of those")
+}
+
+// dialectGuard is loopGuard for a source dialect other than OpenAI-chat: the
+// head closes on the first event that carries text, so the cut lands in the
+// block loop rather than on the gate.
+func dialectGuard(t *testing.T, runner segmentRunner, format adapter.Format) *streamGuard {
+	t.Helper()
+	return newStreamGuard(runner, adapter.NewRegistry(), format, stageInputFixture(),
+		streamGuardConfig{headChars: 1, minChars: 1}, newGuardLogger())
+}
+
+// blockOnCall scripts the runner to answer the n-th call with a block, which is
+// what puts the cut mid-stream instead of on the head block.
+func blockOnCall(runner *scriptedRunner, n int, message string) {
+	runner.probe = func() {
+		if runner.calls == n {
+			runner.outcome = &appplugins.SegmentOutcome{Block: true, Message: message}
+		}
+	}
+}
+
+// splitAtCut divides what the client received into the upstream prefix the
+// guard released byte for byte and the terminator it synthesised after it. The
+// boundary is stated rather than searched for: a terminator opens with lines an
+// upstream emits too — content_block_stop is one — so scanning for the first
+// difference would put the cut in the wrong place on exactly the dialects this
+// is here to check.
+func splitAtCut(t *testing.T, got, source []string, released int) ([]string, []string) {
+	t.Helper()
+	require.GreaterOrEqual(t, len(got), released)
+	require.Equal(t, source[:released], got[:released],
+		"the released prefix reproduces the upstream byte for byte")
+	return got[:released], got[released:]
+}
+
+func anthropicTwoBlockStreamLines() []string {
+	return []string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5"}}`, "",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me see"}}`, "",
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`, "",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hola"}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" mundo"}}`, "",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`, "",
+		"event: message_stop",
+		`data: {"type":"message_stop"}`, "",
+	}
+}
+
+func responsesMessageStreamLines() []string {
+	return []string{
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","output_index":0,` +
+			`"item":{"id":"msg_1","type":"message","role":"assistant"}}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Hello"}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":" world"}`, "",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5"}}`, "",
+	}
+}
+
+func geminiStreamLines() []string {
+	return []string{
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hola"}]}}]}`, "",
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":" mundo"}]}}]}`, "",
+		`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}]}`, "",
+	}
+}
+
+func cohereStreamLines() []string {
+	return []string{
+		"event: content-delta",
+		`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"Hola"}}}}`, "",
+		"event: content-delta",
+		`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":" mundo"}}}}`, "",
+		"event: message-end",
+		`data: {"type":"message-end","delta":{"finish_reason":"COMPLETE"}}`, "",
+	}
+}
+
+// TestStreamGuard_CutSpeaksTheCallersDialect is what the whole of Track A was
+// for. A cut after the status is committed can only be read as a content filter
+// if the terminator says so in the dialect the client speaks: on Anthropic the
+// alternative is stop_reason end_turn, which is a normal ending and worse than
+// not cutting at all.
+//
+// The finish-reason terminator comes first and the error event after it. The
+// other order — or the error event alone — leaves an Anthropic content block
+// and a Responses output item open for good.
+func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
+	t.Parallel()
+	const message = "nope"
+	tests := []struct {
+		name         string
+		format       adapter.Format
+		lines        []string
+		wantReleased int
+		wantTail     []string
+	}{
+		{
+			name:         "openai chat",
+			format:       adapter.FormatOpenAI,
+			lines:        textStreamLines("a1", "b2", "c3"),
+			wantReleased: 2,
+			wantTail:     openAICutLines(message),
+		},
+		{
+			name:         "anthropic",
+			format:       adapter.FormatAnthropic,
+			lines:        anthropicTwoBlockStreamLines(),
+			wantReleased: 9,
+			wantTail: []string{
+				"event: content_block_stop",
+				`data: {"type":"content_block_stop","index":0}`, "",
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}`, "",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`, "",
+				"event: error",
+				`data: {"type":"error","error":{"type":"permission_error","message":"nope"}}`, "",
+			},
+		},
+		{
+			name:         "gemini",
+			format:       adapter.FormatGemini,
+			lines:        geminiStreamLines(),
+			wantReleased: 2,
+			wantTail: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}]}`, "",
+				`data: {"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED"}}`, "",
+			},
+		},
+		{
+			// Cohere gets the terminator alone. Its streamed-response union has
+			// no error member, so StreamBlockedEvent would fall through to the
+			// OpenAI-shaped default — an object with no "type" discriminant on
+			// a wire whose SDK parses every event as a StreamedChatResponseV2.
+			// ERROR on message-end is the whole signal there.
+			name:         "cohere",
+			format:       adapter.FormatCohere,
+			lines:        cohereStreamLines(),
+			wantReleased: 3,
+			wantTail: []string{
+				"event: message-end",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`, "",
+			},
+		},
+		{
+			// Mistral speaks the OpenAI-chat wire but normalizeFormat does not
+			// fold it into FormatOpenAI, so a gate written as IsSameWireFormat
+			// leaves a Mistral client waiting for a [DONE] that never comes.
+			name:         "mistral",
+			format:       adapter.FormatMistral,
+			lines:        textStreamLines("a1", "b2", "c3"),
+			wantReleased: 2,
+			wantTail:     openAICutLines(message),
+		},
+		{
+			name:         "openai responses",
+			format:       adapter.FormatOpenAIResponses,
+			lines:        responsesMessageStreamLines(),
+			wantReleased: 6,
+			// The output item the cut interrupts is still left open here. A
+			// bare terminator cannot tell a message item from a function_call
+			// one and both open at output index 0, so closing blind would
+			// terminate an item that was never added and leave the real one
+			// open. The guard learns which is which in the slice that follows
+			// this one; until then a cut Responses stream is a wire-level
+			// defect and both halves have to land together.
+			wantTail: []string{
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"incomplete_details":` +
+					`{"reason":"content_filter"},"object":"response","output":[],"status":"incomplete"}}`, "",
+				"event: error",
+				`data: {"type":"error","code":"content_filter","message":"nope","param":null}`, "",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := dialectGuard(t, runner, tc.format)
+			blockOnCall(runner, 2, message)
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			_, tail := splitAtCut(t, got, tc.lines, tc.wantReleased)
+			require.Equal(t, tc.wantTail, tail)
+			require.Equal(t, 2, runner.calls, "a cut issues no further calls")
+		})
+	}
+}
+
+// encodeFailingCodec decodes normally and cannot encode, which is the only way
+// a cut reaches the wire without a terminator in front of it.
+type encodeFailingCodec struct{ guardCodec }
+
+func (encodeFailingCodec) EncodeStreamChunkFor(
+	*adapter.CanonicalStreamChunk,
+	adapter.Format,
+) ([][]byte, error) {
+	return nil, errors.New("no encoder")
+}
+
+// TestStreamGuard_CutWithoutATerminatorSendsNoBlockedEventAlone holds
+// StreamBlockedEvent to its own contract. It is the secondary signal and the
+// terminator is the primary one; on Anthropic and Responses an error event with
+// no terminator in front of it leaves the content block and the output item the
+// cut interrupted open for good, which is worse than a stream that simply ends.
+func TestStreamGuard_CutWithoutATerminatorSendsNoBlockedEventAlone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		format       adapter.Format
+		lines        []string
+		wantReleased int
+		wantTail     []string
+	}{
+		{
+			name:         "a dialect whose wire ends on a sentinel still gets it",
+			format:       adapter.FormatOpenAI,
+			lines:        textStreamLines("a1", "b2", "c3"),
+			wantReleased: 2,
+			wantTail:     []string{"data: [DONE]", ""},
+		},
+		{
+			name:         "a dialect with no sentinel gets nothing at all",
+			format:       adapter.FormatAnthropic,
+			lines:        anthropicTwoBlockStreamLines(),
+			wantReleased: 9,
+			wantTail:     []string{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := newStreamGuard(runner, encodeFailingCodec{adapter.NewRegistry()}, tc.format,
+				stageInputFixture(), streamGuardConfig{headChars: 1, minChars: 1}, newGuardLogger())
+			blockOnCall(runner, 2, "nope")
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			_, tail := splitAtCut(t, got, tc.lines, tc.wantReleased)
+			require.Equal(t, tc.wantTail, tail)
+			for _, line := range tail {
+				require.NotContains(t, line, "content_filter",
+					"the blocked event must not travel without the terminator it qualifies")
+			}
+			require.True(t, g.stopped)
+		})
+	}
 }

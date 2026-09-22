@@ -277,6 +277,15 @@ func (failingCodec) DecodeStreamChunkFor([]byte, adapter.Format) (*adapter.Canon
 	return nil, errors.New("no adapter")
 }
 
+// The encode direction stays real: a stream the codec cannot decode is still
+// owed an honest terminator when the guard cuts it.
+func (failingCodec) EncodeStreamChunkFor(
+	canonical *adapter.CanonicalStreamChunk,
+	source adapter.Format,
+) ([][]byte, error) {
+	return adapter.NewRegistry().EncodeStreamChunkFor(canonical, source)
+}
+
 func TestSegmenter_DecodeFailureStillYieldsTheEvent(t *testing.T) {
 	t.Parallel()
 	seg := newSegmenter(failingCodec{}, adapter.FormatOpenAI)

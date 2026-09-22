@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -247,19 +248,37 @@ func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
 type streamInspectorPlugin struct {
 	stubPlugin
 	verdict *appplugins.SegmentVerdict
+	// blockSeq places the verdict on one block rather than on every one, which
+	// is what tells the two cut regimes apart: block 1 is the head.
+	blockSeq int
+	options  appplugins.StreamOptions
+	postSeen chan appplugins.ExecInput
+}
+
+func (s *streamInspectorPlugin) Execute(
+	ctx context.Context,
+	in appplugins.ExecInput,
+) (*appplugins.Result, error) {
+	if in.Stage == policy.StagePostResponse && s.postSeen != nil {
+		s.postSeen <- in
+	}
+	return s.stubPlugin.Execute(ctx, in)
 }
 
 func (s *streamInspectorPlugin) InspectSegment(
-	context.Context,
-	appplugins.ExecInput,
-	appplugins.StreamSegment,
+	_ context.Context,
+	_ appplugins.ExecInput,
+	seg appplugins.StreamSegment,
 ) (*appplugins.SegmentVerdict, error) {
+	if s.blockSeq > 0 && seg.Seq != s.blockSeq {
+		return &appplugins.SegmentVerdict{}, nil
+	}
 	return s.verdict, nil
 }
 
 func (s *streamInspectorPlugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
 	enabled, _ := settings["enabled"].(bool)
-	return enabled, appplugins.StreamOptions{}
+	return enabled, s.options
 }
 
 // streamingPolicy wires a consumer with the precompiled plan the forwarder
@@ -627,4 +646,164 @@ func collectStages(t *testing.T, ch chan policy.Stage, n int) []policy.Stage {
 		}
 	}
 	return out
+}
+
+// TestForward_MidStreamCutEndsOnATerminatorAndDrainsTheUpstream is the other
+// regime end to end. Past the head the status is committed, so the rejection is
+// a 200 that ends on a content-filter terminator — and the upstream it
+// abandoned is still read to the end in the background, because usage rides the
+// last chunk and observeChunk sees it when the line is read, not when it is
+// released. Without that wiring a cut stream is charged nothing at all.
+func TestForward_MidStreamCutEndsOnATerminatorAndDrainsTheUpstream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"one"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"two"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"three"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`), {},
+		[]byte("data: [DONE]"), {},
+	}
+	var pulled atomic.Int64
+	counted := func(yield func([]byte, error) bool) {
+		for _, l := range lines {
+			pulled.Add(1)
+			if !yield(l, nil) {
+				return
+			}
+		}
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: counted}, nil).
+		Once()
+
+	p := &streamInspectorPlugin{
+		stubPlugin: stubPlugin{
+			name:   "guardrail",
+			stages: []policy.Stage{policy.StagePreResponse},
+			result: &appplugins.Result{StatusCode: 200},
+		},
+		verdict:  &appplugins.SegmentVerdict{Block: true, Type: "guardrail_violation", Message: "blocked mid-stream"},
+		blockSeq: 2,
+		options:  appplugins.StreamOptions{HeadChars: 1, MinCharsBetweenEvals: 1},
+	}
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+	assert.Equal(t, 200, res.StatusCode, "the status went out with the head block")
+
+	var got []string
+	for line, lineErr := range res.Stream {
+		require.NoError(t, lineErr)
+		got = append(got, string(line))
+	}
+	assert.Equal(t, []string{string(lines[0]), ""}, got[:2], "only the block the head cleared is relayed")
+	assert.NotContains(t, got, string(lines[2]), "the block the verdict was about is never written")
+	assert.Equal(t, []string{
+		`data: {"id":"c","object":"chat.completion.chunk","choices":` +
+			`[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`, "",
+		`data: {"error":{"message":"blocked mid-stream","type":"content_filter"}}`, "",
+		"data: [DONE]", "",
+	}, got[2:])
+
+	require.Eventually(t, func() bool {
+		return pulled.Load() == int64(len(lines))
+	}, time.Second, 5*time.Millisecond,
+		"the cut must leave the rest of the upstream to the background drain, usage chunk included")
+}
+
+// TestForward_PostResponseWaitsForTheCutDrain is the ordering B8.4's acceptance
+// criterion actually needs. Usage rides the last chunk, and on a cut that chunk
+// is still upstream when the terminator reaches the client: a post_response that
+// fired on the next statement would hand token_rate_limiter a req.Metadata the
+// drain had not written yet, charging a blocked stream nothing — and it would
+// read that map while the drain's goroutine was writing it, which is a fatal
+// concurrent map access rather than a stale number.
+//
+// The client is not what waits. Its whole body is collected below before the
+// drain is released, so the terminator reached it while the upstream was still
+// being read.
+func TestForward_PostResponseWaitsForTheCutDrain(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"one"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"two"}}]}`), {},
+		[]byte(`data: {"id":"c","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`), {},
+	}
+	release := make(chan struct{})
+	var pulled atomic.Int64
+	held := func(yield func([]byte, error) bool) {
+		for i, l := range lines {
+			// The usage chunk is where the drain earns its keep, so it is the
+			// one the upstream withholds.
+			if i == len(lines)-2 {
+				<-release
+			}
+			pulled.Add(1)
+			if !yield(l, nil) {
+				return
+			}
+		}
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: held}, nil).
+		Once()
+
+	seen := make(chan appplugins.ExecInput, 2)
+	p := &streamInspectorPlugin{
+		stubPlugin: stubPlugin{
+			name:   "guardrail",
+			stages: []policy.Stage{policy.StagePreResponse, policy.StagePostResponse},
+			result: &appplugins.Result{StatusCode: 200},
+		},
+		verdict:  &appplugins.SegmentVerdict{Block: true, Type: "guardrail_violation", Message: "blocked mid-stream"},
+		blockSeq: 2,
+		options:  appplugins.StreamOptions{HeadChars: 1, MinCharsBetweenEvals: 1},
+		postSeen: seen,
+	}
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+
+	for line, lineErr := range res.Stream {
+		require.NoError(t, lineErr)
+		_ = line
+	}
+
+	select {
+	case in := <-seen:
+		t.Fatalf("post_response ran at stage %s while the drain was still reading", in.Stage)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case in := <-seen:
+		assert.Equal(t, policy.StagePostResponse, in.Stage)
+	case <-time.After(2 * time.Second):
+		t.Fatal("post_response never ran after the drain finished")
+	}
+	assert.Equal(t, int64(len(lines)), pulled.Load(),
+		"the drain reached the usage chunk before post_response read the request")
 }

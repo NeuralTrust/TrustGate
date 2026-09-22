@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,13 @@ const (
 	trustGuardStreamHeadChars = 64
 
 	trustGuardStreamFiller = " filler"
+
+	// trustGuardStreamMinChars is the configurable floor on
+	// streaming.min_chars_between_evals, which closes a block every two padded
+	// deltas. The mid-stream cases need it: at the default of 2048 a response
+	// this short is one head block and one final block, so there is no
+	// mid-stream verdict to place a violation on.
+	trustGuardStreamMinChars = 256
 )
 
 // trustGuardStreamMarkers are the distinctive substrings the assistant text is
@@ -120,6 +128,16 @@ func trustGuardStreamPolicySettings() map[string]any {
 			"head_chars": trustGuardStreamHeadChars,
 		},
 	}
+}
+
+func trustGuardStreamCutPolicySettings() map[string]any {
+	settings := trustGuardStreamPolicySettings()
+	settings["streaming"] = map[string]any{
+		"enabled":                 true,
+		"head_chars":              trustGuardStreamHeadChars,
+		"min_chars_between_evals": trustGuardStreamMinChars,
+	}
+	return settings
 }
 
 func trustGuardStreamRequest() map[string]any {
@@ -232,4 +250,129 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		assert.Equal(t, 1, tg.GuardHits(), "a blocked head must not be followed by any further inspection")
 		assert.Equal(t, upstreamBefore+1, up.Hits())
 	})
+}
+
+// trustGuardStreamCutBlockMessage is what the stub's block verdict renders as on
+// the error channel of a cut. It is the same sentence the head gate returns as a
+// 403 body: the incident is the same, only the regime differs.
+const trustGuardStreamCutBlockMessage = "Request blocked by security policy: " + trustGuardBlockReason + "."
+
+// trustGuardOpenAICut is the whole of a cut on an OpenAI-chat wire: the
+// finish-reason chunk carrying the id of the stream it ends, the blocked event,
+// and the [DONE] sentinel an OpenAI client reads end-of-stream from.
+func trustGuardOpenAICut() string {
+	return `data: {"id":"chatcmpl-tg-stream","object":"chat.completion.chunk",` +
+		`"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}` + "\n\n" +
+		`data: {"error":{"message":"` + trustGuardStreamCutBlockMessage + `","type":"content_filter"}}` + "\n\n" +
+		"data: [DONE]\n\n"
+}
+
+// trustGuardStreamEventsCovering rebuilds, byte for byte, the upstream events a
+// guard call had cleared when it answered: the prelude, plus one event per
+// marker the call's cumulative payload carried. It is the only honest way to
+// state the released prefix — a literal would pin whatever the block cadence
+// happened to be on the machine that ran the suite.
+func trustGuardStreamEventsCovering(payload string) string {
+	events := trustGuardStreamEvents()
+	covered := 2
+	for _, marker := range trustGuardStreamMarkers {
+		if !strings.Contains(payload, marker) {
+			break
+		}
+		covered++
+	}
+	return strings.Join(events[:covered], "")
+}
+
+// trustGuardStreamedContent is the assistant text one evaluate payload carried.
+// trustGuardInspectText flattens a whole payload, which is enough to look for a
+// marker in it but not to compare two calls: the response leg frames its text as
+// an assistant message, and it is that text, not the JSON around it, that has to
+// grow as a contiguous prefix.
+func trustGuardStreamedContent(t *testing.T, payload json.RawMessage) string {
+	t.Helper()
+	var body struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &body))
+	require.Len(t, body.Messages, 1, "the response leg sends exactly one assistant message")
+	return body.Messages[0].Content
+}
+
+// trustGuardStreamCalls are the evaluate calls that carried a stream envelope,
+// in order, with each call's payload beside its envelope. The buffered
+// post_response pass runs after a cut — that is the audit trail the cut does
+// not remove — and it carries no envelope, so counting hits would count it as a
+// fourth inspection of the stream.
+//
+// Both lists are filtered on the same call index. Indexing the unfiltered
+// payloads with a filtered position lines up only as long as no envelope-less
+// call precedes the streaming ones, which is a property of the current fixture
+// and not of the harness.
+func trustGuardStreamCalls(
+	streams []GuardStream,
+	payloads []json.RawMessage,
+) ([]GuardStream, []json.RawMessage) {
+	gotStreams := make([]GuardStream, 0, len(streams))
+	gotPayloads := make([]json.RawMessage, 0, len(streams))
+	for i, s := range streams {
+		if s.ID == "" || i >= len(payloads) {
+			continue
+		}
+		gotStreams = append(gotStreams, s)
+		gotPayloads = append(gotPayloads, payloads[i])
+	}
+	return gotStreams, gotPayloads
+}
+
+func TestPluginE2E_TrustGuard_StreamMidStreamCut(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamGuardDelay)
+	tg.BlockOnCall(3)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", trustGuardStreamCutPolicySettings()))
+
+	upstreamBefore := up.Hits()
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+	body := string(raw)
+
+	// The status went out with the head block, so a violation after it cannot be
+	// a status code any more. A 200 whose body ends on a content-filter
+	// terminator is the whole of regime B.
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+
+	streams, payloads := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+	require.Len(t, streams, 3, "the head, one cleared block, and the block that blocked")
+	require.Equal(t, []int{1, 2, 3}, []int{streams[0].Seq, streams[1].Seq, streams[2].Seq})
+
+	texts := make([]string, 0, len(payloads))
+	for i := range payloads {
+		texts = append(texts, trustGuardStreamedContent(t, payloads[i]))
+	}
+	for i := 1; i < len(texts); i++ {
+		assert.True(t, strings.HasPrefix(texts[i], texts[i-1]),
+			"payload %d is not a contiguous prefix of payload %d", i, i+1)
+	}
+
+	wantPrefix := trustGuardStreamEventsCovering(texts[1])
+	require.Equal(t, wantPrefix+trustGuardOpenAICut(), body,
+		"the client gets the events the first two calls cleared, byte for byte, and then the cut")
+
+	// The marker that tripped the third call is the first one the client never
+	// saw: the cut goes forward at the release pointer, so the block under
+	// inspection is never written.
+	assert.NotContains(t, body, trustGuardStreamMarkers[len(trustGuardStreamMarkers)-1])
+	assert.Equal(t, upstreamBefore+1, up.Hits(), "a cut re-runs nothing upstream")
+
+	require.Eventually(t, func() bool {
+		later, _ := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+		return len(later) == 3
+	}, time.Second, 20*time.Millisecond, "a cut stream must not be inspected again")
 }
