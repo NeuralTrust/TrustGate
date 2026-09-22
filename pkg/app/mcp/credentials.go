@@ -548,10 +548,12 @@ func (r *credentialResolver) consentRequired(
 	if reg.ForwardedAuth().Shared() {
 		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg), Shared: true}
 	}
-	// A consumer that acts as itself has no person behind the call: nobody can
-	// complete a consent page, so it is told what is missing and who fixes it
-	// rather than handed a ticket it cannot redeem.
-	if !rc.Consumer.ActsForUsers() {
+	// A request running as the application itself has no person behind it:
+	// nobody can complete a consent page, so it is told what is missing and who
+	// fixes it rather than handed a ticket it cannot redeem. Read from the
+	// principal, because the same application serves a person on one request and
+	// nobody on the next.
+	if principalSub == consumerdomain.AppSubject(rc.Consumer.ID) {
 		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg)}
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)

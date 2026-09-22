@@ -192,7 +192,7 @@ func (h *ListConsumerHandler) stampPendingUpstreamAuth(
 	cons *domain.Consumer,
 	item *response.ConsumerResponse,
 ) {
-	if h.upstream == nil || cons == nil || cons.Type != domain.TypeMCP || cons.Identity.ActsForUsers {
+	if h.upstream == nil || cons == nil || cons.Type != domain.TypeMCP {
 		return
 	}
 	pending, err := h.upstream.PendingUpstreamAuth(c.UserContext(), gatewayID, cons.ID)

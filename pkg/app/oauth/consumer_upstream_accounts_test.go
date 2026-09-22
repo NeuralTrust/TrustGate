@@ -248,28 +248,8 @@ func TestConsumerUpstreamAccounts_LinkRefusesServersItCannotAuthorize(t *testing
 	require.ErrorIs(t, err, commonerrors.ErrNotFound)
 }
 
-func TestConsumerUpstreamAccounts_RefusesConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	t.Run("users sign in", func(t *testing.T) {
-		t.Parallel()
-		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
-			consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
-			[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-		_, err := f.accounts.State(ctx, f.gatewayID, f.consumerID)
-		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
-	})
-
-	t.Run("the application names its own users", func(t *testing.T) {
-		t.Parallel()
-		f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
-			consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
-			[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-		_, err := f.accounts.Link(ctx, f.gatewayID, f.consumerID, ids.RegistryID{})
-		require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
-	})
-}
+// Every MCP consumer may hold accounts of its own now: the declaration that
+// used to say otherwise is gone, so there is nothing left to refuse for.
 
 // An application that holds no api key at all — one that authenticates with a
 // client certificate, or one whose only key was just revoked — still has
@@ -456,17 +436,4 @@ func TestPendingUpstreamAuth_ReadsNoVaultWithoutAForwardedServer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, pending)
 	require.Empty(t, f.vault.findProviders, "nothing to link must not cost a credential lookup")
-}
-
-// Applications whose users sign in for themselves hold no accounts of their
-// own, so there is nothing for a listing to count — and a zero would read as
-// "fully authorized" rather than "not this kind of application".
-func TestPendingUpstreamAuth_RefusesConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
-	t.Parallel()
-	f := newUpstreamFixture(t, ids.New[ids.GatewayKind](),
-		consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
-		[]*authdomain.Auth{apiKeyAuth("prod")}, nil)
-
-	_, err := f.accounts.PendingUpstreamAuth(context.Background(), f.gatewayID, f.consumerID)
-	require.ErrorIs(t, err, oauth.ErrUpstreamAccountsNotMachine)
 }

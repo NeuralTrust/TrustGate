@@ -134,29 +134,26 @@ func TestListConsumers_ReportsWhatIsStillUnauthorized(t *testing.T) {
 	require.Nil(t, out.Items[1].PendingUpstreamAuth, "an application that owes nothing carries no count")
 }
 
-// Only an application that acts as itself holds accounts of its own: an
-// application whose users sign in for themselves owes nothing, and asking would
-// only be refused.
-func TestListConsumers_SkipsConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
+// Every MCP consumer may hold accounts of its own now — an application is
+// asked about, a consumer of another plane is not.
+func TestListConsumers_AsksOnlyAboutMCPConsumers(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	machine := mcpConsumer(gw, "batch-jobs", domain.Identity{})
-	forUsers := mcpConsumer(gw, "assistant", domain.Identity{
-		ActsForUsers: true, Source: domain.IdentitySourceApp,
-	})
+	assistant := mcpConsumer(gw, "assistant", domain.Identity{})
 	llm := &domain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Name: "chat", Slug: "chat",
 		Type: domain.TypeLLM, Active: true,
 	}
 	upstream := &stubUpstreamAccounts{pending: map[ids.ConsumerID]int{machine.ID: 1}}
 
-	out := listConsumers(t, gw, &stubConsumerFinder{items: []*domain.Consumer{machine, forUsers, llm}}, upstream)
+	out := listConsumers(t, gw, &stubConsumerFinder{items: []*domain.Consumer{machine, assistant, llm}}, upstream)
 
 	require.Len(t, out.Items, 3)
-	require.Equal(t, []ids.ConsumerID{machine.ID}, upstream.asked)
+	require.Equal(t, []ids.ConsumerID{machine.ID, assistant.ID}, upstream.asked)
 	require.NotNil(t, out.Items[0].PendingUpstreamAuth)
-	require.Nil(t, out.Items[1].PendingUpstreamAuth)
-	require.Nil(t, out.Items[2].PendingUpstreamAuth)
+	require.Nil(t, out.Items[1].PendingUpstreamAuth, "an application that owes nothing carries no count")
+	require.Nil(t, out.Items[2].PendingUpstreamAuth, "the model plane has no upstream accounts")
 }
 
 // An unreadable vault is not the same as nothing owed: the listing still

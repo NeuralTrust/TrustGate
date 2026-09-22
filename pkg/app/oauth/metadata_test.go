@@ -200,7 +200,7 @@ func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *test
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/users/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, platformUsersIdentity()),
+			Consumer:  consumerdomain.BuildStoreConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{apiKey, disabledKey},
 		}},
 	}}
@@ -274,7 +274,7 @@ func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testi
 	otherIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://theirs.example.com", RequiredScopes: []string{"theirs:secret-project"}})
 	gatewayID := ourIdP.GatewayID
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/bare/mcp": {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, platformUsersIdentity())}},
+		"/bare/mcp": {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
 	}}
 	svc := NewMetadataService(
 		&fakeCredentialFinder{oauth2: []*authdomain.Auth{ourIdP, otherIdP}}, paths, nil, newMemFlowStore(),

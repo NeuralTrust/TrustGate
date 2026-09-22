@@ -42,12 +42,6 @@ type KeyConsumer struct {
 	Name   string
 	Type   domain.Type
 	Active bool
-	// ActsForUsers is false for a consumer that acts as the application
-	// itself. It is here because it decides which handle an SDK hands back,
-	// and asking the consumer is the only way to know.
-	ActsForUsers bool
-	// IdentitySource names who the users are when it acts for them.
-	IdentitySource string
 }
 
 // APIKeyConsumers answers what an api key reaches.
@@ -107,12 +101,10 @@ func (s *apiKeyConsumers) ForAPIKey(
 			continue
 		}
 		out = append(out, KeyConsumer{
-			Slug:           cons.Slug,
-			Name:           cons.Name,
-			Type:           cons.Type,
-			Active:         cons.Active,
-			ActsForUsers:   cons.Identity.ActsForUsers,
-			IdentitySource: string(cons.Identity.Source),
+			Slug:   cons.Slug,
+			Name:   cons.Name,
+			Type:   cons.Type,
+			Active: cons.Active,
 		})
 	}
 	if len(out) == 0 {

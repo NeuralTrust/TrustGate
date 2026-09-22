@@ -66,11 +66,6 @@ type WhoAmIConsumer struct {
 	// consumer, the provider-compatible base URL for an LLM one. Empty when
 	// the gateway has no public host configured for that plane.
 	URL string `json:"url,omitempty"`
-	// ActsForUsers is false for a consumer that acts as the application
-	// itself, which is the actor a batch runs as.
-	ActsForUsers bool `json:"acts_for_users"`
-	// IdentitySource names who its users are when it acts for them.
-	IdentitySource string `json:"identity_source,omitempty"`
 }
 
 // WhoAmIResponse is everything a client can learn from its own key.
@@ -107,13 +102,11 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 	out := WhoAmIResponse{Gateway: gateway.Slug, Consumers: make([]WhoAmIConsumer, 0, len(consumers))}
 	for _, cons := range consumers {
 		out.Consumers = append(out.Consumers, WhoAmIConsumer{
-			Slug:           cons.Slug,
-			Name:           cons.Name,
-			Type:           string(cons.Type),
-			Active:         cons.Active,
-			URL:            h.consumerURL(c, gateway, cons),
-			ActsForUsers:   cons.ActsForUsers,
-			IdentitySource: cons.IdentitySource,
+			Slug:   cons.Slug,
+			Name:   cons.Name,
+			Type:   string(cons.Type),
+			Active: cons.Active,
+			URL:    h.consumerURL(c, gateway, cons),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(out)

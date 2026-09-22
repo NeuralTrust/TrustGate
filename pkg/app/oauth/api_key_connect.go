@@ -150,9 +150,6 @@ func (s *apiKeyConnectService) findTarget(
 	if !ok || !validMCPConsumer(target, gatewayID) {
 		return nil, nil, ErrAPIKeyConnectUnauthorized
 	}
-	if target.Consumer.Identity.AppUsers() {
-		return nil, nil, ErrAPIKeyConnectEndUsers
-	}
 	return data, target, nil
 }
 

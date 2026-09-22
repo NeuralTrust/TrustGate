@@ -575,7 +575,7 @@ func currentAppIdentity(
 		rc.Consumer.ID.String() != ticket.ConsumerID {
 		return false
 	}
-	if !validMCPConsumer(rc, gatewayID) || rc.Consumer.Identity.ActsForUsers {
+	if !validMCPConsumer(rc, gatewayID) {
 		return false
 	}
 	if ticket.AuthID == "" {
