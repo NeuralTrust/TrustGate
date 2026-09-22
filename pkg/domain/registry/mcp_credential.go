@@ -19,6 +19,8 @@ import (
 	"encoding/hex"
 	"net/url"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 // forwardedVaultSeparator joins the provider name and the resource fingerprint
@@ -29,6 +31,33 @@ const forwardedVaultSeparator = "|"
 // forwardedResourceFingerprintLen keeps the key short while leaving collisions
 // out of reach: 48 bits of a SHA-256 over a URL, within one gateway.
 const forwardedResourceFingerprintLen = 12
+
+// sharedAccountSubjectPrefix namespaces the account an instance holds for
+// everyone, so it can never collide with a person's token subject or with an
+// application's own (app:<consumer_id>).
+const sharedAccountSubjectPrefix = "instance:"
+
+// Shared reports whether one connected account serves every caller of this
+// instance, rather than each caller connecting their own.
+func (a *MCPAuth) Shared() bool {
+	return a != nil && a.Mode == MCPAuthModeForwarded && a.Account == MCPAccountShared
+}
+
+// SharedAccountSubject is the vault subject an instance's shared account is
+// stored under. The instance, not the catalog code: two instances of one
+// server are two accounts — that is what having two instances is for.
+func SharedAccountSubject(registryID ids.RegistryID) string {
+	return sharedAccountSubjectPrefix + registryID.String()
+}
+
+// CredentialSubject is whose forwarded credential a call on this registry
+// reads: the caller's own account, or the one the instance holds for everyone.
+func CredentialSubject(reg *Registry, principalSub string) string {
+	if reg != nil && reg.ForwardedAuth().Shared() {
+		return SharedAccountSubject(reg.ID)
+	}
+	return principalSub
+}
 
 // ForwardedAuth returns the registry's forwarded OAuth config, or nil when the
 // registry does not forward a per-user credential.

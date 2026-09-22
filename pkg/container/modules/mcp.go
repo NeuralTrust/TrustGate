@@ -31,6 +31,7 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -148,6 +149,12 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewListRegistryToolsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(provideRegistrySharedAccounts); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewSharedAccountHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
@@ -487,6 +494,17 @@ func provideConsumerUpstreamAccounts(
 	connect appoauth.ConnectService,
 ) (appoauth.ConsumerUpstreamAccounts, error) {
 	return appoauth.NewConsumerUpstreamAccounts(consumers, connect)
+}
+
+// provideRegistrySharedAccounts serves the account an MCP instance holds for
+// every caller. It is the connect service the runtime already uses, minting the
+// ticket for the instance instead of for whoever is calling.
+func provideRegistrySharedAccounts(
+	registries appregistry.Finder,
+	vault vaultdomain.Repository,
+	connect appoauth.ConnectService,
+) appregistry.SharedAccountService {
+	return appregistry.NewSharedAccountService(registries, vault, connect)
 }
 
 func provideEndUserConnectionsService(
