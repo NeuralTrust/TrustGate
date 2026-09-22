@@ -77,7 +77,7 @@ func TestParseCuratedMCPServers_ExposesCapabilities(t *testing.T) {
 		"transport":"streamable-http",
 		"server_url":"https://a.example.com/mcp",
 		"self_service":false,
-		"multi_instance":false,
+		
 		"tools":[{"name":"search_pages"}]
 	}]}`)
 

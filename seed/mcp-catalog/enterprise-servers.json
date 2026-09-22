@@ -21,7 +21,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -49,7 +48,6 @@
       "server_url": "https://api.ahrefs.com/mcp/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -79,7 +77,6 @@
       "server_url": "https://mcp.airbyte.ai/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -105,7 +102,6 @@
       "server_url": "https://mcp.airtable.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -339,7 +335,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -364,7 +359,6 @@
       "server_url": "https://mcp.amplitude.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -430,7 +424,6 @@
       "server_url": "https://mcp.apify.com/",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -542,7 +535,6 @@
       "server_url": "https://mcp.apollo.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -586,7 +578,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -619,7 +610,6 @@
       "server_url": "https://mcp.asana.com/v2/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -759,7 +749,6 @@
       "server_url": "https://mcp.assemblyai.com/docs",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 55,
       "tools": [
         {
@@ -794,7 +783,6 @@
       "server_url": "https://mcp.atlan.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -943,7 +931,6 @@
       "server_url": "https://mcp.atlassian.com/v1/mcp/authv2",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1107,7 +1094,6 @@
       "server_url": "https://mcp.attio.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1288,7 +1274,6 @@
       "server_url": "https://mcp.axiom.co/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1388,7 +1373,6 @@
       "server_url": "https://mcp.betterstack.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1419,7 +1403,6 @@
       "server_url": "https://mcp.box.com/",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1664,7 +1647,6 @@
       "server_url": "https://api.braintrust.dev/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -1719,7 +1701,6 @@
       "server_url": "https://api.brex.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -1839,7 +1820,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "relevance": 55,
       "tools": [
         {
@@ -1899,7 +1879,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "relevance": 55,
       "tools": [
         {
@@ -1974,7 +1953,6 @@
       "server_url": "https://cdn.builder.io/api/v1/mcp/builder-content",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -1999,7 +1977,6 @@
       "server_url": "https://mcp.buildkite.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2151,7 +2128,6 @@
       "server_url": "https://mcp.cal.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2312,7 +2288,6 @@
       "server_url": "https://mcp.calendly.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2481,7 +2456,6 @@
       "server_url": "https://mcp.canva.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2660,7 +2634,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -2691,7 +2664,6 @@
       "server_url": "https://mcp.checkr.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2734,7 +2706,6 @@
       "server_url": "https://mcp.clickhouse.cloud/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2822,7 +2793,6 @@
       "server_url": "https://mcp.clickup.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -2853,7 +2823,6 @@
       "server_url": "https://mcp.close.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3127,7 +3096,6 @@
       "server_url": "https://ai-gateway.mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3176,7 +3144,6 @@
       "server_url": "https://mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3213,7 +3180,6 @@
       "server_url": "https://bindings.mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3330,7 +3296,6 @@
       "server_url": "https://docs.mcp.cloudflare.com/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 90,
       "tools": [
         {
@@ -3357,7 +3322,6 @@
       "server_url": "https://observability.mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3398,7 +3362,6 @@
       "server_url": "https://radar.mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3667,7 +3630,6 @@
       "server_url": "https://asset-management.mcp.cloudinary.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "cloudinary-url",
@@ -3786,7 +3748,6 @@
       "server_url": "https://coda.io/apis/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -3816,7 +3777,6 @@
       "server_url": "https://api.cdp.coinbase.com/platform/v2/x402/discovery/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 70,
       "tools": [
         {
@@ -3843,7 +3803,6 @@
       "server_url": "https://mcp.contentful.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -4051,7 +4010,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -4071,7 +4029,6 @@
       "server_url": "https://mcp.customer.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -4129,7 +4086,6 @@
       "server_url": "https://mcp.daloopa.com/server/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -4196,7 +4152,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -4227,7 +4182,6 @@
       "server_url": "https://mcp.datadoghq.com/v1/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -4503,7 +4457,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -4570,7 +4523,6 @@
       "server_url": "https://mcp.deepwiki.com/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "read_wiki_structure",
@@ -4600,7 +4552,6 @@
       "server_url": "https://api.devexpress.com/mcp/docs",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "devexpress_docs_search",
@@ -4626,7 +4577,6 @@
       "server_url": "https://accounts.mcp.digitalocean.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -4702,7 +4652,6 @@
       "server_url": "https://apps.mcp.digitalocean.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -4762,7 +4711,6 @@
       "server_url": "https://databases.mcp.digitalocean.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -4946,7 +4894,6 @@
       "server_url": "https://droplets.mcp.digitalocean.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -5146,7 +5093,6 @@
       "server_url": "https://doks.mcp.digitalocean.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -5246,7 +5192,6 @@
       "server_url": "https://mcp.dropbox.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5336,7 +5281,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -5387,7 +5331,6 @@
       "server_url": "https://mcp-server.egnyte.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5420,7 +5363,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -5446,7 +5388,6 @@
       "server_url": "https://docs.endorlabs.com/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "search_endor_labs_documentation",
@@ -5472,7 +5413,6 @@
       "server_url": "https://mcp.exa.ai/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "x-api-key",
@@ -5508,7 +5448,6 @@
       "server_url": "https://mcp.excalidraw.com",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "read_me",
@@ -5546,7 +5485,6 @@
       "server_url": "https://api.fathom.ai/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5606,7 +5544,6 @@
       "server_url": "https://mcp.fibery.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5666,7 +5603,6 @@
       "server_url": "https://mcp.firecrawl.dev/v2/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5718,7 +5654,6 @@
       "server_url": "https://api.fireflies.ai/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -5769,7 +5704,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -5790,7 +5724,6 @@
       "server_url": "https://mcp.frontapp.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5858,7 +5791,6 @@
       "server_url": "https://api.githubcopilot.com/mcp/",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5918,7 +5850,6 @@
       "server_url": "https://gitlab.com/api/v4/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -5987,7 +5918,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -6026,7 +5956,6 @@
       "server_url": "https://mcp.globalping.dev/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "ping",
@@ -6096,7 +6025,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -6159,7 +6087,6 @@
       "server_url": "https://mcp.slack.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6200,7 +6127,6 @@
       "server_url": "https://gmailmcp.googleapis.com/mcp/v1",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6276,7 +6202,6 @@
       "server_url": "https://calendarmcp.googleapis.com/mcp/v1",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6348,7 +6273,6 @@
       "server_url": "https://drivemcp.googleapis.com/mcp/v1",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6391,7 +6315,6 @@
       "server_url": "https://androidmanagement.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6459,7 +6382,6 @@
       "server_url": "https://bigtableadmin.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6550,7 +6472,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6622,7 +6543,6 @@
       "server_url": "https://compute.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6770,7 +6690,6 @@
       "server_url": "https://container.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6894,7 +6813,6 @@
       "server_url": "https://datastream.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -6966,7 +6884,6 @@
       "server_url": "https://design.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7019,7 +6936,6 @@
       "server_url": "https://developerknowledge.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7063,7 +6979,6 @@
       "server_url": "https://firestore.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7155,7 +7070,6 @@
       "server_url": "https://mapstools.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7207,7 +7121,6 @@
       "server_url": "https://memorystore.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7295,7 +7208,6 @@
       "server_url": "https://monitoring.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7363,7 +7275,6 @@
       "server_url": "https://run.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7415,7 +7326,6 @@
       "server_url": "https://sqladmin.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7507,7 +7417,6 @@
       "server_url": "https://stitch.googleapis.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7604,7 +7513,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7641,7 +7549,6 @@
       "server_url": "https://mcp.grafana.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7672,7 +7579,6 @@
       "server_url": "https://mcp.granola.ai/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7728,7 +7634,6 @@
       "server_url": "https://mcp.api.getguru.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7783,7 +7688,6 @@
       "server_url": "https://app.hex.tech/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7833,7 +7737,6 @@
       "server_url": "https://mcp.holded.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -7860,7 +7763,6 @@
       "server_url": "https://mcp.honeycomb.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8029,7 +7931,6 @@
       "server_url": "https://mcp.hubspot.com",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8113,7 +8014,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -8139,7 +8039,6 @@
       "server_url": "https://huggingface.co/mcp?login",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8175,7 +8074,6 @@
       "server_url": "https://mcp.incident.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8332,7 +8230,6 @@
       "server_url": "https://mcp.infobip.com/sms",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -8358,7 +8255,6 @@
       "server_url": "https://mcp.intercom.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8439,7 +8335,6 @@
       "server_url": "https://mcp.jam.dev/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8532,7 +8427,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -8731,7 +8625,6 @@
       "server_url": "https://mcp.jina.ai/v1",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -8843,7 +8736,6 @@
       "server_url": "https://mcp.jotform.com",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -8895,7 +8787,6 @@
       "server_url": "https://mcp.jumpcloud.com/v1",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -9026,7 +8917,6 @@
       "server_url": "https://mcp.klaviyo.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -9219,7 +9109,6 @@
       "server_url": "https://cloud.langfuse.com/api/public/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -9454,7 +9343,6 @@
       "server_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -9496,7 +9384,6 @@
       "server_url": "https://mcp.linear.app/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -9706,7 +9593,6 @@
       "server_url": "https://docs.lithic.com/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "list-endpoints",
@@ -9748,7 +9634,6 @@
       "server_url": "https://mandrillapp.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -9812,7 +9697,6 @@
       "server_url": "https://mcp.make.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -9839,7 +9723,6 @@
       "server_url": "https://mcp.mem0.ai/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -9910,7 +9793,6 @@
       "server_url": "https://mcp.mercury.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10002,7 +9884,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10090,7 +9971,6 @@
       "server_url": "https://learn.microsoft.com/api/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 100,
       "tools": [
         {
@@ -10121,7 +10001,6 @@
       "server_url": "https://sentinel.microsoft.com/mcp/data-exploration",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10177,7 +10056,6 @@
       "server_url": "https://mcp.miro.com/",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10290,7 +10168,6 @@
       "server_url": "https://mcp.mixpanel.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10437,7 +10314,6 @@
       "server_url": "https://docs.moderntreasury.com/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "tools": [
         {
           "name": "list-endpoints",
@@ -10471,7 +10347,6 @@
       "server_url": "https://mcp.mollie.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -10747,7 +10622,6 @@
       "server_url": "https://mcp.monday.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -10912,7 +10786,6 @@
       "server_url": "https://mcp.getmontecarlo.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11026,7 +10899,6 @@
       "server_url": "https://api.motherduck.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11149,7 +11021,6 @@
       "server_url": "https://mcp.mux.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11272,7 +11143,6 @@
       "server_url": "https://mcp.neon.tech/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11428,7 +11298,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -11449,7 +11318,6 @@
       "server_url": "https://mcp.newrelic.com/mcp/",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11591,7 +11459,6 @@
       "server_url": "https://mcp.norman.finance/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11730,7 +11597,6 @@
       "server_url": "https://mcp.notion.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11838,7 +11704,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -11862,7 +11727,6 @@
       "server_url": "https://mcp.paddle.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -11902,7 +11766,6 @@
       "server_url": "https://mcp.pagerduty.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12044,7 +11907,6 @@
       "server_url": "https://mcp.pandadoc.com/v1/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12074,7 +11936,6 @@
       "server_url": "https://mcp.paypal.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12207,7 +12068,6 @@
       "server_url": "https://app.pendo.io/mcp/v0/shttp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12351,7 +12211,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -12383,7 +12242,6 @@
       "server_url": "https://remote.mcp.pipedream.net/v3",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -12437,7 +12295,6 @@
       "server_url": "https://api.dashboard.plaid.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -12481,7 +12338,6 @@
       "server_url": "https://mcp.pscale.dev/mcp/planetscale",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12584,7 +12440,6 @@
       "server_url": "https://mcp.port.io/v1",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12690,7 +12545,6 @@
       "server_url": "https://mcp.posthog.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12741,7 +12595,6 @@
       "server_url": "https://mcp.postman.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12838,7 +12691,6 @@
       "server_url": "https://mcp.prisma.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12911,7 +12763,6 @@
       "server_url": "https://mcp.prismic.io/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -12999,7 +12850,6 @@
       "server_url": "https://mcp.railway.com/",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13063,7 +12913,6 @@
       "server_url": "https://mcp.ramp.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13170,7 +13019,6 @@
       "server_url": "https://mcp.razorpay.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -13246,7 +13094,6 @@
       "server_url": "https://mcp.render.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -13370,7 +13217,6 @@
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13435,7 +13281,6 @@
       "server_url": "https://mcp.rootly.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13553,7 +13398,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -13574,7 +13418,6 @@
       "server_url": "https://mcp.sanity.io",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13706,7 +13549,6 @@
       "server_url": "https://api.scrapingant.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "x-api-key",
@@ -13745,7 +13587,6 @@
       "server_url": "https://mcp.semgrep.ai/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13808,7 +13649,6 @@
       "server_url": "https://mcp.semrush.com/v1/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13873,7 +13713,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13897,7 +13736,6 @@
       "server_url": "https://mcp.sentry.dev/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14012,7 +13850,6 @@
       "server_url": "https://mcp.serpapi.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -14055,7 +13892,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -14083,7 +13919,6 @@
       ],
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": true,
       "relevance": 90,
       "tools": [
         {
@@ -14114,7 +13949,6 @@
       "server_url": "https://mcp.shortcut.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14240,7 +14074,6 @@
       "server_url": "https://swagger.mcp.smartbear.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14366,7 +14199,6 @@
       "server_url": "https://mcp.smartsheet.com",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -14576,7 +14408,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true
@@ -14597,7 +14428,6 @@
       "server_url": "https://mcp.socket.dev/",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 50,
       "tools": [
         {
@@ -14644,7 +14474,6 @@
       "server_url": "https://api.sonarcloud.io/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -14761,7 +14590,6 @@
       "server_url": "https://mcp.guide.sonatype.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -14801,7 +14629,6 @@
       "server_url": "https://mcp.squareup.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14852,7 +14679,6 @@
       "server_url": "https://api.statsig.com/v1/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14879,7 +14705,6 @@
       "server_url": "https://mcp.storyblok.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -14936,7 +14761,6 @@
       "server_url": "https://mcp.stripe.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -15081,7 +14905,6 @@
       "server_url": "https://mcp.stytch.dev/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -15146,7 +14969,6 @@
       "server_url": "https://mcp.supabase.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -15326,7 +15148,6 @@
       "server_url": "https://mcp.tavily.com/mcp/",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -15379,7 +15200,6 @@
       "server_url": "https://mcp.ai.teamwork.com",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -16126,7 +15946,6 @@
       "server_url": "https://api.telnyx.com/v2/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -16178,7 +15997,6 @@
       "server_url": "https://agent.thoughtspot.app/mcp?api-version=latest",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16247,7 +16065,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "tools": [
         {
           "name": "explore_data",
@@ -16289,7 +16106,6 @@
       "server_url": "https://ai.todoist.net/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16526,7 +16342,6 @@
       "server_url": "https://mcp.twilio.com/docs",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 80,
       "tools": [
         {
@@ -16574,7 +16389,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16660,7 +16474,6 @@
       "server_url": "https://mcp.vercel.com",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16775,7 +16588,6 @@
       "server_url": "https://mcp.vimeo.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16809,7 +16621,6 @@
       "server_url": "https://documentation-mcp.vonage.dev/mcp",
       "requires_auth": false,
       "self_service": true,
-      "multi_instance": false,
       "relevance": 50,
       "tools": [
         {
@@ -16856,7 +16667,6 @@
       "server_url": "https://mcp.webflow.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -16977,7 +16787,6 @@
       "server_url": "https://mcp.withwandb.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -17060,7 +16869,6 @@
       "server_url": "https://mcp.wix.com/mcp",
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": false,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17140,7 +16948,6 @@
       "server_url": "https://app.workato.com/mcp",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "auth_headers": [
         {
           "name": "Authorization",
@@ -17166,7 +16973,6 @@
       "server_url": "https://mcp.zoom.us/mcp/docs/streamable",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17206,7 +17012,6 @@
       "server_url": "https://mcp.zoom.us/mcp/revenue_accelerator/streamable",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17242,7 +17047,6 @@
       "server_url": "https://mcp.zoom.us/mcp/team_chat/streamable",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17303,7 +17107,6 @@
       "server_url": "https://mcp.zoom.us/mcp/whiteboard/streamable",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17384,7 +17187,6 @@
       "server_url": "https://mcp.zoom.us/mcp/zoom/streamable",
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17456,7 +17258,6 @@
       ],
       "requires_auth": true,
       "self_service": true,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -17531,7 +17332,6 @@
       ],
       "requires_auth": true,
       "self_service": false,
-      "multi_instance": true,
       "oauth": {
         "required": true,
         "resource_metadata": true,

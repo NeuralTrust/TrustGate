@@ -16,11 +16,9 @@ package registry_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -29,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// instanceCatalog is the catalog the creator reads the instance rule from.
+// instanceCatalog is the catalog the creator canonicalises auth against.
 type instanceCatalog struct {
 	entries map[string]catalogdomain.MCPServer
 }
@@ -43,35 +41,31 @@ func (instanceCatalog) SharedOAuthCredentials(string) (string, string, bool) {
 	return "", "", false
 }
 
-// linearEntry is what the catalog declares for a server whose second instance
-// would be a copy of the first: one URL, per-user OAuth the gateway registers
-// itself, nothing an operator supplies.
+// linearEntry is a server that is one URL behind per-user OAuth: nothing in its
+// address or its client differs between two instances.
 func linearEntry() catalogdomain.MCPServer {
 	return catalogdomain.MCPServer{
-		Code:          "app.linear/mcp",
-		DisplayName:   "Linear",
-		URL:           "https://mcp.linear.app/mcp",
-		AuthHint:      "oauth",
-		RequiresAuth:  true,
-		SelfService:   true,
-		MultiInstance: false,
-		OAuth:         &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
+		Code:         "app.linear/mcp",
+		DisplayName:  "Linear",
+		URL:          "https://mcp.linear.app/mcp",
+		AuthHint:     "oauth",
+		RequiresAuth: true,
+		SelfService:  true,
+		OAuth:        &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
 	}
 }
 
-// snowflakeEntry is what it declares for the servers instances exist for: a
-// templated URL, so two registries reach two different schemas.
+// snowflakeEntry is a templated URL, so two registries reach two schemas.
 func snowflakeEntry() catalogdomain.MCPServer {
 	return catalogdomain.MCPServer{
-		Code:          "com.snowflake/mcp",
-		DisplayName:   "Snowflake",
-		URL:           "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{server}",
-		AuthHint:      "oauth",
-		RequiresAuth:  true,
-		URLVariables:  []catalogdomain.MCPURLVariable{{Name: "account_url", Required: true}},
-		SelfService:   false,
-		MultiInstance: true,
-		OAuth:         &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
+		Code:         "com.snowflake/mcp",
+		DisplayName:  "Snowflake",
+		URL:          "https://{account_url}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{server}",
+		AuthHint:     "oauth",
+		RequiresAuth: true,
+		URLVariables: []catalogdomain.MCPURLVariable{{Name: "account_url", Required: true}},
+		SelfService:  false,
+		OAuth:        &catalogdomain.MCPOAuth{Required: true, Registration: "auto"},
 	}
 }
 
@@ -90,62 +84,25 @@ func catalogInput(gatewayID ids.GatewayID, name, code, url string) appregistry.C
 	}
 }
 
-func shelved(gatewayID ids.GatewayID, name, code, url string) *domain.Registry {
-	registry, err := domain.NewMCPRegistry(gatewayID, name, "", &domain.MCPTarget{
-		URL: url, Code: code, Transport: domain.MCPTransportStreamableHTTP,
-		// A shelf entry skips canonicalisation, so it carries the registration
-		// the catalog would have stamped on it.
-		Auth: &domain.MCPAuth{
-			Mode:         domain.MCPAuthModeForwarded,
-			Provider:     code,
-			Registration: domain.RegistrationAuto,
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return registry
-}
-
-func TestCreator_RefusesASecondInstanceOfAFixedOAuthServer(t *testing.T) {
+// A server with one URL and one sign-in used to hold exactly one instance: two
+// of them could only differ in what an operator configured, and there was
+// nothing to configure. Whose account it uses is now such a thing — one
+// instance where each user connects their own, another on the account the team
+// shares — so the shelf takes as many as the operator asks for.
+func TestCreator_AllowsASecondInstanceOfAFixedOAuthServer(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().
-		List(mock.Anything, mock.Anything).
-		Return([]*domain.Registry{
-			shelved(gatewayID, "Linear", "app.linear/mcp", "https://mcp.linear.app/mcp"),
-		}, 1, nil).
-		Once()
-	cat := instanceCatalog{entries: map[string]catalogdomain.MCPServer{"app.linear/mcp": linearEntry()}}
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, cat)
-
-	_, err := creator.Create(context.Background(),
-		catalogInput(gatewayID, "Linear (second)", "app.linear/mcp", "https://mcp.linear.app/mcp"))
-
-	require.ErrorIs(t, err, appregistry.ErrSingleInstanceServer)
-	// A conflict, not a validation error: the request is well formed, the shelf
-	// already holds the only instance this server can have.
-	require.ErrorIs(t, err, commonerrors.ErrConflict)
-	// The operator needs to know which one is in the way.
-	require.Contains(t, err.Error(), "Linear")
-}
-
-// The first one is what every self-service install depends on.
-func TestCreator_AllowsTheFirstInstanceOfAFixedOAuthServer(t *testing.T) {
-	t.Parallel()
-	gatewayID := ids.New[ids.GatewayKind]()
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().List(mock.Anything, mock.Anything).Return(nil, 0, nil).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 	cat := instanceCatalog{entries: map[string]catalogdomain.MCPServer{"app.linear/mcp": linearEntry()}}
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, cat)
 
+	// The shelf is never even read: there is no rule left to check it against.
 	registry, err := creator.Create(context.Background(),
-		catalogInput(gatewayID, "Linear", "app.linear/mcp", "https://mcp.linear.app/mcp"))
+		catalogInput(gatewayID, "Linear (shared)", "app.linear/mcp", "https://mcp.linear.app/mcp"))
 
 	require.NoError(t, err)
-	require.Equal(t, "Linear", registry.Name)
+	require.Equal(t, "Linear (shared)", registry.Name)
 }
 
 func TestCreator_AllowsASecondInstanceOfAConfigurableServer(t *testing.T) {
@@ -156,8 +113,6 @@ func TestCreator_AllowsASecondInstanceOfAConfigurableServer(t *testing.T) {
 	cat := instanceCatalog{entries: map[string]catalogdomain.MCPServer{"com.snowflake/mcp": snowflakeEntry()}}
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, cat)
 
-	// The shelf is never even read: the entry declares multi_instance, so there
-	// is nothing to compare against.
 	_, err := creator.Create(context.Background(), catalogInput(
 		gatewayID, "Snowflake — FINANCE", "com.snowflake/mcp",
 		"https://acme.snowflakecomputing.com/api/v2/databases/D/schemas/FINANCE/mcp-servers/S"))
@@ -165,7 +120,7 @@ func TestCreator_AllowsASecondInstanceOfAConfigurableServer(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// A server an operator wired by hand has no catalog entry to read a rule from.
+// A server an operator wired by hand carries no catalog code at all.
 func TestCreator_LeavesAHandWiredServerAlone(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
@@ -185,21 +140,4 @@ func TestCreator_LeavesAHandWiredServerAlone(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-}
-
-// A read failure must not be mistaken for "nothing on the shelf", which would
-// let the duplicate through.
-func TestCreator_DoesNotCreateWhenTheShelfCannotBeRead(t *testing.T) {
-	t.Parallel()
-	gatewayID := ids.New[ids.GatewayKind]()
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().List(mock.Anything, mock.Anything).Return(nil, 0, errors.New("db down")).Once()
-	cat := instanceCatalog{entries: map[string]catalogdomain.MCPServer{"app.linear/mcp": linearEntry()}}
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, cat)
-
-	_, err := creator.Create(context.Background(),
-		catalogInput(gatewayID, "Linear", "app.linear/mcp", "https://mcp.linear.app/mcp"))
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "db down")
 }
