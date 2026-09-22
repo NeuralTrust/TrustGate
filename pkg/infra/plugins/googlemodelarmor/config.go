@@ -56,11 +56,9 @@ var allFilters = []string{filterSDP, filterRAI, filterPIAndJailbreak, filterMali
 //     credential — useless without their grant, and revocable without
 //     touching our database.
 //  2. ServiceAccountJSON set: mint tokens from that explicit service-account
-//     key. Like bedrock_guardrail's own access_key_id/secret_access_key,
-//     policy settings persist through a bare json.Marshal with no encryption
-//     in the repository layer, so this sits there in plaintext next to
-//     bedrock's secret_access_key. That is a known, separate decision
-//     (RUN-1644), not an oversight here.
+//     key. Policy settings are persisted unencrypted and are returned to the
+//     console in full, so this key is exposed exactly as bedrock's own
+//     secret_access_key is; tracked in RUN-1646.
 //  3. Neither set: Application Default Credentials / GKE Workload Identity —
 //     today's only behaviour, unchanged, so a policy with no credentials
 //     block keeps working exactly as before.
