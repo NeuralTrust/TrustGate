@@ -485,6 +485,14 @@ Invariants checked in this audit:
   surface watcher skip when the subject is empty.
 - The end-user swap only happens after the caller proved it is the application
   (API key or certificate); a platform session cannot impersonate an end user.
+- **The gateway's own subject namespaces are reserved.** `app:` and `instance:`
+  are minted here and nowhere else, so a credential whose subject arrives from
+  outside — a token an identity provider signed, a certificate a CA issued —
+  may not wear them (`identity.ReservedSubject`, refused in the auth chain).
+  Without that, a token saying `app:<another team's consumer>` *is* that
+  application at the vault, and `subject_claim` is configurable per credential,
+  so the subject can be a claim a person edits about themselves. An api key is
+  exempt: its subject is this gateway's own label for the key.
 - Per-user credentials are keyed by the principal subject everywhere (vault,
   consent tickets, statuses, stream fingerprint), so the three subjects
   (`app:<id>`, `app:<id>:<user>`, a verified `sub`) never share an account.

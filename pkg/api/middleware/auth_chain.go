@@ -115,19 +115,52 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if cert := r.clientCertificate(c); cert != nil {
-		return r.resolveMTLS(c.UserContext(), cert, scope)
+		return ownSubjectsOnly(r.resolveMTLS(c.UserContext(), cert, scope))
 	}
 	// An api key presented as a bearer token is an api key, not a token to hand
 	// to the IdP validators: most MCP clients can only send Authorization, and
 	// the proxy plane has always accepted that form. A bearer without the api-key
 	// marker keeps its precedence over the key headers.
 	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
-		return r.resolveBearer(c.UserContext(), token, scope)
+		return ownSubjectsOnly(r.resolveBearer(c.UserContext(), token, scope))
 	}
 	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
+		// Not guarded: an api key's subject is the name an admin gave the key,
+		// a row in this gateway's own database, and the MCP plane replaces it
+		// with the application's subject anyway. Refusing it would only lock
+		// out a key somebody happened to call "app:something".
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
 	return Identity{}, resolver.ErrUnauthenticated
+}
+
+// ownSubjectsOnly refuses a credential whose subject claims a namespace only
+// the gateway mints.
+//
+// A subject is what an upstream account hangs off, so two callers with the same
+// subject are the same account. The gateway mints app:<consumer_id> for an
+// application, app:<consumer_id>:<end_user> for someone it names, and
+// instance:<registry_id> for the account a server's instance holds for
+// everyone. Everything else here is whatever an identity provider put in a
+// token — and which claim that is read from is configurable per credential, so
+// it can be one a person edits about themselves.
+//
+// A token saying "app:<the other team's consumer>" would otherwise be that
+// application, and would read the upstream accounts it had linked. Nothing
+// legitimate arrives here wearing these prefixes: the gateway builds them after
+// this point, from the consumer it just resolved, never from the wire.
+//
+// It guards the credentials whose subject comes from outside — a token an
+// identity provider signed, a certificate a CA issued. An api key's subject is
+// this gateway's own label for it and is left alone (see Resolve).
+func ownSubjectsOnly(id Identity, err error) (Identity, error) {
+	if err != nil {
+		return id, err
+	}
+	if id.Principal != nil && identity.ReservedSubject(id.Principal.Subject) {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	return id, nil
 }
 
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
