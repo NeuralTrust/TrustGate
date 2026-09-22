@@ -127,7 +127,10 @@ type MCPAuthResponse struct {
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
 
-	Provider                string   `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account a forwarded credential is; empty means the
+	// caller's own.
+	Account                 string   `json:"account,omitempty"`
 	Registration            string   `json:"registration,omitempty"`
 	ClientID                string   `json:"client_id,omitempty"`
 	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117 -- masked before serialization
@@ -286,6 +289,7 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 			Scope:                   t.Auth.Scope,
 			Actor:                   t.Auth.Actor,
 			Provider:                t.Auth.Provider,
+			Account:                 string(t.Auth.Account),
 			Registration:            string(t.Auth.Registration),
 			ClientID:                t.Auth.ClientID,
 			ClientSecret:            secret.Mask(t.Auth.ClientSecret),

@@ -55,16 +55,6 @@ type MCPServer struct {
 	// client, which the seed cannot know (see applyPlatformOAuth). The zero
 	// value is the conservative answer.
 	SelfService bool `json:"self_service"`
-	// MultiInstance reports whether more than one registry of this server is
-	// meaningful on one gateway: two of them can only differ in what an operator
-	// configures — a templated URL, a credential of its own, an OAuth client they
-	// register — so a server that is one URL behind per-user OAuth holds exactly
-	// one, and a second would be a copy of the first.
-	//
-	// Declared per entry in the catalog seed as multi_instance, like
-	// SelfService, and nothing moves it after load. The zero value is the
-	// conservative answer.
-	MultiInstance bool `json:"multi_instance"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`

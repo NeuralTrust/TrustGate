@@ -101,15 +101,14 @@ type rawServer struct {
 	ServerURL    string                  `json:"server_url"`
 	URLVariables []domain.MCPURLVariable `json:"url_variables"`
 	RequiresAuth bool                    `json:"requires_auth"`
-	// SelfService and MultiInstance are declared per entry rather than derived,
-	// so the catalog answers both questions by reading it. Required on every
-	// entry: a pointer distinguishes "false" from "whoever added this server
-	// forgot", and the loader refuses the latter.
-	SelfService   *bool                  `json:"self_service"`
-	MultiInstance *bool                  `json:"multi_instance"`
-	AuthHeaders   []domain.MCPAuthHeader `json:"auth_headers"`
-	OAuth         *domain.MCPOAuth       `json:"oauth"`
-	ConfigGuide   *domain.MCPConfigGuide `json:"config_guide,omitempty"`
+	// SelfService is declared per entry rather than derived, so the catalog
+	// answers the question by reading it. Required on every entry: a pointer
+	// distinguishes "false" from "whoever added this server forgot", and the
+	// loader refuses the latter.
+	SelfService *bool                  `json:"self_service"`
+	AuthHeaders []domain.MCPAuthHeader `json:"auth_headers"`
+	OAuth       *domain.MCPOAuth       `json:"oauth"`
+	ConfigGuide *domain.MCPConfigGuide `json:"config_guide,omitempty"`
 	// AuthMethods optionally overrides the derived list of installable auth
 	// methods ("static" and/or "oauth"). Set it to offer a choice (e.g. both)
 	// where the derivation alone would pick a single method.
@@ -150,9 +149,6 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 		if s.SelfService == nil {
 			return nil, fmt.Errorf("mcp catalog: server %q does not declare self_service", s.Name)
 		}
-		if s.MultiInstance == nil {
-			return nil, fmt.Errorf("mcp catalog: server %q does not declare multi_instance", s.Name)
-		}
 		if s.Hidden {
 			continue
 		}
@@ -169,7 +165,6 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			RequiresAuth:   s.RequiresAuth,
 			RequiresConfig: requiresConfig(s),
 			SelfService:    *s.SelfService,
-			MultiInstance:  *s.MultiInstance,
 			Relevance:      s.Relevance,
 			URLVariables:   s.URLVariables,
 			AuthHeaders:    s.AuthHeaders,
@@ -344,10 +339,7 @@ func requiresConfig(s rawServer) bool {
 // one: self_service. The seed answers for a gateway standing on its own, where a
 // manual-registration server needs an operator to register a client first; a
 // platform-held client is a deployment fact the seed cannot know, and it removes
-// exactly that blocker. multi_instance is not touched — the install form still
-// offers an operator their own client id and secret for such a server, so two
-// instances can still differ (their own Google Cloud project, consent screen and
-// quota), which is what the flag means.
+// exactly that blocker.
 func applyPlatformOAuth(servers []domain.MCPServer, shared mcpoauth.Provider) {
 	if shared == nil {
 		return
