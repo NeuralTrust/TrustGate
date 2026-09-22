@@ -256,9 +256,12 @@ type CanonicalStreamChunk struct {
 	// last released event was already a content_block_stop. Closing it twice
 	// asks the SDK to apply a stop it has no open block left for.
 	ContentBlockClosed bool `json:"content_block_closed,omitempty"`
-	// OpenItem names the output item this chunk interrupts, for the dialects
-	// that number and type the items of one response. Only Responses does;
-	// every other encoder ignores it. nil means nothing is known to be open,
+	// OpenItem names the output item this chunk belongs to or interrupts, for
+	// the dialects that number and type the items of one response. Only
+	// Responses does; every other encoder ignores it. It carries a delta as
+	// well as a terminator, because a delta written into a stream someone else
+	// opened has the same problem a terminator has: it belongs to an item the
+	// encoder did not add. nil means nothing is known to be open,
 	// which is not the same as item 0: a message item and a function_call item
 	// both open at output index 0, so a terminator that closed index 0 blind
 	// would leave the real item unterminated and close one that was never
