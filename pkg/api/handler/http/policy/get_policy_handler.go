@@ -17,17 +17,19 @@ package policy
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type GetPolicyHandler struct {
-	finder apppolicy.Finder
+	finder   apppolicy.Finder
+	registry appplugins.Registry
 }
 
-func NewGetPolicyHandler(finder apppolicy.Finder) *GetPolicyHandler {
-	return &GetPolicyHandler{finder: finder}
+func NewGetPolicyHandler(finder apppolicy.Finder, registry appplugins.Registry) *GetPolicyHandler {
+	return &GetPolicyHandler{finder: finder, registry: registry}
 }
 
 // Handle godoc
@@ -52,5 +54,5 @@ func (h *GetPolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicy(p, h.registry))
 }

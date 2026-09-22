@@ -126,6 +126,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths opts this plugin into settings masking (RUN-1646):
+// service_account_json is a real credential. ImpersonateServiceAccount is
+// deliberately not listed — it is an email, useless without the customer's
+// own IAM grant, not a secret (see the Credentials doc comment in config.go).
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"credentials.service_account_json"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

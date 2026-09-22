@@ -142,7 +142,10 @@ func TestCreator_Create_MCPScope_UnknownPluginIsLeftToPluginValidation(t *testin
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().Get(mock.Anything).Return(nil, false).Once()
+	// Called twice: once by Create's own credential-path lookup (RUN-1646,
+	// unaffected here since the plugin is unknown to Get) and once by
+	// validateMCPScopePlugin.
+	reg.EXPECT().Get(mock.Anything).Return(nil, false).Twice()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 

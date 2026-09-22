@@ -17,6 +17,8 @@ package response
 import (
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
@@ -59,7 +61,17 @@ type MCPScopeResponse struct {
 	ExceptGroups []string             `json:"except_groups,omitempty"`
 }
 
-func FromPolicy(p *domain.Policy) PolicyResponse {
+// FromPolicy renders p for the API, masking every credential-bearing
+// settings path its plugin declared via appplugins.CredentialSettings (see
+// PluginCredentialPaths). registry may be nil — a policy response is still
+// renderable without one, just unmasked, same as a plugin that never opted
+// in; call sites always have one in production.
+//
+// secret.MaskSettings never mutates p.Settings: the same map is also handed
+// to plugin execution as-is via app/plugins/plan.go, which needs the real
+// credential, not its mask. Masking anywhere in that map by mutation would
+// break every guardrail that reads it after a response has been rendered.
+func FromPolicy(p *domain.Policy, registry appplugins.Registry) PolicyResponse {
 	return PolicyResponse{
 		ID:          p.ID,
 		GatewayID:   p.GatewayID,
@@ -71,7 +83,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		Global:      p.Global,
 		Priority:    p.Priority,
 		Parallel:    p.Parallel,
-		Settings:    p.Settings,
+		Settings:    maskPolicySettings(p, registry),
 		Stages:      fromStages(p.Stages),
 		Mode:        string(p.Mode.Normalize()),
 		MCPScope:    fromMCPScope(p.MCPScope),
@@ -82,10 +94,18 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 
 // FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
 // write that produced p.
-func FromPolicyWithWarnings(p *domain.Policy, warnings []string) PolicyResponse {
-	out := FromPolicy(p)
+func FromPolicyWithWarnings(p *domain.Policy, warnings []string, registry appplugins.Registry) PolicyResponse {
+	out := FromPolicy(p, registry)
 	out.Warnings = warnings
 	return out
+}
+
+func maskPolicySettings(p *domain.Policy, registry appplugins.Registry) map[string]any {
+	paths := appplugins.PluginCredentialPaths(registry, p.Slug)
+	if len(paths) == 0 {
+		return p.Settings
+	}
+	return secret.MaskSettings(p.Settings, paths)
 }
 
 func fromMCPScope(scope *domain.MCPScope) *MCPScopeResponse {

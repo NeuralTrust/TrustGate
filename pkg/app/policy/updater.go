@@ -16,14 +16,17 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -124,6 +127,16 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		existing.Parallel = *in.Parallel
 	}
 	if in.Settings != nil {
+		// Resolve against the plugin the settings will be validated for
+		// (existing.Slug, already patched above if in.Slug was set), not the
+		// slug the policy carried on load: a settings payload that also
+		// changes the plugin type is for the new plugin.
+		if paths := appplugins.PluginCredentialPaths(u.registry, existing.Slug); len(paths) > 0 {
+			secret.ResolveSettings(*in.Settings, existing.Settings, paths)
+			if err := secret.RejectMaskedSettings(*in.Settings, paths); err != nil {
+				return nil, errors.Join(commonerrors.ErrValidation, err)
+			}
+		}
 		existing.Settings = *in.Settings
 	}
 	if in.Stages != nil {

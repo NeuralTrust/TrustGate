@@ -105,6 +105,16 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths opts this plugin into settings masking (RUN-1646): the
+// three AWS credentials fields nested under "credentials" in Settings.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{
+		"credentials.access_key_id",
+		"credentials.secret_access_key",
+		"credentials.session_token",
+	}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

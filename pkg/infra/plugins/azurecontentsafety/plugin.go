@@ -81,6 +81,12 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths opts this plugin into settings masking (RUN-1646):
+// api_key is a top-level field of Settings, not nested.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"api_key"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

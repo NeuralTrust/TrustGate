@@ -17,6 +17,7 @@ package googlemodelarmor
 import (
 	"testing"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -153,4 +154,22 @@ func TestParseConfigRejectsBothCredentialPaths(t *testing.T) {
 	_, err := parseConfig(settings)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "set only one of")
+}
+
+// TestCredentialPaths pins the RUN-1646 declaration: only
+// service_account_json is a credential. impersonate_service_account is
+// deliberately NOT declared — it is an email, useless without the
+// customer's own IAM grant (see the Credentials doc comment).
+func TestCredentialPaths(t *testing.T) {
+	t.Parallel()
+	p := &Plugin{}
+	var _ appplugins.CredentialSettings = p // opts in
+	assert.Equal(t, []string{"credentials.service_account_json"}, p.CredentialPaths())
+
+	settings := validSettings()
+	settings["credentials"] = map[string]any{"service_account_json": `{"type":"service_account"}`}
+	creds := settings["credentials"].(map[string]any)
+	if _, ok := creds["service_account_json"]; !ok {
+		t.Fatal("declared path credentials.service_account_json does not resolve against a real settings payload")
+	}
 }

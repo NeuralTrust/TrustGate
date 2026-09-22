@@ -17,6 +17,7 @@ package policy
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -24,10 +25,11 @@ import (
 
 type DuplicatePolicyHandler struct {
 	duplicator apppolicy.Duplicator
+	registry   appplugins.Registry
 }
 
-func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator) *DuplicatePolicyHandler {
-	return &DuplicatePolicyHandler{duplicator: duplicator}
+func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator, registry appplugins.Registry) *DuplicatePolicyHandler {
+	return &DuplicatePolicyHandler{duplicator: duplicator, registry: registry}
 }
 
 // Handle godoc
@@ -53,5 +55,5 @@ func (h *DuplicatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromPolicy(p))
+	return httpio.WriteCreated(c, response.FromPolicy(p, h.registry))
 }

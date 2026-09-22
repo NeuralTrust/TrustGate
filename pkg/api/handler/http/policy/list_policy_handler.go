@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -27,11 +28,12 @@ import (
 )
 
 type ListPolicyHandler struct {
-	finder apppolicy.Finder
+	finder   apppolicy.Finder
+	registry appplugins.Registry
 }
 
-func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
-	return &ListPolicyHandler{finder: finder}
+func NewListPolicyHandler(finder apppolicy.Finder, registry appplugins.Registry) *ListPolicyHandler {
+	return &ListPolicyHandler{finder: finder, registry: registry}
 }
 
 // Handle godoc
@@ -125,7 +127,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		Total: total,
 	}
 	for _, p := range items {
-		out.Items = append(out.Items, response.FromPolicy(p))
+		out.Items = append(out.Items, response.FromPolicy(p, h.registry))
 	}
 	return httpio.WriteOK(c, out)
 }

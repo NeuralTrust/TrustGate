@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -27,12 +28,13 @@ import (
 )
 
 type UpdatePolicyHandler struct {
-	updater apppolicy.Updater
-	warner  apppolicy.Warner
+	updater  apppolicy.Updater
+	warner   apppolicy.Warner
+	registry appplugins.Registry
 }
 
-func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) *UpdatePolicyHandler {
-	return &UpdatePolicyHandler{updater: updater, warner: warner}
+func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner, registry appplugins.Registry) *UpdatePolicyHandler {
+	return &UpdatePolicyHandler{updater: updater, warner: warner, registry: registry}
 }
 
 // Handle godoc
@@ -86,5 +88,5 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p), h.registry))
 }
