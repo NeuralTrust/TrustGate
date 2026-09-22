@@ -17,6 +17,7 @@ package request
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -27,6 +28,10 @@ type CreateAuthRequest struct {
 	Type    string        `json:"type"`
 	Enabled *bool         `json:"enabled,omitempty"`
 	Config  ConfigRequest `json:"config"`
+	// ExpiresAt retires an api key on its own, as an RFC 3339 instant. Omitted
+	// or empty is no expiry, which is what every key was before the field
+	// existed.
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 type ConfigRequest struct {
@@ -82,7 +87,20 @@ func (r CreateAuthRequest) Validate() error {
 	if strings.TrimSpace(r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
+	if _, err := parseExpiresAt(r.ExpiresAt); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ToExpiresAt returns the parsed expiry. Validate has already rejected a
+// malformed one, so the error here can only repeat itself.
+func (r CreateAuthRequest) ToExpiresAt() *time.Time {
+	at, err := parseExpiresAt(r.ExpiresAt)
+	if err != nil {
+		return nil
+	}
+	return at
 }
 
 func (r CreateAuthRequest) IsEnabled() bool {

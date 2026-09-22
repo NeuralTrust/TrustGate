@@ -676,7 +676,7 @@ re-verified by hand).
 
 | Concept | What it is for | What it is today |
 |---|---|---|
-| **Call credential** | proves "I am this application" on each request | an `auths` row of type `api_key`; a consumer may hold several, and rotation issues a new one |
+| **Call credential** | proves "I am this application" on each request | an `auths` row of type `api_key`; a consumer may hold several. `POST /v1/gateways/{gateway_id}/auths/{id}/rotate` mints a new secret on the same row, so the id and the name survive — and with them the principal, which is what an upstream account belongs to. Revoking and issuing again is a different operation and loses both. `expires_at` (nullable, default NULL = never) retires a key on its own: it is refused at lookup, so the proxy, the connect pages and the consumer lookup all stop serving it at the same instant, and the holder is told exactly what an unknown key is told |
 | **Application identity** | the stable thing an upstream account should belong to | `app:<consumer_id>` (§14.3); until this branch, *nothing* |
 | **Upstream account** | what the third-party MCP server authorizes | a vault row keyed by `(gateway_id, principal_sub, provider)` |
 

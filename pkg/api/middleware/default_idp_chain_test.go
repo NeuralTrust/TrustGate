@@ -67,7 +67,7 @@ func TestChain_DefaultIdP_NotAddedWhenConsumerHasAPIKey(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "api-key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "api-key", true, nil)
 	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{},

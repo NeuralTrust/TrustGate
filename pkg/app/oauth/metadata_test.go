@@ -141,7 +141,7 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 	t.Parallel()
 	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
 	gatewayID := idp.GatewayID
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}
@@ -189,11 +189,11 @@ func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *test
 	t.Parallel()
 	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
 	gatewayID := idp.GatewayID
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "residual", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "residual", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}
-	disabledKey, err := authdomain.NewAPIKeyAuth(gatewayID, "disabled", false)
+	disabledKey, err := authdomain.NewAPIKeyAuth(gatewayID, "disabled", false, nil)
 	if err != nil {
 		t.Fatalf("build disabled api key auth: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestProtectedResourceMetadataAppSourceConsumerAdvertisesNoLogin(t *testing.
 	t.Parallel()
 	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
 	gatewayID := idp.GatewayID
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "app-key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "app-key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}

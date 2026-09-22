@@ -32,10 +32,12 @@ type AuthResponse struct {
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
 	// Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk" + "Rv8Q").
-	KeyPrefix string    `json:"key_prefix,omitempty"`
-	KeySuffix string    `json:"key_suffix,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"key_prefix,omitempty"`
+	KeySuffix string `json:"key_suffix,omitempty"`
+	// When the key retires itself. Absent means it never does.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 	// Consumers are the consumers this auth reaches, which is what a caller
 	// needs before revoking one: a key can be attached to several, so
 	// disabling it stops more than the endpoint the reader was looking at.
@@ -106,6 +108,7 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Config:    fromConfig(a.Config),
 		KeyPrefix: a.KeyPrefix,
 		KeySuffix: a.KeySuffix,
+		ExpiresAt: a.ExpiresAt,
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}
@@ -113,6 +116,15 @@ func FromAuth(a *domain.Auth) AuthResponse {
 
 func FromCreatedAuth(a *domain.Auth) AuthResponse {
 	res := FromAuth(a)
+	res.APIKey = a.RawKey
+	return res
+}
+
+// FromCreatedAuthWithConsumers carries the one-time secret and the consumers
+// the auth reaches. Rotation needs both: the secret because it is the only time
+// it is readable, and the consumers because they are what the rotation cut off.
+func FromCreatedAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuthWithConsumers(a, held)
 	res.APIKey = a.RawKey
 	return res
 }
