@@ -88,7 +88,7 @@ type forwarder struct {
 	resolver   approuting.Resolver
 	listing    appcatalog.ModelListing
 	limiter    ratelimitapp.Checker
-	codec      streamCodec
+	codec      guardCodec
 	maxRetries int
 	logger     *slog.Logger
 }
@@ -99,7 +99,7 @@ type ForwarderOption func(*forwarder)
 // WithStreamCodec attaches the codec the stream guard segments SSE events
 // with. Omitting it leaves the guard unbuilt, which is what keeps tests that do
 // not exercise streaming inspection off the path entirely.
-func WithStreamCodec(codec streamCodec) ForwarderOption {
+func WithStreamCodec(codec guardCodec) ForwarderOption {
 	return func(f *forwarder) {
 		f.codec = codec
 	}
@@ -563,6 +563,7 @@ func (f *forwarder) finalizeStream(
 		return pluginErrorResult(pe)
 	}
 	stream := providerResp.Stream
+	var cutBarrier func() <-chan struct{}
 	if guard := f.newStreamGuard(dto, pluginResp); guard != nil {
 		remaining, pe := guard.Run(ctx, stream)
 		if pe != nil {
@@ -570,8 +571,9 @@ func (f *forwarder) finalizeStream(
 			return pluginErrorResult(pe)
 		}
 		stream = remaining
+		cutBarrier = guard.cutBarrier
 	}
-	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream)
+	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, stream, cutBarrier)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
@@ -605,7 +607,7 @@ func (f *forwarder) newStreamGuard(
 	if !ok {
 		return nil
 	}
-	return newStreamGuard(
+	guard := newStreamGuard(
 		runner,
 		f.codec,
 		sourceFormatFromRequest(dto.request),
@@ -625,6 +627,13 @@ func (f *forwarder) newStreamGuard(
 		},
 		f.logger,
 	)
+	// A cut abandons the upstream mid-response, which is the same situation
+	// drainAsync already exists for: the usage the last chunk carries is read
+	// on the way through adaptStream, so draining is what keeps a cut stream
+	// charged. post_response then orders itself behind guard.cutBarrier, which
+	// is what makes "charged" true rather than aspirational.
+	guard.drain = f.drainAsync
+	return guard
 }
 
 // retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the

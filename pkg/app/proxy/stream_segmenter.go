@@ -135,6 +135,7 @@ type segmenter struct {
 	codec  streamCodec
 	format adapter.Format
 	buf    [][]byte
+	anchor cutAnchor
 }
 
 // newSegmenter builds a segmenter for the source format. After adaptStream the
@@ -197,6 +198,7 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	if err != nil {
 		return fmt.Errorf("segmenting %s stream chunk: %w", s.format, err)
 	}
+	s.anchor.observe(chunk)
 	if chunk == nil {
 		return nil
 	}

@@ -41,6 +41,14 @@ type segmentRunner interface {
 	) (*appplugins.SegmentOutcome, error)
 }
 
+// guardCodec is the adapter registry as the guard uses it: the segmenter's
+// decode direction, plus the encode direction a cut terminator is synthesised
+// through.
+type guardCodec interface {
+	streamCodec
+	EncodeStreamChunkFor(canonical *adapter.CanonicalStreamChunk, source adapter.Format) ([][]byte, error)
+}
+
 // streamOnError is what the guard does with held text when a guard call fails
 // for a reason the operator can configure away.
 type streamOnError string
@@ -58,6 +66,12 @@ const (
 	// "the guard rejected it" on the wire, which are different incidents for
 	// a client deciding whether to retry.
 	streamUnverifiableType = "guardrail_unverifiable"
+
+	// streamCutReason is the canonical finish reason a cut terminator carries.
+	// Every source adapter maps it to its own dialect — Anthropic refusal,
+	// Gemini SAFETY, Cohere ERROR, Responses response.incomplete — and
+	// StreamBlockedEvent constrains the error channel to the same closed set.
+	streamCutReason = "content_filter"
 
 	streamMaskedMessage = "Response blocked: guardrail masking is not available on a streamed response."
 	// streamMaskedType marks a block the policy did not ask for: the guard
@@ -93,6 +107,12 @@ const (
 	// that is not arriving, and the buffered post_response pass still audits
 	// the whole response.
 	maxConsecutiveFailures = 3
+	// cutDrainDeadline bounds the background drain a cut leaves behind. Usage
+	// rides the last chunk, so a stream that is still generating when the
+	// deadline expires is charged nothing — but an upstream connection held
+	// open for the rest of a long generation nobody will read is the worse of
+	// the two, and the deadline is what makes the drain a bounded cost.
+	cutDrainDeadline = 30 * time.Second
 )
 
 // Why a stream stopped being inspected the way the policy asked. A degrade is
@@ -148,11 +168,20 @@ func (c streamGuardConfig) withDefaults() streamGuardConfig {
 type streamGuard struct {
 	runner segmentRunner
 	seg    *segmenter
+	codec  guardCodec
 	in     appplugins.StageInput
 	cfg    streamGuardConfig
 	source adapter.Format
 	logger *slog.Logger
 	now    func() time.Time
+	// drain hands the rest of an abandoned upstream to a background reader, so
+	// a cut still accounts the usage the last chunk carries. A nil drain cuts
+	// the same way and charges nothing.
+	drain func(iter.Seq2[[]byte, error])
+	// drained is closed by that reader when it is done. It is the only
+	// happens-before edge between the drain's writes to req.Metadata and the
+	// stages that read them.
+	drained chan struct{}
 
 	next func() ([]byte, error, bool)
 	stop func()
@@ -177,13 +206,15 @@ type streamGuard struct {
 	failures       int
 	silenced       bool
 	stopped        bool
+	handedOff      bool
+	cutMessage     string
 	degradedReason string
 	fallbackReason string
 }
 
 func newStreamGuard(
 	runner segmentRunner,
-	codec streamCodec,
+	codec guardCodec,
 	source adapter.Format,
 	in appplugins.StageInput,
 	cfg streamGuardConfig,
@@ -192,6 +223,7 @@ func newStreamGuard(
 	return &streamGuard{
 		runner: runner,
 		seg:    newSegmenter(codec, source),
+		codec:  codec,
 		in:     in,
 		cfg:    cfg.withDefaults(),
 		source: source,
@@ -388,7 +420,14 @@ func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]by
 	return func(yield func([]byte, error) bool) {
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer release()
-		defer g.stop()
+		// A cut hands the pull coroutine to the background drain, which closes
+		// it when it is done. Stopping it here as well would cut the drain off
+		// mid-read and lose the usage it exists to recover.
+		defer func() {
+			if !g.handedOff {
+				g.stop()
+			}
+		}()
 		defer cancel()
 		if !g.flush(yield) {
 			return
@@ -404,7 +443,7 @@ func (g *streamGuard) replay(ctx context.Context, release func()) iter.Seq2[[]by
 // contiguous prefix of the text produced so far.
 func (g *streamGuard) blockLoop(ctx context.Context, yield func([]byte, error) bool) {
 	g.gate = newBlockGate(g, g.cfg.minChars, g.cfg.maxHold)
-	for !g.stopped {
+	for {
 		line, err, ok := g.next()
 		if !ok {
 			g.exhausted = true
@@ -419,16 +458,21 @@ func (g *streamGuard) blockLoop(ctx context.Context, yield func([]byte, error) b
 			continue
 		}
 		g.inspect(ctx)
+		if g.stopped {
+			g.cut(yield)
+			return
+		}
 		g.gate.reset()
 		if !g.flush(yield) {
 			return
 		}
 	}
-	if g.stopped {
-		return
-	}
 	g.admit(g.seg.flush())
 	g.inspect(ctx)
+	if g.stopped {
+		g.cut(yield)
+		return
+	}
 	if !g.flush(yield) {
 		return
 	}
@@ -441,8 +485,8 @@ func (g *streamGuard) blockLoop(ctx context.Context, yield func([]byte, error) b
 // verdict. Everything it can do to a late or failing verdict is a degrade: it
 // releases text rather than truncating a response the client is already
 // reading. A verdict that says block is the one thing it cannot degrade, so it
-// stops the stream where it stands; the honest per-format terminator for that
-// stop is the next slice.
+// stops the stream where it stands and the loop cuts it with the terminator
+// the caller's dialect carries for a content filter.
 func (g *streamGuard) inspect(ctx context.Context) {
 	if g.clearedIdx == len(g.produced) {
 		return
@@ -628,6 +672,7 @@ func (g *streamGuard) retire(reason string) {
 
 func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 	g.stopped = true
+	g.cutMessage = cutMessage(outcome)
 	if g.logger == nil {
 		return
 	}
@@ -639,6 +684,166 @@ func (g *streamGuard) stopStream(outcome *appplugins.SegmentOutcome) {
 		slog.Int("seq", g.seq),
 		slog.Int("released_events", g.releasedIdx),
 		slog.String("type", kind))
+}
+
+// cutMessage names the incident on the error channel. The dialects have one
+// free-form slot between them and the reason already occupies it, so the three
+// reasons a stream stops — rejected, unverifiable, and a mask the stream path
+// cannot apply — are told apart by the message alone.
+func cutMessage(outcome *appplugins.SegmentOutcome) string {
+	switch {
+	case outcome == nil:
+		return streamUnverifiableMessage
+	case outcome.Block && outcome.Message != "":
+		return outcome.Message
+	case outcome.Block:
+		return streamBlockMessage
+	default:
+		return streamMaskedMessage
+	}
+}
+
+// cut is regime B. The status went out with the head, so the only honest
+// ending left is the one the caller's dialect has for a content filter: the
+// finish-reason terminator first, and the blocked event after it, never
+// instead of it — an error event on its own leaves an Anthropic content block
+// or a Responses output item open for good.
+//
+// What the guard still holds is dropped where it stands. The payload is
+// cumulative, so the verdict can name text released blocks ago, and a wire the
+// client has already read cannot be retracted: the cut goes forward at the
+// release pointer and one block is the exposure bound.
+func (g *streamGuard) cut(yield func([]byte, error) bool) {
+	g.drainForUsage()
+	// Releasing the wire bytes of everything the cut drops is a hint to the
+	// collector, not behaviour: nothing reads produced[releasedIdx:] again. It
+	// is here because the tail of a long response is megabytes of SSE the
+	// guard would otherwise keep alive until the request object is collected.
+	for _, ev := range g.produced[g.releasedIdx:] {
+		ev.lines = nil
+	}
+	for _, line := range g.cutLines() {
+		if !yield(line, nil) {
+			return
+		}
+	}
+}
+
+// cutLines is the whole cut on the wire, in one dialect.
+//
+// [DONE] is unconditional here, unlike in adaptStream, which re-emits it only
+// on the cross-format branch (provider_stream.go:164) because on a passthrough
+// the upstream's own sentinel comes through by itself. On a cut it never
+// arrives: the upstream is abandoned and what it still had to say is dropped or
+// drained, so the guard owes the sentinel to every source whose wire ends on
+// one.
+//
+// Cohere is the one dialect that gets no blocked event. Its streamed-response
+// union has no error member, so StreamBlockedEvent falls through to the
+// OpenAI-shaped default — an object with no "type" discriminant on a wire whose
+// SDK parses every event as a StreamedChatResponseV2. ERROR on message-end
+// carries the whole signal there, which is what canonicalFinishToCohere says.
+func (g *streamGuard) cutLines() [][]byte {
+	lines, err := g.codec.EncodeStreamChunkFor(g.terminator(), g.source)
+	if err != nil {
+		// StreamBlockedEvent is documented as never travelling alone, and
+		// without a terminator in front of it that is exactly what it would be:
+		// on Anthropic and Responses it leaves the block and the item the cut
+		// interrupted open for good. The bare sentinel is the most a dialect
+		// that has one can still be told honestly.
+		if g.logger != nil {
+			g.logger.Warn("stream cut terminator could not be encoded",
+				slog.String("format", string(g.source)),
+				slog.String("error", err.Error()))
+		}
+		return g.cutDoneLines()
+	}
+	if !adapter.IsSameWireFormat(g.source, adapter.FormatCohere) {
+		lines = append(lines, adapter.StreamBlockedEvent(g.source, streamCutReason, g.cutMessage)...)
+	}
+	return append(lines, g.cutDoneLines()...)
+}
+
+// cutDoneLines is the [DONE] sentinel for the sources whose wire ends on it and
+// nothing for the rest. Mistral is named on its own because normalizeFormat
+// does not fold it into FormatOpenAI even though the rest of the gateway treats
+// it as OpenAI-family (format.go:113,126), and a Mistral SSE client waits for
+// [DONE] rather than for the connection to close.
+func (g *streamGuard) cutDoneLines() [][]byte {
+	if adapter.IsSameWireFormat(g.source, adapter.FormatOpenAI) || g.source == adapter.FormatMistral {
+		return sseDoneLines()
+	}
+	return nil
+}
+
+// terminator is the chunk a cut ends on: the identity of the response, and the
+// content-filter finish reason every source adapter maps into its own dialect.
+func (g *streamGuard) terminator() *adapter.CanonicalStreamChunk {
+	return adapter.CompletionsTerminalStreamChunk(
+		&adapter.CanonicalStreamChunk{ID: g.seg.anchor.id, Model: g.seg.anchor.model},
+		streamCutReason,
+	)
+}
+
+// drainForUsage keeps reading the abandoned upstream in the background so the
+// usage the last chunk carries is still charged. observeChunk runs inside
+// adaptStream, upstream of the guard, so usage is recorded when a line is read
+// and not when it is released: draining is enough for streamObserver to see it
+// and to populate req.Metadata["usage"].
+//
+// It is also the point at which the request grows a second writer. streamObserver
+// writes that map from the drain's goroutine, so everything downstream that
+// reads it — post_response, and token_rate_limiter through it — has to wait for
+// drained, which cutRemainder closes when it is done. Reading the map before
+// then is a concurrent map read and write, and charging from it before then
+// charges nothing at all, because usage has not arrived yet.
+//
+// The drain takes the pull coroutine over, which is what handedOff records: two
+// owners would stop it twice and cut the drain off mid-read.
+func (g *streamGuard) drainForUsage() {
+	if g.drain == nil {
+		return
+	}
+	g.handedOff = true
+	g.drained = make(chan struct{})
+	g.drain(g.cutRemainder(g.drained))
+}
+
+// cutBarrier is closed once the drain a cut handed the upstream to has finished
+// reading it. It is nil when no cut handed anything off, which is every stream
+// that ended on its own.
+//
+// It must be read after the returned sequence is exhausted: the cut runs on the
+// stream's own goroutine, so a consumer whose range loop has ended has seen the
+// field written.
+func (g *streamGuard) cutBarrier() <-chan struct{} { return g.drained }
+
+// cutRemainder is the rest of the source, read on the drain's goroutine while
+// the stream's own goroutine is still writing the terminator. It touches no
+// guard state for that reason, and it closes drained on the way out so the
+// stages that read what the drain accounted can order themselves behind it.
+//
+// It stops on its own deadline, which is checked between reads: an upstream
+// that keeps generating is abandoned within one read of the deadline, but one
+// that stalls mid-read holds the goroutine until the transport gives up. That
+// is the bound this deadline actually provides.
+//
+// It yields nothing. Reading is the whole point — usage is recorded where the
+// line is read — and drainStream stops at the first line it is handed, because
+// releasing the backend connection is all its other callers ask of it. A
+// sequence that handed its lines over would therefore drain exactly one.
+func (g *streamGuard) cutRemainder(drained chan<- struct{}) iter.Seq2[[]byte, error] {
+	next, stop, now := g.next, g.stop, g.now
+	until := now().Add(cutDrainDeadline)
+	return func(func([]byte, error) bool) {
+		defer close(drained)
+		defer stop()
+		for now().Before(until) {
+			if _, _, ok := next(); !ok {
+				return
+			}
+		}
+	}
 }
 
 func (g *streamGuard) degrade(reason string) {
@@ -702,6 +907,30 @@ func (g *streamGuard) remainder() iter.Seq2[[]byte, error] {
 				return
 			}
 		}
+	}
+}
+
+// cutAnchor is the identity of the response a synthesised terminator ends.
+// Neither field survives on the chunk a cut builds from nothing, and a strict
+// OpenAI client rejects a chunk without an id, so both are read off the first
+// event that carries them and kept for the cut.
+//
+// It is filled by the segmenter, the only place that holds a raw payload and
+// its decode at the same time.
+type cutAnchor struct {
+	id    string
+	model string
+}
+
+func (a *cutAnchor) observe(chunk *adapter.CanonicalStreamChunk) {
+	if chunk == nil {
+		return
+	}
+	if a.id == "" {
+		a.id = chunk.ID
+	}
+	if a.model == "" {
+		a.model = chunk.Model
 	}
 }
 
