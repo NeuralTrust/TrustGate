@@ -44,10 +44,10 @@ func bearerToken(req *infracontext.RequestContext) string {
 // there. Claims are trustworthy only when bearer auth is what admitted the
 // caller, and a claim must not be used for an authorization decision otherwise.
 //
-// Verifying here is not an option while this plugin stays previewable: signature
-// checks need the gateway's auth configuration and, for a remote JWKS, the
-// network — which is exactly what Previewable (app/plugins/plugin.go) forbids.
-// The honest fix is to carry already-verified claims on the request context.
+// Verifying here is not an option: signature checks need the gateway's auth
+// configuration and, for a remote JWKS, the network, neither of which a plugin
+// reading a header has. The honest fix is to carry already-verified claims on
+// the request context.
 func unverifiedClaim(token, claimName string) (string, bool) {
 	if token == "" || claimName == "" {
 		return "", false
