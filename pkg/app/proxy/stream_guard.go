@@ -73,11 +73,12 @@ const (
 	// StreamBlockedEvent constrains the error channel to the same closed set.
 	streamCutReason = "content_filter"
 
-	streamMaskedMessage = "Response blocked: guardrail masking is not available on a streamed response."
+	streamMaskedMessage = "Response blocked: guardrail masking could not be applied to this stream."
 	// streamMaskedType marks a block the policy did not ask for: the guard
-	// returned a mask, which the head gate cannot apply yet, so it escalated.
-	// A client seeing this is being denied something a buffered call would
-	// have received with the sensitive span masked.
+	// returned a mask the stream path could not write into the held events, so
+	// it escalated. rewrite is the whole account of when that happens. A client
+	// seeing this is being denied something a buffered call would have received
+	// with the sensitive span masked.
 	streamMaskedType = "guardrail_masked_unsupported"
 )
 
@@ -199,9 +200,15 @@ type streamGuard struct {
 	exhausted   bool
 	srcErr      error
 
-	released       releasedAnchor
-	gate           *blockGate
-	seq            int
+	released releasedAnchor
+	gate     *blockGate
+	seq      int
+	// inspected is the accumulated text the last call carried, which a
+	// transform verdict replaces whole. It is a suffix of the produced text and
+	// not always the whole of it: past the accumulation cap a call carries a
+	// tail window, and the bytes in front of that window are text no verdict of
+	// that block speaks for.
+	inspected      string
 	sentChars      int
 	finalSent      bool
 	failures       int
@@ -389,11 +396,12 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 		g.markCut()
 		return blockedHeadError(g.source, outcome)
 	}
-	// A transform escalates to a block until the buffer rewrite lands. Releasing
-	// the head unmasked would turn a masking policy into a no-op on every
-	// streamed response, and at the head nothing is committed yet, so escalating
-	// costs a status code rather than a truncated body.
-	if outcome != nil && outcome.HasTransform {
+	// Nothing has been released at the head, so the one trigger rewrite cannot
+	// fire here is the released-text one; every other reason it refuses applies
+	// to the head block as it does to any other. Escalating still costs a status
+	// code rather than a truncated body, which is the one advantage the head
+	// has over every block after it.
+	if outcome != nil && outcome.HasTransform && !g.rewrite(outcome) {
 		g.markCut()
 		return streamError(g.source, streamMaskedType, streamMaskedMessage)
 	}
@@ -548,14 +556,177 @@ func (g *streamGuard) inspect(ctx context.Context) {
 		return
 	}
 	g.failures = 0
-	// A transform escalates to a block for the same reason it does at the
-	// head: releasing the text unmasked would turn a masking policy into a
-	// no-op on every streamed response.
-	if outcome != nil && (outcome.Block || outcome.HasTransform) {
+	if outcome != nil && (outcome.Block || (outcome.HasTransform && !g.rewrite(outcome))) {
 		g.stopStream(outcome)
 		return
 	}
 	g.clearedIdx = len(g.produced)
+}
+
+// rewrite applies a transform verdict to the accumulated buffer and reports
+// whether it could. One rule decides it: the masked buffer may differ from the
+// produced one only inside text the guard is still holding, and the held events
+// that carried that text must be re-encodable from the text alone. Held text is
+// the only text the guard can still change on the wire, and a re-encode is the
+// only way it can change it.
+//
+// Everything else stops the stream rather than release text the policy asked to
+// mask. The two the rule is written for are a span that reaches into what the
+// client has already read — those bytes are gone, and §3.5 is that the cut goes
+// forward at the release pointer — and a span the text buffer does not carry,
+// which is in reasoning or in tool-call arguments, where a mask would put
+// assistant text where a thought or a JSON argument stood. rewritableHold
+// carries the rest, and two operational refusals sit here: a call that
+// inspected no window of the buffer names no span for the verdict to replace,
+// and an encode that produced nothing has no event to put the mask in.
+func (g *streamGuard) rewrite(outcome *appplugins.SegmentOutcome) bool {
+	produced := g.text.String()
+	if g.inspected == "" || !strings.HasSuffix(produced, g.inspected) {
+		return false
+	}
+	masked := strings.TrimSuffix(produced, g.inspected) + outcome.Transformed
+	// A verdict that left the buffer byte-identical masked something the buffer
+	// cannot see. It reads the same as a verdict re-flagging a mask the guard
+	// itself already applied and handing it back unchanged, and the verdict
+	// names no offsets to tell them apart, so both end the stream: releasing on
+	// the wrong reading releases exactly the content the policy asked to mask.
+	// Finding offsets on SegmentOutcome are what would separate them (§11).
+	if masked == produced {
+		return false
+	}
+	first, ok := g.rewritableHold()
+	if !ok || !strings.HasPrefix(masked, g.releasedText()) {
+		return false
+	}
+	return g.remask(masked, first)
+}
+
+// rewritableHold reports whether the held events can carry a mask at all, and
+// names the one the masked text would collapse onto. Three things say they
+// cannot, and none of them can be read off the verdict, which names no offsets
+// and replaces the accumulated text as a whole.
+//
+// A held event carrying reasoning or tool-call deltas is refused whether or not
+// it carries text of its own. The narrow condition — only an event carrying
+// both — would be enough to keep a re-encode from dropping a thought or a JSON
+// argument, and it would keep masking working on reasoning streams, where a
+// pure thinking_delta is left untouched. It is not taken because the single
+// Transformed field cannot say which field the mask fell in: a verdict over a
+// payload that carried text, reasoning and arguments hands back one text, and
+// rewriting the text on that basis assumes the mask fell entirely in text,
+// which the contract does not say. The cost is stated rather than hidden — a
+// transform verdict on an extended-thinking or reasoning_content provider is
+// always a cut, never a mask — and it is the conservative direction: a cut
+// announces itself, an unmasked release does not.
+//
+// A held event whose text rides with a finish reason, a usage report or a
+// structural mark is refused because the re-encode carries none of them.
+// Gemini's last chunk is one data: line holding the delta, the finish reason
+// and the usage metadata at once, and Gemini has no [DONE]: re-encoding it from
+// its text would end the stream on a bare text delta.
+//
+// Held text spanning more than one block or item is refused because the
+// collapse is onto one event. Dividing the mask back across the events it
+// arrived in is the fragment splicing §2.6 rejected, so the text of a later
+// block would move into an earlier one and leave an empty text block behind —
+// which reconstructs the same string but which the Messages API rejects on
+// input, so an agent replaying the turn gets a 400 it did not get before.
+func (g *streamGuard) rewritableHold() (int, bool) {
+	first, last := -1, -1
+	for i := g.releasedIdx; i < len(g.produced); i++ {
+		ev := g.produced[i]
+		if ev.reasoning != "" || len(ev.toolCalls) > 0 {
+			return 0, false
+		}
+		if ev.text == "" {
+			continue
+		}
+		if ev.beyondText {
+			return 0, false
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	if first < 0 {
+		return 0, false
+	}
+	for _, ev := range g.produced[first+1 : last+1] {
+		if ev.mark.op != markNone {
+			return 0, false
+		}
+	}
+	return first, true
+}
+
+// releasedText is the text the client has already read, which is what a mask
+// may not reach into. It is rebuilt from the events rather than counted,
+// because a rewrite changes the length of everything behind it and a counter
+// kept across one would have to be corrected on every path a rewrite can fail.
+func (g *streamGuard) releasedText() string {
+	var released strings.Builder
+	for _, ev := range g.produced[:g.releasedIdx] {
+		released.WriteString(ev.text)
+	}
+	return released.String()
+}
+
+// remask replaces the accumulated buffer and the wire bytes of the held events
+// that carried the text it changed. Nothing else is re-encoded: released events
+// have already gone out byte for byte, held events with no text of their own
+// keep the bytes they arrived as, and what the source has not yielded yet is
+// untouched. The segmenter still has no encode direction — this is the guard's
+// own, and it is reached only by a transform verdict.
+//
+// The held text is collapsed onto first, the first held event that carried any,
+// rather than divided back across the events it arrived in. The verdict
+// replaces the buffer whole and says nothing about where inside it the mask
+// fell, so a per-event division would be the fragment splicing §2.6 rejected.
+func (g *streamGuard) remask(masked string, first int) bool {
+	held := strings.TrimPrefix(masked, g.releasedText())
+	anchor := g.released
+	for _, ev := range g.produced[g.releasedIdx:first] {
+		anchor.apply(ev.mark)
+	}
+	lines, err := g.maskLines(held, anchor)
+	if err != nil || (held != "" && len(lines) == 0) {
+		if g.logger != nil {
+			g.logger.Warn("stream mask could not be encoded; escalating to a cut",
+				slog.String("format", string(g.source)),
+				slog.Any("error", err))
+		}
+		return false
+	}
+	for _, ev := range g.produced[first:] {
+		if ev.text == "" {
+			continue
+		}
+		ev.lines, ev.text = nil, ""
+	}
+	g.produced[first].lines, g.produced[first].text = lines, held
+	g.text.Reset()
+	g.text.WriteString(masked)
+	g.sentChars = g.text.Len()
+	g.inspected = ""
+	return true
+}
+
+// maskLines encodes the held text as one event in the caller's dialect. The
+// anchor is the structure the client can see open at the point the event sits,
+// which is the released one advanced over the held events in front of it: an
+// Anthropic text_delta names the content block it belongs to, and naming the
+// wrong one puts the masked text in a block the client never saw opened.
+func (g *streamGuard) maskLines(held string, anchor releasedAnchor) ([][]byte, error) {
+	if held == "" {
+		return nil, nil
+	}
+	return g.codec.EncodeStreamChunkFor(&adapter.CanonicalStreamChunk{
+		ID:                g.seg.anchor.id,
+		Model:             g.seg.anchor.model,
+		Delta:             held,
+		ContentBlockIndex: anchor.blockIndex,
+	}, g.source)
 }
 
 // nextSegment builds the envelope for the call this block is owed. It advances
@@ -571,6 +742,7 @@ func (g *streamGuard) nextSegment() appplugins.StreamSegment {
 	if capped {
 		g.degrade(degradeAccumulationCap)
 	}
+	g.inspected = accumulated
 	final := g.final() && !g.finalSent
 	g.finalSent = g.finalSent || final
 	g.seq++
@@ -636,7 +808,10 @@ func (g *streamGuard) remember(outcome *appplugins.SegmentOutcome) {
 
 // The offset is what the client had already received, not what the provider had
 // produced: it is the exposure the cut did not prevent, which is the number an
-// operator sets min_chars_between_evals against.
+// operator sets min_chars_between_evals against. On a stream an earlier block
+// rewrote, the characters it counts are the masked ones the client actually
+// read rather than the ones the provider sent, which is the same answer to the
+// same question and not a coincidence worth relying on elsewhere.
 func (g *streamGuard) markCut() {
 	if g.cutAtEval != 0 {
 		return

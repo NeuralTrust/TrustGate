@@ -117,6 +117,15 @@ type streamEvent struct {
 	text      string
 	reasoning string
 	toolCalls []adapter.StreamToolCallDelta
+	// beyondText is set when the event carries something a re-encode built from
+	// its text alone would drop: a finish reason, a usage report, or a
+	// structural mark. A text-carrying event is not a text-only event — Gemini
+	// decodes one data: line into a delta, a finishReason and usageMetadata at
+	// once, and the chat-completions family, Bedrock and Mistral all pack the
+	// finish reason onto a chunk that still carries content. Only the guard's
+	// mask path re-encodes an event, and this is what tells it which ones it
+	// must leave alone.
+	beyondText bool
 }
 
 // streamMark is what one event does to the structure a client can see open: the
@@ -299,6 +308,7 @@ func (s *segmenter) classify(ev *streamEvent) error {
 		return nil
 	}
 	ev.mark = streamMarkFor(s.format, eventType, payload)
+	ev.beyondText = ev.mark.op != markNone
 	chunk, err := s.codec.DecodeStreamChunkFor(payload, s.format)
 	if err != nil {
 		return fmt.Errorf("segmenting %s stream chunk: %w", s.format, err)
@@ -307,6 +317,7 @@ func (s *segmenter) classify(ev *streamEvent) error {
 	if chunk == nil {
 		return nil
 	}
+	ev.beyondText = ev.beyondText || chunk.FinishReason != "" || chunk.Usage != nil
 	ev.text, ev.reasoning, ev.toolCalls = chunk.Delta, chunk.ReasoningDelta, chunk.ToolCallDeltas
 	switch {
 	case chunk.FinishReason != "" && endsOnFinishReason(s.format, eventType):

@@ -205,12 +205,14 @@ func guardCases() []guardCase {
 		},
 		{
 			// A masking policy must not become a no-op on a streamed response.
-			// The buffer rewrite is a later slice, so until then the head
-			// escalates rather than releasing the text the guard asked to mask.
-			name:        "a transform verdict escalates instead of releasing unmasked text",
+			// A verdict that leaves the accumulated buffer byte-identical
+			// masked something the buffer does not carry, so there is nothing
+			// for the guard to rewrite and releasing the head would release the
+			// flagged content unmasked.
+			name:        "a transform the buffer does not carry escalates instead of releasing unmasked text",
 			format:      adapter.FormatOpenAI,
 			lines:       openAIStreamLines(),
-			outcome:     &appplugins.SegmentOutcome{HasTransform: true, Transformed: "[MASKED]"},
+			outcome:     &appplugins.SegmentOutcome{HasTransform: true, Transformed: "Hello world"},
 			wantCalls:   1,
 			wantBlocked: true,
 		},
@@ -532,15 +534,26 @@ func recordAdmitted(g *streamGuard, runner *scriptedRunner) *[]string {
 // being inspected is read by no call at all. The equality against admitted is
 // what closes that axis; the last one states it for the whole stream.
 //
-// The cap is the one thing this cannot be combined with: once window returns a
-// tail, payload[i] stops being a prefix of payload[i+1] and the payload stops
-// being everything admitted. That is by design — overlapping tails still expose
-// cross-block findings within max_accumulated_bytes, which is what Truncated
-// and degraded_reason: accumulation_cap announce — so a capped payload gets a
-// message here rather than an unexplained failure.
-func assertContiguousPrefixes(t *testing.T, segs []appplugins.StreamSegment, admitted []string) {
+// Two things cannot be combined with this, and both are by design rather than
+// defects. The cap is the first: once window returns a tail, payload[i] stops
+// being a prefix of payload[i+1] and the payload stops being everything
+// admitted — overlapping tails still expose cross-block findings within
+// max_accumulated_bytes, which is what Truncated and degraded_reason:
+// accumulation_cap announce. A transform rewrite is the second: it replaces
+// text already carried by an earlier payload, so the buffer the next call
+// accumulates onto is not an extension of the last one but a correction of it,
+// which is the whole point of masking in place. Each gets a guard clause, so a
+// test that combines them gets a message here rather than an unexplained
+// failure.
+func assertContiguousPrefixes(
+	t *testing.T,
+	segs []appplugins.StreamSegment,
+	admitted []string,
+	rewritten bool,
+) {
 	t.Helper()
 	require.NotEmpty(t, segs)
+	require.False(t, rewritten, "prefix contiguity does not survive a transform rewrite")
 	require.Len(t, admitted, len(segs), "one admitted snapshot per guard call")
 	for i := range segs {
 		require.Equal(t, i+1, segs[i].Seq, "seq must number the calls in order")
@@ -583,7 +596,7 @@ func TestStreamGuard_BlockLoopCadenceAndOrderedRelease(t *testing.T) {
 	require.Equal(t, len(g.produced), g.releasedIdx, "a clean stream releases everything it produced")
 
 	require.Equal(t, 4, runner.calls, "the head, two clock-closed blocks and the terminal block")
-	assertContiguousPrefixes(t, runner.segments, *admitted)
+	assertContiguousPrefixes(t, runner.segments, *admitted, false)
 	require.Equal(t, []string{"a1", "b2c3d4", "e5f6g7", ""}, blockDeltas(runner.segments))
 	require.Equal(t, "a1b2c3d4e5f6g7", runner.segments[3].Accumulated)
 }
@@ -663,7 +676,7 @@ func TestStreamGuard_FinalityIsLatchedAcrossRepeatedTerminals(t *testing.T) {
 			require.Equal(t, 1, finals, "Final is latched once per stream")
 			require.True(t, runner.segments[1].Final)
 			require.Equal(t, tc.wantAccum, runner.segments[1].Accumulated)
-			assertContiguousPrefixes(t, runner.segments, *admitted)
+			assertContiguousPrefixes(t, runner.segments, *admitted, false)
 		})
 	}
 }
@@ -885,9 +898,9 @@ func TestStreamGuard_ClassificationFailureInTheLoopStillReleases(t *testing.T) {
 
 // TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade records where B7 stops
 // and B8 starts. A verdict that says block, a transform the buffer rewrite
-// cannot yet apply, and a fail_closed policy are the three things the loop
-// cannot answer by releasing text, so the held events are not written and no
-// further call is issued.
+// cannot apply, and a fail_closed policy are the three things the loop cannot
+// answer by releasing text, so the held events are not written and no further
+// call is issued.
 //
 // Each of the three ends the stream on the same terminator, and each says why
 // on the error channel: they are different incidents to a client deciding
@@ -913,7 +926,7 @@ func TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade(t *testing.T) {
 			wantMessage: streamBlockMessage,
 		},
 		{
-			name:        "transform escalates to a block",
+			name:        "a transform the rewrite cannot apply escalates to a block",
 			outcome:     &appplugins.SegmentOutcome{HasTransform: true, Transformed: "x"},
 			wantMessage: streamMaskedMessage,
 		},
@@ -1923,4 +1936,284 @@ func TestStreamGuard_FoldsRepeatedFindingsIntoOneSet(t *testing.T) {
 			assert.Equal(t, tt.want, runner.closings[0].Findings)
 		})
 	}
+}
+
+// streamedText is the content a client would assemble from what the guard
+// released. The masked event is the one thing on the wire the guard encoded
+// itself, so asserting it by its bytes would pin the dialect's encoder rather
+// than the rewrite; what the rewrite owes the client is the text.
+func streamedText(t *testing.T, format adapter.Format, lines []string) string {
+	t.Helper()
+	registry := adapter.NewRegistry()
+	var text strings.Builder
+	for _, line := range lines {
+		payload, ok := dataPayload([]byte(line))
+		if !ok || isSSEDone([]byte(line)) {
+			continue
+		}
+		chunk, err := registry.DecodeStreamChunkFor(payload, format)
+		if err != nil || chunk == nil {
+			continue
+		}
+		text.WriteString(chunk.Delta)
+	}
+	return text.String()
+}
+
+func toolCallStreamLines() []string {
+	return []string{
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"a1"}}]}`, "",
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"b2"}}]}`, "",
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1",` +
+			`"type":"function","function":{"name":"lookup","arguments":"{\"q\":\"b2\"}"}}]}}]}`, "",
+		"data: [DONE]", "",
+	}
+}
+
+// TestStreamGuard_TransformRewritesTheHeldBuffer is B11.2. A masking policy on
+// a streamed response has to reach the client, and the head is where it can
+// still do so without a single byte having gone out: the flagged span never
+// reaches the wire, the events that carried it are re-encoded as the masked
+// text, and the buffer the next call accumulates onto is the masked one.
+func TestStreamGuard_TransformRewritesTheHeldBuffer(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("Hello ", "secret")
+	runner := &scriptedRunner{
+		outcome: &appplugins.SegmentOutcome{HasTransform: true, Transformed: "Hello ****"},
+	}
+	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI,
+		stageInputFixture(), streamGuardConfig{}, newGuardLogger())
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe, "a mask the guard can apply is not a block")
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Hello ****", streamedText(t, adapter.FormatOpenAI, got))
+	assert.NotContains(t, strings.Join(got, "\n"), "secret", "the flagged span must not reach the wire")
+	assert.Equal(t, lines[len(lines)-2:], got[len(got)-2:], "the terminal event is released byte for byte")
+	assert.Equal(t, "Hello ****", g.text.String(), "the accumulated buffer is rewritten in place")
+	assert.Equal(t, 1, runner.calls)
+}
+
+// TestStreamGuard_TransformEscalatesOnWhatItCannotRewrite is B11.3: one rule,
+// two triggers. The rule is that a masked buffer may differ from the produced
+// one only inside text the guard still holds. Text the client has already read
+// breaks it because the wire cannot be retracted, and a span the buffer does
+// not carry breaks it because the mask would land on a thought or on JSON
+// arguments — which the guard sees as a buffer the verdict left untouched, or
+// as a held event carrying tool-call deltas of its own.
+func TestStreamGuard_TransformEscalatesOnWhatItCannotRewrite(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		lines       []string
+		cfg         streamGuardConfig
+		transformed string
+		wantHead    []string
+	}{
+		{
+			name:        "the masked span reaches text already released",
+			lines:       textStreamLines("a1", "b2", "c3"),
+			cfg:         streamGuardConfig{minChars: 1},
+			transformed: "**b2",
+			wantHead:    textStreamLines("a1")[:2],
+		},
+		{
+			name:        "the masked span lands in a tool-call region",
+			lines:       toolCallStreamLines(),
+			cfg:         streamGuardConfig{minChars: 1 << 10},
+			transformed: "a1**",
+			wantHead:    toolCallStreamLines()[:2],
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := loopGuard(t, runner, adapter.NewRegistry(), tc.cfg)
+			runner.probe = func() {
+				if runner.calls == 2 {
+					runner.outcome = &appplugins.SegmentOutcome{
+						HasTransform: true,
+						Transformed:  tc.transformed,
+					}
+				}
+			}
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe, "past the head the status is already committed")
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			require.Equal(t, tc.wantHead, got[:len(tc.wantHead)], "only the head block reaches the client")
+			assert.Equal(t, openAICutLines(streamMaskedMessage), got[len(tc.wantHead):],
+				"a mask that cannot be applied ends the stream on the terminator")
+			assert.Equal(t, 2, runner.calls, "a stop issues no further calls")
+			assert.True(t, g.stopped)
+		})
+	}
+}
+
+// TestStreamGuard_MaskedFindingIsNotReDetected is B11.4's last case and the
+// proof B11.5 rests on. The payload is cumulative, so without the in-place
+// rewrite an enforce-mode masking policy — which no longer cuts — would put the
+// flagged span in front of the engine again on every later block, with neither
+// the dedupe set nor a published one behind it. The rewrite is what removes it
+// from the payload, which is as far as the gateway's half of the guarantee
+// reaches.
+func TestStreamGuard_MaskedFindingIsNotReDetected(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls == 1 {
+			runner.outcome = &appplugins.SegmentOutcome{HasTransform: true, Transformed: "[MASK]"}
+			return
+		}
+		runner.outcome = nil
+	}
+
+	out, pe := g.Run(context.Background(),
+		invariantSource(t, g, textStreamLines("secret", "tail"), nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.Greater(t, runner.calls, 1, "one call cannot show a finding failing to come back")
+	for _, seg := range runner.segments[1:] {
+		assert.NotContains(t, seg.Accumulated, "secret", "the masked span must not be inspected again")
+		assert.Contains(t, seg.Accumulated, "[MASK]", "the engine sees what the client sees")
+	}
+	assert.Equal(t, "[MASK]tail", streamedText(t, adapter.FormatOpenAI, got))
+	assert.Equal(t, "tail", runner.segments[1].Text, "the block delta follows the rewritten buffer")
+}
+
+// packedTerminalStreamLines is the shape textStreamLines cannot produce: a
+// provider that puts the finish reason, and the usage report with it, on the
+// chunk that still carries the last of the text. Gemini/Vertex, Bedrock,
+// Mistral and the chat-completions family all end this way, and Gemini has no
+// [DONE] behind it, so that one event is the whole ending of the response.
+func packedTerminalStreamLines(format adapter.Format, head, tail string) []string {
+	if format == adapter.FormatGemini {
+		return []string{
+			`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"` + head + `"}]}}]}`, "",
+			`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"` + tail + `"}]},` +
+				`"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,` +
+				`"candidatesTokenCount":2,"totalTokenCount":3}}`, "",
+		}
+	}
+	return []string{
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"` + head + `"}}]}`, "",
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"` + tail + `"},` +
+			`"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,` +
+			`"total_tokens":3}}`, "",
+		"data: [DONE]", "",
+	}
+}
+
+// TestStreamGuard_MaskWillNotRewriteAnEventCarryingMoreThanText is the rule
+// that keeps the rewrite from ending a response. maskLines encodes one text
+// delta, so an event whose text rides with a finish reason and a usage report
+// cannot be rebuilt from its text: re-encoding it drops the ending, and
+// dropping it whole drops the ending too. On Gemini, where there is no [DONE]
+// behind it, the stream would then simply stop on a bare text delta — no finish
+// reason, no usage, nothing for a client to end on.
+//
+// The last case is the control. The same text with an ending of its own is
+// masked, because there the held text events really do carry nothing else, and
+// the ending is released byte for byte because the rewrite never touches it.
+func TestStreamGuard_MaskWillNotRewriteAnEventCarryingMoreThanText(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		format     adapter.Format
+		lines      []string
+		wantMasked bool
+	}{
+		{
+			name:   "the chat-completions family packs the finish reason onto the last text chunk",
+			format: adapter.FormatOpenAI,
+			lines:  packedTerminalStreamLines(adapter.FormatOpenAI, "Hello ", "secret"),
+		},
+		{
+			name:   "gemini packs the finish reason and the usage metadata onto it",
+			format: adapter.FormatGemini,
+			lines:  packedTerminalStreamLines(adapter.FormatGemini, "Hello ", "secret"),
+		},
+		{
+			name:       "an ending of its own leaves the text events carrying only text",
+			format:     adapter.FormatOpenAI,
+			lines:      textStreamLines("Hello ", "secret"),
+			wantMasked: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{
+				outcome: &appplugins.SegmentOutcome{HasTransform: true, Transformed: "Hello ****"},
+			}
+			g := newStreamGuard(runner, adapter.NewRegistry(), tc.format,
+				stageInputFixture(), streamGuardConfig{}, newGuardLogger())
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			if !tc.wantMasked {
+				require.NotNil(t, pe, "a mask that would cost the response its ending is a block")
+				assert.Equal(t, streamMaskedType, pe.Type)
+				// What Run returns after a head-gate block is the undrained
+				// remainder, not output: the caller drains and discards it. No
+				// text of the response is in it, which is the whole claim.
+				assert.Empty(t, streamedText(t, tc.format, got), "a head-gate block releases no text")
+				return
+			}
+			require.Nil(t, pe)
+			assert.Equal(t, "Hello ****", streamedText(t, tc.format, got))
+			assert.Equal(t, tc.lines[len(tc.lines)-2:], got[len(got)-2:],
+				"the event that ends the response is released byte for byte")
+		})
+	}
+}
+
+// TestStreamGuard_TransformRewritesABlockBehindTheReleasePointer is the rewrite
+// where released text exists. Every other passing-rewrite case runs on the head
+// block, where nothing has gone out and the released text is empty, so the
+// released-text rule is only ever satisfied vacuously and the buffer is only
+// ever rewritten from a zero base.
+//
+// Here the head has already been written. The masked buffer has to carry the
+// released prefix unchanged for B11.3 to let it through, the held text is what
+// is left once that prefix is taken off, and the block delta the next call
+// carries is measured from the rewritten buffer rather than the produced one.
+func TestStreamGuard_TransformRewritesABlockBehindTheReleasePointer(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "secret", "tail")
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+	runner.probe = func() {
+		if runner.calls == 2 {
+			runner.outcome = &appplugins.SegmentOutcome{HasTransform: true, Transformed: "a1[REDACTED]"}
+			return
+		}
+		runner.outcome = nil
+	}
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe, "the rewrite lands, so the block loop releases rather than cuts")
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.Equal(t, lines[:2], got[:2], "the head was released before the verdict and is untouched")
+	assert.Equal(t, "a1[REDACTED]tail", streamedText(t, adapter.FormatOpenAI, got))
+	assert.NotContains(t, strings.Join(got, "\n"), "secret")
+	assert.Equal(t, "a1[REDACTED]tail", g.text.String(),
+		"the buffer keeps the released prefix, replaces the rest and accumulates onto that")
+
+	require.Greater(t, len(runner.segments), 2, "a later call is what proves the new base")
+	assert.Equal(t, "tail", runner.segments[2].Text,
+		"the block delta is measured from the rewritten buffer, not the produced one")
+	assert.Equal(t, "a1[REDACTED]tail", runner.segments[2].Accumulated)
 }

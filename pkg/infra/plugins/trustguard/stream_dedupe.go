@@ -38,13 +38,18 @@ const (
 // stream carries, and how many of them could not be identified well enough to
 // contribute at all.
 //
-// Only an entry that never cuts contributes. Enforce stops the stream on its
-// first blocking or transforming verdict, so it sees a finding once and never
-// gets a second block to compare it against: a key it would never read again is
-// dead weight on the path that is holding a client's bytes. Alert-only is the
-// opposite — it keeps calling over a cumulative payload, so the same finding
-// comes back on every later block — and it is the mode a policy is evaluated in
-// before it is switched on, which is why the noise there is worth removing.
+// Only an entry that never cuts contributes, and in enforce no finding ever
+// comes back to be deduplicated. A blocking verdict stops the stream, so there
+// is no later block to see it again. A transforming one keeps the stream
+// running, but the guard rewrites the masked span into the accumulated buffer
+// in place, so every later block carries the masked text and the flagged bytes
+// the finding was raised on are no longer in front of the engine. Where that
+// rewrite cannot land the guard cuts, and there is again no later block. A key
+// enforce would never read a second time is dead weight on the path that is
+// holding a client's bytes. Alert-only is the opposite — it keeps calling over
+// a cumulative payload, so the same finding comes back on every later block —
+// and it is the mode a policy is evaluated in before it is switched on, which
+// is why the noise there is worth removing.
 func streamFingerprints(mode policy.Mode, findings []GuardFinding) ([]string, int) {
 	if appplugins.Blocks(mode) {
 		return nil, 0
