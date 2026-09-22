@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -36,15 +37,19 @@ func (r whoAmIGateway) Resolve(*fiber.Ctx) (*gatewaydomain.Gateway, error) { ret
 
 type whoAmIConsumers struct {
 	consumers []appconsumer.KeyConsumer
+	key       appconsumer.KeyInfo
 	err       error
 	gotKey    string
 }
 
 func (s *whoAmIConsumers) ForAPIKey(
 	_ context.Context, _ ids.GatewayID, rawKey string,
-) ([]appconsumer.KeyConsumer, error) {
+) (*appconsumer.KeyDescription, error) {
 	s.gotKey = rawKey
-	return s.consumers, s.err
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &appconsumer.KeyDescription{Key: s.key, Consumers: s.consumers}, nil
 }
 
 func whoAmIApp(service appconsumer.APIKeyConsumers, gateway *gatewaydomain.Gateway) *fiber.App {
@@ -162,4 +167,91 @@ func TestWhoAmI_CarriesNoInternalIdentifiers(t *testing.T) {
 	require.NotContains(t, payload, gateway.ID.String())
 	require.NotContains(t, payload, "ag_secret")
 	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+}
+
+// A key that retires itself is the failure a client discovers as a 401 in
+// production, months after whoever issued it left. So the key says when.
+func TestWhoAmI_SaysWhenTheKeyRetiresItself(t *testing.T) {
+	t.Parallel()
+	expiry := time.Date(2027, 3, 1, 9, 30, 0, 0, time.UTC)
+	service := &whoAmIConsumers{
+		key:       appconsumer.KeyInfo{Name: "prod", ExpiresAt: &expiry},
+		consumers: []appconsumer.KeyConsumer{{Slug: "assistant", Type: consumerdomain.TypeMCP, Active: true}},
+	}
+	app := whoAmIApp(service, &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"})
+
+	_, body := callWhoAmI(t, app, "ag_secret")
+
+	require.Equal(t, "prod", body.Key.Name)
+	require.Equal(t, "2027-03-01T09:30:00Z", body.Key.ExpiresAt)
+}
+
+// A key that never expires says nothing rather than a far-off date a client
+// would have to recognise as "never".
+func TestWhoAmI_LeavesTheExpiryOutWhenThereIsNone(t *testing.T) {
+	t.Parallel()
+	service := &whoAmIConsumers{
+		key:       appconsumer.KeyInfo{Name: "prod"},
+		consumers: []appconsumer.KeyConsumer{{Slug: "assistant", Type: consumerdomain.TypeMCP, Active: true}},
+	}
+	app := whoAmIApp(service, &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"})
+
+	_, body := callWhoAmI(t, app, "ag_secret")
+
+	require.Empty(t, body.Key.ExpiresAt)
+}
+
+// The first tool call against an unconnected server fails with a refusal the
+// caller can do nothing about. Answering it here, before the call, is the
+// difference between a client that can tell its operator what to do and one
+// that only knows something went wrong.
+func TestWhoAmI_NamesWhatIsStillWaitingToBeConnected(t *testing.T) {
+	t.Parallel()
+	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{
+		Slug: "assistant", Type: consumerdomain.TypeMCP, Active: true,
+		Upstreams: []appconsumer.KeyUpstream{
+			{
+				Server: "Confluence", Provider: "atlassian",
+				Account: appconsumer.KeyUpstreamShared, Connected: true,
+			},
+			{
+				Server: "Notion", Provider: "notion",
+				Account: appconsumer.KeyUpstreamShared,
+				Blocked: appconsumer.KeyBlockedAdministrator,
+			},
+			{
+				Server: "GitHub", Provider: "github",
+				Account: appconsumer.KeyUpstreamUser,
+				Blocked: appconsumer.KeyBlockedEndUser,
+			},
+		},
+	}}}
+	app := whoAmIApp(service, &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"})
+
+	_, body := callWhoAmI(t, app, "ag_secret")
+
+	upstreams := body.Consumers[0].Upstreams
+	require.Len(t, upstreams, 3)
+	require.Equal(t, "Confluence", upstreams[0].Server)
+	require.True(t, upstreams[0].Connected)
+	require.Empty(t, upstreams[0].Blocked, "a connected shared account is ready and says nothing")
+	require.Equal(t, "shared", upstreams[1].Account)
+	require.Equal(t, "administrator", upstreams[1].Blocked, "nobody calling can connect an account they do not own")
+	require.Equal(t, "user", upstreams[2].Account)
+	require.Equal(t, "end_user", upstreams[2].Blocked, "the application names the person it acts for")
+}
+
+// A consumer whose servers all carry their own credential is not "everything
+// connected" and not "nothing to connect" — there is no list, and the field is
+// absent rather than an empty array a client would have to interpret.
+func TestWhoAmI_SaysNothingAboutUpstreamsThatNeedNoAccount(t *testing.T) {
+	t.Parallel()
+	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{
+		{Slug: "assistant", Type: consumerdomain.TypeMCP, Active: true},
+	}}
+	app := whoAmIApp(service, &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"})
+
+	_, body := callWhoAmI(t, app, "ag_secret")
+
+	require.Nil(t, body.Consumers[0].Upstreams)
 }

@@ -2852,14 +2852,6 @@ definitions:
     properties:
       active:
         type: boolean
-      acts_for_users:
-        description: |-
-          ActsForUsers is false for a consumer that acts as the application
-          itself, which is the actor a batch runs as.
-        type: boolean
-      identity_source:
-        description: IdentitySource names who its users are when it acts for them.
-        type: string
       name:
         type: string
       slug:
@@ -2867,11 +2859,28 @@ definitions:
       type:
         description: 'Type is the plane this consumer belongs to: MCP, LLM or A2A.'
         type: string
+      upstreams:
+        description: |-
+          Upstreams are the MCP servers behind this consumer that read a stored
+          account, and what each is still waiting for. Absent when none of them
+          does — and also absent on a plane that cannot read the accounts at all,
+          which is why a client reads "blocked" rather than counting a length.
+        items:
+          $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIUpstream'
+        type: array
       url:
         description: |-
           URL is where this consumer is served — the MCP endpoint for an MCP
           consumer, the provider-compatible base URL for an LLM one. Empty when
           the gateway has no public host configured for that plane.
+        type: string
+    type: object
+  pkg_api_handler_http_mcp.WhoAmIKey:
+    properties:
+      expires_at:
+        description: ExpiresAt is RFC3339, absent when the key never expires.
+        type: string
+      name:
         type: string
     type: object
   pkg_api_handler_http_mcp.WhoAmIResponse:
@@ -2881,6 +2890,33 @@ definitions:
           $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer'
         type: array
       gateway:
+        type: string
+      key:
+        $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIKey'
+    type: object
+  pkg_api_handler_http_mcp.WhoAmIUpstream:
+    properties:
+      account:
+        description: |-
+          Account is whose account the server reads: "shared", the one the
+          instance holds for every caller, or "user", one per caller.
+        type: string
+      blocked:
+        description: |-
+          Blocked names who has to act before this server answers a call that runs
+          as the application: "administrator" or "end_user". Absent when ready.
+        type: string
+      connected:
+        description: |-
+          Connected answers for this caller. A "user" instance never has an
+          account for an application, so it reads false and blocked says end_user.
+        type: boolean
+      needs_reconnect:
+        description: 'NeedsReconnect: there is an account and it has gone stale.'
+        type: boolean
+      provider:
+        type: string
+      server:
         type: string
     type: object
   pkg_api_handler_http_oauth.EndUserConnectionResponse:
@@ -5831,12 +5867,13 @@ paths:
   /whoami:
     get:
       description: Returns the consumers this API key is attached to, one per plane,
-        each with the URL it is served on. A key is attached to consumers and a consumer
-        has one type, so an agent that calls both tools and models holds an MCP consumer
-        and an LLM one behind the same key; this is how a client learns their slugs
-        and addresses instead of being configured with them. Carries no identifiers
-        and no credentials. An unknown, disabled or foreign key is refused without
-        saying which.
+        each with the URL it is served on — plus when the key itself expires and,
+        for an MCP consumer, which of its bound servers still need an account connected
+        and by whom. A key is attached to consumers and a consumer has one type, so
+        an agent that calls both tools and models holds an MCP consumer and an LLM
+        one behind the same key; this is how a client learns their slugs and addresses
+        instead of being configured with them. Carries no identifiers and no credentials.
+        An unknown, disabled, expired or foreign key is refused without saying which.
       produces:
       - application/json
       responses:

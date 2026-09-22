@@ -3928,7 +3928,7 @@ const docTemplate = `{
         },
         "/whoami": {
             "get": {
-                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.",
+                "description": "Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which.",
                 "produces": [
                     "application/json"
                 ],
@@ -8235,14 +8235,6 @@ const docTemplate = `{
                 "active": {
                     "type": "boolean"
                 },
-                "acts_for_users": {
-                    "description": "ActsForUsers is false for a consumer that acts as the application\nitself, which is the actor a batch runs as.",
-                    "type": "boolean"
-                },
-                "identity_source": {
-                    "description": "IdentitySource names who its users are when it acts for them.",
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
@@ -8253,8 +8245,27 @@ const docTemplate = `{
                     "description": "Type is the plane this consumer belongs to: MCP, LLM or A2A.",
                     "type": "string"
                 },
+                "upstreams": {
+                    "description": "Upstreams are the MCP servers behind this consumer that read a stored\naccount, and what each is still waiting for. Absent when none of them\ndoes — and also absent on a plane that cannot read the accounts at all,\nwhich is why a client reads \"blocked\" rather than counting a length.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIUpstream"
+                    }
+                },
                 "url": {
                     "description": "URL is where this consumer is served — the MCP endpoint for an MCP\nconsumer, the provider-compatible base URL for an LLM one. Empty when\nthe gateway has no public host configured for that plane.",
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIKey": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "description": "ExpiresAt is RFC3339, absent when the key never expires.",
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }
@@ -8269,6 +8280,36 @@ const docTemplate = `{
                     }
                 },
                 "gateway": {
+                    "type": "string"
+                },
+                "key": {
+                    "$ref": "#/definitions/pkg_api_handler_http_mcp.WhoAmIKey"
+                }
+            }
+        },
+        "pkg_api_handler_http_mcp.WhoAmIUpstream": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "description": "Account is whose account the server reads: \"shared\", the one the\ninstance holds for every caller, or \"user\", one per caller.",
+                    "type": "string"
+                },
+                "blocked": {
+                    "description": "Blocked names who has to act before this server answers a call that runs\nas the application: \"administrator\" or \"end_user\". Absent when ready.",
+                    "type": "string"
+                },
+                "connected": {
+                    "description": "Connected answers for this caller. A \"user\" instance never has an\naccount for an application, so it reads false and blocked says end_user.",
+                    "type": "boolean"
+                },
+                "needs_reconnect": {
+                    "description": "NeedsReconnect: there is an account and it has gone stale.",
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "server": {
                     "type": "string"
                 }
             }
