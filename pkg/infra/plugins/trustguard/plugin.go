@@ -59,6 +59,24 @@ const (
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
 	skipReasonUndecodableResponse = "undecodable_response"
 	skipReasonObserveMode         = "observe_mode"
+	// skipReasonProviderNotStreaming marks a response leg that opted into
+	// per-block inspection and never got a block to inspect: the provider
+	// produced no stream the guard could close a block on. Without it the
+	// event is indistinguishable from a stream that was inspected and found
+	// clean, which is the same gap skipReasonEmptyResponseBody closed on the
+	// buffered leg.
+	skipReasonProviderNotStreaming = "provider_not_streaming"
+)
+
+// Why a streamed leg stopped being inspected the way the policy asked. The
+// values are the shared tokens: the guard records them and this plugin
+// publishes them, and they land in ClickHouse, so a rename after release is a
+// data migration rather than a code change.
+const (
+	degradedReasonAccumulationCap     = appplugins.StreamDegradeAccumulationCap
+	degradedReasonGuardTimeout        = appplugins.StreamDegradeGuardTimeout
+	fallbackReasonSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
+	fallbackReasonClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )
 
 const (

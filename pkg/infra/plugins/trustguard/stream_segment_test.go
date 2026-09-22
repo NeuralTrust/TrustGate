@@ -620,3 +620,131 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 		})
 	}
 }
+
+// The aggregate is the only thing that makes a streamed block visible: without
+// it a head-gate 403 publishes a plugin span carrying no guard data at all.
+// It has to land exactly once, on the closing segment, and it has to survive
+// every block that came before it.
+func TestInspectSegmentWritesTheAggregateOnceOnClosing(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
+		streamingSettings(nil), segmentRequest(), nil, event)
+	ctx := segmentTraceContext()
+
+	for seq := 1; seq <= 3; seq++ {
+		_, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{
+			Seq: seq, Final: seq == 3, Accumulated: "Hello world",
+		})
+		require.NoError(t, err)
+	}
+	require.Nil(t, span.PluginAttrsCopy().Extras,
+		"a per-block write would be overwritten by the next block and is never made")
+
+	verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{
+		Seq: 3, Closing: true,
+		Report: appplugins.StreamReport{
+			Evals: 3, GuardCalls: 3, FinalPass: true,
+			GuardLatency: 90 * time.Millisecond, GuardLatencyMax: 40 * time.Millisecond,
+			AddedLatency: 130 * time.Millisecond,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, verdict)
+	assert.False(t, verdict.Block, "the closing segment asks for no verdict")
+	assert.Len(t, g.calls(), 3, "the closing segment never reaches the engine")
+
+	attrs := span.PluginAttrsCopy()
+	data, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "extras = %T, want guardData", attrs.Extras)
+	require.NotNil(t, data.Streaming)
+	assert.Equal(t, testStreamTraceID+streamIDSeparator+legResponse, data.Streaming.StreamID)
+	assert.Equal(t, 3, data.Streaming.EvalsTotal)
+	assert.Equal(t, 3, data.Streaming.GuardCalls)
+	assert.True(t, data.Streaming.FinalPass)
+	assert.Equal(t, int64(130), data.Streaming.AddedLatencyMs)
+	assert.False(t, data.Skipped)
+	assert.Equal(t, "allowed", attrs.Decision)
+	assert.Equal(t, 90*time.Millisecond, span.Latency(),
+		"the span latency is the chain time the client waited for, not the whole stream drain")
+}
+
+// A cut never reaches a final block, so the closing segment is the only thing
+// that puts it on the event at all.
+func TestInspectSegmentAggregateOnACut(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPlugin(t, adapter.NewRegistry(), "")
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
+		streamingSettings(nil), segmentRequest(), nil, event)
+
+	_, err := p.InspectSegment(segmentTraceContext(), in, appplugins.StreamSegment{
+		Seq: 5, Closing: true,
+		Report: appplugins.StreamReport{Evals: 5, GuardCalls: 5, CutAtEval: 5, CutOffsetChars: 1840},
+	})
+	require.NoError(t, err)
+
+	attrs := span.PluginAttrsCopy()
+	data, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "extras = %T, want guardData", attrs.Extras)
+	assert.Equal(t, "block", attrs.Decision)
+	assert.Equal(t, 5, data.Streaming.CutAtEval)
+	assert.Equal(t, 1840, data.Streaming.CutOffsetChars)
+	assert.False(t, data.Streaming.FinalPass)
+}
+
+// A policy that never enabled streaming writes nothing: it is on the chain, so
+// it is asked, but it has nothing to say about a stream it did not inspect.
+func TestInspectSegmentClosingWritesNothingWhenStreamingIsOff(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPlugin(t, adapter.NewRegistry(), "")
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
+		map[string]any{"collector_id": testCollectorID}, segmentRequest(), nil, event)
+
+	_, err := p.InspectSegment(segmentTraceContext(), in,
+		appplugins.StreamSegment{Closing: true, Report: appplugins.StreamReport{Evals: 2}})
+	require.NoError(t, err)
+
+	assert.Nil(t, span.PluginAttrsCopy().Extras)
+}
+
+// An observe-mode policy is what an operator runs to see what a policy would do
+// before enabling it, so a decision it never made is the one thing its entry
+// must never carry. The executor clears the cut from every entry but the one
+// that made it; this pins what the console is then shown.
+func TestInspectSegmentObserveModeReportsNoCutItDidNotMake(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPlugin(t, adapter.NewRegistry(), "")
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeObserve,
+		streamingSettings(nil), segmentRequest(), nil, event)
+
+	_, err := p.InspectSegment(segmentTraceContext(), in, appplugins.StreamSegment{
+		Seq: 5, Closing: true,
+		Report: appplugins.StreamReport{
+			Evals: 5, GuardCalls: 5, GuardLatency: 70 * time.Millisecond,
+			AddedLatency: 240 * time.Millisecond,
+		},
+	})
+	require.NoError(t, err)
+
+	attrs := span.PluginAttrsCopy()
+	data, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "extras = %T, want guardData", attrs.Extras)
+	assert.Equal(t, "allowed", attrs.Decision,
+		"an entry that cut nothing must not read as having blocked the response")
+	assert.Zero(t, data.Streaming.CutAtEval)
+	assert.Zero(t, data.Streaming.CutOffsetChars)
+	assert.Equal(t, 5, data.Streaming.EvalsTotal,
+		"what the stream cost still reaches an observing entry")
+	assert.Equal(t, int64(240), data.Streaming.AddedLatencyMs)
+	assert.Equal(t, 70*time.Millisecond, span.Latency(),
+		"the observing entry is charged its own share of the hold")
+}
