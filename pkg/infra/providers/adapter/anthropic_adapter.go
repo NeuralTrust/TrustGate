@@ -77,6 +77,7 @@ type anthropicResponse struct {
 	Content      []anthropicContentBlock `json:"content"`
 	StopReason   string                  `json:"stop_reason"`
 	StopSequence *string                 `json:"stop_sequence"` // null or the matched stop sequence
+	StopDetails  *anthropicStopDetails   `json:"stop_details,omitempty"`
 	Usage        *anthropicUsage         `json:"usage,omitempty"`
 }
 
@@ -230,8 +231,17 @@ type anthropicSSEMessageDelta struct {
 }
 
 type anthropicSSEMessageDeltaBody struct {
-	StopReason   string  `json:"stop_reason"`
-	StopSequence *string `json:"stop_sequence"`
+	StopReason   string                `json:"stop_reason"`
+	StopSequence *string               `json:"stop_sequence"`
+	StopDetails  *anthropicStopDetails `json:"stop_details,omitempty"`
+}
+
+// anthropicStopDetails is the RefusalStopDetails the real API pairs with a
+// refusal stop reason. Only type is required; category is a closed enum of
+// Anthropic's own policy buckets, which a gateway guardrail cannot claim, so it
+// is left off. The accumulator in both SDKs copies this onto the final Message.
+type anthropicStopDetails struct {
+	Type string `json:"type"`
 }
 
 type anthropicSSESimple struct {
@@ -536,10 +546,18 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 
 // Response: Encode (Canonical → Anthropic response)
 
+// anthropicStopRefusal is the stop_reason a guardrail cut carries, and the
+// discriminant of the stop_details the API pairs with it.
+const anthropicStopRefusal = "refusal"
+
 // canonicalFinishToAnthropicStop is shared by the buffered and the streamed
 // encode so a cut cannot be honest on one path and a lie on the other.
 // content_filter maps to refusal rather than falling through to end_turn,
 // which would make a guardrail cut indistinguishable from a normal finish.
+//
+// It is also the only channel the cut travels on: StreamBlockedEvent emits
+// nothing for Anthropic, because its SDKs raise on a trailing `event: error`
+// instead of reading it. The doc comment there has the measurements.
 func canonicalFinishToAnthropicStop(reason string) string {
 	switch reason {
 	case "length":
@@ -547,7 +565,7 @@ func canonicalFinishToAnthropicStop(reason string) string {
 	case "tool_calls":
 		return "tool_use"
 	case "content_filter":
-		return "refusal"
+		return anthropicStopRefusal
 	default:
 		return "end_turn"
 	}
@@ -584,6 +602,9 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 		Model:      resp.Model,
 		Content:    content,
 		StopReason: canonicalFinishToAnthropicStop(resp.FinishReason),
+	}
+	if out.StopReason == anthropicStopRefusal {
+		out.StopDetails = &anthropicStopDetails{Type: anthropicStopRefusal}
 	}
 
 	if resp.Usage != nil {
@@ -815,9 +836,14 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: chunk.ContentBlockIndex}
 		data, _ := json.Marshal(cbStop)
 		lines = append(lines, SSEEvent("content_block_stop", data)...)
+		stopReason := canonicalFinishToAnthropicStop(chunk.FinishReason)
+		delta := anthropicSSEMessageDeltaBody{StopReason: stopReason}
+		if stopReason == anthropicStopRefusal {
+			delta.StopDetails = &anthropicStopDetails{Type: anthropicStopRefusal}
+		}
 		msgDelta := anthropicSSEMessageDelta{
 			Type:  "message_delta",
-			Delta: anthropicSSEMessageDeltaBody{StopReason: canonicalFinishToAnthropicStop(chunk.FinishReason)},
+			Delta: delta,
 			Usage: anthropicSSEUsageFrom(chunk.Usage),
 		}
 		data, _ = json.Marshal(msgDelta)

@@ -176,15 +176,35 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 // output_item unterminated, which is the failure the terminators exist to
 // avoid.
 //
-// Cohere has no error member in its streamed-response union, so it falls
-// through to the default rather than emit a discriminant its SDK skips
-// silently; its block travels as ERROR on the message-end terminator.
+// Two dialects carry their block on the terminator alone, for the same reason
+// in two strengths: their SDKs cannot read this channel as a block.
 //
-// Each element is one SSE line and every dialect ends with the same empty-line
-// separator, so callers frame them identically. reason reaches the wire only
-// where the dialect has a free-form slot (OpenAI-chat "type", Responses
-// "code") and is constrained to the closed set streamBlockedReason allows; the
-// rest carry the block through their own permission-denied taxonomy.
+//   - Anthropic returns nothing at all, because its SDK does not ignore the
+//     event, it raises on it. anthropic-sdk-python raises unconditionally on an SSE whose
+//     event is "error" (_streaming.py), and _make_status_error dispatches on
+//     response.status_code. Our SSE rides a 200, so it falls past every branch
+//     to the base APIStatusError with status_code 200: an
+//     `except anthropic.PermissionDeniedError` does not catch it despite the
+//     "permission_error" type we put in the body, and the TS SDK is worse
+//     still, raising a base APIError with status undefined. MessageStream has
+//     no try/except around the iteration, so get_final_message() raises and
+//     finalMessage() rejects on a message that is otherwise complete, leaving
+//     it reachable only through current_message_snapshot. The terminator
+//     (content_block_stop, message_delta with stop_reason "refusal",
+//     message_stop) carries the whole signal and is the one the SDK surfaces:
+//     the accumulator assigns "refusal" straight onto the final Message, and
+//     has done since 0.50.0.
+//   - Cohere has no error member in its streamed-response union, so it falls
+//     through to the default rather than emit a discriminant its SDK skips
+//     silently; its block travels as ERROR on the message-end terminator.
+//
+// Each element is one SSE line and every dialect that emits one ends with the
+// same empty-line separator, so callers frame them identically; a nil return
+// means this dialect has nothing to add and the caller appends nothing. reason
+// reaches the wire only where the dialect has a free-form slot (OpenAI-chat
+// "type", Responses "code") and is constrained to the closed set
+// streamBlockedReason allows; the rest carry the block through their own
+// permission-denied taxonomy.
 func StreamBlockedEvent(source Format, reason, message string) [][]byte {
 	reason = streamBlockedReason(reason)
 	if message == "" {
@@ -192,7 +212,7 @@ func StreamBlockedEvent(source Format, reason, message string) [][]byte {
 	}
 	switch normalizeFormat(source) {
 	case FormatAnthropic:
-		return SSEEvent("error", EncodeErrorBody(FormatAnthropic, http.StatusForbidden, message))
+		return nil
 	case FormatGemini:
 		return SSEData(EncodeErrorBody(FormatGemini, http.StatusForbidden, message))
 	case FormatOpenAIResponses:

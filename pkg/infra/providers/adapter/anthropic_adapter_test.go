@@ -626,10 +626,12 @@ func encodeAnthropicStream(t *testing.T, chunks []*CanonicalStreamChunk) []strin
 	return got
 }
 
-// A guardrail cut has to be legible on the wire, which takes two things the
+// A guardrail cut has to be legible on the wire, which takes three things the
 // encoder used to get wrong: a stop_reason a client can tell apart from a
-// normal ending, and a content_block_stop naming the block the stream was
-// actually in. The last case pins the untouched shape of a normal finish.
+// normal ending, the stop_details the real API pairs with that reason, and a
+// content_block_stop naming the block the stream was actually in. The
+// terminator is the whole cut on this dialect — no trailing error event
+// follows it. The last case pins the untouched shape of a normal finish.
 func TestAnthropicEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -663,7 +665,8 @@ func TestAnthropicEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				`data: {"type":"content_block_stop","index":0}`,
 				"",
 				"event: message_delta",
-				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},` +
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},` +
 					`"usage":{"input_tokens":0,"output_tokens":0}}`,
 				"",
 				"event: message_stop",
@@ -685,7 +688,8 @@ func TestAnthropicEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				`data: {"type":"content_block_stop","index":1}`,
 				"",
 				"event: message_delta",
-				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},` +
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},` +
 					`"usage":{"input_tokens":0,"output_tokens":0}}`,
 				"",
 				"event: message_stop",
