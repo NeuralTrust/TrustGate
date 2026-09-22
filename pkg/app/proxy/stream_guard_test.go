@@ -432,3 +432,329 @@ func TestStreamGuardConfig_Defaults(t *testing.T) {
 	require.Equal(t, 16, closed.headChars)
 	require.Equal(t, streamFailClosed, closed.onError)
 }
+
+// fakeStreamClock advances a fixed step on every read, so block cadence is a
+// function of the event count and never of how fast the machine running the
+// test happens to be.
+type fakeStreamClock struct {
+	now  time.Time
+	step time.Duration
+}
+
+func (c *fakeStreamClock) Now() time.Time {
+	c.now = c.now.Add(c.step)
+	return c.now
+}
+
+// flakyCodec decodes a fixed number of chunks and then fails, so a
+// classification failure can be placed inside the block loop rather than at
+// the head gate.
+type flakyCodec struct {
+	inner streamCodec
+	ok    int
+}
+
+func (c *flakyCodec) DecodeStreamChunkFor(
+	chunk []byte,
+	target adapter.Format,
+) (*adapter.CanonicalStreamChunk, error) {
+	if c.ok > 0 {
+		c.ok--
+		return c.inner.DecodeStreamChunkFor(chunk, target)
+	}
+	return nil, errors.New("codec rejected the chunk")
+}
+
+func textStreamLines(chunks ...string) []string {
+	lines := make([]string, 0, 2*len(chunks)+2)
+	for _, chunk := range chunks {
+		lines = append(lines, `data: {"id":"c1","choices":[{"index":0,"delta":{"content":"`+chunk+`"}}]}`, "")
+	}
+	return append(lines, "data: [DONE]", "")
+}
+
+// loopGuard builds a guard whose head closes on the first text event, so every
+// case below exercises the block loop rather than the gate B5 already covers.
+func loopGuard(t *testing.T, runner segmentRunner, codec streamCodec, cfg streamGuardConfig) *streamGuard {
+	t.Helper()
+	cfg.headChars = 1
+	return newStreamGuard(runner, codec, adapter.FormatOpenAI, stageInputFixture(), cfg, newGuardLogger())
+}
+
+// recordAdmitted snapshots, at the instant each call is consulted, the text of
+// every event the guard had admitted by then. That is the axis the prefix
+// assertion cannot see on its own, and the one the evasion hole in spike §5.1b
+// lives on: released text is always a byte-prefix of produced text, so a
+// payload rebuilt from produced[:releasedIdx] satisfies HasPrefix on every
+// consecutive pair while lagging a whole block behind what the guard has read.
+func recordAdmitted(g *streamGuard, runner *scriptedRunner) *[]string {
+	admitted := new([]string)
+	inner := runner.probe
+	runner.probe = func() {
+		var produced strings.Builder
+		for _, ev := range g.produced {
+			produced.WriteString(ev.text)
+		}
+		*admitted = append(*admitted, produced.String())
+		if inner != nil {
+			inner()
+		}
+	}
+	return admitted
+}
+
+// assertContiguousPrefixes is the regression guard for the evasion hole in
+// spike §5.1b. admitted[i] is the text of every event the guard had admitted
+// when call i+1 was issued.
+//
+// The prefix pair alone does not guard this. It closes the sliding-window
+// mutation, but a payload accumulated from released rather than produced text
+// passes it untouched, because released text is a byte-prefix of produced text
+// by construction — so the pair holds on every call while the payload lags a
+// block behind and a finding split across the block in flight and the block
+// being inspected is read by no call at all. The equality against admitted is
+// what closes that axis; the last one states it for the whole stream.
+func assertContiguousPrefixes(t *testing.T, segs []appplugins.StreamSegment, admitted []string) {
+	t.Helper()
+	require.NotEmpty(t, segs)
+	require.Len(t, admitted, len(segs), "one admitted snapshot per guard call")
+	for i := range segs {
+		require.Equal(t, i+1, segs[i].Seq, "seq must number the calls in order")
+		require.Equal(t, admitted[i], segs[i].Accumulated,
+			"payload %d omits text the guard had already admitted when it was issued", i+1)
+		if i == 0 {
+			continue
+		}
+		require.True(t, strings.HasPrefix(segs[i].Accumulated, segs[i-1].Accumulated),
+			"payload %d is not a contiguous prefix of payload %d", i, i+1)
+	}
+	last := len(segs) - 1
+	require.Equal(t, admitted[last], segs[last].Accumulated,
+		"the last payload must carry the whole produced text, not the text released before it")
+}
+
+// TestStreamGuard_BlockLoopCadenceAndOrderedRelease pins the three properties
+// that make the loop a loop: the clock closes blocks, the payload grows as a
+// contiguous prefix, and the wire is reproduced byte for byte in arrival
+// order. With maxHold at three clock steps the gate closes every third event.
+func TestStreamGuard_BlockLoopCadenceAndOrderedRelease(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3", "d4", "e5", "f6", "g7")
+	runner := &scriptedRunner{}
+	clock := &fakeStreamClock{step: 100 * time.Millisecond}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{
+		minChars: 1 << 20,
+		maxHold:  300 * time.Millisecond,
+	})
+	g.now = clock.Now
+	runner.probe = func() { checkInvariant(t, g) }
+	admitted := recordAdmitted(g, runner)
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, lines, got, "released lines must reproduce the source byte for byte, in order")
+	require.Equal(t, len(g.produced), g.releasedIdx, "a clean stream releases everything it produced")
+
+	require.Equal(t, 4, runner.calls, "the head, two clock-closed blocks and the terminal block")
+	assertContiguousPrefixes(t, runner.segments, *admitted)
+	require.Equal(t, []string{"a1", "b2c3d4", "e5f6g7", ""}, blockDeltas(runner.segments))
+	require.Equal(t, "a1b2c3d4e5f6g7", runner.segments[3].Accumulated)
+}
+
+func blockDeltas(segs []appplugins.StreamSegment) []string {
+	out := make([]string, 0, len(segs))
+	for _, seg := range segs {
+		out = append(out, seg.Text)
+	}
+	return out
+}
+
+// openAIMultiChoiceStreamLines is what n>1 looks like on the wire: one
+// finish-reason chunk per choice and no data: [DONE] at all, so the stream
+// carries three terminal events and the latch never sees the sentinel that
+// makes the two-terminal case obvious.
+func openAIMultiChoiceStreamLines() []string {
+	return []string{
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"Hello"}}]}`, "",
+		`data: {"id":"c1","choices":[{"index":1,"delta":{"content":"Hola"}}]}`, "",
+		`data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`, "",
+		`data: {"id":"c1","choices":[{"index":1,"delta":{},"finish_reason":"stop"}]}`, "",
+		`data: {"id":"c1","choices":[{"index":2,"delta":{},"finish_reason":"stop"}]}`, "",
+	}
+}
+
+// TestStreamGuard_FinalityIsLatchedAcrossRepeatedTerminals pins B7.1's second
+// half. unitTerminal is neither unique per stream nor per choice: OpenAI emits
+// the finish-reason chunk and then data: [DONE], and with n>1 it emits one
+// finish-reason chunk per choice — three terminals on a stream a client reads
+// without any [DONE] semantics at all. The later terminal events must still
+// reach the client, but they open no second final segment and cost no second
+// call.
+func TestStreamGuard_FinalityIsLatchedAcrossRepeatedTerminals(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		lines     []string
+		wantAccum string
+	}{
+		{
+			name:      "the finish-reason chunk and then data: [DONE]",
+			lines:     openAIStreamLines(),
+			wantAccum: "Hello world",
+		},
+		{
+			name:      "n>1 emits one finish-reason chunk per choice",
+			lines:     openAIMultiChoiceStreamLines(),
+			wantAccum: "HelloHola",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			clock := &fakeStreamClock{step: 100 * time.Millisecond}
+			g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{
+				minChars: 1 << 20,
+				maxHold:  time.Hour,
+			})
+			g.now = clock.Now
+			admitted := recordAdmitted(g, runner)
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+			require.Equal(t, tc.lines, got, "every terminal event still reaches the client")
+
+			require.Equal(t, 2, runner.calls, "a later terminal event opens no second segment")
+			finals := 0
+			for _, seg := range runner.segments {
+				if seg.Final {
+					finals++
+				}
+			}
+			require.Equal(t, 1, finals, "Final is latched once per stream")
+			require.True(t, runner.segments[1].Final)
+			require.Equal(t, tc.wantAccum, runner.segments[1].Accumulated)
+			assertContiguousPrefixes(t, runner.segments, *admitted)
+		})
+	}
+}
+
+// TestStreamGuard_DisconnectStopsCalling pins B7.6. There is no cancellation
+// on disconnect — c.UserContext() is not cancelled and fasthttp's
+// RequestCtx.Done() fires only on shutdown — so propagation is pull-based and
+// the assertion is that no further call is issued, not that one is cancelled.
+//
+// The consumer is pulled past two block boundaries before it leaves, so the
+// loop is demonstrably running and issuing calls when it does. Leaving inside
+// the head's own release instead would prove nothing about B7.6: flush would
+// return false before blockLoop was ever entered, and the call count would
+// hold because the loop never ran.
+func TestStreamGuard_DisconnectStopsCalling(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{}
+	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, textStreamLines("a1", "b2", "c3", "d4", "e5"), nil))
+	require.Nil(t, pe)
+	require.Equal(t, 1, runner.calls, "only the head call has been issued so far")
+
+	// Two lines per event: the head's own release, then the two blocks the
+	// loop closed and cleared after it, so the consumer leaves mid-release of
+	// the third with d4 and e5 still unpulled.
+	const pullUntil = 6
+	pulled := 0
+	for range out {
+		pulled++
+		if pulled == pullUntil {
+			break
+		}
+	}
+	require.Equal(t, pullUntil, pulled)
+
+	require.Equal(t, 3, runner.calls,
+		"the head and one call per block the loop closed, and none for what the consumer never pulled")
+	require.Less(t, g.releasedIdx, len(g.produced), "the consumer left with the stream unfinished")
+	require.False(t, g.final(), "the loop stopped well before the terminal event")
+}
+
+// TestStreamGuard_ClassificationFailureInTheLoopStillReleases carries B5.4's
+// contract into the block loop: segmenter.feed hands back the event and the
+// error, so the loop records the failure and keeps releasing the original
+// bytes. A reflexive early return on the error would drop wire bytes.
+func TestStreamGuard_ClassificationFailureInTheLoopStillReleases(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3")
+	runner := &scriptedRunner{}
+	codec := &flakyCodec{inner: adapter.NewRegistry(), ok: 1}
+	g := loopGuard(t, runner, codec, streamGuardConfig{minChars: 1})
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+	require.Equal(t, lines, got, "an undecodable event is released byte for byte")
+	require.Equal(t, "a1", runner.segments[len(runner.segments)-1].Accumulated,
+		"what the codec could not decode contributes no inspectable text")
+}
+
+// TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade records where B7 stops
+// and B8 starts. A verdict that says block, a transform the buffer rewrite
+// cannot yet apply, and a fail_closed policy are the three things the loop
+// cannot answer by releasing text, so the held events are not written and no
+// further call is issued. The honest per-format terminator for that stop is
+// B8; until it lands the stream simply ends.
+func TestStreamGuard_StopsTheStreamOnWhatItCannotDegrade(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		outcome *appplugins.SegmentOutcome
+		err     error
+		onError streamOnError
+	}{
+		{name: "block verdict", outcome: &appplugins.SegmentOutcome{Block: true, Type: "guardrail_violation"}},
+		{name: "transform escalates to a block", outcome: &appplugins.SegmentOutcome{HasTransform: true, Transformed: "x"}},
+		{name: "fail_closed on a failing call", err: errors.New("guard timeout"), onError: streamFailClosed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines := textStreamLines("a1", "b2", "c3", "d4")
+			runner := &scriptedRunner{}
+			g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1, onError: tc.onError})
+			runner.probe = func() {
+				if runner.calls == 2 {
+					runner.outcome, runner.err = tc.outcome, tc.err
+				}
+			}
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			require.Nil(t, pe, "past the head the status is already committed")
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+			require.Equal(t, lines[:2], got, "only the block the head cleared reaches the client")
+			require.Equal(t, 2, runner.calls, "a stop issues no further calls")
+			require.True(t, g.stopped)
+			checkInvariant(t, g)
+		})
+	}
+}
+
+// TestStreamGuard_WorstCaseBlockHoldFitsTheWriteDeadline states the constraint
+// the design leaves implicit: fasthttp sets the write deadline once per
+// response, so SERVER_WRITE_TIMEOUT (60s by default, unset in gitops) covers
+// the whole streamed body and every per-block hold eats into it.
+func TestStreamGuard_WorstCaseBlockHoldFitsTheWriteDeadline(t *testing.T) {
+	t.Parallel()
+	const serverWriteTimeout = 60 * time.Second
+	const maxGuardTimeout = 10 * time.Second
+	const maxConfiguredHold = 5 * time.Second
+
+	cfg := streamGuardConfig{maxHold: maxConfiguredHold}.withDefaults()
+	require.Equal(t, maxConfiguredHold, cfg.maxHold)
+	require.Less(t, cfg.maxHold+maxGuardTimeout, serverWriteTimeout/3,
+		"one block's worst case is a full hold plus a full guard timeout, and the client trails by one of those")
+}

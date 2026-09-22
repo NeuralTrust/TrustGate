@@ -61,10 +61,14 @@ type SegmentVerdict struct {
 // HeadChars and OnError live in the plugin's own settings schema, so they
 // travel with the opt-in rather than being re-read by a caller that cannot
 // parse them: an operator who sets streaming.on_error to fail_closed must not
-// silently get fail_open.
+// silently get fail_open. The block-loop knobs travel the same way and for the
+// same reason: MinCharsBetweenEvals floors how often a block closes and
+// MaxHoldMS ceilings how long one may be held.
 type StreamOptions struct {
-	HeadChars int
-	OnError   string
+	HeadChars            int
+	OnError              string
+	MinCharsBetweenEvals int
+	MaxHoldMS            int
 }
 
 // StreamInspector is the opt-in a plugin declares to be consulted per block of
