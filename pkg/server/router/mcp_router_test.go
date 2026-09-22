@@ -26,7 +26,6 @@ import (
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
-	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	oauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
@@ -79,14 +78,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	gateway := &gatewaydomain.Gateway{ID: gatewayID, Slug: "tenant"}
 	gateways := gatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindBySlug(mock.Anything, "tenant").Return(gateway, nil).Times(3)
-
-	apiKeyConnect := oauthmocks.NewAPIKeyConnectService(t)
-	apiKeyConnect.EXPECT().ValidateTarget(mock.Anything, gatewayID, "tools").Return(nil).Twice()
-	apiKeyConnect.EXPECT().
-		CreateTicket(mock.Anything, gatewayID, "tools", "secret-key").
-		Return("self-service-ticket", nil).
-		Once()
+	gateways.EXPECT().FindBySlug(mock.Anything, "tenant").Return(gateway, nil).Maybe()
 
 	connect := oauthmocks.NewConnectService(t)
 	connect.EXPECT().
@@ -98,12 +90,6 @@ func TestMCPRouterDispatch(t *testing.T) {
 		Return("https://provider.example/authorize", nil).
 		Once()
 
-	apiKeyHandler := oauthhttp.NewAPIKeyConnectHandler(
-		resolver.NewSubdomainGatewayResolver(gateways, "mcp.test"),
-		apiKeyConnect,
-		appoauth.NewNoopConnectAttemptLimiter(),
-		func(string, string) string { return "127.0.0.1" },
-	)
 	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
 	mcpHandler := mcphttp.NewHandler(nil, nil)
 	ops := &routerOpsRecorder{}
@@ -126,7 +112,6 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.AuthorizeHandler),
 		new(oauthhttp.CallbackHandler),
 		new(oauthhttp.TokenHandler),
-		apiKeyHandler,
 		nil,
 		connectHandler,
 		oauthhttp.NewConfigureHandler(nil),
@@ -137,52 +122,10 @@ func TestMCPRouterDispatch(t *testing.T) {
 	app := fiber.New()
 	require.NoError(t, mcpRouter.BuildRoutes(app))
 
-	t.Run("GET self-service route", func(t *testing.T) {
-		res, body := dispatchMCPRequest(t, app, fiber.MethodGet, "/tools/connect", "", "")
-
-		assert.Equal(t, fiber.StatusOK, res.StatusCode)
-		assert.Contains(t, body, `action="/tools/connect"`)
-		assertMCPResponsePolicies(t, res)
-		assert.Empty(t, res.Header.Get(fiber.HeaderWWWAuthenticate))
-		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
-	})
-
-	t.Run("GET single-segment connect with ticket stays self-service", func(t *testing.T) {
-		res, body := dispatchMCPRequest(
-			t,
-			app,
-			fiber.MethodGet,
-			"/tools/connect?ticket=shadow-ticket",
-			"",
-			"",
-		)
-
-		assert.Equal(t, fiber.StatusOK, res.StatusCode)
-		assert.Contains(t, body, `action="/tools/connect"`)
-		assert.NotContains(t, body, "shadow-ticket")
-		assertMCPResponsePolicies(t, res)
-		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
-	})
-
-	t.Run("POST self-service route", func(t *testing.T) {
-		res, _ := dispatchMCPRequest(
-			t,
-			app,
-			fiber.MethodPost,
-			"/tools/connect",
-			"api_key=secret-key",
-			fiber.MIMEApplicationForm,
-		)
-
-		assert.Equal(t, fiber.StatusSeeOther, res.StatusCode)
-		assert.Equal(t, "/tools/mcp/connect?ticket=self-service-ticket", res.Header.Get(fiber.HeaderLocation))
-		assert.Equal(t, "DENY", res.Header.Get("X-Frame-Options"))
-		assertMCPResponsePolicies(t, res)
-		assert.Empty(t, res.Header.Get(fiber.HeaderWWWAuthenticate))
-		assert.NotContains(t, res.Header.Get(fiber.HeaderLocation), "secret-key")
-		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
-		assert.Equal(t, o11y.OutcomeAllowed, ops.request.Outcome)
-	})
+	// The api-key connect page is gone: an application's upstream account is a
+	// property of the server's instance now, connected by an admin there, so
+	// /{slug}/connect no longer serves a form for a caller to paste a key into.
+	// Only the ticket-redeeming pages under /oauth/ remain.
 
 	t.Run("existing nested connect route", func(t *testing.T) {
 		res, body := dispatchMCPRequest(
@@ -249,7 +192,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Contains(t, unknownResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
 	})
 
-	assert.Equal(t, 11, ops.count)
+	// Every dispatched request is recorded once: the two connect pages plus the
+	// six MCP method calls above.
+	assert.Equal(t, 8, ops.count)
 }
 
 func assertMCPResponsePolicies(t *testing.T, response *http.Response) {

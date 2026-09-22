@@ -55,8 +55,9 @@ func (e *ToolNotPermittedError) Error() string {
 // consumer that acts as itself has no person behind the request, so there is
 // nobody to walk an OAuth page — and minting a connect ticket for it would drop
 // a bearer capability into the application's error channel and its logs, where
-// it is of no use to the only party who can redeem it. The administrator
-// authorizes the application from Consumers → Routing instead.
+// it is of no use to the only party who can redeem it. Whose account a server's
+// instance uses is settled on that instance instead: an administrator connects a
+// shared account there, or the caller names the person it is acting for.
 type ApplicationNotConnectedError struct {
 	Provider string
 	Registry string
@@ -78,7 +79,8 @@ func (e *ApplicationNotConnectedError) Error() string {
 		)
 	}
 	return fmt.Sprintf(
-		"mcp: this application has no account on %q; an administrator must authorize it from Consumers → Routing",
+		"mcp: %q uses a per-user account and this request runs as the application itself; "+
+			"name the end user it acts for, or have an administrator switch the server's instance to a shared account",
 		server,
 	)
 }

@@ -41,13 +41,7 @@ type ConsumerResponse struct {
 	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
 	FailMode        string                   `json:"fail_mode,omitempty"`
 	Identity        IdentityResponse         `json:"identity"`
-	// PendingUpstreamAuth counts the upstream accounts this application still
-	// owes before it can call every server it is bound to: never signed in, or
-	// signed in and since expired or revoked.
-	// Absent when nothing is owed, and on a plane that cannot read the accounts
-	// at all — a list must not claim everything is fine when it did not look.
-	PendingUpstreamAuth *int                `json:"pending_upstream_auth,omitempty"`
-	AuthBinding         AuthBindingResponse `json:"auth_binding"`
+	AuthBinding     AuthBindingResponse      `json:"auth_binding"`
 	// Synthetic marks a consumer the gateway serves without storing: today the
 	// MCP Store. It has no row, so it cannot be edited, deleted or given a key,
 	// and it is only listed when a caller asks for it.

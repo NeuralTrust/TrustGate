@@ -47,7 +47,7 @@ type PrincipalConnectRequest struct {
 // PrincipalConnectLink is the minted ticket and where it is redeemed. The URL is
 // composed by the caller: only the gateway's MCP host serves the connect page
 // and the admin API answers on another one, so the host is the console's to
-// know (same split as a consumer's upstream-accounts link). The lifetime is the
+// know (the admin API and the MCP plane never share a host). The lifetime is the
 // connect flow's own (appoauth.ConnectTicketTTL) and is stamped by the handler,
 // which can name it without this package depending on that one.
 type PrincipalConnectLink struct {
