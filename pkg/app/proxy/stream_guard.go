@@ -226,6 +226,17 @@ type streamGuard struct {
 	cutAtEval     int
 	cutOffset     int
 	closed        bool
+
+	// findings is every finding fingerprint the chain reported over this
+	// stream, in first-seen order and tagged with the entry that reported it,
+	// and seenFindings is the membership test behind it. Alert-only never cuts
+	// and every call carries the whole accumulated text, so a finding that
+	// trips one block trips every block after it; the set is what makes the
+	// inspector publish it once. It hangs off the guard because the guard is
+	// the one object whose lifetime is the stream's, so nothing has to remember
+	// to sweep it.
+	findings     []appplugins.StreamFinding
+	seenFindings map[appplugins.StreamFinding]struct{}
 }
 
 func newStreamGuard(
@@ -600,7 +611,27 @@ func (g *streamGuard) call(
 		g.callFailures++
 		return nil, err
 	}
+	g.remember(outcome)
 	return outcome, nil
+}
+
+// remember folds one block's fingerprints into the stream's set. It sits here
+// rather than in the block loop so the head block, which is evaluated on its
+// own path, contributes on the same terms as every block after it.
+func (g *streamGuard) remember(outcome *appplugins.SegmentOutcome) {
+	if outcome == nil || len(outcome.Fingerprints) == 0 {
+		return
+	}
+	if g.seenFindings == nil {
+		g.seenFindings = make(map[appplugins.StreamFinding]struct{}, len(outcome.Fingerprints))
+	}
+	for _, fp := range outcome.Fingerprints {
+		if _, ok := g.seenFindings[fp]; ok {
+			continue
+		}
+		g.seenFindings[fp] = struct{}{}
+		g.findings = append(g.findings, fp)
+	}
 }
 
 // The offset is what the client had already received, not what the provider had
@@ -646,6 +677,7 @@ func (g *streamGuard) close(ctx context.Context) {
 		Seq:      g.seq,
 		Closing:  true,
 		Report:   g.report(),
+		Findings: g.findings,
 	}); err != nil && g.logger != nil {
 		g.logger.Warn("stream aggregate was not published",
 			slog.String("format", string(g.source)),

@@ -56,6 +56,20 @@ type StreamSegment struct {
 	// so it measures and the inspector publishes. It is filled on the closing
 	// segment and empty on every other.
 	Report StreamReport
+	// Findings is every fingerprint the chain returned over the stream, in
+	// first-seen order with the repeats collapsed, filled on the closing
+	// segment and empty on every other. The guard folds one set for the whole
+	// chain and the executor narrows it to the entry being called, the way it
+	// narrows Report: an inspector is handed what it reported and nothing a
+	// second policy on the same stream reported.
+	//
+	// The set lives with the guard rather than with an inspector because an
+	// inspector is a process-wide singleton called once per block: a set it
+	// kept itself would have to be keyed on the stream and swept afterwards,
+	// and a sweep missed on any of the paths a stream can end on is an
+	// unbounded map. The guard's own state is freed with the stream on every
+	// one of them.
+	Findings []StreamFinding
 	// ReportsStream marks the one entry on a closing segment that is asked to
 	// publish what describes the whole stream rather than its own share of it.
 	// Every entry writes its own span, but an instrument keyed on the response
@@ -112,6 +126,12 @@ const (
 // HasTransform is set, replaces the whole of StreamSegment.Accumulated: the
 // caller owns a single contiguous buffer and rewrites it in place, so splicing
 // per-segment fragments back together is never required.
+//
+// Fingerprints digests what the plugin reported on this segment down to what
+// stays the same about a finding while the payload under it grows. A plugin
+// returns its own and nothing else: the executor tags each one with the entry
+// it called, so which policy a fingerprint belongs to is never something an
+// inspector encodes into the value.
 type SegmentVerdict struct {
 	Block        bool
 	Type         string
@@ -157,14 +177,26 @@ type StreamInspector interface {
 }
 
 // SegmentOutcome is the executor's consolidated answer across the chain for one
-// StreamSegment.
+// StreamSegment. Fingerprints carries what every entry reported on the segment,
+// each tagged with the entry that reported it.
 type SegmentOutcome struct {
 	Block        bool
 	Type         string
 	Message      string
 	HasTransform bool
 	Transformed  string
-	Fingerprints []string
+	Fingerprints []StreamFinding
+}
+
+// StreamFinding is one finding fingerprint and the chain entry that reported
+// it. The guard folds a single set for the whole stream, so an untagged
+// fingerprint would leave two policies inspecting the same stream each
+// publishing the other's findings. Attribution is the executor's to record: it
+// knows the chain, and it narrows the set back to one entry before an inspector
+// is handed it.
+type StreamFinding struct {
+	Entry       string
+	Fingerprint string
 }
 
 // streamInspector reports whether the descriptor opted in, and hands back the
@@ -319,6 +351,24 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 		report.CutOffsetChars = 0
 	}
 	return report
+}
+
+// entryFindings narrows the stream's set to what this entry reported. An entry
+// publishes its own findings or none, for the same reason entryReport hands it
+// its own share of the chain's latency: the set is folded once for a chain that
+// several policies can sit in.
+func entryFindings(findings []StreamFinding, entry chainEntry) []StreamFinding {
+	mine := make([]StreamFinding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Entry != entry.config.ID {
+			continue
+		}
+		mine = append(mine, finding)
+	}
+	if len(mine) == 0 {
+		return nil
+	}
+	return mine
 }
 
 func (s *streamSpans) publish() {

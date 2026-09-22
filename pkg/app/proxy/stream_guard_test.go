@@ -1856,3 +1856,71 @@ func TestStreamGuard_CutOffsetCountsReleasedTextOnly(t *testing.T) {
 	require.Less(t, report.CutOffsetChars, len(g.text.String()),
 		"the client saw less than the provider produced, or the cut prevented nothing")
 }
+
+// The set is the guard's because the guard is the only object whose lifetime is
+// the stream's. An alert-only chain never cuts and every call carries the whole
+// accumulated text, so the same finding comes back on every block after the one
+// that first tripped it; what reaches the closing segment is the fold, in
+// first-seen order. The key is the entry together with the fingerprint, so one
+// detection reported by two policies on the same stream stays two findings and
+// the executor can hand each entry its own.
+func TestStreamGuard_FoldsRepeatedFindingsIntoOneSet(t *testing.T) {
+	t.Parallel()
+
+	first := appplugins.StreamFinding{Entry: "cfg-1", Fingerprint: "a"}
+	second := appplugins.StreamFinding{Entry: "cfg-1", Fingerprint: "b"}
+
+	tests := []struct {
+		name string
+		per  func(call int) []appplugins.StreamFinding
+		want []appplugins.StreamFinding
+	}{
+		{
+			name: "the same finding on every block",
+			per:  func(int) []appplugins.StreamFinding { return []appplugins.StreamFinding{first} },
+			want: []appplugins.StreamFinding{first},
+		},
+		{
+			name: "a second finding a later block is the first to carry",
+			per: func(call int) []appplugins.StreamFinding {
+				if call < 2 {
+					return []appplugins.StreamFinding{first}
+				}
+				return []appplugins.StreamFinding{first, second}
+			},
+			want: []appplugins.StreamFinding{first, second},
+		},
+		{
+			name: "the same key from a second policy on the stream",
+			per: func(int) []appplugins.StreamFinding {
+				return []appplugins.StreamFinding{first, {Entry: "cfg-2", Fingerprint: "a"}}
+			},
+			want: []appplugins.StreamFinding{first, {Entry: "cfg-2", Fingerprint: "a"}},
+		},
+		{
+			name: "a stream nothing was reported on",
+			per:  func(int) []appplugins.StreamFinding { return nil },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{minChars: 1})
+			runner.probe = func() {
+				runner.outcome = &appplugins.SegmentOutcome{Fingerprints: tt.per(runner.calls)}
+			}
+
+			out, pe := g.Run(context.Background(),
+				invariantSource(t, g, textStreamLines("alpha", "bravo", "charlie", "delta", "echo"), nil))
+			require.Nil(t, pe)
+			_, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			require.Greater(t, runner.calls, 1, "one call cannot show a repeat being collapsed")
+			require.Len(t, runner.closings, 1)
+			assert.Equal(t, tt.want, runner.closings[0].Findings)
+		})
+	}
+}
