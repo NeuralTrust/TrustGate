@@ -609,7 +609,7 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				"",
 				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
 				"",
-				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}`,
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`,
 				"",
 			},
 		},
@@ -619,7 +619,7 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				{FinishReason: "content_filter", Usage: newCanonicalUsage(11, 7, 0)},
 			},
 			want: []string{
-				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}],` +
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}],` +
 					`"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"totalTokenCount":18}}`,
 				"",
 			},
@@ -699,8 +699,8 @@ func TestGeminiFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 		{name: "stop", finishReason: "stop", wantBuffered: "STOP", wantStreamed: "STOP"},
 		{name: "length", finishReason: "length", wantBuffered: "MAX_TOKENS", wantStreamed: "MAX_TOKENS"},
 		{name: "tool calls", finishReason: "tool_calls", wantBuffered: "STOP", wantStreamed: "STOP"},
-		{name: "content filter", finishReason: "content_filter", wantBuffered: "SAFETY", wantStreamed: "SAFETY"},
-		{name: "upstream refusal", finishReason: "refusal", wantBuffered: "SAFETY", wantStreamed: "SAFETY"},
+		{name: "content filter", finishReason: "content_filter", wantBuffered: "PROHIBITED_CONTENT", wantStreamed: "PROHIBITED_CONTENT"},
+		{name: "upstream refusal", finishReason: "refusal", wantBuffered: "PROHIBITED_CONTENT", wantStreamed: "PROHIBITED_CONTENT"},
 		{name: "empty", finishReason: "", wantBuffered: "STOP", wantStreamed: ""},
 		{name: "unrecognised", finishReason: "something_else", wantBuffered: "STOP", wantStreamed: "something_else"},
 	}
