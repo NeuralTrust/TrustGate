@@ -112,6 +112,25 @@ func trustGuardInspectText(payload json.RawMessage) string {
 	if err := json.Unmarshal(payload, &llm); err == nil && strings.TrimSpace(llm.Input) != "" {
 		return llm.Input
 	}
+	// An LLM leg is a chat envelope, and what the engine reads — and hands back
+	// masked — is the message content, not the envelope around it. Falling
+	// through to the whole JSON would make a transform verdict return a
+	// serialised payload as if it were the masked text, which every caller that
+	// writes the mask back into a body or a buffer would then reject.
+	var chat struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(payload, &chat); err == nil && len(chat.Messages) > 0 {
+		var parts []string
+		for _, msg := range chat.Messages {
+			if content, ok := msg["content"].(string); ok && strings.TrimSpace(content) != "" {
+				parts = append(parts, content)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
 	var mcp map[string]any
 	if err := json.Unmarshal(payload, &mcp); err != nil {
 		return string(payload)

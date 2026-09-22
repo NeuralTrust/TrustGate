@@ -698,3 +698,118 @@ func TestPluginE2E_TrustGuard_StreamAlertOnlyReportsAFindingOnce(t *testing.T) {
 	assert.Regexp(t, "^[0-9a-f]{32}$", leg.Findings[0],
 		"the event carries a fixed-width digest, never a detection name or a span of the response")
 }
+
+// trustGuardStreamMaskAt is the marker the mask flag rides with. It is well
+// past the head block, so the mask lands on a block the guard is holding while
+// earlier blocks have already been written to the client — the case the rewrite
+// exists for, and the one where the released prefix constrains what the masked
+// buffer is allowed to be.
+const trustGuardStreamMaskAt = 4
+
+// trustGuardStreamMaskEvents is the streaming body one delta of which trips the
+// stub's transform verdict, ending on a usage chunk as a provider asked for
+// usage does.
+func trustGuardStreamMaskEvents() []string {
+	events := make([]string, 0, len(trustGuardStreamMarkers)+5)
+	events = append(events,
+		": keepalive\n\n",
+		trustGuardStreamChunk(`{"role":"assistant"}`),
+	)
+	for i, marker := range trustGuardStreamMarkers {
+		text := trustGuardStreamChunkText(marker)
+		if i == trustGuardStreamMaskAt {
+			text = trustGuardMaskWord + " " + text
+		}
+		events = append(events, trustGuardStreamChunk(fmt.Sprintf(`{"content":%q}`, text)))
+	}
+	return append(events,
+		trustGuardStreamChunk(`{}`, `"finish_reason":"stop"`),
+		`data: {"id":"chatcmpl-tg-stream","object":"chat.completion.chunk","choices":[],`+
+			`"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}`+"\n\n",
+		"data: [DONE]\n\n",
+	)
+}
+
+// TestPluginE2E_TrustGuard_StreamMasksHeldTextAnthropicIngress is B11 end to
+// end, on the dialect shape the guard's own tests cannot build. Those drive
+// OpenAI content deltas plus [DONE]: one text delta per event, the ending on an
+// event of its own, and no structure around either. An Anthropic client is the
+// opposite on every axis — events are multi-line and framed, the text lives
+// inside a numbered content block, and the ending is a message_delta carrying
+// the stop reason and the usage report before message_stop closes the message.
+//
+// The rewrite re-encodes held events, so everything the response ends on is
+// something it could destroy: an event it rewrote from text alone would lose
+// the stop reason and the usage with it, and an Anthropic stream has no [DONE]
+// behind them to end on instead. The claim here is that the client gets the
+// masked text *and* a whole ending.
+//
+// The backend is the OpenAI upstream every functional route uses, for the
+// reason the cut case states: an Anthropic client posts to a compile-time
+// api.anthropic.com URL, so the dialect can only be reached from the ingress
+// side.
+func TestPluginE2E_TrustGuard_StreamMasksHeldTextAnthropicIngress(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamGuardDelay)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamMaskEvents(), trustGuardStreamGap)
+	apiKey, chatPath := setupPolicyRoute(t, up, policyPlugin("trustguard", trustGuardStreamCutPolicySettings()))
+
+	request := anthropicChatRequest("gpt-4o-mini")
+	request["stream"] = true
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, anthropicMessagesPath(chatPath), nil, mustJSON(t, request))
+	body := string(raw)
+
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+
+	assert.Contains(t, body, trustGuardMaskToken, "the mask the policy asked for reaches the client")
+	assert.NotContains(t, body, trustGuardMaskWord, "the flagged span must not reach the client")
+
+	// The ending is asserted as one event rather than as three substrings: the
+	// stop reason and the usage report ride the same message_delta, and a
+	// rewrite that dropped it would take both at once. The token counts on it
+	// are the cross-format adapter's, not the upstream's, so only their
+	// presence is claimed here.
+	ending := anthropicEventData(t, body, "message_delta")
+	require.NotEmpty(t, ending, "the response keeps the event that ends it")
+	assert.Contains(t, ending, `"stop_reason":"end_turn"`, "a masked response ended normally")
+	assert.Contains(t, ending, `"usage"`, "the usage the ending carries survives the rewrite")
+	assert.Contains(t, body, "event: message_stop", "the message the client opened is closed")
+	assert.NotContains(t, body, "permission_error", "a mask that lands is not a cut")
+	assert.NotContains(t, body, "guardrail_masked_unsupported", "and does not escalate to one")
+
+	opened, closed := anthropicBlockIndexes(t, body)
+	require.NotEmpty(t, opened, "the stream opened a content block")
+	assert.Equal(t, opened, closed, "every block the client saw opened was closed exactly once")
+
+	for i, marker := range trustGuardStreamMarkers {
+		if i == trustGuardStreamMaskAt {
+			continue
+		}
+		assert.Contains(t, body, marker, "text the policy did not flag is delivered unchanged")
+	}
+}
+
+// anthropicEventData returns the data: payload of the first event of the given
+// type in an SSE body, or "" when the stream carries none.
+func anthropicEventData(t *testing.T, body, eventType string) string {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(payload), &event) != nil || event.Type != eventType {
+			continue
+		}
+		return payload
+	}
+	return ""
+}

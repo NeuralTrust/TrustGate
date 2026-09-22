@@ -2178,6 +2178,34 @@ func TestStreamGuard_MaskWillNotRewriteAnEventCarryingMoreThanText(t *testing.T)
 	}
 }
 
+// TestStreamGuard_MaskedDeltaNamesTheItemTheClientHasOpen is the Responses half
+// of what terminator already does for a cut. The dialect carries no content
+// block index at all — structure there is the output item — and the encoder
+// writes output index 0 with no item_id for any delta that names none. A client
+// accumulating by item_id then attaches the masked text to nothing, which is a
+// mask that never reaches the reader it was written for.
+func TestStreamGuard_MaskedDeltaNamesTheItemTheClientHasOpen(t *testing.T) {
+	t.Parallel()
+	lines := responsesItemStreamLines(2, "message")
+	runner := &scriptedRunner{
+		outcome: &appplugins.SegmentOutcome{HasTransform: true, Transformed: "Hello ****"},
+	}
+	g := newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAIResponses,
+		stageInputFixture(), streamGuardConfig{}, newGuardLogger())
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe)
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	wire := strings.Join(got, "\n")
+	assert.NotContains(t, wire, " world", "the flagged span must not reach the wire")
+	require.Contains(t, wire, `"type":"response.output_text.delta"`)
+	assert.Contains(t, wire, `"item_id":"msg_1"`, "the masked delta names the item the client saw added")
+	assert.Contains(t, wire, `"output_index":2`, "and the index that item was added at")
+	assert.Equal(t, lines[:3], got[:3], "the item the mask belongs to is announced byte for byte")
+}
+
 // TestStreamGuard_TransformRewritesABlockBehindTheReleasePointer is the rewrite
 // where released text exists. Every other passing-rewrite case runs on the head
 // block, where nothing has gone out and the released text is empty, so the

@@ -714,9 +714,12 @@ func (g *streamGuard) remask(masked string, first int) bool {
 
 // maskLines encodes the held text as one event in the caller's dialect. The
 // anchor is the structure the client can see open at the point the event sits,
-// which is the released one advanced over the held events in front of it: an
-// Anthropic text_delta names the content block it belongs to, and naming the
-// wrong one puts the masked text in a block the client never saw opened.
+// which is the released one advanced over the held events in front of it, and
+// both axes it carries are named for the same reason terminator names them: an
+// Anthropic text_delta names the content block it belongs to and a Responses
+// delta names the output item, and naming neither attaches the masked text to
+// block 0 of an unidentified item — which a client keyed on item_id does not
+// attach at all.
 func (g *streamGuard) maskLines(held string, anchor releasedAnchor) ([][]byte, error) {
 	if held == "" {
 		return nil, nil
@@ -726,6 +729,7 @@ func (g *streamGuard) maskLines(held string, anchor releasedAnchor) ([][]byte, e
 		Model:             g.seg.anchor.model,
 		Delta:             held,
 		ContentBlockIndex: anchor.blockIndex,
+		OpenItem:          anchor.openItem,
 	}, g.source)
 }
 

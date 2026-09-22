@@ -762,6 +762,16 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 			OutputIndex:  0,
 			ContentIndex: 0,
 		}
+		// A caller that knows which item the wire has open says so, and a delta
+		// that names none belongs to output item 0 with no identity at all — a
+		// client accumulating by item_id attaches it to nothing. Only a caller
+		// writing into a stream it did not start can know this, which today is
+		// the guard's masked delta; every other caller opens its own item at
+		// index 0 and keeps the shape it has.
+		if chunk.OpenItem != nil {
+			event.ItemID = chunk.OpenItem.ID
+			event.OutputIndex = chunk.OpenItem.Index
+		}
 		data, _ := json.Marshal(event)
 		allLines = append(allLines, SSEEvent("response.output_text.delta", data)...)
 	}
