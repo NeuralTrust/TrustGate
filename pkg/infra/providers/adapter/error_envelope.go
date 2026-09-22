@@ -172,18 +172,17 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 // finish-reason terminator each dialect carries on its own stream chunks,
 // synthesised through EncodeStreamChunkFor. A blocked stream emits the
 // finish-reason terminator first and this event after it, never this event
-// alone — emitting it alone leaves an Anthropic content block or a Responses
-// output_item unterminated, which is the failure the terminators exist to
-// avoid.
+// alone — emitting it alone leaves a Responses output_item unterminated, which
+// is the failure the terminators exist to avoid.
 //
 // Two dialects carry their block on the terminator alone, for the same reason
 // in two strengths: their SDKs cannot read this channel as a block.
 //
 //   - Anthropic returns nothing at all, because its SDK does not ignore the
-//     event, it raises on it. anthropic-sdk-python raises unconditionally on an SSE whose
-//     event is "error" (_streaming.py), and _make_status_error dispatches on
-//     response.status_code. Our SSE rides a 200, so it falls past every branch
-//     to the base APIStatusError with status_code 200: an
+//     event, it raises on it. anthropic-sdk-python raises unconditionally on
+//     an SSE whose event is "error" (_streaming.py), and _make_status_error
+//     dispatches on response.status_code. Our SSE rides a 200, so it falls
+//     past every branch to the base APIStatusError with status_code 200: an
 //     `except anthropic.PermissionDeniedError` does not catch it despite the
 //     "permission_error" type we put in the body, and the TS SDK is worse
 //     still, raising a base APIError with status undefined. MessageStream has
@@ -196,7 +195,8 @@ func StreamErrorEvent(source Format, status int, errType, message string) []byte
 //     has done since 0.50.0.
 //   - Cohere has no error member in its streamed-response union, so it falls
 //     through to the default rather than emit a discriminant its SDK skips
-//     silently; its block travels as ERROR on the message-end terminator.
+//     silently; its block travels as ERROR plus delta.error on the message-end
+//     terminator.
 //
 // Each element is one SSE line and every dialect that emits one ends with the
 // same empty-line separator, so callers frame them identically; a nil return
