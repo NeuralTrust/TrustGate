@@ -24,41 +24,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The two flags are declared per entry rather than derived, so the one thing
-// that must never happen is an entry that forgot to declare them: false would
-// then mean "needs an admin, holds one instance" by accident. A pointer tells
-// the difference and the loader refuses the whole catalog.
-func TestParseCuratedMCPServers_RequiresBothFlags(t *testing.T) {
+// self_service is declared per entry rather than derived, so the one thing that
+// must never happen is an entry that forgot to declare it: false would then mean
+// "needs an admin" by accident. A pointer tells the difference and the loader
+// refuses the whole catalog.
+func TestParseCuratedMCPServers_RequiresSelfService(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		name  string
-		entry string
-		want  string
-	}{
-		{
-			name:  "neither declared",
-			entry: `{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"}`,
-			want:  "does not declare self_service",
-		},
-		{
-			name:  "only self_service",
-			entry: `{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":true}`,
-			want:  "does not declare multi_instance",
-		},
-		{
-			name:  "only multi_instance",
-			entry: `{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","multi_instance":true}`,
-			want:  "does not declare self_service",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := parseCuratedMCPServers([]byte(`{"servers":[` + tc.entry + `]}`))
-			require.ErrorContains(t, err, tc.want)
-			require.ErrorContains(t, err, "com.acme/mcp")
-		})
-	}
+	_, err := parseCuratedMCPServers([]byte(
+		`{"servers":[{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"}]}`))
+
+	require.ErrorContains(t, err, "does not declare self_service")
+	require.ErrorContains(t, err, "com.acme/mcp")
 }
 
 // A declared false must survive the load, which a bool alone could not tell
@@ -67,12 +44,11 @@ func TestParseCuratedMCPServers_KeepsDeclaredFalse(t *testing.T) {
 	t.Parallel()
 
 	servers, err := parseCuratedMCPServers([]byte(`{"servers":[
-		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":false,"multi_instance":false}
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp","self_service":false}
 	]}`))
 	require.NoError(t, err)
 	require.Len(t, servers, 1)
 	require.False(t, servers[0].SelfService)
-	require.False(t, servers[0].MultiInstance)
 }
 
 // staticCredentialSlot reports whether the entry has anywhere to put a
@@ -110,25 +86,10 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, servers, 200, "the seed grew or shrank; re-audit the flags")
 
-	multi, self := 0, 0
+	self := 0
 	for _, s := range servers {
-		if s.MultiInstance {
-			multi++
-		}
 		if s.SelfService {
 			self++
-		}
-
-		// multi_instance: false claims there is nothing two registries of this
-		// server could differ in. Anything an operator supplies contradicts it.
-		if !s.MultiInstance {
-			require.Empty(t, s.URLVariables, "%s: a templated URL differs per instance", s.Code)
-			require.Empty(t, s.AuthHeaders, "%s: two credentials are two instances", s.Code)
-			require.False(t, clientCredentials(s), "%s: the machine credential is the operator's", s.Code)
-			require.False(t, operatorRegistersClient(s), "%s: the operator's own client differs", s.Code)
-			if static, _ := s.SupportedAuthMethods(); static {
-				t.Fatalf("%s: a static credential differs per instance", s.Code)
-			}
 		}
 
 		// self_service: false claims a user cannot install it until an admin
@@ -149,9 +110,8 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 		}
 	}
 
-	// Canaries: a change in these counts means entries moved between the two
+	// Canary: a change in this count means entries moved between the two
 	// answers, which is worth looking at deliberately.
-	require.Equal(t, 99, multi, "multi_instance count changed")
 	require.Equal(t, 115, self, "self_service count changed")
 }
 
@@ -159,12 +119,6 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 // client is a deployment fact it cannot know, and it is the only thing that
 // moves a declared flag after load — self_service, because the blocker it
 // declared (an operator must register a client first) is gone.
-//
-// multi_instance stays as declared: the install form still offers an operator
-// their own client id and secret for a manual-registration server, so two
-// instances can still differ. This is the one behaviour that changed when the
-// flags became data; before, the platform client also forced the server to a
-// single instance.
 func TestPlatformClientRaisesSelfServiceOnly(t *testing.T) {
 	t.Parallel()
 	const gmail = "com.google.workspace/gmail"
@@ -174,21 +128,18 @@ func TestPlatformClientRaisesSelfServiceOnly(t *testing.T) {
 	entry, ok := without.GetByCode(gmail)
 	require.True(t, ok)
 	require.False(t, entry.SelfService, "an operator must register the client themselves")
-	require.True(t, entry.MultiInstance, "their own client is what two instances differ in")
 
 	with, err := NewMCPServerCatalog(mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"))
 	require.NoError(t, err)
 	entry, ok = with.GetByCode(gmail)
 	require.True(t, ok)
 	require.True(t, entry.SelfService, "the platform holds the client, so nothing is asked of an operator")
-	require.True(t, entry.MultiInstance, "an operator may still bring their own client on another instance")
 
 	// Nothing else moves: an entry the platform holds no client for is served
 	// exactly as the seed declares it.
 	untouched, ok := with.GetByCode("app.linear/mcp")
 	require.True(t, ok)
 	require.True(t, untouched.SelfService)
-	require.True(t, untouched.MultiInstance)
 	require.False(t, untouched.PlatformClient)
 }
 
