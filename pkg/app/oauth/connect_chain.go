@@ -79,7 +79,10 @@ func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayI
 		// Not connected, or connected but unreadable under the current key: both
 		// need the user to (re)link, so both count as unlinked here.
 		key := registrydomain.ForwardedVaultProvider(reg)
-		if _, err := s.vault.Find(ctx, gatewayID, principalSub, key); errors.Is(err, vaultdomain.ErrNotFound) ||
+		// A shared instance answers for everyone, so it is not this caller's to
+		// link and must not count as something they still owe.
+		subject := registrydomain.CredentialSubject(reg, principalSub)
+		if _, err := s.vault.Find(ctx, gatewayID, subject, key); errors.Is(err, vaultdomain.ErrNotFound) ||
 			errors.Is(err, vaultdomain.ErrUndecryptable) {
 			return true
 		}
