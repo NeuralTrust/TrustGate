@@ -146,7 +146,7 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 		t.Fatalf("build api key auth: %v", err)
 	}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID), Auths: []*authdomain.Auth{apiKey}}},
 		"/bare/mcp":         {{GatewayID: gatewayID}},
 		"/nil-consumer/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
@@ -239,12 +239,12 @@ func TestProtectedResourceMetadataAppSourceConsumerAdvertisesNoLogin(t *testing.
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/app-key/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Consumer:  mcpConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{apiKey},
 		}},
 		"/app-mtls/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Consumer:  mcpConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{mtls},
 		}},
 	}}

@@ -197,12 +197,6 @@ func TestMCPRouterDispatch(t *testing.T) {
 	assert.Equal(t, 8, ops.count)
 }
 
-func assertMCPResponsePolicies(t *testing.T, response *http.Response) {
-	t.Helper()
-	assert.Contains(t, response.Header.Get(fiber.HeaderCacheControl), "no-store")
-	assert.Equal(t, "no-referrer", response.Header.Get("Referrer-Policy"))
-}
-
 func dispatchMCPRequest(
 	t *testing.T,
 	app *fiber.App,
