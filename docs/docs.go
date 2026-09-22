@@ -1906,77 +1906,6 @@ const docTemplate = `{
                 ]
             }
         },
-        "/v1/gateways/{gateway_id}/policies/preview": {
-            "post": {
-                "description": "Runs a previewable plugin against a sample request body without storing anything or sending traffic. Returns 200 for every outcome the plugin can produce, including a rejection; inspect decision. Only plugins that declare themselves previewable are accepted.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "policies"
-                ],
-                "summary": "Preview a policy configuration",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Gateway id",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Configuration and sample request",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.PreviewPolicyRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PreviewPolicyResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
-                        }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            }
-        },
         "/v1/gateways/{gateway_id}/policies/{id}": {
             "get": {
                 "description": "Returns a single policy by id.",
@@ -5918,36 +5847,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.PreviewPolicyRequest": {
-            "type": "object",
-            "properties": {
-                "body": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    }
-                },
-                "mode": {
-                    "type": "string"
-                },
-                "settings": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "slug": {
-                    "type": "string"
-                }
-            }
-        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
@@ -6117,29 +6016,6 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PreviewPolicyResponse": {
-            "type": "object",
-            "properties": {
-                "decision": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "request_body": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "status": {
-                    "type": "integer"
-                },
-                "type": {
-                    "type": "string"
                 }
             }
         },

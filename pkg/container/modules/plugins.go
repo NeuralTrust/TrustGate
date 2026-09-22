@@ -73,9 +73,6 @@ func Plugins(c *container.Container) error {
 	if err := c.Provide(appplugins.NewCatalogService); err != nil {
 		return err
 	}
-	if err := c.Provide(appplugins.NewPreviewService); err != nil {
-		return err
-	}
 	return c.Provide(cataloghttp.NewListPolicyCatalogHandler)
 }
 

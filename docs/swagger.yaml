@@ -1071,26 +1071,6 @@ definitions:
       tool:
         type: string
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.PreviewPolicyRequest:
-    properties:
-      body:
-        items:
-          type: integer
-        type: array
-      headers:
-        additionalProperties:
-          items:
-            type: string
-          type: array
-        type: object
-      mode:
-        type: string
-      settings:
-        additionalProperties: {}
-        type: object
-      slug:
-        type: string
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest:
     properties:
       description:
@@ -1210,21 +1190,6 @@ definitions:
         items:
           type: string
         type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PreviewPolicyResponse:
-    properties:
-      decision:
-        type: string
-      message:
-        type: string
-      request_body:
-        items:
-          type: integer
-        type: array
-      status:
-        type: integer
-      type:
-        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest:
     properties:
@@ -4842,55 +4807,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Mark a policy as global
-      tags:
-      - policies
-  /v1/gateways/{gateway_id}/policies/preview:
-    post:
-      consumes:
-      - application/json
-      description: Runs a previewable plugin against a sample request body without
-        storing anything or sending traffic. Returns 200 for every outcome the plugin
-        can produce, including a rejection; inspect decision. Only plugins that declare
-        themselves previewable are accepted.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Configuration and sample request
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.PreviewPolicyRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PreviewPolicyResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Preview a policy configuration
       tags:
       - policies
   /v1/gateways/{gateway_id}/registries:

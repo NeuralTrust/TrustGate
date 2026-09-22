@@ -69,33 +69,6 @@ func inertSafe(d PluginDescriptor) bool {
 	return ok && s.ScopeInertSafe()
 }
 
-// Previewable is the opt-in a plugin declares to be runnable against a sample
-// request from the console, outside any gateway traffic. It may only be declared
-// by a plugin whose Execute is pure: no database, cache, network call or shared
-// counter, and no dependency on anything the preview cannot supply. A plugin that
-// rate-limits, calls a provider or writes to a collector must not declare it —
-// previewing it would either mutate real state or answer with something the real
-// request would not.
-//
-// The preview drives the plugin at pre_request only, with a nil Event and a zero
-// RuntimeScope, and reports a rewritten body or a rejection. A plugin that needs a
-// stage, a scope subject or an event sink must not opt in.
-//
-// Answered for RUN-1640: prompt_template opted in, because it reads only its own
-// settings, the request body and the request headers, and returns the rewritten
-// body. Anything added later starts denied: the opt-in is per plugin, never
-// blanket.
-type Previewable interface {
-	Previewable() bool
-}
-
-// previewable reports whether the descriptor opted in. A descriptor that does not
-// implement Previewable is denied, so no plugin becomes previewable by omission.
-func previewable(d PluginDescriptor) bool {
-	p, ok := d.(Previewable)
-	return ok && p.Previewable()
-}
-
 // IsInertSafe reports whether the plugin registered under slug opted into
 // running on a plane where the scope does not gate. It is the same predicate
 // inertSafe applies, reachable from the config load path so the decision has a
