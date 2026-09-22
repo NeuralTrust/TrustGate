@@ -586,8 +586,10 @@ func encodeGeminiStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
 }
 
 // A cut used to put the canonical value straight on the wire, so a Gemini
-// client received a finishReason that is not in the enum at all. The last case
-// pins the untouched shape of a normal finish.
+// client received a finishReason that is not in the enum at all. Every chunk
+// also carries a parts array rather than a null, which @google/genai
+// dereferences without a guard. The last case pins the untouched shape of a
+// normal finish.
 func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -607,7 +609,7 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				"",
 				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
 				"",
-				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}]}`,
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}`,
 				"",
 			},
 		},
@@ -617,7 +619,7 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				{FinishReason: "content_filter", Usage: newCanonicalUsage(11, 7, 0)},
 			},
 			want: []string{
-				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"SAFETY"}],` +
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}],` +
 					`"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"totalTokenCount":18}}`,
 				"",
 			},
@@ -634,7 +636,7 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				"",
 				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
 				"",
-				`data: {"candidates":[{"content":{"role":"model","parts":null},"finishReason":"STOP"}]}`,
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}]}`,
 				"",
 			},
 		},
@@ -643,6 +645,41 @@ func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, encodeGeminiStream(t, tc.chunks))
+		})
+	}
+}
+
+// @google/genai reads a candidate's parts as `parts === undefined ||
+// parts.length === 0`, so a JSON null is dereferenced and throws inside
+// sendMessageStream before any chunk reaches the caller. No chunk the encoder
+// can produce may carry one.
+func TestGeminiEncodeStreamChunk_NeverEmitsNullParts(t *testing.T) {
+	t.Parallel()
+	chunks := map[string]*CanonicalStreamChunk{
+		"role only":            {Role: "assistant"},
+		"text delta":           {Delta: "hi"},
+		"normal finish":        {FinishReason: "stop"},
+		"cut":                  {FinishReason: "content_filter"},
+		"cut carrying usage":   {FinishReason: "content_filter", Usage: newCanonicalUsage(1, 1, 0)},
+		"length finish":        {FinishReason: "length"},
+		"unrecognised finish":  {FinishReason: "something_else"},
+		"tool call with args":  {ToolCallDeltas: []StreamToolCallDelta{{Name: "f", ArgumentsDelta: `{"a":1}`}}},
+		"tool call, no args":   {ToolCallDeltas: []StreamToolCallDelta{{Name: "f"}}},
+		"role and finish only": {Role: "assistant", FinishReason: "content_filter"},
+	}
+	for name, chunk := range chunks {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lines, err := (&GeminiAdapter{}).EncodeStreamChunk(chunk)
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			for _, line := range lines {
+				assert.NotContains(t, string(line), `"parts":null`)
+			}
+			var decoded geminiResponse
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[0], []byte("data: ")), &decoded))
+			require.Len(t, decoded.Candidates, 1)
+			assert.NotNil(t, decoded.Candidates[0].Content.Parts)
 		})
 	}
 }
