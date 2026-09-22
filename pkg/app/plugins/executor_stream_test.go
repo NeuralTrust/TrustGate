@@ -144,6 +144,20 @@ func streamChainWithClock(
 	return runner, pols, inspectors
 }
 
+// fingerprints drops the entry the executor tagged each key with, so a merge
+// assertion states the keys in chain order. The tags are asserted where
+// attribution is what is under test.
+func fingerprints(findings []StreamFinding) []string {
+	if len(findings) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, finding.Fingerprint)
+	}
+	return out
+}
+
 func segment(seq int, final bool) StreamSegment {
 	return StreamSegment{StreamID: "stream-1", Seq: seq, Final: final, Text: "tail", Accumulated: "head tail"}
 }
@@ -196,7 +210,7 @@ func TestExecutor_RunStreamSegment_FiltersTheChain(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, out.Block, "a plugin that only runs at pre_request is not part of the stream chain")
-	assert.Equal(t, []string{"f1"}, out.Fingerprints)
+	assert.Equal(t, []string{"f1"}, fingerprints(out.Fingerprints))
 	assert.Len(t, inspector.seen, 1)
 	assert.Empty(t, preRequestOnly.seen)
 }
@@ -213,6 +227,7 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 		name          string
 		specs         []entrySpec
 		want          SegmentOutcome
+		wantPrints    []string
 		wantConsulted []string
 	}{
 		{
@@ -223,19 +238,22 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 		{
 			name:          "enforce blocks",
 			specs:         []entrySpec{{slug: "guard", mode: policy.ModeEnforce, verdict: block()}},
-			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut", Fingerprints: []string{"f-block"}},
+			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut"},
+			wantPrints:    []string{"f-block"},
 			wantConsulted: []string{"guard"},
 		},
 		{
 			name:          "throttle blocks",
 			specs:         []entrySpec{{slug: "guard", mode: policy.ModeThrottle, verdict: block()}},
-			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut", Fingerprints: []string{"f-block"}},
+			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut"},
+			wantPrints:    []string{"f-block"},
 			wantConsulted: []string{"guard"},
 		},
 		{
 			name:          "observe reports but never blocks",
 			specs:         []entrySpec{{slug: "guard", mode: policy.ModeObserve, verdict: block()}},
-			want:          SegmentOutcome{Type: "jailbreak", Message: "cut", Fingerprints: []string{"f-block"}},
+			want:          SegmentOutcome{Type: "jailbreak", Message: "cut"},
+			wantPrints:    []string{"f-block"},
 			wantConsulted: []string{"guard"},
 		},
 		{
@@ -257,7 +275,8 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 				{slug: "b_blocker", mode: policy.ModeEnforce, verdict: block()},
 				{slug: "c_last", mode: policy.ModeEnforce, verdict: &SegmentVerdict{Fingerprints: []string{"never"}}},
 			},
-			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut", Fingerprints: []string{"f-block"}},
+			want:          SegmentOutcome{Block: true, Type: "jailbreak", Message: "cut"},
+			wantPrints:    []string{"f-block"},
 			wantConsulted: []string{"a_masker", "b_blocker"},
 		},
 		{
@@ -267,7 +286,8 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 				{slug: "b_first", mode: policy.ModeEnforce, verdict: mask("first", "pii")},
 				{slug: "c_second", mode: policy.ModeEnforce, verdict: mask("second", "secret")},
 			},
-			want:          SegmentOutcome{HasTransform: true, Transformed: "first", Type: "pii", Fingerprints: []string{"f-allow"}},
+			want:          SegmentOutcome{HasTransform: true, Transformed: "first", Type: "pii"},
+			wantPrints:    []string{"f-allow"},
 			wantConsulted: []string{"a_allow", "b_first", "c_second"},
 		},
 		{
@@ -276,11 +296,8 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 				{slug: "a_observer", mode: policy.ModeObserve, verdict: block()},
 				{slug: "b_enforcer", mode: policy.ModeEnforce, verdict: &SegmentVerdict{Fingerprints: []string{"f-enforce"}}},
 			},
-			want: SegmentOutcome{
-				Type:         "jailbreak",
-				Message:      "cut",
-				Fingerprints: []string{"f-block", "f-enforce"},
-			},
+			want:          SegmentOutcome{Type: "jailbreak", Message: "cut"},
+			wantPrints:    []string{"f-block", "f-enforce"},
 			wantConsulted: []string{"a_observer", "b_enforcer"},
 		},
 	}
@@ -302,7 +319,7 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 			assert.Equal(t, tt.want.Transformed, out.Transformed)
 			assert.Equal(t, tt.want.Type, out.Type)
 			assert.Equal(t, tt.want.Message, out.Message)
-			assert.Equal(t, tt.want.Fingerprints, out.Fingerprints)
+			assert.Equal(t, tt.wantPrints, fingerprints(out.Fingerprints))
 
 			consulted := make([]string, 0, len(tt.specs))
 			for _, spec := range tt.specs {
@@ -335,6 +352,34 @@ func TestExecutor_RunStreamSegment_HandsTheEntryToTheInspector(t *testing.T) {
 	require.Len(t, guard.seen, 1)
 	assert.Equal(t, 3, guard.seen[0].Seq)
 	assert.True(t, guard.seen[0].Final)
+}
+
+// The guard folds one set for a chain two policies sit in, so the tag the
+// executor writes is what keeps the closing segment from handing either of them
+// the other's findings. A plugin answers for itself and never says so.
+func TestExecutor_RunStreamSegment_NarrowsTheStreamsFindingsToTheEntry(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "a_guard", mode: policy.ModeObserve, verdict: &SegmentVerdict{Fingerprints: []string{"f-a"}}},
+		entrySpec{slug: "b_guard", mode: policy.ModeObserve, verdict: &SegmentVerdict{Fingerprints: []string{"f-b"}}},
+	)
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	out, err := runSegment(t, exec, in, segment(1, false))
+	require.NoError(t, err)
+	assert.Equal(t, []StreamFinding{
+		{Entry: pols[0].ID.String(), Fingerprint: "f-a"},
+		{Entry: pols[1].ID.String(), Fingerprint: "f-b"},
+	}, out.Fingerprints, "the entry is the executor's to record; the plugin returned a bare key")
+
+	_, err = runSegment(t, exec, in, StreamSegment{
+		StreamID: "stream-1", Seq: 2, Closing: true, Findings: out.Fingerprints,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []StreamFinding{{Entry: pols[0].ID.String(), Fingerprint: "f-a"}},
+		lastSeen(t, inspectors["a_guard"]).Findings)
+	assert.Equal(t, []StreamFinding{{Entry: pols[1].ID.String(), Fingerprint: "f-b"}},
+		lastSeen(t, inspectors["b_guard"]).Findings)
 }
 
 func TestExecutor_RunStreamSegment_WrapsTheInspectorError(t *testing.T) {
@@ -424,7 +469,8 @@ func TestExecutor_RunStreamSegment_UsesThePreResponsePlan(t *testing.T) {
 	}, segment(0, false))
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"f1"}, out.Fingerprints, "the stream chain is the pre_response chain whatever StageInput.Stage says")
+	assert.Equal(t, []string{"f1"}, fingerprints(out.Fingerprints),
+		"the stream chain is the pre_response chain whatever StageInput.Stage says")
 	assert.Len(t, inspectors["guard"].seen, 1)
 }
 

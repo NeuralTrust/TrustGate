@@ -138,6 +138,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		call := seg
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
+			call.Findings = entryFindings(seg.Findings, entry)
 			call.ReportsStream = spanKey(seg, entry) == reporter
 		}
 		started := e.clock()
@@ -187,8 +188,15 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 // Blocks(entry.mode): an observe-mode entry contributes its findings and its
 // fingerprints, but never cuts the stream and never rewrites text the client is
 // about to read.
+//
+// Fingerprints are tagged with the entry here because here is where the entry
+// is known. The guard holds one set for the whole stream and a plugin answers
+// only for itself, so the tag is what lets the set be narrowed back to the
+// entry that reported each key.
 func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict, entry chainEntry) bool {
-	outcome.Fingerprints = append(outcome.Fingerprints, verdict.Fingerprints...)
+	for _, fp := range verdict.Fingerprints {
+		outcome.Fingerprints = append(outcome.Fingerprints, StreamFinding{Entry: entry.config.ID, Fingerprint: fp})
+	}
 	if outcome.Type == "" && verdict.Type != "" {
 		outcome.Type = verdict.Type
 		outcome.Message = verdict.Message

@@ -96,7 +96,19 @@ func (p *Plugin) inspectSegment(
 	if err != nil {
 		return p.segmentFailure(ctx, in, seg, err)
 	}
-	return segmentVerdict(seg, resp), nil
+	verdict := segmentVerdict(seg, resp)
+	fingerprints, unidentified := streamFingerprints(in.Mode, resp.Findings)
+	verdict.Fingerprints = fingerprints
+	if unidentified > 0 {
+		// A stream whose findings all land here reports nothing and reads like
+		// a clean one. Synthesising a key for them would fold distinct findings
+		// together, so the count is logged rather than published.
+		p.debug(ctx, "stream findings carried no identity to fingerprint",
+			slog.Int("dropped", unidentified),
+			slog.Int("seq", seg.Seq),
+			slog.String("slug", in.Config.Slug))
+	}
+	return verdict, nil
 }
 
 // recordStreamOutcome publishes this entry's account of the stream. It runs
