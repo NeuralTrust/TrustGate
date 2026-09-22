@@ -463,6 +463,18 @@ func setupStreamPlaygroundRoute(
 	settings map[string]any,
 ) (gatewaySlug, consumerSlug, path string) {
 	t.Helper()
+	return setupStreamPlaygroundPolicy(t, up, policyPlugin("trustguard", settings))
+}
+
+// setupStreamPlaygroundPolicy is the same wiring for a case that owns the whole
+// policy entry rather than only its settings, which is what choosing the mode
+// takes.
+func setupStreamPlaygroundPolicy(
+	t *testing.T,
+	up *fakeUpstream,
+	policyPayload map[string]any,
+) (gatewaySlug, consumerSlug, path string) {
+	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("tg-stream-pg")})
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
@@ -470,7 +482,6 @@ func setupStreamPlaygroundRoute(
 	require.NotEmpty(t, gatewaySlug)
 
 	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("tg-stream-be"), up.URL()))
-	policyPayload := policyPlugin("trustguard", settings)
 	policyPayload["name"] = uniqueName("tg-stream-pol")
 	policyID := CreatePolicy(t, gatewayID, policyPayload)
 
@@ -489,6 +500,10 @@ type streamingExtras struct {
 	AddedLatencyMs      int64 `json:"added_latency_ms"`
 	CutAtEval           int   `json:"cut_at_eval"`
 	FinalPass           bool  `json:"final_pass"`
+	// Findings is the deduplicated fingerprint set of the whole stream. It is
+	// what an operator evaluating a policy in observe mode counts incidents
+	// from, which is why it is a set and not one entry per block.
+	Findings []string `json:"findings"`
 }
 
 // streamedEvent is the part of the stored playground trace this case reads: the
@@ -593,4 +608,93 @@ func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
 		evt.Latency.TotalMs, evt.Latency.PoliciesMs)
 	assert.Less(t, leg.AddedLatencyMs, evt.Latency.TotalMs,
 		"added_latency_ms sums per-block worst cases; it is not a second copy of the request")
+}
+
+// trustGuardStreamRepeatEvents is the paced body with the stub's block word
+// folded into the second delta, so every block from the one that first carries
+// it re-detects the same finding over the accumulated payload. That repetition
+// is what alert-only has and enforce does not: enforce stops calling on the
+// first verdict, so the flagged text is never sent a second time.
+func trustGuardStreamRepeatEvents() []string {
+	events := make([]string, 0, len(trustGuardStreamMarkers)+4)
+	events = append(events,
+		": keepalive\n\n",
+		trustGuardStreamChunk(`{"role":"assistant"}`),
+	)
+	for i, marker := range trustGuardStreamMarkers {
+		text := trustGuardStreamChunkText(marker)
+		if i == 1 {
+			text = marker + " " + trustGuardBlockWord + strings.Repeat(trustGuardStreamFiller, 12)
+		}
+		events = append(events, trustGuardStreamChunk(
+			fmt.Sprintf(`{"content":%q}`, text),
+		))
+	}
+	events = append(events,
+		trustGuardStreamChunk(`{}`, `"finish_reason":"stop"`),
+		"data: [DONE]\n\n",
+	)
+	return events
+}
+
+// TestPluginE2E_TrustGuard_StreamAlertOnlyReportsAFindingOnce is functional case
+// 3, and the one regime where deduplication is a question at all. Enforce cuts
+// on the first verdict and stops calling, so it sees a finding once by
+// construction; alert-only keeps calling over a payload that only grows, so
+// every block after the one that tripped carries the same detection again.
+//
+// It is also the mode a policy is evaluated in before it is switched on, which
+// is what makes the noise worth removing: an operator counting incidents off
+// the event would read one response as a dozen.
+func TestPluginE2E_TrustGuard_StreamAlertOnlyReportsAFindingOnce(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamGuardDelay)
+	tg.BlockOnCall(2)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamRepeatEvents(), trustGuardStreamGap)
+	entry := policyPlugin("trustguard", trustGuardStreamCutPolicySettings())
+	entry["mode"] = "observe"
+	gatewaySlug, consumerSlug, path := setupStreamPlaygroundPolicy(t, up, entry)
+	token := mintPlaygroundToken(t, consumerSlug)
+
+	status, headers, raw := playgroundPost(t, gatewaySlug, token, path, trustGuardStreamRequest())
+	body := string(raw)
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+
+	for _, marker := range trustGuardStreamMarkers {
+		assert.Contains(t, body, marker, "an observing policy withholds nothing, verdict or not")
+	}
+	assert.Contains(t, body, "[DONE]", "the stream ends on its own terminator, not on a cut")
+	assert.NotContains(t, body, "content_filter")
+	assert.NotContains(t, body, trustGuardStreamCutBlockMessage)
+
+	streams, payloads := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+	require.Greater(t, len(streams), 2,
+		"the finding must be followed by blocks that carry the same text again")
+	redetections := 0
+	for i := range payloads {
+		if strings.Contains(trustGuardInspectText(payloads[i]), trustGuardBlockWord) {
+			redetections++
+		}
+	}
+	require.Greater(t, redetections, 1,
+		"only one call carried the flagged text, so there was no repeat to collapse")
+
+	traceID := headers.Get(traceIDHeader)
+	require.NotEmpty(t, traceID)
+	trace := pollPlaygroundTrace(t, traceID)
+	var evt streamedEvent
+	require.NoError(t, json.Unmarshal(trace, &evt), "trace body: %s", trace)
+	leg, _ := streamedLeg(t, evt, trace)
+
+	assert.Zero(t, leg.CutAtEval, "observe mode reports, it does not cut")
+	assert.Equal(t, len(streams), leg.EvalsTotal)
+	require.Len(t, leg.Findings, 1,
+		"the finding reached the event once, not once per block after it")
+	assert.Regexp(t, "^[0-9a-f]{32}$", leg.Findings[0],
+		"the event carries a fixed-width digest, never a detection name or a span of the response")
 }

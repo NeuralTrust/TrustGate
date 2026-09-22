@@ -164,6 +164,17 @@ type streamData struct {
 	AddedLatencyMs      int64  `json:"added_latency_ms"`
 	DegradedReason      string `json:"degraded_reason"`
 	FallbackReason      string `json:"fallback_reason"`
+	// Findings is the one exception to the rule above: an absent key and an
+	// empty list both say the stream reported nothing, so there is no zero to
+	// preserve, and omitting it keeps a stream with no findings emitting the
+	// event it emitted before this field existed.
+	//
+	// It holds fingerprints and never a finding's own fields. evidence is
+	// free-form and carries flagged response text, so a findings list here
+	// would be a second route for it onto the span; the fingerprint is a digest
+	// over a detector name, a signal label and an action, and nothing about the
+	// response can be recovered from it.
+	Findings []string `json:"findings,omitempty"`
 }
 
 // Stream outcomes for trustguard_stream_evals_total. They answer "what happened
