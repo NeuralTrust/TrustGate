@@ -21,25 +21,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type ListConsumerHandler struct {
-	finder   appconsumer.Finder
-	upstream appoauth.ConsumerUpstreamAccounts
+	finder appconsumer.Finder
 }
 
-// NewListConsumerHandler builds the listing. upstream may be nil on a plane
-// without the connect service; the listing then omits the pending-authorization
-// count rather than reporting zero, which would read as "nothing owed".
-func NewListConsumerHandler(
-	finder appconsumer.Finder,
-	upstream appoauth.ConsumerUpstreamAccounts,
-) *ListConsumerHandler {
-	return &ListConsumerHandler{finder: finder, upstream: upstream}
+func NewListConsumerHandler(finder appconsumer.Finder) *ListConsumerHandler {
+	return &ListConsumerHandler{finder: finder}
 }
 
 // Handle godoc
@@ -133,7 +125,6 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 	}
 	for _, cons := range items {
 		item := response.FromConsumer(cons)
-		h.stampPendingUpstreamAuth(c, gatewayID, cons, &item)
 		out.Items = append(out.Items, item)
 	}
 	return httpio.WriteOK(c, out)
@@ -175,29 +166,4 @@ func storeEntry(
 		return nil
 	}
 	return store
-}
-
-// stampPendingUpstreamAuth tells the listing which applications cannot yet call
-// a server they are bound to.
-//
-// It is the one thing a row cannot work out for itself: the binding is in the
-// consumer, the credential is in the vault, and without this an application
-// reads Active while every call to that server is refused. Only an application
-// that acts as itself has accounts of its own — the service says so by refusing
-// the rest — and a failure leaves the count absent rather than failing the list,
-// because an unreadable vault is not the same as nothing owed.
-func (h *ListConsumerHandler) stampPendingUpstreamAuth(
-	c *fiber.Ctx,
-	gatewayID ids.GatewayID,
-	cons *domain.Consumer,
-	item *response.ConsumerResponse,
-) {
-	if h.upstream == nil || cons == nil || cons.Type != domain.TypeMCP {
-		return
-	}
-	pending, err := h.upstream.PendingUpstreamAuth(c.UserContext(), gatewayID, cons.ID)
-	if err != nil || pending == 0 {
-		return
-	}
-	item.PendingUpstreamAuth = &pending
 }

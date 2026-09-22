@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	oauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -237,4 +238,16 @@ func TestAppConnections_RejectAForeignKeyAndAnUnknownSlug(t *testing.T) {
 
 	_, err = svc.AppConnections(ctx, gatewayID, "does-not-exist", "ag_secret")
 	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+}
+
+// validAPIKeyAuth is an enabled api key of this gateway, as the finder returns
+// it. It lived beside the api-key connect page until that page was deleted.
+func validAPIKeyAuth(gatewayID ids.GatewayID, authID ids.AuthID) *authdomain.Auth {
+	return &authdomain.Auth{
+		ID:        authID,
+		GatewayID: gatewayID,
+		Name:      "Exact Principal",
+		Type:      authdomain.TypeAPIKey,
+		Enabled:   true,
+	}
 }

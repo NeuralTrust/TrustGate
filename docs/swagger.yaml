@@ -611,21 +611,6 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerConnectLink:
-    properties:
-      connect_path:
-        type: string
-      consumer_path:
-        type: string
-      expires_at:
-        type: string
-      providers:
-        items:
-          type: string
-        type: array
-      ticket:
-        type: string
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse:
     properties:
       active:
@@ -660,14 +645,6 @@ definitions:
         type: array
       name:
         type: string
-      pending_upstream_auth:
-        description: |-
-          PendingUpstreamAuth counts the upstream accounts this application still
-          owes before it can call every server it is bound to: never signed in, or
-          signed in and since expired or revoked.
-          Absent when nothing is owed, and on a plane that cannot read the accounts
-          at all — a list must not claim everything is fine when it did not look.
-        type: integer
       registry_ids:
         items:
           type: string
@@ -685,57 +662,6 @@ definitions:
       type:
         type: string
       updated_at:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccount:
-    properties:
-      account_ref:
-        type: string
-      code:
-        type: string
-      expires_at:
-        type: string
-      linked:
-        type: boolean
-      mode:
-        description: |-
-          Mode is the server's upstream auth mode: none, static, client_credentials,
-          forwarded, passthrough or exchange.
-        type: string
-      needs_linked_account:
-        description: |-
-          NeedsLinkedAccount is true only for a server that forwards a stored
-          credential; the rest carry their own or need none.
-        type: boolean
-      needs_reconnect:
-        type: boolean
-      provider:
-        type: string
-      registry:
-        type: string
-      registry_id:
-        type: string
-      scopes:
-        items:
-          type: string
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccounts:
-    properties:
-      accounts:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccount'
-        type: array
-      consumer_id:
-        type: string
-      needs_linking:
-        type: boolean
-      principal_sub:
-        description: |-
-          PrincipalSub is the identity the upstream accounts hang off:
-          app:<consumer_id>, the application itself.
-        type: string
-      slug:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse:
@@ -4295,113 +4221,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Attach a registry to a consumer
-      tags:
-      - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts:
-    get:
-      description: 'For an MCP consumer that acts as the application itself: per bound
-        MCP server, its upstream auth mode, whether that server needs an account linked
-        for the application, and — when it does — whether one is linked, for which
-        account, and whether it needs reconnecting. The accounts belong to the consumer,
-        so the answer does not depend on which credential the application authenticates
-        with. Credential material is never returned.'
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccounts'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: The consumer acts for users, so it holds no account of its
-            own
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Read an MCP application's upstream accounts
-      tags:
-      - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts/link:
-    post:
-      description: Returns a connect ticket an admin can open to link the application's
-        own accounts on the servers that forward a stored credential — the same page
-        the api-key self-service flow uses, without needing one of the application's
-        credentials. Naming a registry narrows the ticket to that one server; omitting
-        it covers every server of the application that forwards a credential. The
-        ticket is pinned to this consumer and to those providers, revalidated on redemption,
-        audited, and short-lived.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Authorize only this bound MCP server
-        format: uuid
-        in: query
-        name: registry_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerConnectLink'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: The consumer does not exist, or the registry is not bound to
-            it
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: The consumer acts for users, or the named server carries its
-            own credential
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Mint a connect link for an MCP application's upstream accounts
       tags:
       - consumers
   /v1/gateways/{gateway_id}/policies:

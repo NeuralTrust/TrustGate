@@ -99,16 +99,12 @@ type AdminRouterDeps struct {
 	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
-	// ConsumerUpstreamAccounts serves an MCP application's upstream credentials:
-	// which bound servers need its account linked, and a link to link them.
-	ConsumerUpstreamAccounts *consumerhttp.UpstreamAccountsHandler
-
-	CreateAuth *authhttp.CreateAuthHandler
-	GetAuth    *authhttp.GetAuthHandler
-	ListAuth   *authhttp.ListAuthHandler
-	UpdateAuth *authhttp.UpdateAuthHandler
-	RotateAuth *authhttp.RotateAuthHandler
-	DeleteAuth *authhttp.DeleteAuthHandler
+	CreateAuth          *authhttp.CreateAuthHandler
+	GetAuth             *authhttp.GetAuthHandler
+	ListAuth            *authhttp.ListAuthHandler
+	UpdateAuth          *authhttp.UpdateAuthHandler
+	RotateAuth          *authhttp.RotateAuthHandler
+	DeleteAuth          *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
@@ -218,8 +214,6 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)
 	consumers.Post("/:id/auths/:auth_id", r.deps.ConsumerAssociation.AttachAuth)
 	consumers.Delete("/:id/auths/:auth_id", r.deps.ConsumerAssociation.DetachAuth)
-	consumers.Get("/:id/upstream-accounts", r.deps.ConsumerUpstreamAccounts.Get)
-	consumers.Post("/:id/upstream-accounts/link", r.deps.ConsumerUpstreamAccounts.Link)
 	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
 	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
 
