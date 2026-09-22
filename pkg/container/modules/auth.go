@@ -53,6 +53,11 @@ func provideAuthServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Rotator {
+		return appauth.NewRotator(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Deleter {
 		return appauth.NewDeleter(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
@@ -100,6 +105,9 @@ func provideAuthServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(authhttp.NewUpdateAuthHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(authhttp.NewRotateAuthHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(authhttp.NewDeleteAuthHandler); err != nil {

@@ -107,6 +107,7 @@ type AdminRouterDeps struct {
 	GetAuth    *authhttp.GetAuthHandler
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
+	RotateAuth *authhttp.RotateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
@@ -254,6 +255,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	auths.Get("", r.deps.ListAuth.Handle)
 	auths.Get("/:id", r.deps.GetAuth.Handle)
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
+	auths.Post("/:id/rotate", r.deps.RotateAuth.Handle)
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
 
 	// Routes that carry no gateway scope are console-only: a machine credential

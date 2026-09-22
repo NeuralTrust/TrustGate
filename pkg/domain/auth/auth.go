@@ -152,6 +152,30 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, e
 	return a, nil
 }
 
+// RotateAPIKey mints a new secret for an existing api_key auth and returns the
+// hash the old secret was looked up by, so callers can evict it from the key
+// cache: an api key is authenticated by digest, and leaving the old digest
+// cached would keep a rotated-away secret working until the entry expired.
+//
+// Everything else about the auth is untouched — its id, its name and every
+// consumer it is attached to — which is what separates rotating from revoking
+// and issuing again: the application keeps its key, the key gets a new secret.
+func (a *Auth) RotateAPIKey() (previousHash string, err error) {
+	if a.Type != TypeAPIKey {
+		return "", fmt.Errorf("%w: only api_key auths carry a secret to rotate", ErrInvalidType)
+	}
+	rawKey, err := GenerateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("auth: generate api key: %w", err)
+	}
+	previousHash = a.KeyHash
+	a.RawKey = rawKey
+	a.KeyHash = HashAPIKey(rawKey)
+	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
+	a.UpdatedAt = time.Now().UTC()
+	return previousHash, nil
+}
+
 func GenerateAPIKey() (string, error) {
 	buf := make([]byte, apiKeyEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
