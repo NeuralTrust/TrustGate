@@ -351,6 +351,75 @@ func TestForward_HeadGateBlockIsARealStatus(t *testing.T) {
 	assert.NotContains(t, string(res.Body), "secret")
 }
 
+// TestForward_PreResponseShortCircuitStopsAStream pins the half of
+// runPreResponseGated the buffered leg never needed. applyResults writes a
+// StopUpstream result onto the ResponseContext, and finalizeBodyGated renders
+// from exactly that, so on a buffered response the short circuit lands without
+// anyone reading the stage outcome. finalizeStream renders from the provider
+// response and hands the upstream iterator on, so there the same result reached
+// nothing at all: the plugin's status and body were dropped and the stream it
+// asked to stop was relayed under the provider's own 200.
+//
+// What replaces the stream is a buffered response, and it has to be one
+// throughout. The headers were cloned from a streaming provider response, so
+// text/event-stream in front of the plugin's body announces a stream that is
+// not there and an SSE client waits for events that never come. The two tails
+// the buffered leg runs after its own short circuit run here too: without them
+// a plugin-stopped streamed response is invisible to post_response auditing
+// while the identical buffered response is not.
+func TestForward_PreResponseShortCircuitStopsAStream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	lines := [][]byte{
+		[]byte(`data: {"id":"c","choices":[{"index":0,"delta":{"content":"secret"}}]}`), {},
+		[]byte("data: [DONE]"), {},
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{
+			StatusCode: 200,
+			Headers: map[string][]string{
+				"Content-Type":      {"text/event-stream"},
+				"Transfer-Encoding": {"chunked"},
+			},
+			Stream: sseLinesStream(lines),
+		}, nil).
+		Once()
+
+	ran := make(chan policy.Stage, 4)
+	p := &stubPlugin{
+		name:   "guardrail",
+		stages: []policy.Stage{policy.StagePreResponse, policy.StagePostResponse},
+		result: &appplugins.Result{
+			StopUpstream: true,
+			StatusCode:   451,
+			Body:         []byte(`{"error":"stopped at pre_response"}`),
+		},
+		ran: ran,
+	}
+	rc := streamingPolicy(t, gatewayID, p)
+	fwd := forwarderWithPlugin(t, invoker, p, appproxy.WithStreamCodec(adapter.NewRegistry()))
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"stream":true}`)},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, res.Stream, "a stopped upstream must not be relayed")
+	assert.Equal(t, 451, res.StatusCode)
+	assert.Equal(t, `{"error":"stopped at pre_response"}`, string(res.Body))
+
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"],
+		"the body that replaced the stream is not an event stream")
+	assert.NotContains(t, res.Headers, "Transfer-Encoding",
+		"the streaming framing described a response that is no longer sent")
+
+	assert.Contains(t, collectStages(t, ran, 2), policy.StagePostResponse,
+		"a stopped streamed response is audited like a stopped buffered one")
+}
+
 // TestForward_StreamIsUntouchedWithoutAnInspector is the wiring AC. A policy
 // that never opted in must see the stream it sees today, byte for byte.
 func TestForward_StreamIsUntouchedWithoutAnInspector(t *testing.T) {

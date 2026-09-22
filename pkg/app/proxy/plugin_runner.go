@@ -91,35 +91,56 @@ func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID)
 	return nil, err
 }
 
+// runPreResponseGated runs the pre_response stage and hands back both ways it
+// can end the response: a PluginError, and the stage outcome a plugin's own
+// StopUpstream result produces.
+//
+// The outcome has to be returned because only one of the two callers can read
+// it off anything else. applyResults writes StatusCode, Body and Headers onto
+// the ResponseContext, and finalizeBodyGated renders its ForwardResult from
+// exactly that, so on the buffered leg a short circuit is already applied by
+// the time this returns. finalizeStream renders from the provider response and
+// forwards the upstream iterator, so there the same result reaches nothing:
+// without this the stream would be sent unmodified under the provider's own
+// status, and only a PluginError would ever stop it.
+//
+// No plugin in this repository produces that result on a stream today. Every
+// output-inspecting plugin skips a streaming pre_response leg outright, and the
+// ones that rewrite a body — regexreplace, googlemodelarmor, bedrockguardrail —
+// have nothing to rewrite there, because mergeStreamingResponse copies status
+// and headers and leaves the body empty. This is therefore a defensive fix with
+// no live producer: the stage contract says a pre_response result can end the
+// response, and one of the two legs was not honouring it.
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
 	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
-) *appplugins.PluginError {
+) (*appplugins.StageOutcome, *appplugins.PluginError) {
 	if f.executor == nil {
-		return nil
+		return nil, nil
 	}
-	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
+	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: policies,
 		Plan:     plan,
 		Request:  req,
 		Response: resp,
-	}); err != nil {
+	})
+	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return pe
+			return nil, pe
 		}
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
 		if preResponseBlocks(policies, plan) {
-			return &appplugins.PluginError{
+			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusBadGateway,
 				Message:    "pre_response plugin stage failed",
 			}
 		}
 	}
-	return nil
+	return outcome, nil
 }
 
 func preResponseBlocks(policies []*policy.Policy, plan *appplugins.StagePlan) bool {
@@ -323,6 +344,22 @@ func hasResponseHeader(headers map[string][]string, name string) bool {
 		}
 	}
 	return false
+}
+
+// setResponseHeader replaces name whatever case it was spelled in, so a value
+// the gateway is correcting cannot end up beside the one it corrected.
+func setResponseHeader(headers map[string][]string, name, value string) {
+	deleteResponseHeader(headers, name)
+	headers[textproto.CanonicalMIMEHeaderKey(name)] = []string{value}
+}
+
+func deleteResponseHeader(headers map[string][]string, name string) {
+	want := textproto.CanonicalMIMEHeaderKey(name)
+	for k := range headers {
+		if textproto.CanonicalMIMEHeaderKey(k) == want {
+			delete(headers, k)
+		}
+	}
 }
 
 func cloneResponseHeaders(headers map[string][]string) map[string][]string {

@@ -558,9 +558,14 @@ func (f *forwarder) finalizeStream(
 ) *ForwardResult {
 	pluginResp := dto.response
 	mergeStreamingResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+	outcome, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	if pe != nil {
 		f.drainAsync(providerResp.Stream)
 		return pluginErrorResult(pe)
+	}
+	if outcome != nil && outcome.ShortCircuit {
+		f.drainAsync(providerResp.Stream)
+		return f.shortCircuitStream(ctx, dto, providerResp, pluginResp, outcome)
 	}
 	stream := providerResp.Stream
 	var cutBarrier func() <-chan struct{}
@@ -580,6 +585,49 @@ func (f *forwarder) finalizeStream(
 		StatusCode: providerResp.StatusCode,
 		Headers:    pluginResp.Headers,
 		Stream:     out,
+	}
+}
+
+// shortCircuitStream renders a pre_response stop on the streaming leg. What it
+// returns is a buffered response — a status, headers and a body, with no stream
+// behind it — so it runs the two tails finalizeBodyGated runs after its own
+// short circuit. Without them a plugin-stopped streamed response would be
+// invisible to post_response auditing and to session recording while the
+// identical buffered response is not, which is an asymmetry nothing downstream
+// could explain.
+//
+// The headers cannot be the ones the outcome carries. They were cloned from the
+// provider's streaming response, and text/event-stream in front of a plugin's
+// body is a content type the body does not have: an SSE client reads it as a
+// stream that never yields an event and never ends. Content-Type is replaced
+// for the same reason pluginErrorResult sets it, and Transfer-Encoding goes
+// with it because it described a response that is no longer being sent.
+func (f *forwarder) shortCircuitStream(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	providerResp *ProviderResponse,
+	pluginResp *infracontext.ResponseContext,
+	outcome *appplugins.StageOutcome,
+) *ForwardResult {
+	// The response leg is no longer streaming, and saying so is what lets
+	// post_response read the body: every output-inspecting plugin skips a
+	// response marked streaming, because on that leg the body is empty by
+	// construction. Here it is not — it is whatever the plugin handed back.
+	pluginResp.Streaming = false
+	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	f.recordSession(
+		ctx, dto.request, providerResp.ResponseID,
+		dto.backend.Provider(), providerResp.Model, providerResp.StatusCode,
+	)
+	headers := cloneResponseHeaders(outcome.Headers)
+	deleteResponseHeader(headers, "Transfer-Encoding")
+	if len(outcome.Body) > 0 {
+		setResponseHeader(headers, "Content-Type", "application/json")
+	}
+	return &ForwardResult{
+		StatusCode: outcome.StatusCode,
+		Headers:    headers,
+		Body:       outcome.Body,
 	}
 }
 
@@ -692,7 +740,7 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeBufferedResponse(pluginResp, providerResp)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+	if _, pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
 	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
