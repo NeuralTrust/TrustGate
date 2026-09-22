@@ -106,7 +106,7 @@ const (
 
 // Link godoc
 // @Summary      Mint a connect link for an application's end user
-// @Description  For an MCP consumer whose application identifies its end users (identity.source = app). Returns the URL the application shows that user to connect their own account on one of the consumer's servers (or on any of them when provider is omitted). Authenticated with the consumer's API key.
+// @Description  Returns the URL an application shows one of its end users to connect that person's own account on one of the consumer's servers (or on any of them when provider is omitted). Any MCP consumer may name an end user — who a request runs as is read from the request, not declared on the consumer. Authenticated with the consumer's API key.
 // @Tags         connections
 // @Accept       json
 // @Produce      json
@@ -115,7 +115,6 @@ const (
 // @Success      201    {object}  EndUserLinkResponse
 // @Failure      400    {object}  httpio.ErrorBody
 // @Failure      401    {object}  httpio.ErrorBody
-// @Failure      409    {object}  httpio.ErrorBody
 // @Failure      429    {object}  httpio.ErrorBody
 // @Router       /{slug}/connections/links [post]
 func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
@@ -151,7 +150,7 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 
 // List godoc
 // @Summary      Read connection states for an end user or for the application itself
-// @Description  Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that end user, for an MCP consumer whose application identifies its own users (identity.source = app). Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Authenticated with the consumer's API key.
+// @Description  Reports, per connectable server, whether the actor is connected, needs to reconnect, or has not connected. Naming end_user asks about that person, under this application. Omitting it asks about the application acting as itself (app:<consumer_id>) — the preflight a batch runs before it starts, since nobody is there to follow a connect link once it is running. Both actors belong to every MCP consumer, so neither form is ever refused for being the wrong one. Authenticated with the consumer's API key.
 // @Tags         connections
 // @Produce      json
 // @Param        slug      path   string  true   "Consumer slug"
@@ -159,7 +158,6 @@ func (h *EndUserConnectionsHandler) Link(c *fiber.Ctx) error {
 // @Success      200       {object}  EndUserConnectionsResponse
 // @Failure      400       {object}  httpio.ErrorBody
 // @Failure      401       {object}  httpio.ErrorBody
-// @Failure      409       {object}  httpio.ErrorBody
 // @Router       /{slug}/connections [get]
 func (h *EndUserConnectionsHandler) List(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderCacheControl, "no-store")
@@ -227,10 +225,6 @@ func (h *EndUserConnectionsHandler) writeServiceError(c *fiber.Ctx, err error) e
 		return writeConnectionsError(c, fiber.StatusServiceUnavailable, "unavailable", "rate limiter unavailable")
 	case errors.Is(err, appoauth.ErrAPIKeyConnectUnauthorized), errors.Is(err, appauth.ErrInvalidAuthRequest):
 		return writeConnectionsError(c, fiber.StatusUnauthorized, "unauthenticated", "invalid API key for this consumer")
-	case errors.Is(err, appoauth.ErrEndUserConnectionsUnsupported):
-		return writeConnectionsError(c, fiber.StatusConflict, "end_users_not_identified", err.Error())
-	case errors.Is(err, appoauth.ErrAppConnectionsUnsupported):
-		return writeConnectionsError(c, fiber.StatusConflict, "consumer_acts_for_users", err.Error())
 	case errors.Is(err, commonerrors.ErrValidation):
 		return writeConnectionsError(c, fiber.StatusBadRequest, "invalid_request", err.Error())
 	default:
