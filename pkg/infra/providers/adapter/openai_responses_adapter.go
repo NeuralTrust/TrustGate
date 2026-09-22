@@ -129,6 +129,57 @@ type openaiResponsesStreamEvent struct {
 	Response     json.RawMessage `json:"response,omitempty"`
 }
 
+// The output item types this encoder names. A message item and a function_call
+// item both open at output index 0, so the kind is what tells a cut which of
+// them it is closing.
+const (
+	responsesItemKindMessage      = "message"
+	responsesItemKindFunctionCall = "function_call"
+)
+
+// responsesPartDoneEvent and responsesItemDoneEvent close what a cut
+// interrupted. They exist beside openaiResponsesStreamEvent rather than reusing
+// it because their indices are not omitempty: output index 0 is the first item
+// and content index 0 the first part of it, and to a client reading the field
+// an absent index is not the first one. An item is not a part of itself, so
+// only the part events carry a content index.
+type responsesPartDoneEvent struct {
+	Type         string          `json:"type"`
+	OutputIndex  int             `json:"output_index"`
+	ContentIndex int             `json:"content_index"`
+	Part         json.RawMessage `json:"part,omitempty"`
+}
+
+type responsesItemDoneEvent struct {
+	Type        string          `json:"type"`
+	OutputIndex int             `json:"output_index"`
+	Item        json.RawMessage `json:"item"`
+}
+
+// responsesCloseMessage and responsesCloseFunctionCall are the items those
+// events carry. They do not reuse openaiResponsesItem because that struct omits
+// every empty field, and the SDK types a client decodes these into are strict:
+// ResponseOutputMessage requires id and content, ResponseFunctionToolCall
+// requires arguments, call_id and name. An omitted field raises a validation
+// error there instead of delivering the refusal the cut exists to deliver, so a
+// cut that produced no arguments has to say so as "" rather than by silence.
+type responsesCloseMessage struct {
+	ID      string                   `json:"id"`
+	Type    string                   `json:"type"`
+	Role    string                   `json:"role"`
+	Status  string                   `json:"status"`
+	Content []openaiResponsesContent `json:"content"`
+}
+
+type responsesCloseFunctionCall struct {
+	ID        string `json:"id,omitempty"`
+	Type      string `json:"type"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Status    string `json:"status"`
+}
+
 func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	var req openaiResponsesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -608,38 +659,83 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 // reconstruction is out of reach until this encoder emits response.created,
 // which it never does.
 //
-// It fires only when the cut chunk itself proves a text item is open. The
-// adapter is a stateless shared singleton and a synthesised terminator usually
-// arrives bare, so on any other chunk it cannot tell a message item from a
-// function_call one — and both open at output index 0. Closing index 0 as a
-// message there would leave the real item unterminated and close one that was
-// never added, which is worse than closing nothing. The guard has to carry the
-// open item's index and kind for that case to be answerable.
+// The item it closes is the one the caller carries on OpenItem. The adapter is
+// a stateless shared singleton, so a synthesised terminator that names no item
+// closes none: a message item and a function_call item both open at output
+// index 0, and closing index 0 as a message would leave the real item
+// unterminated and close one that was never added. A cut chunk that carries
+// text of its own proves a message item open on its own account, which is the
+// one case the adapter can answer without being told.
 func responsesCutCloseEvents(chunk *CanonicalStreamChunk) [][]byte {
-	if len(chunk.ToolCallDeltas) > 0 || (chunk.Delta == "" && chunk.Role == "") {
+	item := chunk.OpenItem
+	if item == nil {
+		if len(chunk.ToolCallDeltas) > 0 || (chunk.Delta == "" && chunk.Role == "") {
+			return nil
+		}
+		item = &StreamOpenItem{Kind: responsesItemKindMessage}
+	}
+	switch item.Kind {
+	case responsesItemKindMessage:
+		return responsesCloseMessageItem(item)
+	case responsesItemKindFunctionCall:
+		return responsesCloseFunctionCallItem(item)
+	default:
 		return nil
 	}
+}
 
+func responsesCloseMessageItem(item *StreamOpenItem) [][]byte {
 	var lines [][]byte
 
-	textDone, _ := json.Marshal(openaiResponsesStreamEvent{Type: "response.output_text.done"})
+	textDone, _ := json.Marshal(responsesPartDoneEvent{
+		Type:        "response.output_text.done",
+		OutputIndex: item.Index,
+	})
 	lines = append(lines, SSEEvent("response.output_text.done", textDone)...)
 
-	partEvent := openaiResponsesStreamEvent{Type: "response.content_part.done"}
+	partEvent := responsesPartDoneEvent{
+		Type:        "response.content_part.done",
+		OutputIndex: item.Index,
+	}
 	partEvent.Part, _ = json.Marshal(openaiResponsesContent{Type: "output_text"})
 	partDone, _ := json.Marshal(partEvent)
 	lines = append(lines, SSEEvent("response.content_part.done", partDone)...)
 
-	itemEvent := openaiResponsesStreamEvent{Type: "response.output_item.done"}
-	itemEvent.Item, _ = json.Marshal(openaiResponsesItem{
-		Type:   "message",
-		Role:   "assistant",
-		Status: "incomplete",
+	closed, _ := json.Marshal(responsesCloseMessage{
+		ID:      item.ID,
+		Type:    responsesItemKindMessage,
+		Role:    "assistant",
+		Status:  "incomplete",
+		Content: []openaiResponsesContent{},
 	})
-	itemDone, _ := json.Marshal(itemEvent)
-	lines = append(lines, SSEEvent("response.output_item.done", itemDone)...)
+	return append(lines, responsesCloseItemEvent(item.Index, closed)...)
+}
 
-	return lines
+// responsesCloseFunctionCallItem closes a tool call the cut interrupted. There
+// is no text part to close: the arguments ride
+// response.function_call_arguments.delta, and their .done event asserts a
+// complete argument string, which a cut has not produced. The arguments the
+// item itself carries are "" for the same reason — absent is not a valid
+// ResponseFunctionToolCall, and a partial string would be a lie.
+func responsesCloseFunctionCallItem(item *StreamOpenItem) [][]byte {
+	closed, _ := json.Marshal(responsesCloseFunctionCall{
+		ID:        item.ID,
+		Type:      responsesItemKindFunctionCall,
+		CallID:    item.CallID,
+		Name:      item.Name,
+		Arguments: "",
+		Status:    "incomplete",
+	})
+	return responsesCloseItemEvent(item.Index, closed)
+}
+
+func responsesCloseItemEvent(outputIndex int, item json.RawMessage) [][]byte {
+	data, _ := json.Marshal(responsesItemDoneEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: outputIndex,
+		Item:        item,
+	})
+	return SSEEvent("response.output_item.done", data)
 }
 
 func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {

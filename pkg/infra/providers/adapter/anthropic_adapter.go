@@ -812,15 +812,17 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 	// --- finish_reason → content_block_stop + message_delta + message_stop ----
 	if chunk.FinishReason != "" {
 		var lines [][]byte
-		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: chunk.ContentBlockIndex}
-		data, _ := json.Marshal(cbStop)
-		lines = append(lines, SSEEvent("content_block_stop", data)...)
+		if !chunk.ContentBlockClosed {
+			cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: chunk.ContentBlockIndex}
+			data, _ := json.Marshal(cbStop)
+			lines = append(lines, SSEEvent("content_block_stop", data)...)
+		}
 		msgDelta := anthropicSSEMessageDelta{
 			Type:  "message_delta",
 			Delta: anthropicSSEMessageDeltaBody{StopReason: canonicalFinishToAnthropicStop(chunk.FinishReason)},
 			Usage: anthropicSSEUsageFrom(chunk.Usage),
 		}
-		data, _ = json.Marshal(msgDelta)
+		data, _ := json.Marshal(msgDelta)
 		lines = append(lines, SSEEvent("message_delta", data)...)
 		msgStop := anthropicSSESimple{Type: "message_stop"}
 		data, _ = json.Marshal(msgStop)

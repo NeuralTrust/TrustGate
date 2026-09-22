@@ -247,4 +247,38 @@ type CanonicalStreamChunk struct {
 	// passed through unchanged. A caller synthesising a terminator sets it to
 	// the block it last saw on the wire.
 	ContentBlockIndex int `json:"content_block_index,omitempty"`
+	// ContentBlockClosed says the wire has no content block open any more, so a
+	// synthesised terminator must not emit a content_block_stop of its own. It
+	// is inverted on purpose: the zero value keeps the shape every existing
+	// caller relies on, where a finish reason closes the block the encoder
+	// itself opened. Only a caller that tracks what the client actually saw —
+	// the stream guard's cut — can know the other case, which is a stream whose
+	// last released event was already a content_block_stop. Closing it twice
+	// asks the SDK to apply a stop it has no open block left for.
+	ContentBlockClosed bool `json:"content_block_closed,omitempty"`
+	// OpenItem names the output item this chunk interrupts, for the dialects
+	// that number and type the items of one response. Only Responses does;
+	// every other encoder ignores it. nil means nothing is known to be open,
+	// which is not the same as item 0: a message item and a function_call item
+	// both open at output index 0, so a terminator that closed index 0 blind
+	// would leave the real item unterminated and close one that was never
+	// added.
+	//
+	// Decoders leave it alone, as they do ContentBlockIndex: it describes the
+	// stream being written, and only the caller synthesising a terminator
+	// knows which item the wire still has open.
+	OpenItem *StreamOpenItem `json:"open_item,omitempty"`
+}
+
+// StreamOpenItem is one output item a synthesised terminator has to close. It
+// carries the identity fields as well as the index, because the SDK types a
+// close event decodes into are strict: ResponseOutputMessage requires an id and
+// ResponseFunctionToolCall requires a call_id and a name, so a close built from
+// the index alone raises a validation error instead of delivering the refusal.
+type StreamOpenItem struct {
+	Index  int    `json:"index"`
+	Kind   string `json:"kind"`
+	ID     string `json:"id,omitempty"`
+	CallID string `json:"call_id,omitempty"`
+	Name   string `json:"name,omitempty"`
 }

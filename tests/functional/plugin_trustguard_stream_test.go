@@ -376,3 +376,80 @@ func TestPluginE2E_TrustGuard_StreamMidStreamCut(t *testing.T) {
 		return len(later) == 3
 	}, time.Second, 20*time.Millisecond, "a cut stream must not be inspected again")
 }
+
+// TestPluginE2E_TrustGuard_StreamMidStreamCutAnthropicIngress is case 2 over an
+// Anthropic-dialect ingress, and the case that makes Track A concrete: before
+// it, a cut rendered as stop_reason end_turn — a normal ending — which is worse
+// than not cutting, because the client has no way to know the answer was
+// truncated by a policy.
+//
+// The backend is the OpenAI upstream every functional route uses: the Anthropic
+// client posts to a compile-time api.anthropic.com URL, so an
+// Anthropic-to-Anthropic passthrough cannot be staged here. That is also why the
+// content block the cut closes is asserted against the block the client was
+// shown rather than against a literal — the cross-format encoder opens one
+// block, and the passthrough case that opens several is pinned in the guard's
+// own tests.
+func TestPluginE2E_TrustGuard_StreamMidStreamCutAnthropicIngress(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamGuardDelay)
+	tg.BlockOnCall(3)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	apiKey, chatPath := setupPolicyRoute(t, up, policyPlugin("trustguard", trustGuardStreamCutPolicySettings()))
+
+	request := anthropicChatRequest("gpt-4o-mini")
+	request["stream"] = true
+	upstreamBefore := up.Hits()
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, anthropicMessagesPath(chatPath), nil, mustJSON(t, request))
+	body := string(raw)
+
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+	streams, _ := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
+	require.Len(t, streams, 3)
+	assert.Equal(t, upstreamBefore+1, up.Hits())
+
+	assert.Contains(t, body, `"stop_reason":"refusal"`,
+		"an Anthropic client must be able to tell a policy cut from a normal ending")
+	assert.NotContains(t, body, "end_turn", "end_turn is what a finished answer says")
+	assert.Contains(t, body, "event: message_stop", "the message the cut interrupted is closed")
+	assert.Contains(t, body, `"type":"permission_error"`, "the blocked event names the incident")
+	assert.NotContains(t, body, "[DONE]", "the Anthropic wire has its own terminator")
+
+	opened, closed := anthropicBlockIndexes(t, body)
+	require.NotEmpty(t, opened, "the stream opened a content block")
+	require.NotEmpty(t, closed, "the cut closed one")
+	assert.Equal(t, opened[len(opened)-1], closed[len(closed)-1],
+		"the terminator must close the block that was open, not whichever one is first")
+}
+
+// anthropicBlockIndexes reads the index of every content_block_start and
+// content_block_stop event in an SSE body, in arrival order.
+func anthropicBlockIndexes(t *testing.T, body string) ([]int, []int) {
+	t.Helper()
+	var opened, closed []int
+	for _, line := range strings.Split(body, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+		}
+		if json.Unmarshal([]byte(payload), &event) != nil {
+			continue
+		}
+		switch event.Type {
+		case "content_block_start":
+			opened = append(opened, event.Index)
+		case "content_block_stop":
+			closed = append(closed, event.Index)
+		}
+	}
+	return opened, closed
+}

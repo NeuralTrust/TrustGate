@@ -1285,14 +1285,16 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			format:       adapter.FormatOpenAIResponses,
 			lines:        responsesMessageStreamLines(),
 			wantReleased: 6,
-			// The output item the cut interrupts is still left open here. A
-			// bare terminator cannot tell a message item from a function_call
-			// one and both open at output index 0, so closing blind would
-			// terminate an item that was never added and leave the real one
-			// open. The guard learns which is which in the slice that follows
-			// this one; until then a cut Responses stream is a wire-level
-			// defect and both halves have to land together.
 			wantTail: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":0,"content_index":0}`, "",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`, "",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`, "",
 				"event: response.incomplete",
 				`data: {"type":"response.incomplete","response":{"incomplete_details":` +
 					`{"reason":"content_filter"},"object":"response","output":[],"status":"incomplete"}}`, "",
@@ -1380,6 +1382,335 @@ func TestStreamGuard_CutWithoutATerminatorSendsNoBlockedEventAlone(t *testing.T)
 					"the blocked event must not travel without the terminator it qualifies")
 			}
 			require.True(t, g.stopped)
+		})
+	}
+}
+
+// steppedDialectGuard is dialectGuard on a clock that jumps a whole max_hold
+// between reads, so in the block loop every event closes its own block. It is
+// how a case puts a chosen event at the end of the released prefix: blocks
+// otherwise close on chars, and only a text event carries any, so a prefix
+// ending on a structural event is unreachable without it.
+func steppedDialectGuard(t *testing.T, runner segmentRunner, format adapter.Format) *streamGuard {
+	t.Helper()
+	g := dialectGuard(t, runner, format)
+	clock := &fakeStreamClock{now: time.Now(), step: time.Second}
+	g.now = clock.Now
+	return g
+}
+
+// anthropicSecondBlockStreamLines closes the thinking block and opens the text
+// one before the head fills, so the released prefix ends with block 1 open and
+// index 1 is the honest answer rather than a coincidence.
+func anthropicSecondBlockStreamLines() []string {
+	return []string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5"}}`, "",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`, "",
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`, "",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hola"}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" mundo"}}`, "",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`, "",
+		"event: message_stop",
+		`data: {"type":"message_stop"}`, "",
+	}
+}
+
+// anthropicClosedBlockStreamLines ends its only content block and then carries
+// on with a message_delta that has usage on it. That event is the point: it is
+// the first thing after the stop that is not opaque, so the prefix the guard
+// releases stops exactly at the stop rather than running on into whatever the
+// upstream opens next.
+func anthropicClosedBlockStreamLines() []string {
+	return []string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5"}}`, "",
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hola"}}`, "",
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`, "",
+		"event: message_delta",
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`, "",
+		"event: message_stop",
+		`data: {"type":"message_stop"}`, "",
+	}
+}
+
+// TestStreamGuard_CutClosesTheContentBlockTheClientSawOpen pins B8.8, read off
+// the released prefix rather than off what the guard has admitted. A cut drops
+// produced[releasedIdx:], so a running index advanced at admit time names the
+// block a held event opened — one the client was never shown — while the block
+// it is actually looking at stays open. That is the defect A2.2 exists to
+// remove, shifted by whatever the guard was holding.
+//
+// The three cases are the three answers: the block the prefix ends inside, the
+// block a later start legitimately makes current, and no block at all when the
+// prefix already ended on a stop.
+func TestStreamGuard_CutClosesTheContentBlockTheClientSawOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		lines        []string
+		stepped      bool
+		blockOn      int
+		wantReleased int
+		wantOpen     bool
+		wantIndex    int
+	}{
+		{
+			// The held events close block 0, open block 1 and write into it.
+			// None of that reached the client: from its seat block 0 is open.
+			name:         "the released prefix ends inside the first block",
+			lines:        anthropicTwoBlockStreamLines(),
+			blockOn:      2,
+			wantReleased: 9,
+			wantOpen:     true,
+			wantIndex:    0,
+		},
+		{
+			name:         "the released prefix ends after the second block opened",
+			lines:        anthropicSecondBlockStreamLines(),
+			blockOn:      2,
+			wantReleased: 15,
+			wantOpen:     true,
+			wantIndex:    1,
+		},
+		{
+			// The client saw the upstream close block 0 itself. A terminator
+			// that stopped it again asks the SDK to apply a stop with no open
+			// block left to apply it to.
+			name:         "the released prefix ends on the upstream's own stop",
+			lines:        anthropicClosedBlockStreamLines(),
+			stepped:      true,
+			blockOn:      2,
+			wantReleased: 12,
+			wantOpen:     false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := dialectGuard(t, runner, adapter.FormatAnthropic)
+			if tc.stepped {
+				g = steppedDialectGuard(t, runner, adapter.FormatAnthropic)
+			}
+			blockOnCall(runner, tc.blockOn, "nope")
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			require.Equal(t, tc.wantOpen, g.released.blockOpen,
+				"the anchor must follow open and closed, not the last index it saw")
+			_, tail := splitAtCut(t, got, tc.lines, tc.wantReleased)
+			if !tc.wantOpen {
+				for _, line := range tail {
+					require.NotContains(t, line, "content_block_stop",
+						"the client already saw this block closed")
+				}
+				return
+			}
+			require.Equal(t, tc.wantIndex, g.released.blockIndex)
+			require.Contains(t, tail,
+				`data: {"type":"content_block_stop","index":`+strconv.Itoa(tc.wantIndex)+`}`,
+				"the terminator must close the block the client saw open")
+			for i := range tc.wantIndex + 2 {
+				if i == tc.wantIndex {
+					continue
+				}
+				require.NotContains(t, tail,
+					`data: {"type":"content_block_stop","index":`+strconv.Itoa(i)+`}`,
+					"no other block is the client's open one")
+			}
+		})
+	}
+}
+
+// responsesItemStreamLines opens one output item of the given kind at the given
+// output index and streams two deltas into it. Both kinds open the same way and
+// at whatever index the caller's own output has reached, which is why a cut
+// cannot infer either.
+func responsesItemStreamLines(outputIndex int, kind string) []string {
+	idx := strconv.Itoa(outputIndex)
+	if kind == "function_call" {
+		return []string{
+			"event: response.output_item.added",
+			`data: {"type":"response.output_item.added","output_index":` + idx +
+				`,"item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"lookup"}}`, "",
+			"event: response.function_call_arguments.delta",
+			`data: {"type":"response.function_call_arguments.delta","output_index":` + idx + `,"delta":"{\"city\":"}`, "",
+			"event: response.function_call_arguments.delta",
+			`data: {"type":"response.function_call_arguments.delta","output_index":` + idx + `,"delta":"\"Paris\"}"}`, "",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{}}`, "",
+		}
+	}
+	return []string{
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","output_index":` + idx +
+			`,"item":{"id":"msg_1","type":"message","role":"assistant"}}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":` + idx + `,"content_index":0,"delta":"Hello"}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":` + idx + `,"content_index":0,"delta":" world"}`, "",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{}}`, "",
+	}
+}
+
+// TestStreamGuard_CutClosesTheOpenResponsesItem pins B8.9, the same axis one
+// dialect over: Responses numbers output items rather than content blocks, and
+// a message item and a function_call item both open at output index 0. A cut
+// that closed index 0 blind would leave the real item unterminated and close
+// one that was never added, so the guard carries which item the client saw
+// opened and what kind it is — with the identity fields the SDK types require,
+// because a close missing them raises a validation error instead of delivering
+// the refusal.
+func TestStreamGuard_CutClosesTheOpenResponsesItem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		lines     []string
+		wantClose []string
+	}{
+		{
+			name:  "a message item at an output index the encoder does not control",
+			lines: responsesItemStreamLines(2, "message"),
+			wantClose: []string{
+				`data: {"type":"response.output_text.done","output_index":2,"content_index":0}`,
+				`data: {"type":"response.content_part.done","output_index":2,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`,
+				`data: {"type":"response.output_item.done","output_index":2,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`,
+			},
+		},
+		{
+			// The arguments rode function_call_arguments.delta and there is no
+			// text part to close; .done would assert a complete argument string,
+			// which a cut has not produced. The item still has to say arguments
+			// is "" rather than omit it.
+			name:  "a function call at the same index a message opens at",
+			lines: responsesItemStreamLines(0, "function_call"),
+			wantClose: []string{
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"fc_1","type":"function_call","call_id":"call_1",` +
+					`"name":"lookup","arguments":"","status":"incomplete"}}`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &scriptedRunner{}
+			g := dialectGuard(t, runner, adapter.FormatOpenAIResponses)
+			blockOnCall(runner, 2, "nope")
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, tc.lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			_, tail := splitAtCut(t, got, tc.lines, 6)
+			for _, want := range tc.wantClose {
+				require.Contains(t, tail, want)
+			}
+			require.Equal(t, len(tc.wantClose)*3+6, len(tail),
+				"the close events, the terminator and the blocked event, and nothing else")
+		})
+	}
+}
+
+// responsesInterruptedItemStreamLines has the upstream close item 0 partway
+// through and keep writing into it. Where that close falls relative to the
+// release pointer is the whole question: held, the client never saw it and the
+// item is still open to it; released, the client saw it and a second close is a
+// close of nothing.
+func responsesInterruptedItemStreamLines() []string {
+	return []string{
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","output_index":0,` +
+			`"item":{"id":"msg_1","type":"message","role":"assistant"}}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Hello"}`, "",
+		"event: response.output_item.done",
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}`, "",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":" world"}`, "",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{}}`, "",
+	}
+}
+
+// TestStreamGuard_CutClosesTheItemOnlyWhileTheClientHasItOpen is the other half
+// of B8.9, and the case an admit-time anchor gets exactly backwards. The same
+// upstream is cut in two places: with output_item.done still held, the client
+// has item 0 open and the cut owes it a close; with output_item.done released,
+// the client watched the upstream close it and closing it again terminates an
+// item nobody has open.
+func TestStreamGuard_CutClosesTheItemOnlyWhileTheClientHasItOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		stepped      bool
+		blockOn      int
+		wantReleased int
+		wantClose    bool
+	}{
+		{
+			name:         "the upstream's close is among the events the cut drops",
+			blockOn:      2,
+			wantReleased: 6,
+			wantClose:    true,
+		},
+		{
+			name:         "the upstream's close is inside the released prefix",
+			stepped:      true,
+			blockOn:      3,
+			wantReleased: 9,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines := responsesInterruptedItemStreamLines()
+			runner := &scriptedRunner{}
+			g := dialectGuard(t, runner, adapter.FormatOpenAIResponses)
+			if tc.stepped {
+				g = steppedDialectGuard(t, runner, adapter.FormatOpenAIResponses)
+			}
+			blockOnCall(runner, tc.blockOn, "nope")
+
+			out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+			require.Nil(t, pe)
+			got, err := collectGuardOutput(t, g, out)
+			require.NoError(t, err)
+
+			_, tail := splitAtCut(t, got, lines, tc.wantReleased)
+			if !tc.wantClose {
+				require.Nil(t, g.released.openItem, "the client saw the upstream close its own item")
+				for _, line := range tail {
+					require.NotContains(t, line, "response.output_item.done",
+						"closing an item nobody has open is worse than closing nothing")
+				}
+				return
+			}
+			require.NotNil(t, g.released.openItem, "the client never saw the close")
+			require.Contains(t, tail,
+				`data: {"type":"response.output_item.done","output_index":0,`+
+					`"item":{"id":"msg_1","type":"message","role":"assistant",`+
+					`"status":"incomplete","content":[]}}`)
 		})
 	}
 }
