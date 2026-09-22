@@ -453,3 +453,144 @@ func anthropicBlockIndexes(t *testing.T, body string) ([]int, []int) {
 	}
 	return opened, closed
 }
+
+// setupStreamPlaygroundRoute wires the paced streaming route behind a
+// playground consumer. The playground leg is the only place a functional test
+// can read the emitted event back, and the event is what this case is about.
+func setupStreamPlaygroundRoute(
+	t *testing.T,
+	up *fakeUpstream,
+	settings map[string]any,
+) (gatewaySlug, consumerSlug, path string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("tg-stream-pg")})
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	gatewaySlug = strings.TrimSuffix(host.(string), "."+gatewayBaseDomain())
+	require.NotEmpty(t, gatewaySlug)
+
+	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("tg-stream-be"), up.URL()))
+	policyPayload := policyPlugin("trustguard", settings)
+	policyPayload["name"] = uniqueName("tg-stream-pol")
+	policyID := CreatePolicy(t, gatewayID, policyPayload)
+
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("tg-stream-co")})
+	AttachRegistry(t, gatewayID, coID, registryID)
+	AttachPolicy(t, gatewayID, coID, policyID)
+	return gatewaySlug, ConsumerSlug(t, coID), chatCompletionsPath(t, coID)
+}
+
+// streamingExtras is the streaming object one policy-chain entry carries.
+type streamingExtras struct {
+	Enabled             bool  `json:"enabled"`
+	EvalsTotal          int   `json:"evals_total"`
+	GuardCalls          int   `json:"guard_calls"`
+	GuardLatencyMsTotal int64 `json:"guard_latency_ms_total"`
+	AddedLatencyMs      int64 `json:"added_latency_ms"`
+	CutAtEval           int   `json:"cut_at_eval"`
+	FinalPass           bool  `json:"final_pass"`
+}
+
+// streamedEvent is the part of the stored playground trace this case reads: the
+// latency split and the policy chain the fold built from the stream spans.
+type streamedEvent struct {
+	Latency struct {
+		TotalMs    int64 `json:"total_ms"`
+		ProviderMs int64 `json:"provider_ms"`
+		PoliciesMs int64 `json:"policies_ms"`
+		GatewayMs  int64 `json:"gateway_ms"`
+	} `json:"latency"`
+	PolicyChain []struct {
+		Name      string `json:"name"`
+		Stage     string `json:"stage"`
+		Decision  string `json:"decision"`
+		LatencyMs int64  `json:"latency_ms"`
+		Extras    struct {
+			Streaming *streamingExtras `json:"streaming"`
+		} `json:"extras"`
+	} `json:"policy_chain"`
+}
+
+// streamedLeg is the one policy-chain entry that inspected the stream, with the
+// latency the fold charged it. A streamed request also carries the buffered
+// passes of the same policy, and those carry no streaming object.
+func streamedLeg(t *testing.T, evt streamedEvent, body []byte) (*streamingExtras, int64) {
+	t.Helper()
+	for _, entry := range evt.PolicyChain {
+		if entry.Stage == "pre_response" && entry.Extras.Streaming != nil {
+			return entry.Extras.Streaming, entry.LatencyMs
+		}
+	}
+	t.Fatalf("no streamed policy-chain entry in %s", body)
+	return nil, 0
+}
+
+// trustGuardStreamFastGuardDelay is a guard that answers quickly relative to
+// generation, which is the shape of a real deployment and the only one in which
+// "the entry is not charged the drain" is a statement with room to be false. The
+// cut cases need the opposite pairing and keep their own delay.
+const trustGuardStreamFastGuardDelay = 5 * time.Millisecond
+
+// TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain is the end-to-end
+// half of the per-entry latency split. Everything upstream of the emitted event
+// is pinned by unit tests; this is the one case that proves the number actually
+// arrives in the policy chain, and that the whole drain does not.
+//
+// The stream span opens on the first block and ends when the stream does, so
+// left to its own wall clock it would carry the drain — provider generation
+// included — and policies_ms would come out at roughly the whole request. The
+// assertion is therefore a relation, not a literal: with a guard that answers
+// in single-digit milliseconds against a response paced over hundreds, the
+// chain's share has to stay a small fraction of the wall clock.
+//
+// gateway_ms is deliberately not asserted. On a streamed response the hold
+// happens inside the provider span — the block loop runs during drain — so
+// provider_ms already contains the guard time that blocking_policies_ms now
+// also carries, and the remainder clamps to zero however small the chain's
+// share is. That overlap is described in docs/telemetry/otlp-metadata-contract.md
+// and is not something this leg can settle.
+func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+	tg.SetGuardDelay(trustGuardStreamFastGuardDelay)
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	gatewaySlug, consumerSlug, path := setupStreamPlaygroundRoute(t, up, trustGuardStreamCutPolicySettings())
+	token := mintPlaygroundToken(t, consumerSlug)
+
+	started := time.Now()
+	status, headers, raw := playgroundPost(t, gatewaySlug, token, path, trustGuardStreamRequest())
+	drain := time.Since(started)
+	require.Equal(t, http.StatusOK, status, "body: %s", raw)
+	require.Contains(t, string(raw), trustGuardStreamMarkers[len(trustGuardStreamMarkers)-1],
+		"nothing was cut, so the whole paced response must have been streamed")
+
+	traceID := headers.Get(traceIDHeader)
+	require.NotEmpty(t, traceID)
+
+	body := pollPlaygroundTrace(t, traceID)
+	var evt streamedEvent
+	require.NoError(t, json.Unmarshal(body, &evt), "trace body: %s", body)
+	leg, legLatencyMs := streamedLeg(t, evt, body)
+
+	assert.True(t, leg.Enabled)
+	assert.Positive(t, leg.EvalsTotal, "the block loop must have inspected something")
+	assert.Equal(t, leg.EvalsTotal, leg.GuardCalls, "every block came back with a verdict")
+	assert.Zero(t, leg.CutAtEval, "nothing was cut on this leg")
+	assert.True(t, leg.FinalPass, "the block covering the end of the response was inspected")
+	assert.Equal(t, leg.GuardLatencyMsTotal, legLatencyMs,
+		"the entry's latency_ms is the guard time, not the span's wall clock")
+
+	require.Positive(t, evt.Latency.TotalMs)
+	assert.Less(t, legLatencyMs, evt.Latency.TotalMs/4,
+		"the policy entry carries the chain's hold (%dms), not the %s drain (total %dms)",
+		legLatencyMs, drain, evt.Latency.TotalMs)
+	assert.Less(t, evt.Latency.PoliciesMs, evt.Latency.TotalMs/4,
+		"a stream span left on its own wall clock would put the whole drain (%dms) into policies_ms (%dms)",
+		evt.Latency.TotalMs, evt.Latency.PoliciesMs)
+	assert.Less(t, leg.AddedLatencyMs, evt.Latency.TotalMs,
+		"added_latency_ms sums per-block worst cases; it is not a second copy of the request")
+}

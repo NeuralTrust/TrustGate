@@ -43,6 +43,10 @@ func (p *Plugin) inspectSegment(
 	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
+	if seg.Closing {
+		p.recordStreamOutcome(ctx, in, seg)
+		return segmentAllow(), nil
+	}
 	if p.baseURL == "" || !p.tokens.configured() || p.registry == nil {
 		return segmentAllow(), nil
 	}
@@ -93,6 +97,39 @@ func (p *Plugin) inspectSegment(
 		return p.segmentFailure(ctx, in, seg, err)
 	}
 	return segmentVerdict(seg, resp), nil
+}
+
+// recordStreamOutcome publishes this entry's account of the stream. It runs
+// exactly once per stream per entry, on the closing segment, because
+// Span.SetExtras overwrites rather than merges: a per-block write would leave
+// the span carrying only the last block's account of a response that took
+// several.
+//
+// It also sets the span's latency, which is the one thing about a streamed leg
+// the policy chain would otherwise get wrong. A stream span opens on the first
+// block and ends when the stream does, so its default wall clock is the whole
+// drain — provider generation included — and the fold in pkg/app/metrics counts
+// a pre_response span as blocking. Left alone it would charge the provider's
+// own time to the policy chain and flatten gateway_ms to zero. The guard
+// latency is what the client actually waited for the chain, and it is blocking:
+// the block loop runs during stream drain, holding bytes. The executor narrows
+// it to this entry's share before the report arrives, so the fold sums the
+// chain's spans back to one hold rather than to one per policy.
+func (p *Plugin) recordStreamOutcome(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+) {
+	if in.Event == nil {
+		return
+	}
+	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
+	in.Event.SetSLatency(seg.Report.GuardLatency)
+	setExtras(in.Event, data)
+	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
+	if seg.ReportsStream {
+		recordStreamEvals(ctx, seg.Report)
+	}
 }
 
 // segmentStream places the block in its stream. An id is what the engine

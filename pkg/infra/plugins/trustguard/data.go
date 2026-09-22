@@ -166,6 +166,78 @@ type streamData struct {
 	FallbackReason      string `json:"fallback_reason"`
 }
 
+// Stream outcomes for trustguard_stream_evals_total. They answer "what happened
+// to the response" in one label: cut by a verdict, released after the guard
+// gave up on a block, released after the block loop retired, never inspected at
+// all, or inspected clean.
+const (
+	streamOutcomeBlocked  = "blocked"
+	streamOutcomeDegraded = "degraded"
+	streamOutcomeFallback = "fallback"
+	streamOutcomeSkipped  = "skipped"
+	streamOutcomeAllowed  = "allowed"
+)
+
+// streamOutcome folds the per-stream aggregate into the guardData written once
+// at the end of a streamed response leg.
+//
+// evals_total of zero is a skip, not a clean pass: the policy asked for
+// per-block inspection and got no block, which is the one case where an event
+// with no findings would otherwise read as "inspected and clean".
+func streamOutcome(streamID string, r appplugins.StreamReport) guardData {
+	data := guardData{
+		Direction: directionOutput,
+		Decision:  decisionAllowed,
+		Streaming: &streamData{
+			Enabled:             true,
+			StreamID:            streamID,
+			EvalsTotal:          r.Evals,
+			CutAtEval:           r.CutAtEval,
+			CutOffsetChars:      r.CutOffsetChars,
+			FinalPass:           r.FinalPass,
+			GuardCalls:          r.GuardCalls,
+			GuardLatencyMsTotal: r.GuardLatency.Milliseconds(),
+			GuardLatencyMsMax:   r.GuardLatencyMax.Milliseconds(),
+			AddedLatencyMs:      r.AddedLatency.Milliseconds(),
+			DegradedReason:      r.DegradedReason,
+			FallbackReason:      r.FallbackReason,
+		},
+	}
+	if r.DegradedReason != "" {
+		data.Degraded = true
+		data.DegradedReason = r.DegradedReason
+	}
+	switch {
+	case r.CutAtEval > 0:
+		data.Decision = decisionBlocked
+	case r.Evals == 0:
+		data.Skipped = true
+		data.SkipReason = skipReasonProviderNotStreaming
+	}
+	return data
+}
+
+// streamOutcomeLabel is the metric dimension for one streamed response. A cut
+// dominates, then the fallback that retired the loop, then the degrade that
+// released a single block: the labels are ordered by how much of the response
+// went uninspected, so the most serious answer is the one that gets counted.
+func streamOutcomeLabel(r appplugins.StreamReport) string {
+	switch {
+	case r.CutAtEval > 0:
+		return streamOutcomeBlocked
+	case r.FallbackReason == fallbackReasonSegmentationUnavail,
+		r.FallbackReason == fallbackReasonClientDisconnected:
+		return streamOutcomeFallback
+	case r.DegradedReason == degradedReasonGuardTimeout,
+		r.DegradedReason == degradedReasonAccumulationCap:
+		return streamOutcomeDegraded
+	case r.Evals == 0:
+		return streamOutcomeSkipped
+	default:
+		return streamOutcomeAllowed
+	}
+}
+
 func setExtras(event *metrics.EventContext, data guardData) {
 	if event == nil {
 		return
