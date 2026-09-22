@@ -499,8 +499,9 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	// A Store-scoped ticket points at one installed server by catalog code, but the
 	// synthetic Store consumer carries no registries — attach the materialised
 	// registry for that code so the forwarded-auth (OAuth) provider resolves.
-	if consumerdomain.IsStoreConsumer(rc.Consumer) && strings.TrimSpace(ticket.Code) != "" {
-		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code); reg != nil {
+	if consumerdomain.IsStoreConsumer(rc.Consumer) &&
+		(strings.TrimSpace(ticket.Code) != "" || strings.TrimSpace(ticket.InstanceID) != "") {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code, ticket.InstanceID); reg != nil {
 			rc.Registries = []*registrydomain.Registry{reg}
 		}
 	}
@@ -513,10 +514,17 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	return gatewayID, data, rc, nil
 }
 
-// storeRegistry finds the materialised registry for a catalog code on a gateway,
-// so a Store-scoped connect can resolve the one server it targets. Returns nil
-// when no registry lister is wired or none matches.
-func (s *connectService) storeRegistry(ctx context.Context, gatewayID ids.GatewayID, code string) *registrydomain.Registry {
+// storeRegistry finds the server a Store-scoped connect targets. The instance
+// decides when the ticket pins one: two instances of a catalog code are two
+// servers with two accounts, and picking whichever row carries the code would
+// connect the wrong one. Without an instance it falls back to the code, which
+// is all an install-time ticket knows. Returns nil when no registry lister is
+// wired or none matches.
+func (s *connectService) storeRegistry(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	code, instanceID string,
+) *registrydomain.Registry {
 	if s.registries == nil {
 		return nil
 	}
@@ -529,6 +537,15 @@ func (s *connectService) storeRegistry(ctx context.Context, gatewayID ids.Gatewa
 		return nil
 	}
 	code = strings.TrimSpace(code)
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID != "" {
+		for _, reg := range items {
+			if reg != nil && reg.ID.String() == instanceID {
+				return reg
+			}
+		}
+		return nil
+	}
 	for _, reg := range items {
 		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
 			return reg

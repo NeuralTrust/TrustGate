@@ -60,12 +60,22 @@ func (e *ToolNotPermittedError) Error() string {
 type ApplicationNotConnectedError struct {
 	Provider string
 	Registry string
+	// Shared marks the instance whose account serves every caller. Nobody
+	// calling can connect that one — telling them to link their own would send
+	// them somewhere that changes nothing.
+	Shared bool
 }
 
 func (e *ApplicationNotConnectedError) Error() string {
 	server := e.Registry
 	if server == "" {
 		server = e.Provider
+	}
+	if e.Shared {
+		return fmt.Sprintf(
+			"mcp: %q is set to use one shared account and none is connected; an administrator connects it on the server's instance",
+			server,
+		)
 	}
 	return fmt.Sprintf(
 		"mcp: this application has no account on %q; an administrator must authorize it from Consumers → Routing",

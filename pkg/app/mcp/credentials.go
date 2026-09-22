@@ -236,10 +236,14 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return ErrNoPrincipal
 	}
 	gatewayID := rc.Consumer.GatewayID
-	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, registrydomain.ForwardedVaultProvider(reg))
+	// Whose account this is. A shared one belongs to the instance, so every
+	// caller reads the same credential and nobody calling can connect it: the
+	// admin does, once, on the instance.
+	subject := registrydomain.CredentialSubject(reg, principal.Subject)
+	cred, err := r.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
 	if errors.Is(err, vaultdomain.ErrNotFound) {
-		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
-			ConsentCauseNoCredential, "no stored credential for this user and provider")
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, subject,
+			ConsentCauseNoCredential, "no stored credential for this account and provider")
 	}
 	if errors.Is(err, vaultdomain.ErrUndecryptable) {
 		// The credential exists but the vault key can no longer read it — the
@@ -247,7 +251,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		// them round a reconnect loop that only papers over one provider at a
 		// time. Name the real cause; reconnecting rewrites it under the current
 		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
-		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, subject,
 			ConsentCauseUndecryptable,
 			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
 	}
@@ -255,7 +259,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return err
 	}
 	if cred.Expired(vaultRefreshSkew) {
-		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider, "")
+		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, subject, cfg.Provider, "")
 		if err != nil {
 			return err
 		}
@@ -286,7 +290,7 @@ func (r *credentialResolver) Refresh(
 		rc,
 		reg,
 		rc.Consumer.GatewayID,
-		principal.Subject,
+		registrydomain.CredentialSubject(reg, principal.Subject),
 		cfg.Provider,
 		rejected,
 	)
@@ -538,6 +542,12 @@ func (r *credentialResolver) consentRequired(
 		"reason", reason,
 	}
 	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
+	// The account belongs to the instance, not to whoever is calling. A connect
+	// link here would let any caller bind the account every other caller rides
+	// on, so the refusal names the admin instead.
+	if reg.ForwardedAuth().Shared() {
+		return &ApplicationNotConnectedError{Provider: provider, Registry: registryLabelFor(reg), Shared: true}
+	}
 	// A consumer that acts as itself has no person behind the call: nobody can
 	// complete a consent page, so it is told what is missing and who fixes it
 	// rather than handed a ticket it cannot redeem.
