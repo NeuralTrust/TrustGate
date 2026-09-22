@@ -120,8 +120,9 @@ func encodeCohereStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
 // message-end is the whole cut signal on Cohere: the streamed-response union
 // has no error member, so StreamBlockedEvent falls through to the OpenAI
 // default and never reaches a Cohere client. A cut that says COMPLETE here is
-// therefore a clean ending as far as the SDK can tell. The last case pins the
-// untouched shape of a normal finish.
+// therefore a clean ending as far as the SDK can tell — and so is one that
+// says ERROR without delta.error, since no SDK branches on the enum member.
+// The last case pins the untouched shape of a normal finish.
 func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -144,7 +145,8 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"recipe"}}}}`,
 				"",
 				"event: message-end",
-				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`,
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"error":"response blocked by content filter"}}`,
 				"",
 			},
 		},
@@ -156,6 +158,7 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 			want: []string{
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"error":"response blocked by content filter",` +
 					`"usage":{"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
 				"",
 			},
@@ -176,7 +179,8 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				`data: {"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"Here is the "}}}}`,
 				"",
 				"event: message-end",
-				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`,
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"error":"response blocked by content filter"}}`,
 				"",
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"usage":{"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
@@ -255,4 +259,55 @@ func TestCohereFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 			assert.Equal(t, tc.wantStreamed, delta.FinishReason, "streamed")
 		})
 	}
+}
+
+// ChatFinishReason really does include ERROR, but no Cohere SDK in Python, TS
+// or Go branches on it — the member appears only at its own declaration, and
+// v2/raw_client.py ignores finish_reason outright. delta.error is the only
+// field on message-end a client is given a reason to read, so the cut has to
+// fill it and nothing else may.
+func TestCohereEncodeStreamChunk_OnlyACutCarriesDeltaError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		finishReason string
+		wantError    string
+	}{
+		{name: "content filter", finishReason: "content_filter", wantError: "response blocked by content filter"},
+		{name: "upstream refusal", finishReason: "refusal", wantError: "response blocked by content filter"},
+		{name: "stop", finishReason: "stop"},
+		{name: "length", finishReason: "length"},
+		{name: "tool calls", finishReason: "tool_calls"},
+		{name: "unrecognised", finishReason: "something_else"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines, err := (&CohereAdapter{}).EncodeStreamChunk(
+				&CanonicalStreamChunk{FinishReason: tc.finishReason})
+			require.NoError(t, err)
+			require.Len(t, lines, 3)
+			var event cohereStreamEvent
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[1], []byte("data: ")), &event))
+			var delta cohereMessageEndDelta
+			require.NoError(t, json.Unmarshal(event.Delta, &delta))
+			assert.Equal(t, tc.wantError, delta.Error)
+			if tc.wantError == "" {
+				assert.NotContains(t, string(lines[1]), `"error"`)
+			}
+		})
+	}
+}
+
+// A trailing usage-only message-end is not a cut and must not repeat the
+// error, any more than it repeats the finish reason.
+func TestCohereEncodeStreamChunk_UsageOnlyCarriesNoError(t *testing.T) {
+	t.Parallel()
+	lines, err := (&CohereAdapter{}).EncodeStreamChunk(
+		&CanonicalStreamChunk{Usage: newCanonicalUsage(11, 7, 0)})
+	require.NoError(t, err)
+	require.Len(t, lines, 3)
+	assert.Equal(t,
+		`data: {"type":"message-end","delta":{"usage":{"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
+		string(lines[1]))
 }
