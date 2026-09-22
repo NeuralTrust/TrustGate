@@ -513,7 +513,7 @@ not for a machine consumer:
 | `none` | nothing | nothing |
 | `static` | a header + secret the admin configured | nothing |
 | `client_credentials` | a token the gateway mints as an OAuth client | nothing |
-| `forwarded` | the access token of an account linked per principal (vault) | a principal **subject**, plus one linking step |
+| `forwarded` | the access token of an account linked per principal (vault), or the one the instance holds for everyone | a principal **subject**, plus one linking step — nothing, when the account is shared |
 | `passthrough` | the caller's own token, audience-checked | the caller's **raw bearer token** |
 | `exchange` · impersonation / delegation | a token the gateway mints asserting the caller's subject | a principal **subject** |
 | `exchange` · OBO / token_exchange | a token the IdP mints from the caller's token | the caller's **raw bearer token** |
@@ -562,6 +562,37 @@ shared by every call the application makes:
 For a consumer whose *application* identifies its end users the same linking is
 per end user and goes through the connections API instead; the connect page
 refuses it with 409 (`ErrAPIKeyConnectEndUsers`), see §11.
+
+#### The account an instance holds for everyone
+
+Both paths above hang the account off the *caller*, which is the right answer
+when the caller is a person or an application acting for itself, and the wrong
+one when a team wants one Notion login behind a server and does not want to
+answer "whose" at all. So the instance can hold the account instead:
+`MCPTarget.Auth.Account` is `user` (the default, and what every instance was
+before) or `shared`.
+
+Nothing about the OAuth changes — same client, same scopes, same vault — only
+whose account it is:
+
+- **The subject.** `registry.CredentialSubject(reg, principalSub)` answers the
+  caller's own subject, or `instance:<registry_id>` when the account is shared.
+  The instance, not the catalog code: two instances of one server (a Production
+  and a Sandbox Notion) are two accounts, which is what having two is for.
+- **The refusal.** A caller cannot connect an account they do not own, and a
+  connect link handed to them would let any user of the gateway bind the account
+  every other user rides on. So the consent funnel answers
+  `ApplicationNotConnectedError{Shared: true}` instead of a ticket, and says an
+  admin connects it on the instance.
+- **The admin's side.** `GET|DELETE .../registries/{id}/shared-account` reads
+  and drops it; `POST .../shared-account/connect-link` mints the same connect
+  page the runtime hands a user, with the subject pinned to the instance — so
+  what the admin authorizes belongs to the server, and an admin who leaves does
+  not take it with them.
+
+A `static` header and a `client_credentials` grant are already the same for
+every caller by construction, so they carry no account and validation refuses
+one.
 
 ### 12.4 What was actually missing (and the decisions)
 

@@ -1039,3 +1039,81 @@ func TestCredentialResolver_MachineConsumerIsRefusedWithoutATicket(t *testing.T)
 		t.Fatalf("no ticket may be minted, got %v", connect.serverTicketCodes)
 	}
 }
+
+// An instance whose account is shared reads one credential for everyone, and
+// nobody calling can connect it.
+func TestCredentialResolver_SharedAccount(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	cfg := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeForwarded, Provider: "notion", ClientID: "id",
+		AuthorizeURL: "https://notion/a", TokenURL: "https://notion/t",
+		Account: registrydomain.MCPAccountShared,
+	}
+	reg := regWithAuth(gw, cfg)
+
+	t.Run("every caller reads the instance's credential", func(t *testing.T) {
+		t.Parallel()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(
+			gw, registrydomain.SharedAccountSubject(reg.ID), registrydomain.ForwardedVaultProvider(reg),
+			"", "shared-token", "", nil, time.Now().Add(time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "tk"}, infraoauth.NewProviderClient(nil), discardLogger())
+
+		for _, subject := range []string{"alice", "bob"} {
+			target := Target{}
+			if err := r.Apply(principalCtx(&identity.Principal{Subject: subject}), mcpConsumer(gw), reg, &target); err != nil {
+				t.Fatalf("Apply for %s: %v", subject, err)
+			}
+			if target.Headers["Authorization"] != "Bearer shared-token" {
+				t.Fatalf("%s got Authorization = %q", subject, target.Headers["Authorization"])
+			}
+		}
+	})
+
+	// A connect link here would let any caller bind the account every other
+	// caller rides on, so the refusal names the admin and mints no ticket.
+	t.Run("an unconnected shared account is never a consent prompt", func(t *testing.T) {
+		t.Parallel()
+		connect := &stubConnect{ticket: "tk"}
+		r := NewCredentialResolver(nil, &memVault{}, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		target := Target{}
+
+		err := r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), mcpConsumer(gw), reg, &target)
+
+		var consent *ConsentRequiredError
+		if errors.As(err, &consent) {
+			t.Fatalf("error = %v, want no consent prompt for a shared account", err)
+		}
+		var notConnected *ApplicationNotConnectedError
+		if !errors.As(err, &notConnected) || !notConnected.Shared {
+			t.Fatalf("error = %v, want ApplicationNotConnectedError{Shared:true}", err)
+		}
+		if target.Headers["Authorization"] != "" {
+			t.Fatal("nothing must be injected without a connected account")
+		}
+	})
+
+	// The user's own account is what an instance reads when it is not shared:
+	// the same credential must not answer both.
+	t.Run("a shared instance does not read the caller's own account", func(t *testing.T) {
+		t.Parallel()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(
+			gw, "alice", registrydomain.ForwardedVaultProvider(reg), "", "alice-token", "", nil, time.Now().Add(time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "tk"}, infraoauth.NewProviderClient(nil), discardLogger())
+		target := Target{}
+
+		err := r.Apply(principalCtx(&identity.Principal{Subject: "alice"}), mcpConsumer(gw), reg, &target)
+
+		var notConnected *ApplicationNotConnectedError
+		if !errors.As(err, &notConnected) {
+			t.Fatalf("error = %v, want the shared account to be missing", err)
+		}
+		if target.Headers["Authorization"] != "" {
+			t.Fatal("a shared instance forwarded the caller's own credential")
+		}
+	})
+}

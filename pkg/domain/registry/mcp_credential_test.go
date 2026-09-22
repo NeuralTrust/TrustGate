@@ -97,3 +97,36 @@ func TestForwardedVaultProviderName_LeavesAPlainKeyAlone(t *testing.T) {
 	key := domain.URLVariableVaultProvider("com.snowflake/mcp", "account_url")
 	require.Equal(t, key, domain.ForwardedVaultProviderName(key))
 }
+
+func registryWithAuth(t *testing.T, gw ids.GatewayID, auth *domain.MCPAuth) *domain.Registry {
+	t.Helper()
+	reg, err := domain.NewMCPRegistry(gw, "notion", "", &domain.MCPTarget{URL: "https://mcp.notion.com/mcp", Auth: auth})
+	require.NoError(t, err)
+	return reg
+}
+
+func TestCredentialSubject(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shared := registryWithAuth(t, gw, &domain.MCPAuth{
+		Mode: domain.MCPAuthModeForwarded, Provider: "notion", ClientID: "id",
+		AuthorizeURL: "https://notion/a", TokenURL: "https://notion/t",
+		Account: domain.MCPAccountShared,
+	})
+	own := registryWithAuth(t, gw, &domain.MCPAuth{
+		Mode: domain.MCPAuthModeForwarded, Provider: "notion", ClientID: "id",
+		AuthorizeURL: "https://notion/a", TokenURL: "https://notion/t",
+	})
+
+	// The instance, not the catalog code: two instances of one server are two
+	// accounts, which is what having two instances is for.
+	if got, want := domain.CredentialSubject(shared, "alice"), "instance:"+shared.ID.String(); got != want {
+		t.Fatalf("shared subject = %q, want %q", got, want)
+	}
+	if got := domain.CredentialSubject(own, "alice"); got != "alice" {
+		t.Fatalf("own subject = %q, want the caller's", got)
+	}
+	// A subject a person's token could never carry, so the two can never meet.
+	if strings.HasPrefix(domain.CredentialSubject(shared, "alice"), "app:") {
+		t.Fatal("a shared account must not land in an application's namespace")
+	}
+}

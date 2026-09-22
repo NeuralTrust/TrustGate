@@ -72,6 +72,15 @@ const (
 	TokenEndpointAuthClientSecretPost  = "client_secret_post"
 )
 
+// MCPAccount says whose account a forwarded credential is: the caller's own, or
+// the one the instance holds for everyone.
+type MCPAccount string
+
+const (
+	MCPAccountUser   MCPAccount = "user"
+	MCPAccountShared MCPAccount = "shared"
+)
+
 type MCPClientRegistration string
 
 const (
@@ -99,7 +108,11 @@ type MCPAuth struct {
 	Scope            string             `json:"scope,omitempty"`
 	Actor            string             `json:"actor,omitempty"`
 
-	Provider     string                `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account the forwarded credential is. Empty means the
+	// caller's own, which is what every instance was before shared accounts
+	// existed.
+	Account      MCPAccount            `json:"account,omitempty"`
 	Registration MCPClientRegistration `json:"registration,omitempty"`
 	ClientID     string                `json:"client_id,omitempty"`
 	ClientSecret string                `json:"client_secret,omitempty"`
@@ -334,6 +347,16 @@ func (a *MCPAuth) NeedsLinkedAccount() bool {
 }
 
 func (a *MCPAuth) Validate() error {
+	switch a.Account {
+	case "", MCPAccountUser, MCPAccountShared:
+	default:
+		return fmt.Errorf("%w: unknown upstream account %q", ErrInvalidMCPTarget, a.Account)
+	}
+	// Only a forwarded auth holds an account: a static header and a client
+	// credentials grant are the same for every caller by construction.
+	if a.Account != "" && a.Mode != MCPAuthModeForwarded {
+		return fmt.Errorf("%w: auth mode %q has no account of its own", ErrInvalidMCPTarget, a.Mode)
+	}
 	switch a.Mode {
 	case MCPAuthModeNone, "":
 		if a.Header != "" || a.Value != "" {
