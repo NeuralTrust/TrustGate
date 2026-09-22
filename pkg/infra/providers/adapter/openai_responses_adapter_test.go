@@ -1127,3 +1127,105 @@ func TestDecodeResponsesResponse_IncompleteDetailsDrivesTheFinishReason(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "length", got.FinishReason)
 }
+
+// TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen pins the other half of
+// the cut: which item a terminator closes. The adapter is a stateless shared
+// singleton, so it closes what the chunk names and nothing else — a message and
+// a function_call both open at output index 0, and the kind is the only thing
+// telling them apart. The indices are not omitempty either: to a client reading
+// output_index, an absent field is not the first item.
+//
+// The closed item carries the fields its SDK type requires rather than only the
+// ones a cut happens to know. ResponseOutputMessage requires id and content and
+// ResponseFunctionToolCall requires arguments, call_id and name, so an item that
+// omitted them would raise a validation error in a strict client instead of
+// delivering the refusal.
+func TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		chunk *CanonicalStreamChunk
+		want  []string
+	}{
+		{
+			name: "a message item the guard located",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem:     &StreamOpenItem{Index: 2, Kind: "message", ID: "msg_1"},
+			},
+			want: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":2,"content_index":0}`,
+				"",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":2,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`,
+				"",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":2,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`,
+				"",
+			},
+		},
+		{
+			name: "a function call has no text part to close",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem: &StreamOpenItem{
+					Kind: "function_call", ID: "fc_1", CallID: "call_1", Name: "lookup",
+				},
+			},
+			want: []string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"fc_1","type":"function_call","call_id":"call_1",` +
+					`"name":"lookup","arguments":"","status":"incomplete"}}`,
+				"",
+			},
+		},
+		{
+			name:  "a bare terminator names no item, so it closes none",
+			chunk: &CanonicalStreamChunk{FinishReason: "content_filter"},
+		},
+		{
+			name: "an item kind this encoder does not emit",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem:     &StreamOpenItem{Kind: "reasoning"},
+			},
+		},
+		{
+			name: "a cut chunk carrying its own text proves a message open",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				Delta:        "half a sentence",
+			},
+			want: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":0,"content_index":0}`,
+				"",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`,
+				"",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := responsesCutCloseEvents(tc.chunk)
+			if tc.want == nil {
+				assert.Nil(t, got, "closing an item nobody opened is worse than closing nothing")
+				return
+			}
+			assert.Equal(t, tc.want, bytesLinesToStrings(got))
+		})
+	}
+}

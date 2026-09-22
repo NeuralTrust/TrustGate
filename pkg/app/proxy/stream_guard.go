@@ -199,6 +199,7 @@ type streamGuard struct {
 	exhausted   bool
 	srcErr      error
 
+	released       releasedAnchor
 	gate           *blockGate
 	seq            int
 	sentChars      int
@@ -776,13 +777,58 @@ func (g *streamGuard) cutDoneLines() [][]byte {
 	return nil
 }
 
-// terminator is the chunk a cut ends on: the identity of the response, and the
-// content-filter finish reason every source adapter maps into its own dialect.
+// terminator is the chunk a cut ends on: the identity of the response, the
+// content-filter finish reason every source adapter maps into its own dialect,
+// and the structure the client still has open.
+//
+// The structure comes from the released side, not from what the guard has read.
+// The cut drops produced[releasedIdx:], so those events never reached anyone: a
+// terminator built from them closes a block the client never saw announced and
+// leaves the one it is looking at open for good.
 func (g *streamGuard) terminator() *adapter.CanonicalStreamChunk {
-	return adapter.CompletionsTerminalStreamChunk(
+	chunk := adapter.CompletionsTerminalStreamChunk(
 		&adapter.CanonicalStreamChunk{ID: g.seg.anchor.id, Model: g.seg.anchor.model},
 		streamCutReason,
 	)
+	chunk.ContentBlockIndex = g.released.blockIndex
+	chunk.ContentBlockClosed = !g.released.blockOpen
+	chunk.OpenItem = g.released.openItem
+	return chunk
+}
+
+// releasedAnchor is the structure the client can still see open, built from the
+// events the guard actually yielded. cutAnchor names the response; this names
+// what is unterminated on the wire in front of the caller.
+//
+// It tracks open and closed rather than the last index seen, which is the only
+// way to answer the two cases a running index gets wrong: a released prefix that
+// already ended on a content_block_stop needs no second stop, and an item the
+// upstream closed inside the released prefix must not be closed again.
+type releasedAnchor struct {
+	blockOpen  bool
+	blockIndex int
+	openItem   *adapter.StreamOpenItem
+}
+
+func (a *releasedAnchor) apply(m streamMark) {
+	switch m.op {
+	case markOpenBlock:
+		a.blockOpen, a.blockIndex = true, m.index
+	case markCloseBlock:
+		// A stop for some other index is an upstream shape the guard does not
+		// model; forgetting the open block on it would leave it open.
+		if a.blockOpen && a.blockIndex == m.index {
+			a.blockOpen = false
+		}
+	case markOpenItem:
+		item := m.item
+		a.openItem = &item
+	case markCloseItem:
+		if a.openItem != nil && a.openItem.Index == m.index {
+			a.openItem = nil
+		}
+	case markNone:
+	}
 }
 
 // drainForUsage keeps reading the abandoned upstream in the background so the
@@ -874,6 +920,11 @@ func (g *streamGuard) flush(yield func([]byte, error) bool) bool {
 				return false
 			}
 		}
+		// The anchor advances here and only here, because this is where an
+		// event becomes something the client has seen. A yield that comes back
+		// false stops before the mark is applied, which is correct: those lines
+		// did not reach anyone either.
+		g.released.apply(ev.mark)
 		ev.lines = nil
 		g.releasedIdx++
 	}

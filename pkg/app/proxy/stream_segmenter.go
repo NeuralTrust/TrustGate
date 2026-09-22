@@ -46,6 +46,16 @@ type streamCodec interface {
 // what decides how its finish reason must be read.
 const responsesEventPrefix = "response."
 
+// The Responses events that open and close an output item, and the Anthropic
+// events that open and close a content block. They are the only account of what
+// the wire has open: nothing about a block or an item survives the decode.
+const (
+	responsesOutputItemAdded   = "response.output_item.added"
+	responsesOutputItemDone    = "response.output_item.done"
+	anthropicContentBlockStart = "content_block_start"
+	anthropicContentBlockStop  = "content_block_stop"
+)
+
 // finishReasonToolCalls is the canonical finish reason for one completed tool
 // call. On Responses it rides response.function_call_arguments.done, which
 // fires once per function call well before the response ends.
@@ -103,9 +113,103 @@ func endsOnFinishReason(format adapter.Format, payloadType string) bool {
 type streamEvent struct {
 	lines     [][]byte
 	unit      streamUnit
+	mark      streamMark
 	text      string
 	reasoning string
 	toolCalls []adapter.StreamToolCallDelta
+}
+
+// streamMark is what one event does to the structure a client can see open: the
+// Anthropic content block it opens or closes, the Responses output item it adds
+// or completes.
+//
+// It is computed here, where the raw payload is, and applied where the event
+// actually reaches the client. Those are not the same moment. A cut drops
+// everything from the release pointer on, so a running total advanced as events
+// are admitted names blocks and items the client was never shown: a terminator
+// closing a block that was never announced while the one the client is looking
+// at stays open — the defect the terminators exist to remove, shifted by
+// however many events the guard was holding.
+type streamMark struct {
+	op    streamMarkOp
+	index int
+	item  adapter.StreamOpenItem
+}
+
+type streamMarkOp uint8
+
+const (
+	markNone streamMarkOp = iota
+	markOpenBlock
+	markCloseBlock
+	markOpenItem
+	markCloseItem
+)
+
+// streamMarkFor reads the structural change off the raw payload, before the
+// decode and independently of it: what an event does to the wire is stated in
+// the payload itself, and an event the codec rejects still opened the block the
+// client is looking at.
+func streamMarkFor(format adapter.Format, eventType string, payload []byte) streamMark {
+	switch {
+	case adapter.IsSameWireFormat(format, adapter.FormatAnthropic):
+		return anthropicBlockMark(eventType, payload)
+	case adapter.IsSameWireFormat(format, adapter.FormatOpenAIResponses):
+		return responsesItemMark(eventType, payload)
+	default:
+		return streamMark{}
+	}
+}
+
+func anthropicBlockMark(eventType string, payload []byte) streamMark {
+	var op streamMarkOp
+	switch eventType {
+	case anthropicContentBlockStart:
+		op = markOpenBlock
+	case anthropicContentBlockStop:
+		op = markCloseBlock
+	default:
+		return streamMark{}
+	}
+	var probe struct {
+		Index *int `json:"index"`
+	}
+	if json.Unmarshal(payload, &probe) != nil || probe.Index == nil {
+		return streamMark{}
+	}
+	return streamMark{op: op, index: *probe.Index}
+}
+
+func responsesItemMark(eventType string, payload []byte) streamMark {
+	var probe struct {
+		OutputIndex int `json:"output_index"`
+		Item        struct {
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			CallID string `json:"call_id"`
+			Name   string `json:"name"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return streamMark{}
+	}
+	switch eventType {
+	case responsesOutputItemAdded:
+		if probe.Item.Type == "" {
+			return streamMark{}
+		}
+		return streamMark{op: markOpenItem, item: adapter.StreamOpenItem{
+			Index:  probe.OutputIndex,
+			Kind:   probe.Item.Type,
+			ID:     probe.Item.ID,
+			CallID: probe.Item.CallID,
+			Name:   probe.Item.Name,
+		}}
+	case responsesOutputItemDone:
+		return streamMark{op: markCloseItem, index: probe.OutputIndex}
+	default:
+		return streamMark{}
+	}
 }
 
 // chars counts only what a guard call would actually read, which is why a tool
@@ -194,6 +298,7 @@ func (s *segmenter) classify(ev *streamEvent) error {
 		ev.unit = unitTerminal
 		return nil
 	}
+	ev.mark = streamMarkFor(s.format, eventType, payload)
 	chunk, err := s.codec.DecodeStreamChunkFor(payload, s.format)
 	if err != nil {
 		return fmt.Errorf("segmenting %s stream chunk: %w", s.format, err)
