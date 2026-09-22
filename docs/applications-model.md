@@ -306,6 +306,14 @@ serving. That is the one place the console's delete is not just a row.
   consumers a key reaches, which is all the SDK needs to resolve both planes —
   the one-secret story works untouched. What it cannot say is *which application
   those two consumers are*. The SDK talks about consumers, and that stays true.
+  It does answer everything else a client would otherwise learn from a failure:
+  when the calling key retires itself (`key.expires_at`, absent when never), and
+  per MCP consumer which of its bound servers still want an account and from
+  whom — `upstreams[].blocked` is `administrator` for an instance whose shared
+  account nobody has connected, `end_user` for one that keeps an account per
+  caller, and absent when the server is ready. A server carrying its own
+  credential is not listed; neither is anything at all on a plane built without
+  a vault, because an empty list there would read as "nothing to connect".
 - **Telemetry cannot group by application at the gateway.** Traces carry the
   consumer, so a per-application view is a join the console does from its own
   rows. Fine for a dashboard, unavailable to anyone querying the gateway
