@@ -752,38 +752,14 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	}
 }
 
-// The keys are string literals rather than the plugin's config struct because
-// infra plugins depend on this package; the point of the test is that the two
-// lists cannot drift apart unnoticed. Settings are not validated against the
-// schema, so an option missing here still works over the API and is simply
-// unreachable from the admin UI — the failure mode this test exists to prevent.
-func TestPromptCompressionSchema_AdvertisesEveryHonouredOption(t *testing.T) {
+// Prompt compression deliberately exposes no settings: its defaults are the
+// values that keep provider prompt caches stable, and every knob the catalog
+// once offered was a way to make the policy worse. The plugin still parses
+// explicit settings over the API (see promptcompression.parseConfig); this test
+// pins that the console is shown nothing to edit.
+func TestPromptCompressionSchema_ExposesNoFields(t *testing.T) {
 	meta, ok := pluginCatalogMeta["prompt_compression"]
 	require.True(t, ok)
-
-	fields := meta.schema.Fields
-	for _, expected := range []struct {
-		key       string
-		fieldType FieldType
-		def       any
-	}{
-		{"compress_json", FieldTypeBoolean, true},
-		{"normalize_whitespace", FieldTypeBoolean, true},
-		{"strip_ansi", FieldTypeBoolean, true},
-		{"max_consecutive_blank_lines", FieldTypeInteger, 1},
-		{"min_length", FieldTypeInteger, 256},
-		{"max_body_bytes", FieldTypeInteger, 1048576},
-	} {
-		field, found := fieldByKey(fields, expected.key)
-		require.Truef(t, found, "the plugin honours %q but the catalog does not offer it", expected.key)
-		assert.Equal(t, expected.fieldType, field.Type, expected.key)
-		assert.Equal(t, expected.def, field.Default,
-			"%s must advertise the default the plugin actually applies", expected.key)
-	}
-
-	roles, found := fieldByKey(fields, "target_roles")
-	require.True(t, found)
-	assert.Equal(t, FieldTypeArray, roles.Type)
-	require.NotNil(t, roles.Item)
-	assert.Equal(t, []string{"system", "user", "assistant", "tool"}, enumValues(roles.Item.Enum))
+	assert.Empty(t, meta.schema.Fields, "prompt_compression must run on its defaults; a field here puts a Configuration tab back in the console")
+	assert.Contains(t, meta.description, "nothing to configure")
 }
