@@ -381,6 +381,26 @@ func TestMCPSharedAccount_ForwardedFlowEndToEnd(t *testing.T) {
 		require.Equal(t, fx.provider, account["provider"])
 	})
 
+	// What a client reads before it starts, and the same fact the runtime acts
+	// on. A batch that gates on this endpoint and then calls the server must not
+	// be told two different things about the same account: reporting the
+	// instance's connected account as "not connected" stops a run that would
+	// have worked, and no caller can do anything about it.
+	t.Run("the connections endpoint reports the instance's account", func(t *testing.T) {
+		connections := appConnections(t, fx.gatewayID, consumerID, key)
+		require.NotEmpty(t, connections, "a forwarded server is a connectable one")
+		found := false
+		for _, connection := range connections {
+			if connection["provider"] != fx.provider {
+				continue
+			}
+			found = true
+			require.Equal(t, "connected", connection["status"],
+				"the admin connected this instance's account: %v", connection)
+		}
+		require.True(t, found, "the bound server must be listed: %v", connections)
+	})
+
 	t.Run("the stored credential is injected into the upstream call", func(t *testing.T) {
 		fx.capture.reset()
 		status, body := mcpRPC(t, fx.gatewayID, consumerID, apiKeyHeaders(key), "tools/call", fx.echoToolCall())
@@ -450,4 +470,36 @@ func TestMCPUserInstance_RefusesARequestThatRunsAsTheApplication(t *testing.T) {
 	target := fmt.Sprintf("%s/v1/gateways/%s/registries/%s/shared-account", AdminURL, fx.gatewayID, fx.registryID)
 	status, body = sendRequest(t, http.MethodGet, target, nil, nil)
 	require.Equal(t, http.StatusConflict, status, "a user instance has no shared account: %v", body)
+}
+
+// appConnections is GET /{slug}/connections with no end_user: what the
+// application itself has connected, which is the preflight a batch runs.
+func appConnections(t *testing.T, gatewayID, consumerID, key string) []map[string]any {
+	t.Helper()
+	slug := ConsumerSlug(t, consumerID)
+	req, err := http.NewRequest(http.MethodGet, MCPURL+"/"+slug+"/connections", nil)
+	require.NoError(t, err)
+	req.Host = mcpHostOf(t, gatewayID)
+	req.Header.Set("X-AG-API-Key", key)
+	resp, err := noRedirectClient().Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body := decodeBody(t, resp)
+	require.Equal(t, "application", body["actor"])
+	raw, _ := body["connections"].([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		if connection, ok := item.(map[string]any); ok {
+			out = append(out, connection)
+		}
+	}
+	return out
+}
+
+// mcpHostOf is the host the gateway's MCP plane answers on.
+func mcpHostOf(t *testing.T, gatewayID string) string {
+	t.Helper()
+	host, ok := mcpHosts.Load(gatewayID)
+	require.True(t, ok, "mcp host missing for %s", gatewayID)
+	return host.(string)
 }
