@@ -17,8 +17,10 @@ package oauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -27,6 +29,13 @@ var (
 	ErrTicketNotFound     = errors.New("oauth connect: ticket expired or unknown")
 	ErrProviderNotFound   = errors.New("oauth connect: provider not configured for this consumer")
 	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
+	// ErrSharedAccountNotYours: the instance holds one account for every caller,
+	// so no caller owns it. Connecting it is refused at the runtime funnel for
+	// the same reason; this is the other half, revoking.
+	ErrSharedAccountNotYours = fmt.Errorf(
+		"oauth connect: this server uses one shared account; an administrator disconnects it on the instance: %w",
+		commonerrors.ErrConflict,
+	)
 )
 
 type ConnectTicket struct {
@@ -102,6 +111,10 @@ type ProviderStatus struct {
 	Scopes         []string
 	ExpiresAt      time.Time
 	NeedsReconnect bool
+	// Shared marks a row whose account the instance holds for every caller. It
+	// is reported like any other — connected or not, it is the account this
+	// server will call with — but nobody reading it can connect or revoke it.
+	Shared bool
 }
 
 type ConnectPage struct {

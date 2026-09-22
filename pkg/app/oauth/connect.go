@@ -274,7 +274,14 @@ func (s *connectService) providerStatuses(
 		if reg.MCPTarget != nil {
 			status.Code = reg.MCPTarget.Code
 		}
-		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+		// Whose account this instance reads, which is not always the caller's:
+		// a shared instance holds one for everyone, and the runtime injects it
+		// through the same subject. Reading the caller's own key here would
+		// report a connected server as unconnected and stop a batch that gates
+		// on this endpoint — with nothing the caller could do about it.
+		subject := registrydomain.CredentialSubject(reg, ticket.PrincipalSub)
+		status.Shared = subject != ticket.PrincipalSub
+		cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
 		switch {
 		case err == nil:
 			status.Linked = true
@@ -313,6 +320,9 @@ func (s *connectService) Start(
 	reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID)
 	if reg == nil {
 		return "", ErrProviderNotFound
+	}
+	if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+		return "", ErrSharedAccountNotYours
 	}
 	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
 	if err != nil {
@@ -402,6 +412,9 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, ins
 	// since removed must still be able to clear the stored credential, or the
 	// user is left holding an account they cannot revoke.
 	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+			return ErrSharedAccountNotYours
+		}
 		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
 	} else {
 		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
@@ -676,4 +689,17 @@ func providerRegistry(regs []*registrydomain.Registry, provider string) *registr
 
 func connectCallbackURL(baseURL, provider string) string {
 	return baseURL + "/oauth/callback/" + provider
+}
+
+// ownsSharedAccount reports whether this ticket may write the account behind an
+// instance — connect it, or revoke it.
+//
+// An instance that holds one account for everyone has exactly one ticket that
+// may: the one an administrator minted against the instance itself. A caller's
+// own ticket may not, in either direction. Letting them connect it would store
+// a credential under a subject the runtime never reads, so they would walk the
+// whole page and still be told the server is not connected; letting them revoke
+// it would take from every other caller an account none of them can put back.
+func ownsSharedAccount(reg *registrydomain.Registry, principalSub string) bool {
+	return registrydomain.CredentialSubject(reg, principalSub) == principalSub
 }
