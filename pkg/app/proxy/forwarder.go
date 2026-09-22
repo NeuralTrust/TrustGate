@@ -587,8 +587,9 @@ func (f *forwarder) finalizeStream(
 // all, so not one extra allocation or indirection sits between the provider and
 // the client.
 //
-// head_chars and on_error come from StreamPlan rather than from a literal, so
-// a policy that sets on_error to fail_closed is not silently run as fail_open.
+// head_chars, on_error and the block-loop knobs come from StreamPlan rather
+// than from a literal, so a policy that sets on_error to fail_closed is not
+// silently run as fail_open.
 func (f *forwarder) newStreamGuard(
 	dto *forwardRequestDTO,
 	resp *infracontext.ResponseContext,
@@ -615,7 +616,12 @@ func (f *forwarder) newStreamGuard(
 			Request:  dto.request,
 			Response: resp,
 		},
-		streamGuardConfig{headChars: opts.HeadChars, onError: streamOnError(opts.OnError)},
+		streamGuardConfig{
+			headChars: opts.HeadChars,
+			onError:   streamOnError(opts.OnError),
+			minChars:  opts.MinCharsBetweenEvals,
+			maxHold:   time.Duration(opts.MaxHoldMS) * time.Millisecond,
+		},
 		f.logger,
 	)
 }

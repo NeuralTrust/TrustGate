@@ -334,8 +334,10 @@ func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.Strea
 		return false, appplugins.StreamOptions{}
 	}
 	return true, appplugins.StreamOptions{
-		HeadChars: cfg.Streaming.HeadChars,
-		OnError:   cfg.Streaming.OnError,
+		HeadChars:            cfg.Streaming.HeadChars,
+		OnError:              cfg.Streaming.OnError,
+		MinCharsBetweenEvals: cfg.Streaming.MinCharsBetweenEvals,
+		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
 	}
 }
 

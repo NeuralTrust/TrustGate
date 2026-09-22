@@ -588,7 +588,12 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 		"on_error":   onErrorFailClosed,
 	}))
 	assert.True(t, enabled)
-	assert.Equal(t, appplugins.StreamOptions{HeadChars: 1024, OnError: onErrorFailClosed}, opts)
+	assert.Equal(t, appplugins.StreamOptions{
+		HeadChars:            1024,
+		OnError:              onErrorFailClosed,
+		MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
+		MaxHoldMS:            defaultStreamingMaxHoldMS,
+	}, opts, "the block-loop knobs travel with the opt-in, so the caller never runs on defaults it was not given")
 
 	inherited := streamingSettings(nil)
 	inherited["on_error"] = onErrorFailClosed
