@@ -92,7 +92,6 @@ type AdminRouterDeps struct {
 	DeletePolicy    *policyhttp.DeletePolicyHandler
 	GlobalPolicy    *policyhttp.GlobalPolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
-	PreviewPolicy   *policyhttp.PreviewPolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
 	GetConsumer         *consumerhttp.GetConsumerHandler
@@ -207,7 +206,6 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
 	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
-	policies.Post("/preview", r.deps.PreviewPolicy.Handle)
 
 	consumers := gw.Group("/:gateway_id/consumers", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceConsumers))
 	consumers.Post("", r.deps.CreateConsumer.Handle)
