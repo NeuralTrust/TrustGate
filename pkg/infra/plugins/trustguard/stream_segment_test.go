@@ -593,6 +593,7 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 		OnError:              onErrorFailClosed,
 		MinCharsBetweenEvals: defaultStreamingMinCharsBetweenEvals,
 		MaxHoldMS:            defaultStreamingMaxHoldMS,
+		MaxAccumulatedBytes:  defaultStreamingMaxAccumulatedBytes,
 	}, opts, "the block-loop knobs travel with the opt-in, so the caller never runs on defaults it was not given")
 
 	inherited := streamingSettings(nil)

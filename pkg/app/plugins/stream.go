@@ -62,13 +62,15 @@ type SegmentVerdict struct {
 // travel with the opt-in rather than being re-read by a caller that cannot
 // parse them: an operator who sets streaming.on_error to fail_closed must not
 // silently get fail_open. The block-loop knobs travel the same way and for the
-// same reason: MinCharsBetweenEvals floors how often a block closes and
-// MaxHoldMS ceilings how long one may be held.
+// same reason: MinCharsBetweenEvals floors how often a block closes,
+// MaxHoldMS ceilings how long one may be held, and MaxAccumulatedBytes bounds
+// what a single call carries before the payload degrades to a tail window.
 type StreamOptions struct {
 	HeadChars            int
 	OnError              string
 	MinCharsBetweenEvals int
 	MaxHoldMS            int
+	MaxAccumulatedBytes  int
 }
 
 // StreamInspector is the opt-in a plugin declares to be consulted per block of
