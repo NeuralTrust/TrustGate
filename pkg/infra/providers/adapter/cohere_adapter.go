@@ -110,6 +110,7 @@ type cohereContentDeltaMessage struct {
 
 type cohereMessageEndDelta struct {
 	FinishReason string       `json:"finish_reason,omitempty"`
+	Error        string       `json:"error,omitempty"`
 	Usage        *cohereUsage `json:"usage,omitempty"`
 }
 
@@ -140,12 +141,23 @@ func cohereFinishToCanonical(reason string) string {
 	}
 }
 
+// cohereFinishError is the one member of Cohere's finish_reason enum that is
+// not a claim the response finished cleanly.
+const cohereFinishError = "ERROR"
+
 // canonicalFinishToCohere maps a canonical finish reason onto the finish_reason
-// enum Cohere v2 defines on message-end. content_filter becomes ERROR, the only
-// member of that enum that is not a claim the response finished cleanly: a cut
+// enum Cohere v2 defines on message-end. content_filter becomes ERROR: a cut
 // returning COMPLETE is indistinguishable from a normal ending. ERROR also
 // carries the whole signal on its own, because Cohere's streamed-response union
 // has no error member for StreamBlockedEvent to use.
+//
+// ERROR alone is not enough on its own, though. No Cohere SDK in Python, TS or
+// Go branches on the member: it appears only at its own declaration in all
+// three, and v2/raw_client.py ignores finish_reason outright. A client that
+// concatenates content-delta therefore sees a clean, non-raising end, which is
+// why the streamed encode also fills delta.error — the dialect's only "why"
+// channel, documented as "An error message if an error occurred during the
+// generation."
 func canonicalFinishToCohere(reason string) string {
 	switch reason {
 	case "stop":
@@ -155,7 +167,7 @@ func canonicalFinishToCohere(reason string) string {
 	case "tool_calls":
 		return "TOOL_CALL"
 	case "content_filter", "refusal":
-		return "ERROR"
+		return cohereFinishError
 	default:
 		return "COMPLETE"
 	}
@@ -483,6 +495,9 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		delta := cohereMessageEndDelta{}
 		if chunk.FinishReason != "" {
 			delta.FinishReason = canonicalFinishToCohere(chunk.FinishReason)
+			if delta.FinishReason == cohereFinishError {
+				delta.Error = defaultStreamBlockedMessage
+			}
 		}
 		if chunk.Usage != nil {
 			delta.Usage = &cohereUsage{
