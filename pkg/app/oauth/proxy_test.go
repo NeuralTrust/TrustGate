@@ -631,7 +631,7 @@ func assertClientToldOfError(t *testing.T, location, redirectURI, code string) {
 func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true, nil)
 	if err != nil {
 		t.Fatalf("build api key auth: %v", err)
 	}

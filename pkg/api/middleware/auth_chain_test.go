@@ -202,7 +202,7 @@ func TestChain_OpaqueBearer_GoesToIntrospection(t *testing.T) {
 
 func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
 	jwtVal := &fakeTokenValidator{err: errors.New("bad signature")}
 	resolver := middleware.NewChainIdentityResolver(
@@ -218,7 +218,7 @@ func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.
 }
 
 func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "partner-key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "partner-key", true, nil)
 	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
@@ -313,9 +313,9 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 	enabledOAuth := oauth2Auth(t, "https://idp.example.com", true)
 	disabledOAuth := oauth2Auth(t, "https://disabled.example.com", true)
 	disabledOAuth.Enabled = false
-	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
-	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false)
+	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false, nil)
 	require.NoError(t, err)
 	lookupErr := errors.New("lookup failed")
 	tests := []struct {
@@ -441,7 +441,7 @@ func TestChain_PathFirst_NoConsumerMatchRejectsJWT(t *testing.T) {
 }
 
 func TestChain_PathFirst_APIKeyMustBeAttached(t *testing.T) {
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
 	otherConsumerAuth := oauth2Auth(t, "https://idp.example.com", true)
 	resolver := middleware.NewChainIdentityResolver(
@@ -695,7 +695,7 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 // hand it to the OAuth2 validators instead and answer 401.
 func TestChain_APIKeyPresentedAsBearerAuthenticates(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "prod", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "prod", true, nil)
 	require.NoError(t, err)
 	raw := apiKey.RawKey
 	require.NotEmpty(t, raw, "the generated key is returned once, in plain")

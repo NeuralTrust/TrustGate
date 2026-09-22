@@ -15,9 +15,13 @@
 package auth
 
 import (
+	"fmt"
+
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -37,7 +41,8 @@ func NewRotateAuthHandler(rotator appauth.Rotator) *RotateAuthHandler {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
-// @Param        id          path      string  true  "Auth id"     format(uuid)
+// @Param        id          path      string                     true   "Auth id"     format(uuid)
+// @Param        body        body      request.RotateAuthRequest  false  "Expiry for the new secret"
 // @Success      200         {object}  response.AuthResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
@@ -48,7 +53,23 @@ func (h *RotateAuthHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	a, err := h.rotator.Rotate(c.UserContext(), gatewayID, id)
+	// The body is optional: rotating with none replaces the secret and leaves
+	// the expiry where it was.
+	var req request.RotateAuthRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		}
+		if err := req.Validate(); err != nil {
+			return httpio.WriteError(c, err)
+		}
+	}
+
+	a, err := h.rotator.Rotate(c.UserContext(), appauth.RotateInput{
+		ID:        id,
+		GatewayID: gatewayID,
+		Expiry:    req.ToExpiry(),
+	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}

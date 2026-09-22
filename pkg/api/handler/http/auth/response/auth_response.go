@@ -31,10 +31,12 @@ type AuthResponse struct {
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
 	// Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk" + "Rv8Q").
-	KeyPrefix string    `json:"key_prefix,omitempty"`
-	KeySuffix string    `json:"key_suffix,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"key_prefix,omitempty"`
+	KeySuffix string `json:"key_suffix,omitempty"`
+	// When the key retires itself. Absent means it never does.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type ConfigResponse struct {
@@ -76,6 +78,7 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Config:    fromConfig(a.Config),
 		KeyPrefix: a.KeyPrefix,
 		KeySuffix: a.KeySuffix,
+		ExpiresAt: a.ExpiresAt,
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}

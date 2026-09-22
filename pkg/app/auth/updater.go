@@ -33,6 +33,8 @@ type UpdateInput struct {
 	Type      *domain.Type
 	Enabled   *bool
 	Config    *domain.Config
+	// Expiry is left alone when nil; see ExpiryChange.
+	Expiry *ExpiryChange
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=auth_updater_mock.go --case=underscore --with-expecter
@@ -95,6 +97,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if in.Config != nil {
 		in.Config.ResolveSecretsFrom(existing.Config)
 		existing.Config = *in.Config
+	}
+	if in.Expiry != nil {
+		if err := existing.SetExpiry(in.Expiry.At); err != nil {
+			return nil, err
+		}
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {

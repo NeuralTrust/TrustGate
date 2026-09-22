@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -79,4 +80,48 @@ func TestRotateAuth_NotFound(t *testing.T) {
 	)
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
 	assert.Equal(t, "not_found", body["error"])
+}
+
+func TestAuthExpiry_IssueRotateAndRefuseThePast(t *testing.T) {
+	defer Track(t, "RotateAuth")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-expiry")})
+	expiry := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
+		map[string]any{"name": uniqueName("api-key-expiring"), "type": "api_key", "enabled": true, "expires_at": expiry},
+	)
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	require.NotEmpty(t, body["expires_at"], "an issued key must report the expiry it was given: %v", body)
+	authID, _ := body["id"].(string)
+
+	// Rotating says nothing about the expiry, so the key keeps it.
+	status, body = sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/auths/%s/rotate", AdminURL, gwID, authID), nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	require.NotEmpty(t, body["expires_at"], "rotating must not drop the expiry: %v", body)
+
+	// And an empty string is how it is taken away.
+	status, body = sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/auths/%s/rotate", AdminURL, gwID, authID), nil,
+		map[string]any{"expires_at": ""},
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Empty(t, body["expires_at"], "an empty expires_at clears the expiry: %v", body)
+}
+
+func TestCreateAuth_RefusesAnExpiryInThePast(t *testing.T) {
+	defer Track(t, "CreateAuth")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-expiry-past")})
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
+		map[string]any{
+			"name":       uniqueName("api-key-dead"),
+			"type":       "api_key",
+			"expires_at": time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+		},
+	)
+	require.Equal(t, http.StatusBadRequest, status, "a key that is already expired is never what was meant, body=%v", body)
 }

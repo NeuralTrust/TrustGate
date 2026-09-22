@@ -69,6 +69,7 @@ func (h *CreateAuthHandler) Handle(c *fiber.Ctx) error {
 		Type:      domain.Type(req.Type),
 		Enabled:   req.IsEnabled(),
 		Config:    req.Config.ToDomain(),
+		ExpiresAt: req.ToExpiresAt(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
