@@ -48,8 +48,12 @@ type ConsumerResponse struct {
 	// at all — a list must not claim everything is fine when it did not look.
 	PendingUpstreamAuth *int                `json:"pending_upstream_auth,omitempty"`
 	AuthBinding         AuthBindingResponse `json:"auth_binding"`
-	CreatedAt           time.Time           `json:"created_at"`
-	UpdatedAt           time.Time           `json:"updated_at"`
+	// Synthetic marks a consumer the gateway serves without storing: today the
+	// MCP Store. It has no row, so it cannot be edited, deleted or given a key,
+	// and it is only listed when a caller asks for it.
+	Synthetic bool      `json:"synthetic,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type RegistryWeightResponse struct {
@@ -154,6 +158,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		FailMode:        string(c.FailMode()),
 		Identity:        fromIdentity(c.Identity),
 		AuthBinding:     fromAuthBinding(c.AuthBinding),
+		Synthetic:       domain.IsStoreConsumer(c),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}

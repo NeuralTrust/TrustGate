@@ -201,6 +201,28 @@ func TestConnectStart_ProviderWithSlash(t *testing.T) {
 	}
 }
 
+// The connect page links a provider raw, but a client that builds the URL
+// properly escapes the slash - and the SDK's connect link does. Read as written
+// it names a provider no consumer has, and the link 404s on a server that is
+// configured perfectly well.
+func TestConnectStart_ProviderWithEscapedSlash(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectStartPath, h.Start)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/app.linear%2Fmcp?ticket=abc", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusFound {
+		t.Fatalf("status = %d, want 302", res.StatusCode)
+	}
+	if stub.gotProvider != "app.linear/mcp" {
+		t.Fatalf("provider = %q, want app.linear/mcp", stub.gotProvider)
+	}
+}
+
 func TestConnectStart_UsesConfiguredPublicBaseURL(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}

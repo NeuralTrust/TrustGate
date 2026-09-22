@@ -223,8 +223,15 @@ func (c *config) validateInjectTemplates() error {
 	return nil
 }
 
+// validateNamedTemplates enforces label uniqueness per template rather than across
+// the whole policy. Resolution is already per template — findNamedTemplate picks the
+// template by name and only then does resolveVersion look the label up inside it — so
+// the same label on two different templates was never ambiguous, and refusing it only
+// stopped the obvious configuration: one named template per prompt, each carrying a
+// "latest". default_label is still checked against every label the policy declares,
+// since that one is policy-wide.
 func (c *config) validateNamedTemplates() error {
-	labels := map[string]struct{}{}
+	allLabels := map[string]struct{}{}
 	names := map[string]struct{}{}
 	for i := range c.NamedTemplates {
 		nt := c.NamedTemplates[i]
@@ -238,12 +245,16 @@ func (c *config) validateNamedTemplates() error {
 		if len(nt.Versions) == 0 {
 			return fmt.Errorf("prompt_template: named_templates[%q] must have at least one version", nt.Name)
 		}
+		labels := map[string]struct{}{}
 		if err := validateVersions(nt, labels); err != nil {
 			return err
 		}
+		for label := range labels {
+			allLabels[label] = struct{}{}
+		}
 	}
 	if len(c.NamedTemplates) > 0 && c.DefaultLabel != "" {
-		if _, ok := labels[c.DefaultLabel]; !ok {
+		if _, ok := allLabels[c.DefaultLabel]; !ok {
 			return fmt.Errorf("prompt_template: default_label %q does not match any version label", c.DefaultLabel)
 		}
 	}
