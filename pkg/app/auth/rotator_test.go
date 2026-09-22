@@ -33,7 +33,7 @@ import (
 
 func existingAPIKey(t *testing.T, gwID ids.GatewayID) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAPIKeyAuth(gwID, "client-key", true)
+	a, err := domain.NewAPIKeyAuth(gwID, "client-key", true, nil)
 	require.NoError(t, err)
 	return a
 }
@@ -63,7 +63,7 @@ func TestRotator_Rotate_ReplacesTheSecretAndKeepsTheAuth(t *testing.T) {
 	keyCache.Set(firstHash, existing)
 
 	rotated, err := appauth.NewRotator(repo, manager, publisher, newTestLogger(), nil).
-		Rotate(context.Background(), gwID, existing.ID)
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: gwID})
 	require.NoError(t, err)
 
 	require.NotEqual(t, firstKey, rotated.RawKey, "rotation must mint a new secret")
@@ -89,7 +89,7 @@ func TestRotator_Rotate_RefusesAnAuthThatIsNotAnAPIKey(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, oauth.ID).Return(oauth, nil).Once()
 
 	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
-		Rotate(context.Background(), gwID, oauth.ID)
+		Rotate(context.Background(), appauth.RotateInput{ID: oauth.ID, GatewayID: gwID})
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
 }
 
@@ -102,6 +102,6 @@ func TestRotator_Rotate_RefusesAnAuthOfAnotherGateway(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
 	_, err := appauth.NewRotator(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil).
-		Rotate(context.Background(), ids.New[ids.GatewayKind](), existing.ID)
+		Rotate(context.Background(), appauth.RotateInput{ID: existing.ID, GatewayID: ids.New[ids.GatewayKind]()})
 	require.True(t, errors.Is(err, commonerrors.ErrNotFound))
 }

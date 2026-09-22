@@ -106,11 +106,21 @@ type Auth struct {
 	KeyHash   string        `json:"-"`
 	// KeyPrefix / KeySuffix are a non-secret recognition hint for api_key auths
 	// (e.g. "ag_3dlXk" + "Rv8Q"). Never used for authentication.
-	KeyPrefix string    `json:"-"`
-	KeySuffix string    `json:"-"`
-	RawKey    string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"-"`
+	KeySuffix string `json:"-"`
+	RawKey    string `json:"-"`
+	// ExpiresAt retires the credential on its own. Nil is the default and means
+	// the key never expires, which is what every key written before the column
+	// existed is: an expiry nobody asked for would have retired them all.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// IsExpired reports whether the credential has passed its expiry. An auth
+// without one never does.
+func (a *Auth) IsExpired(now time.Time) bool {
+	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
@@ -137,7 +147,7 @@ func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, 
 	return a, nil
 }
 
-func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, error) {
+func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt *time.Time) (*Auth, error) {
 	rawKey, err := GenerateAPIKey()
 	if err != nil {
 		return nil, fmt.Errorf("auth: generate api key: %w", err)
@@ -146,10 +156,33 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, e
 	if err != nil {
 		return nil, err
 	}
+	if err := a.SetExpiry(expiresAt); err != nil {
+		return nil, err
+	}
 	a.RawKey = rawKey
 	a.KeyHash = HashAPIKey(rawKey)
 	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
 	return a, nil
+}
+
+// SetExpiry attaches or clears the expiry. An expiry already in the past is
+// refused rather than stored: a key that is dead the moment it is handed over
+// is never what was meant, and the error says so at the point the mistake was
+// made instead of at the first request that fails.
+func (a *Auth) SetExpiry(expiresAt *time.Time) error {
+	if expiresAt == nil {
+		a.ExpiresAt = nil
+		return nil
+	}
+	if a.Type != TypeAPIKey {
+		return fmt.Errorf("%w: only api_key auths expire; an identity provider's tokens carry their own lifetime", ErrInvalidType)
+	}
+	if !expiresAt.After(time.Now().UTC()) {
+		return ErrExpiryInThePast
+	}
+	utc := expiresAt.UTC()
+	a.ExpiresAt = &utc
+	return nil
 }
 
 // RotateAPIKey mints a new secret for an existing api_key auth and returns the

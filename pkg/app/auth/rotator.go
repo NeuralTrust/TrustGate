@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
@@ -24,6 +25,22 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
+
+// ExpiryChange is an expiry a caller asked to change to.
+//
+// A nil *ExpiryChange leaves the stored expiry as it is, which is what a caller
+// that did not mention expiry means; a non-nil one carrying a nil At clears the
+// expiry. Without the distinction, "rotate this key" and "rotate this key and
+// let it live forever" would be the same request.
+type ExpiryChange struct {
+	At *time.Time
+}
+
+type RotateInput struct {
+	ID        ids.AuthID
+	GatewayID ids.GatewayID
+	Expiry    *ExpiryChange
+}
 
 //go:generate mockery --name=Rotator --dir=. --output=./mocks --filename=auth_rotator_mock.go --case=underscore --with-expecter
 
@@ -35,7 +52,7 @@ import (
 // else, so the only thing that has to reach the caller's clients is the new
 // secret.
 type Rotator interface {
-	Rotate(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) (*domain.Auth, error)
+	Rotate(ctx context.Context, in RotateInput) (*domain.Auth, error)
 }
 
 var _ Rotator = (*rotator)(nil)
@@ -66,18 +83,23 @@ func NewRotator(
 	}
 }
 
-func (r *rotator) Rotate(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) (*domain.Auth, error) {
-	existing, err := r.repo.FindByID(ctx, id)
+func (r *rotator) Rotate(ctx context.Context, in RotateInput) (*domain.Auth, error) {
+	existing, err := r.repo.FindByID(ctx, in.ID)
 	if err != nil {
 		return nil, err
 	}
-	if existing.GatewayID != gatewayID {
+	if existing.GatewayID != in.GatewayID {
 		return nil, domain.ErrNotFound
 	}
 
 	previousHash, err := existing.RotateAPIKey()
 	if err != nil {
 		return nil, err
+	}
+	if in.Expiry != nil {
+		if err := existing.SetExpiry(in.Expiry.At); err != nil {
+			return nil, err
+		}
 	}
 	if err := r.repo.Update(ctx, existing); err != nil {
 		return nil, err
