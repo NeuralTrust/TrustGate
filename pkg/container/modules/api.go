@@ -322,9 +322,6 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
-		return err
-	}
 	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
 		return err
 	}
@@ -340,23 +337,6 @@ func API(c *container.Container) error {
 		return err
 	}
 	return nil
-}
-
-func provideAPIKeyConnectHandler(
-	finder appgateway.Finder,
-	cfg *config.Config,
-	connect appoauth.APIKeyConnectService,
-	limiter appoauth.ConnectAttemptLimiter,
-) *oauthhttp.APIKeyConnectHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
-	resolveSource := func(peer, forwardedFor string) string {
-		return ratelimit.ResolveConnectSource(
-			peer,
-			forwardedFor,
-			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
-		)
-	}
-	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
 }
 
 // provideWhoAmIHandler serves the MCP plane's /whoami. It needs the proxy

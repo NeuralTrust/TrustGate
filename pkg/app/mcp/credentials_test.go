@@ -152,7 +152,7 @@ func mcpConsumer(gw ids.GatewayID) *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
 		Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
-		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
+		Identity: consumerdomain.Identity{},
 	}}
 }
 

@@ -99,8 +99,6 @@ type adminRouterParams struct {
 	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
-	// ConsumerUpstreamAccounts is absent on planes without the connect service.
-	ConsumerUpstreamAccounts *consumerhttp.UpstreamAccountsHandler `optional:"true"`
 
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
@@ -179,7 +177,6 @@ func ServerAdmin(c *container.Container) error {
 				UpdateConsumer:            p.UpdateConsumer,
 				DeleteConsumer:            p.DeleteConsumer,
 				ConsumerAssociation:       p.ConsumerAssociation,
-				ConsumerUpstreamAccounts:  p.ConsumerUpstreamAccounts,
 				CreateAuth:                p.CreateAuth,
 				GetAuth:                   p.GetAuth,
 				ListAuth:                  p.ListAuth,

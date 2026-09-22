@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -117,7 +116,6 @@ func TestEndUserConnectionsHandler_ErrorMapping(t *testing.T) {
 		want int
 	}{
 		"wrong key":                {appoauth.ErrAPIKeyConnectUnauthorized, fiber.StatusUnauthorized},
-		"consumer not app users":   {appoauth.ErrEndUserConnectionsUnsupported, fiber.StatusConflict},
 		"unknown provider":         {appoauth.ErrUnknownConnectProvider, fiber.StatusBadRequest},
 		"rate limiter unavailable": {appoauth.ErrConnectRateLimitUnavailable, fiber.StatusServiceUnavailable},
 	}
@@ -206,20 +204,26 @@ func TestEndUserConnectionsHandler_ListWithEndUserStillAnswersForTheUser(t *test
 	require.Equal(t, "user_123", body.EndUser)
 }
 
-// An application whose users sign in for themselves holds no accounts of its
-// own. Answering with an empty list would read as "connected to nothing"; the
-// conflict says the actor is wrong.
-func TestEndUserConnectionsHandler_ListRefusesTheAppActorForAUserFacingConsumer(t *testing.T) {
-	app := newEndUserApp(&stubEndUserConnections{appErr: appoauth.ErrAppConnectionsUnsupported})
+// Both actors belong to every MCP consumer now: the application itself, and
+// whoever it names on a request. So asking about one never means the other is
+// unavailable, and the two conflicts that used to say so are gone.
+func TestEndUserConnectionsHandler_ServesBothActorsOfOneConsumer(t *testing.T) {
+	svc := &stubEndUserConnections{}
+	app := newEndUserApp(svc)
 
-	request := httptest.NewRequest(http.MethodGet, "/assistant/connections", nil)
-	request.Header.Set("Authorization", "Bearer key-1")
-	response, err := app.Test(request)
+	asApp := httptest.NewRequest(http.MethodGet, "/assistant/connections", nil)
+	asApp.Header.Set("Authorization", "Bearer key-1")
+	appResponse, err := app.Test(asApp)
 	require.NoError(t, err)
-	defer func() { _ = response.Body.Close() }()
+	defer func() { _ = appResponse.Body.Close() }()
+	require.Equal(t, fiber.StatusOK, appResponse.StatusCode)
+	require.True(t, svc.askedForApp)
 
-	require.Equal(t, fiber.StatusConflict, response.StatusCode)
-	var body httpio.ErrorBody
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
-	require.Equal(t, "consumer_acts_for_users", body.Error)
+	forUser := httptest.NewRequest(http.MethodGet, "/assistant/connections?end_user=user_123", nil)
+	forUser.Header.Set("Authorization", "Bearer key-1")
+	userResponse, err := app.Test(forUser)
+	require.NoError(t, err)
+	defer func() { _ = userResponse.Body.Close() }()
+	require.Equal(t, fiber.StatusOK, userResponse.StatusCode)
+	require.Equal(t, "user_123", svc.gotEndUser)
 }

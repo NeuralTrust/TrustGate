@@ -17,6 +17,7 @@ package mcp
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -66,22 +67,51 @@ type WhoAmIConsumer struct {
 	// consumer, the provider-compatible base URL for an LLM one. Empty when
 	// the gateway has no public host configured for that plane.
 	URL string `json:"url,omitempty"`
-	// ActsForUsers is false for a consumer that acts as the application
-	// itself, which is the actor a batch runs as.
-	ActsForUsers bool `json:"acts_for_users"`
-	// IdentitySource names who its users are when it acts for them.
-	IdentitySource string `json:"identity_source,omitempty"`
+	// Upstreams are the MCP servers behind this consumer that read a stored
+	// account, and what each is still waiting for. Absent when none of them
+	// does — and also absent on a plane that cannot read the accounts at all,
+	// which is why a client reads "blocked" rather than counting a length.
+	Upstreams []WhoAmIUpstream `json:"upstreams,omitempty"`
+}
+
+// WhoAmIUpstream is one MCP server this consumer is bound to, answered for the
+// caller holding the key — which is the application itself.
+type WhoAmIUpstream struct {
+	Server   string `json:"server"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account the server reads: "shared", the one the
+	// instance holds for every caller, or "user", one per caller.
+	Account string `json:"account"`
+	// Connected answers for this caller. A "user" instance never has an
+	// account for an application, so it reads false and blocked says end_user.
+	Connected bool `json:"connected"`
+	// NeedsReconnect: there is an account and it has gone stale.
+	NeedsReconnect bool `json:"needs_reconnect,omitempty"`
+	// Blocked names who has to act before this server answers a call that runs
+	// as the application: "administrator" or "end_user". Absent when ready.
+	Blocked string `json:"blocked,omitempty"`
+}
+
+// WhoAmIKey is the calling key, so a client can say "this expires on Friday"
+// instead of discovering it as a 401 in production. The secret is never
+// echoed: its holder already has it, and a copy in a response is a copy in a
+// log.
+type WhoAmIKey struct {
+	Name string `json:"name,omitempty"`
+	// ExpiresAt is RFC3339, absent when the key never expires.
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 // WhoAmIResponse is everything a client can learn from its own key.
 type WhoAmIResponse struct {
 	Gateway   string           `json:"gateway"`
+	Key       WhoAmIKey        `json:"key"`
 	Consumers []WhoAmIConsumer `json:"consumers"`
 }
 
 // Handle godoc
 // @Summary      Describe what an API key reaches
-// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled or foreign key is refused without saying which.
+// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which.
 // @Tags         mcp
 // @Produce      json
 // @Success      200  {object}  WhoAmIResponse
@@ -94,29 +124,58 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 	if err != nil || gateway == nil {
 		return writeWhoAmIError(c, fiber.StatusUnauthorized, "unknown gateway")
 	}
-	consumers, err := h.consumers.ForAPIKey(
+	described, err := h.consumers.ForAPIKey(
 		c.UserContext(), gateway.ID, resolver.APIKeyFromRequest(c),
 	)
-	if err != nil {
+	if err != nil || described == nil {
 		if errors.Is(err, appconsumer.ErrAPIKeyUnknown) {
 			return writeWhoAmIError(c, fiber.StatusUnauthorized, "invalid API key for this gateway")
 		}
 		return writeWhoAmIError(c, fiber.StatusInternalServerError, "failed to describe this API key")
 	}
 
-	out := WhoAmIResponse{Gateway: gateway.Slug, Consumers: make([]WhoAmIConsumer, 0, len(consumers))}
-	for _, cons := range consumers {
+	out := WhoAmIResponse{
+		Gateway:   gateway.Slug,
+		Key:       whoAmIKey(described.Key),
+		Consumers: make([]WhoAmIConsumer, 0, len(described.Consumers)),
+	}
+	for _, cons := range described.Consumers {
 		out.Consumers = append(out.Consumers, WhoAmIConsumer{
-			Slug:           cons.Slug,
-			Name:           cons.Name,
-			Type:           string(cons.Type),
-			Active:         cons.Active,
-			URL:            h.consumerURL(c, gateway, cons),
-			ActsForUsers:   cons.ActsForUsers,
-			IdentitySource: cons.IdentitySource,
+			Slug:      cons.Slug,
+			Name:      cons.Name,
+			Type:      string(cons.Type),
+			Active:    cons.Active,
+			URL:       h.consumerURL(c, gateway, cons),
+			Upstreams: whoAmIUpstreams(cons.Upstreams),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(out)
+}
+
+func whoAmIKey(key appconsumer.KeyInfo) WhoAmIKey {
+	out := WhoAmIKey{Name: key.Name}
+	if key.ExpiresAt != nil {
+		out.ExpiresAt = key.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+func whoAmIUpstreams(upstreams []appconsumer.KeyUpstream) []WhoAmIUpstream {
+	if len(upstreams) == 0 {
+		return nil
+	}
+	out := make([]WhoAmIUpstream, 0, len(upstreams))
+	for _, up := range upstreams {
+		out = append(out, WhoAmIUpstream{
+			Server:         up.Server,
+			Provider:       up.Provider,
+			Account:        string(up.Account),
+			Connected:      up.Connected,
+			NeedsReconnect: up.NeedsReconnect,
+			Blocked:        up.Blocked,
+		})
+	}
+	return out
 }
 
 // consumerURL is where this consumer answers.
