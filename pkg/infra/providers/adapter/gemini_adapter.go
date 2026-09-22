@@ -382,11 +382,22 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 
 // canonicalFinishToGeminiReason maps a canonical finish reason onto Gemini's
 // finishReason vocabulary, returning "" for anything outside it so each call
-// site keeps the fallback it had. content_filter becomes SAFETY rather than
-// PROHIBITED_CONTENT: SAFETY is the value every generation of the Gemini SDKs
-// understands and it covers a block from any filter, while PROHIBITED_CONTENT
-// asserts one specific Google policy we cannot claim on behalf of an Azure or
-// Bedrock upstream.
+// site keeps the fallback it had.
+//
+// content_filter becomes PROHIBITED_CONTENT rather than SAFETY. The choice is
+// between two kinds of legacy exposure, and SAFETY is the worse one:
+//
+//   - The legacy JS SDK @google/generative-ai hardcodes a blocklist
+//     (src/requests/response-helpers.ts): RECITATION, SAFETY and LANGUAGE.
+//     hadBadFinishReason and the text() helper read it, so on 0.24.1 a SAFETY
+//     finish makes .text() throw GoogleGenerativeAIResponseError, while
+//     PROHIBITED_CONTENT and BLOCKLIST both return "".
+//   - PROHIBITED_CONTENT is in the final legacy generations
+//     (google-ai-generativelanguage 0.6.9+, @google/generative-ai 0.22.0+), so
+//     only clients pinned below those see an unknown enum member — a narrower
+//     window than the throw, and an unknown member degrades to a string rather
+//     than raising.
+//   - Legacy Python raises on both, so it does not discriminate.
 func canonicalFinishToGeminiReason(reason string) string {
 	switch reason {
 	case "stop", "tool_calls": // Gemini reports STOP even for function calls.
@@ -394,7 +405,7 @@ func canonicalFinishToGeminiReason(reason string) string {
 	case "length":
 		return "MAX_TOKENS"
 	case "content_filter", "refusal":
-		return "SAFETY"
+		return "PROHIBITED_CONTENT"
 	default:
 		return ""
 	}
