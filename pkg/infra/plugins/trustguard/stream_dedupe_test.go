@@ -15,6 +15,7 @@
 package trustguard
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -316,4 +317,84 @@ func TestInspectSegmentFingerprintSurvivesATransformRewrite(t *testing.T) {
 
 	assert.Equal(t, before.Fingerprints, after.Fingerprints)
 	assert.Len(t, streamSet(before.Fingerprints, after.Fingerprints), 1)
+}
+
+// streamFindings is what the executor hands an inspector on a closing segment:
+// the stream's set narrowed to the entry being called, still carrying the tag
+// the executor attributed it by.
+func streamFindings(entry string, prints []string) []appplugins.StreamFinding {
+	out := make([]appplugins.StreamFinding, 0, len(prints))
+	for _, fp := range prints {
+		out = append(out, appplugins.StreamFinding{Entry: entry, Fingerprint: fp})
+	}
+	return out
+}
+
+func TestInspectSegmentClosingPublishesTheStreamsFindingsOnce(t *testing.T) {
+	t.Parallel()
+
+	p := newTestPlugin(t, adapter.NewRegistry(), "")
+	event, span := newEvent()
+	in := dedupeExecInput(event, policy.ModeObserve)
+
+	mine, _ := streamFingerprints(policy.ModeObserve, []GuardFinding{injectionFinding(), piiFinding()})
+	require.Len(t, mine, 2)
+
+	_, err := p.InspectSegment(segmentTraceContext(), in, appplugins.StreamSegment{
+		Seq: 6, Closing: true,
+		Report:   appplugins.StreamReport{Evals: 6, GuardCalls: 6, FinalPass: true},
+		Findings: streamFindings(dedupeEntryID, mine),
+	})
+	require.NoError(t, err)
+
+	data, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	require.NotNil(t, data.Streaming)
+	assert.Equal(t, mine, data.Streaming.Findings,
+		"the event carries the fingerprints, not the entry the executor narrowed them by")
+	assert.Equal(t, 2, data.FindingsCount)
+}
+
+// Enforce stops the stream on its first blocking or transforming verdict, so it
+// has nothing to deduplicate and contributes no key. Its closing event is the
+// one it emitted before the set existed, asserted on the JSON the span
+// publishes rather than on the struct behind it: the absent key is what the
+// slice promises.
+func TestInspectSegmentEnforceContributesAndPublishesNothing(t *testing.T) {
+	t.Parallel()
+
+	g := &segmentGuard{response: GuardResponse{
+		Status:   statusBlock,
+		Findings: []GuardFinding{injectionFinding()},
+	}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+	event, span := newEvent()
+	in := dedupeExecInput(event, policy.ModeEnforce)
+	ctx := segmentTraceContext()
+
+	verdict, err := p.InspectSegment(ctx, in, appplugins.StreamSegment{Seq: 1, Accumulated: dedupeAccumulated(1)})
+	require.NoError(t, err)
+	require.True(t, verdict.Block)
+	assert.Empty(t, verdict.Fingerprints)
+
+	_, err = p.InspectSegment(ctx, in, appplugins.StreamSegment{
+		Seq: 1, Closing: true,
+		Report: appplugins.StreamReport{Evals: 1, GuardCalls: 1, CutAtEval: 1},
+	})
+	require.NoError(t, err)
+
+	data, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	require.NotNil(t, data.Streaming)
+
+	raw, err := json.Marshal(data)
+	require.NoError(t, err)
+	var published map[string]any
+	require.NoError(t, json.Unmarshal(raw, &published))
+	assert.NotContains(t, published, "findings")
+	assert.NotContains(t, published, "findings_count")
+	streaming, ok := published["streaming"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, streaming, "findings",
+		"an enforced stream emits the event it emitted before the set existed, key for key")
 }

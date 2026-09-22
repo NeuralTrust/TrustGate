@@ -136,12 +136,27 @@ func (p *Plugin) recordStreamOutcome(
 		return
 	}
 	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
+	if prints := findingPrints(seg.Findings); len(prints) > 0 {
+		data.FindingsCount = len(prints)
+		data.Streaming.Findings = prints
+	}
 	in.Event.SetSLatency(seg.Report.GuardLatency)
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	if seg.ReportsStream {
 		recordStreamEvals(ctx, seg.Report)
 	}
+}
+
+// findingPrints is the set the event carries, without the entry the executor
+// already narrowed it by. The entry a fingerprint belongs to is the span it is
+// written on.
+func findingPrints(findings []appplugins.StreamFinding) []string {
+	prints := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		prints = append(prints, finding.Fingerprint)
+	}
+	return prints
 }
 
 // segmentStream places the block in its stream. An id is what the engine
