@@ -215,7 +215,7 @@ func testCatalog() fakeCatalog {
 		// one holds several; and all three are installable by a user alone.
 		"github": {
 			Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true,
-			SelfService: true, MultiInstance: false,
+			SelfService: true,
 		},
 		"snowflake": {
 			Code:        "snowflake",
@@ -225,7 +225,7 @@ func testCatalog() fakeCatalog {
 				{Name: "account_url", Required: true},
 				{Name: "database", Required: true},
 			},
-			SelfService: true, MultiInstance: true,
+			SelfService: true,
 		},
 		"brightdata": {
 			Code:        "brightdata",
@@ -234,7 +234,7 @@ func testCatalog() fakeCatalog {
 			URLVariables: []catalogdomain.MCPURLVariable{
 				{Name: "token", Required: true, Secret: true, In: "query"},
 			},
-			SelfService: true, MultiInstance: true,
+			SelfService: true,
 		},
 	}}
 }

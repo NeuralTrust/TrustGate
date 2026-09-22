@@ -207,7 +207,7 @@ func notionLike() catalogdomain.MCPServer {
 		AuthHint: "oauth", AuthMethods: []string{"oauth"}, RequiresAuth: true,
 		// What the catalog declares for this shape: a user installs it alone,
 		// and one instance serves all of them.
-		SelfService: true, MultiInstance: false,
+		SelfService: true,
 		OAuth: &catalogdomain.MCPOAuth{
 			Required: true, ResourceMetadata: true, Registration: "auto",
 			AuthorizeURL: "https://mcp.notion.com/authorize", TokenURL: "https://mcp.notion.com/token",
@@ -225,7 +225,7 @@ func platformClientLike() catalogdomain.MCPServer {
 		// The seed declares self_service false for a manual-registration server;
 		// the platform holding its client is what raises it, which is what the
 		// catalog loader would have done to this entry.
-		SelfService: true, MultiInstance: true,
+		SelfService: true,
 		OAuth: &catalogdomain.MCPOAuth{
 			Required: true, Registration: "manual",
 			AuthorizeURL: "https://mcp.platform.example/authorize", TokenURL: "https://mcp.platform.example/token",
@@ -238,7 +238,7 @@ func apiKeyOnlyLike() catalogdomain.MCPServer {
 		Code: "com.semrush/mcp", DisplayName: "Semrush", URL: "https://mcp.semrush.com/mcp",
 		Transport: "streamable-http", AuthHint: "static", AuthMethods: []string{"static"}, RequiresAuth: true,
 		AuthHeaders: []catalogdomain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true, Scheme: "Bearer"}},
-		SelfService: false, MultiInstance: true,
+		SelfService: false,
 	}
 }
 
@@ -504,7 +504,7 @@ func TestStoreInstall_ConfigureLinkPinnedToInstanceAndGroups(t *testing.T) {
 		URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
 		// Each user pastes their own token, so a user installs it alone; two
 		// tokens are two accounts, so it holds several instances.
-		SelfService: true, MultiInstance: true,
+		SelfService: true,
 	}
 	h := newE2EHarness(t, bright)
 	raw, err := h.tool.Call(selfServiceDefaultCtx("ana"), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.brightdata/mcp"}`))
