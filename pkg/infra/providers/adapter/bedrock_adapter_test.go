@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -395,12 +396,182 @@ func TestBedrock_DecodeResponse(t *testing.T) {
 	assert.JSONEq(t, `{"city":"Madrid"}`, cr.ToolCalls[0].Arguments)
 	require.NotNil(t, cr.Reasoning)
 	assert.Equal(t, "They want the weather.", cr.Reasoning.ThinkingText)
-	require.NotNil(t, cr.Usage)
-	assert.Equal(t, 12, cr.Usage.InputTokens)
-	assert.Equal(t, 7, cr.Usage.OutputTokens)
-	assert.Equal(t, 19, cr.Usage.TotalTokens)
-	assert.Equal(t, 4, cr.Usage.CachedInputTokens)
-	assert.Equal(t, 2, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, &CanonicalUsage{
+		InputTokens:           18,
+		OutputTokens:          7,
+		TotalTokens:           25,
+		CachedInputTokens:     4,
+		CacheWriteInputTokens: 2,
+	}, cr.Usage)
+}
+
+func TestBedrock_UsageFold(t *testing.T) {
+	tests := []struct {
+		name string
+		wire string
+		want *CanonicalUsage
+	}{
+		{
+			name: "read and write fold into input and total",
+			wire: `{"inputTokens":12,"outputTokens":7,"totalTokens":19,"cacheReadInputTokens":4,"cacheWriteInputTokens":2}`,
+			want: &CanonicalUsage{InputTokens: 18, OutputTokens: 7, TotalTokens: 25, CachedInputTokens: 4, CacheWriteInputTokens: 2},
+		},
+		{
+			name: "total already covering the cache is kept",
+			wire: `{"inputTokens":12,"outputTokens":7,"totalTokens":30,"cacheReadInputTokens":4,"cacheWriteInputTokens":2}`,
+			want: &CanonicalUsage{InputTokens: 18, OutputTokens: 7, TotalTokens: 30, CachedInputTokens: 4, CacheWriteInputTokens: 2},
+		},
+		{
+			name: "1h details split the write",
+			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
+				"cacheDetails":[{"inputTokens":200,"ttl":"1h"},{"inputTokens":100,"ttl":"5m"}]}`,
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200},
+		},
+		{
+			name: "1h share never exceeds the write",
+			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":50,
+				"cacheDetails":[{"inputTokens":200,"ttl":"1h"}]}`,
+			want: &CanonicalUsage{InputTokens: 60, OutputTokens: 5, TotalTokens: 65, CacheWriteInputTokens: 50, CacheWrite1hInputTokens: 50},
+		},
+		{
+			name: "unknown or empty ttl entries are ignored for 1h",
+			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
+				"cacheDetails":[{"inputTokens":100,"ttl":""},{"inputTokens":150,"ttl":"24h"},{"inputTokens":50}]}`,
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300},
+		},
+		{
+			name: "multiple 1h entries are summed",
+			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
+				"cacheDetails":[{"inputTokens":200,"ttl":"1h"},{"inputTokens":50,"ttl":"1h"},{"inputTokens":50,"ttl":"5m"}]}`,
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 250},
+		},
+		{
+			name: "cache-only usage is not dropped",
+			wire: `{"inputTokens":0,"outputTokens":0,"totalTokens":0,"cacheReadInputTokens":40}`,
+			want: &CanonicalUsage{InputTokens: 40, TotalTokens: 40, CachedInputTokens: 40},
+		},
+		{
+			name: "no cache leaves the counts untouched",
+			wire: `{"inputTokens":5,"outputTokens":9,"totalTokens":14}`,
+			want: &CanonicalUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buffered, err := (&BedrockAdapter{}).DecodeResponse([]byte(`{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":` + tt.wire + `}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, buffered.Usage, "buffered")
+			assertUsageInvariants(t, buffered.Usage)
+
+			chunk, err := (&BedrockAdapter{}).DecodeStreamChunk([]byte(`{"metadata":{"usage":` + tt.wire + `}}`))
+			require.NoError(t, err)
+			require.NotNil(t, chunk)
+			streamed := MergeUsage(nil, chunk.Usage)
+			assert.Equal(t, tt.want, streamed, "stream")
+			assertUsageInvariants(t, streamed)
+		})
+	}
+}
+
+func assertUsageInvariants(t *testing.T, u *CanonicalUsage) {
+	t.Helper()
+	require.NotNil(t, u)
+	assert.LessOrEqual(t, u.CachedInputTokens+u.CacheWriteInputTokens, u.InputTokens, "R+W<=I")
+	assert.LessOrEqual(t, u.CacheWrite1hInputTokens, u.CacheWriteInputTokens, "W1h<=W")
+	assert.GreaterOrEqual(t, u.TotalTokens, u.InputTokens+u.OutputTokens, "Total>=I+O")
+}
+
+func TestBedrock_UsageUnfold(t *testing.T) {
+	tests := []struct {
+		name       string
+		usage      *CanonicalUsage
+		want       *ConverseUsage
+		roundTrips bool
+	}{
+		{
+			name: "consistent usage splits the write by ttl",
+			usage: &CanonicalUsage{
+				InputTokens: 318, OutputTokens: 7, TotalTokens: 325,
+				CachedInputTokens: 4, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200,
+			},
+			want: &ConverseUsage{
+				InputTokens: 14, OutputTokens: 7, TotalTokens: 325,
+				CacheReadInputTokens: 4, CacheWriteInputTokens: 300,
+				CacheDetails: []ConverseCacheDetail{{InputTokens: 200, TTL: "1h"}, {InputTokens: 100, TTL: "5m"}},
+			},
+			roundTrips: true,
+		},
+		{
+			name:  "five-minute-only write",
+			usage: &CanonicalUsage{InputTokens: 110, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100},
+			want: &ConverseUsage{
+				InputTokens: 10, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100,
+				CacheDetails: []ConverseCacheDetail{{InputTokens: 100, TTL: "5m"}},
+			},
+			roundTrips: true,
+		},
+		{
+			name:       "read-only",
+			usage:      &CanonicalUsage{InputTokens: 50, OutputTokens: 3, TotalTokens: 53, CachedInputTokens: 40},
+			want:       &ConverseUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 53, CacheReadInputTokens: 40},
+			roundTrips: true,
+		},
+		{
+			name:       "no cache",
+			usage:      &CanonicalUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14},
+			want:       &ConverseUsage{InputTokens: 5, OutputTokens: 9, TotalTokens: 14},
+			roundTrips: true,
+		},
+		{
+			name:  "1h share above the write is clamped",
+			usage: &CanonicalUsage{InputTokens: 60, OutputTokens: 5, TotalTokens: 65, CacheWriteInputTokens: 50, CacheWrite1hInputTokens: 200},
+			want: &ConverseUsage{
+				InputTokens: 10, OutputTokens: 5, TotalTokens: 65, CacheWriteInputTokens: 50,
+				CacheDetails: []ConverseCacheDetail{{InputTokens: 50, TTL: "1h"}},
+			},
+		},
+		{
+			name:  "cache above the input never goes negative",
+			usage: &CanonicalUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CachedInputTokens: 8, CacheWriteInputTokens: 5},
+			want: &ConverseUsage{
+				InputTokens: 0, OutputTokens: 2, TotalTokens: 12, CacheReadInputTokens: 8, CacheWriteInputTokens: 5,
+				CacheDetails: []ConverseCacheDetail{{InputTokens: 5, TTL: "5m"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &BedrockAdapter{}
+
+			buffered, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			var wire ConverseResponse
+			require.NoError(t, json.Unmarshal(buffered, &wire))
+			assert.Equal(t, tt.want, wire.Usage, "buffered wire")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Usage: tt.usage})
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			var event ConverseStreamEvent
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[0], []byte("data: ")), &event))
+			require.NotNil(t, event.Metadata)
+			assert.Equal(t, tt.want, event.Metadata.Usage, "stream wire")
+
+			if !tt.roundTrips {
+				return
+			}
+			back, err := a.DecodeResponse(buffered)
+			require.NoError(t, err)
+			assert.Equal(t, tt.usage, back.Usage, "buffered round trip")
+
+			chunk, err := a.DecodeStreamChunk(bytes.TrimPrefix(lines[0], []byte("data: ")))
+			require.NoError(t, err)
+			require.NotNil(t, chunk)
+			assert.Equal(t, tt.usage, chunk.Usage, "stream round trip")
+		})
+	}
 }
 
 func TestBedrock_DecodeResponse_StopReasons(t *testing.T) {

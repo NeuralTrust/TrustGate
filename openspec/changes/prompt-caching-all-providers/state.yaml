@@ -25,3 +25,5 @@ base:
   note: develop is 634 commits ahead of main and blocks the environment; ENG-1618 is branched from main and PR'd to main; develop catches up via back-merge (review manually).
   moonshot: provider does not exist on main -> out of scope
   revalidate_before: [S2b (openai_responses_adapter differs ~28 lines), S3 (registry.go 12 lines, format.go 4 lines)]
+bedrock_validation:
+  decision_2026-09-23: validate with Amazon Nova for now; Claude-on-Bedrock blocked (AWS Marketplace INVALID_PAYMENT_INSTRUMENT on the SSO account) -> pending, re-run explicit Claude cases once access is fixed
