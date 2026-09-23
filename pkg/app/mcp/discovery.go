@@ -254,11 +254,32 @@ func (c *composer) rememberFailure(key string, err error) {
 	if isContextError(err) {
 		return
 	}
-	var consentErr *ConsentRequiredError
-	if errors.As(err, &consentErr) {
+	if fixableByConnecting(err) {
 		return
 	}
 	c.discovery.Set(key, discoveryFailure{err: err, until: time.Now().Add(negativeTTL)})
+}
+
+// fixableByConnecting reports a refusal somebody can clear from outside, by
+// connecting an account.
+//
+// The negative cache exists to stop a broken upstream being hammered for ten
+// seconds. A missing account is not a broken upstream: the moment it is
+// connected the next call would work, and remembering the refusal would keep
+// failing for ten seconds after the person did exactly what they were told —
+// with nothing in the answer to say that waiting is what is left.
+//
+// Both shapes count. A ConsentRequiredError names a page the caller walks
+// themselves; an ApplicationNotConnectedError names one they cannot, because
+// the account belongs to the server's instance or to an end user they have not
+// named. Which of the two it is changes who acts, not how soon it takes effect.
+func fixableByConnecting(err error) bool {
+	var consentErr *ConsentRequiredError
+	if errors.As(err, &consentErr) {
+		return true
+	}
+	var notConnected *ApplicationNotConnectedError
+	return errors.As(err, &notConnected)
 }
 
 func isContextError(err error) bool {

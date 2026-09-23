@@ -1518,3 +1518,96 @@ func TestConnectService_ProviderTicketReachesOnlyItsProvider(t *testing.T) {
 		t.Fatalf("Start on its own provider: %v", err)
 	}
 }
+
+// A shared instance holds one account for everyone, so the two things a caller
+// can do to a connection of their own — see it and revoke it — part ways here.
+//
+// Seeing it must report the account the runtime will actually call with, or a
+// client that gates on this endpoint stops a run the gateway would have served.
+// Revoking it is not the caller's to do at all: every other caller rides on the
+// same account, which is the same reason no caller may connect it.
+func TestConnectService_ASharedInstanceIsReportedButNotRevocable(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	shared, err := registrydomain.NewMCPRegistry(gw, "Notion", "", &registrydomain.MCPTarget{
+		URL:  "https://mcp.notion.com/mcp",
+		Code: "com.notion/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode: registrydomain.MCPAuthModeForwarded, Provider: "com.notion/mcp",
+			ClientID: "cid", AuthorizeURL: "https://notion/a", TokenURL: "https://notion/t",
+			Account: registrydomain.MCPAccountShared,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{shared},
+	}})
+	store := newMemConnectStore()
+	vault := &memVaultRepo{}
+	svc := oauth.NewConnectService(
+		store, vault, &stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(), nil, nil, nil, nil,
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	// Nothing connected yet, and alice is not who would connect it.
+	statuses, err := svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Linked || !statuses[0].Shared {
+		t.Fatalf("an unconnected shared instance reads as shared and unlinked, got %+v", statuses)
+	}
+
+	// The admin connects it on the instance, under the instance's own subject.
+	credential, err := vaultdomain.NewCredential(
+		gw, registrydomain.SharedAccountSubject(shared.ID),
+		registrydomain.ForwardedVaultProvider(shared),
+		"ops@acme.com", "token", "refresh", nil, time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	if err := vault.Upsert(ctx, credential); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	statuses, err = svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses after connect: %v", err)
+	}
+	if !statuses[0].Linked {
+		t.Fatalf("every caller reads the instance's account as connected, got %+v", statuses)
+	}
+	if statuses[0].AccountRef != "ops@acme.com" {
+		t.Fatalf("the account the calls actually use is the one reported, got %+v", statuses[0])
+	}
+
+	// Alice cannot connect it either, and the refusal is the point: a page she
+	// could walk would store a credential under a subject the runtime never
+	// reads, and leave her told the server is still not connected.
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp", shared.ID.String()); !errors.Is(err, oauth.ErrSharedAccountNotYours) {
+		t.Fatalf("Start = %v, want ErrSharedAccountNotYours", err)
+	}
+
+	// And she cannot take it away from everybody else.
+	if err := svc.Disconnect(ctx, ticket, "com.notion/mcp", shared.ID.String()); !errors.Is(err, oauth.ErrSharedAccountNotYours) {
+		t.Fatalf("Disconnect = %v, want ErrSharedAccountNotYours", err)
+	}
+	if _, err := vault.Find(ctx, gw, registrydomain.SharedAccountSubject(shared.ID),
+		registrydomain.ForwardedVaultProvider(shared)); err != nil {
+		t.Fatalf("the instance's account survives a caller's revoke: %v", err)
+	}
+}

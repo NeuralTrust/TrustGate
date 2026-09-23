@@ -116,7 +116,7 @@ func (s *InstallationsService) upsertInstallation(
 	if err := s.authorizeGateway(ctx, "upsert", in.GatewayID); err != nil {
 		return nil, err
 	}
-	if err := validateDataPlaneInstallation(in); err != nil {
+	if err := s.validateDataPlaneInstallation(ctx, in); err != nil {
 		return nil, err
 	}
 	if err := s.repo.Upsert(ctx, in); err != nil {
@@ -363,14 +363,30 @@ func (s *InstallationsService) authorizeGateway(ctx context.Context, op string, 
 // channel: the data plane only ever records self-service installs, so the
 // installer is the principal. An installed_by that names someone else would let
 // a data plane forge a provisioned-by-admin row.
-func validateDataPlaneInstallation(in *installationdomain.Installation) error {
+//
+// A row the data plane did not create is the exception, and only while it stays
+// what it was: the configure page merges a user's values into the row they
+// already hold, which may have been recorded by the console (a Portal install
+// stamps the caller's email) or an admin. Its installed_by and status must match
+// the stored row exactly — the data plane moves the config, never the
+// provenance or the decision (RUN-1652).
+func (s *InstallationsService) validateDataPlaneInstallation(ctx context.Context, in *installationdomain.Installation) error {
 	if err := in.Validate(); err != nil {
 		return status.Errorf(codes.InvalidArgument, "store installations: upsert: %v", err)
 	}
-	if in.InstalledBy != "" && in.InstalledBy != in.PrincipalSub {
-		return status.Error(codes.PermissionDenied, "store installations: upsert: installed_by must be the principal")
+	if in.InstalledBy == "" || in.InstalledBy == in.PrincipalSub {
+		return nil
 	}
-	return nil
+	if !in.ID.IsNil() {
+		stored, err := s.repo.FindByID(ctx, in.GatewayID, in.PrincipalSub, in.ID)
+		switch {
+		case err == nil && stored != nil && stored.InstalledBy == in.InstalledBy && stored.Status == in.Status:
+			return nil
+		case err != nil && !errors.Is(err, installationdomain.ErrNotFound) && !errors.Is(err, commonerrors.ErrNotFound):
+			return status.Errorf(codes.Internal, "store installations: upsert: load stored row: %v", err)
+		}
+	}
+	return status.Error(codes.PermissionDenied, "store installations: upsert: installed_by must be the principal")
 }
 
 func parseGatewayID(raw, op string) (ids.GatewayID, error) {

@@ -25,7 +25,6 @@ import (
 
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
-	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -44,37 +43,6 @@ func (s *stubConsumerFinder) List(context.Context, domain.ListFilter) ([]*domain
 	return s.items, len(s.items), nil
 }
 
-// stubUpstreamAccounts answers the pending count from a table and records who
-// it was asked about, which is how the tests see the consumers the listing
-// skips without reading the vault at all.
-type stubUpstreamAccounts struct {
-	pending map[ids.ConsumerID]int
-	err     error
-	asked   []ids.ConsumerID
-}
-
-func (s *stubUpstreamAccounts) State(
-	context.Context, ids.GatewayID, ids.ConsumerID,
-) (*appoauth.ConsumerUpstreamState, error) {
-	return nil, errors.New("not used")
-}
-
-func (s *stubUpstreamAccounts) PendingUpstreamAuth(
-	_ context.Context, _ ids.GatewayID, consumerID ids.ConsumerID,
-) (int, error) {
-	s.asked = append(s.asked, consumerID)
-	if s.err != nil {
-		return 0, s.err
-	}
-	return s.pending[consumerID], nil
-}
-
-func (s *stubUpstreamAccounts) Link(
-	context.Context, ids.GatewayID, ids.ConsumerID, ids.RegistryID,
-) (*appoauth.ConsumerConnectLink, error) {
-	return nil, errors.New("not used")
-}
-
 func mcpConsumer(gw ids.GatewayID, name string, identity domain.Identity) *domain.Consumer {
 	return &domain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Name: name, Slug: name,
@@ -86,21 +54,19 @@ func listConsumers(
 	t *testing.T,
 	gw ids.GatewayID,
 	finder *stubConsumerFinder,
-	upstream appoauth.ConsumerUpstreamAccounts,
 ) response.ListConsumerResponse {
-	return listConsumersWith(t, gw, finder, upstream, "")
+	return listConsumersWith(t, gw, finder, "")
 }
 
 func listConsumersWith(
 	t *testing.T,
 	gw ids.GatewayID,
 	finder *stubConsumerFinder,
-	upstream appoauth.ConsumerUpstreamAccounts,
 	query string,
 ) response.ListConsumerResponse {
 	t.Helper()
 	app := fiber.New()
-	app.Get("/gateways/:gateway_id/consumers", consumerhttp.NewListConsumerHandler(finder, upstream).Handle)
+	app.Get("/gateways/:gateway_id/consumers", consumerhttp.NewListConsumerHandler(finder).Handle)
 	url := "/gateways/" + gw.String() + "/consumers"
 	if query != "" {
 		url += "?" + query
@@ -116,73 +82,18 @@ func listConsumersWith(
 	return out
 }
 
-// An application bound to a server it has not signed into is refused on every
-// call to it, and the listing is the only place an admin sees that before a
-// user does.
-func TestListConsumers_ReportsWhatIsStillUnauthorized(t *testing.T) {
-	t.Parallel()
-	gw := ids.New[ids.GatewayKind]()
-	owes := mcpConsumer(gw, "batch-jobs", domain.Identity{})
-	settled := mcpConsumer(gw, "reporting", domain.Identity{})
-	upstream := &stubUpstreamAccounts{pending: map[ids.ConsumerID]int{owes.ID: 2}}
+// The per-consumer upstream accounts the listing used to count are gone: an
+// instance of an MCP server decides whose account it uses, so there is no
+// per-consumer number to report.
 
-	out := listConsumers(t, gw, &stubConsumerFinder{items: []*domain.Consumer{owes, settled}}, upstream)
-
-	require.Len(t, out.Items, 2)
-	require.NotNil(t, out.Items[0].PendingUpstreamAuth)
-	require.Equal(t, 2, *out.Items[0].PendingUpstreamAuth)
-	require.Nil(t, out.Items[1].PendingUpstreamAuth, "an application that owes nothing carries no count")
-}
-
-// Only an application that acts as itself holds accounts of its own: an
-// application whose users sign in for themselves owes nothing, and asking would
-// only be refused.
-func TestListConsumers_SkipsConsumersWithoutAccountsOfTheirOwn(t *testing.T) {
-	t.Parallel()
-	gw := ids.New[ids.GatewayKind]()
-	machine := mcpConsumer(gw, "batch-jobs", domain.Identity{})
-	forUsers := mcpConsumer(gw, "assistant", domain.Identity{
-		ActsForUsers: true, Source: domain.IdentitySourceApp,
-	})
-	llm := &domain.Consumer{
-		ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Name: "chat", Slug: "chat",
-		Type: domain.TypeLLM, Active: true,
-	}
-	upstream := &stubUpstreamAccounts{pending: map[ids.ConsumerID]int{machine.ID: 1}}
-
-	out := listConsumers(t, gw, &stubConsumerFinder{items: []*domain.Consumer{machine, forUsers, llm}}, upstream)
-
-	require.Len(t, out.Items, 3)
-	require.Equal(t, []ids.ConsumerID{machine.ID}, upstream.asked)
-	require.NotNil(t, out.Items[0].PendingUpstreamAuth)
-	require.Nil(t, out.Items[1].PendingUpstreamAuth)
-	require.Nil(t, out.Items[2].PendingUpstreamAuth)
-}
-
-// An unreadable vault is not the same as nothing owed: the listing still
-// answers, and leaves the count out rather than reporting a reassuring zero.
-func TestListConsumers_LeavesTheCountOutWhenItCannotLook(t *testing.T) {
-	t.Parallel()
-	gw := ids.New[ids.GatewayKind]()
-	machine := mcpConsumer(gw, "batch-jobs", domain.Identity{})
-
-	out := listConsumers(t, gw, &stubConsumerFinder{items: []*domain.Consumer{machine}},
-		&stubUpstreamAccounts{err: errors.New("vault unreachable")})
-
-	require.Len(t, out.Items, 1)
-	require.Nil(t, out.Items[0].PendingUpstreamAuth)
-}
-
-// A plane without the connect service has no accounts to read; the listing must
-// still serve.
-func TestListConsumers_ServesWithoutTheConnectService(t *testing.T) {
+func TestListConsumers_Serves(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	out := listConsumers(t, gw,
-		&stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "batch-jobs", domain.Identity{})}}, nil)
+		&stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "batch-jobs", domain.Identity{})}})
 
 	require.Len(t, out.Items, 1)
-	require.Nil(t, out.Items[0].PendingUpstreamAuth)
+	require.Equal(t, "batch-jobs", out.Items[0].Name)
 }
 
 // The Store is served without being stored, so it is in no listing that reads
@@ -194,7 +105,7 @@ func TestListConsumers_OffersTheStoreWhenAsked(t *testing.T) {
 	agent := mcpConsumer(gw, "support-agent", domain.Identity{})
 	finder := &stubConsumerFinder{items: []*domain.Consumer{agent}}
 
-	out := listConsumersWith(t, gw, finder, nil, "include_synthetic=true")
+	out := listConsumersWith(t, gw, finder, "include_synthetic=true")
 
 	require.Len(t, out.Items, 2)
 	require.Equal(t, domain.StoreSlug, out.Items[0].Slug)
@@ -210,7 +121,7 @@ func TestListConsumers_LeavesTheStoreOutByDefault(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	finder := &stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "support-agent", domain.Identity{})}}
 
-	out := listConsumers(t, gw, finder, nil)
+	out := listConsumers(t, gw, finder)
 
 	require.Len(t, out.Items, 1)
 	require.False(t, out.Items[0].Synthetic)
@@ -223,7 +134,7 @@ func TestListConsumers_KeepsTheStoreOffLaterPages(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	finder := &stubConsumerFinder{items: []*domain.Consumer{mcpConsumer(gw, "support-agent", domain.Identity{})}}
 
-	out := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&page=2")
+	out := listConsumersWith(t, gw, finder, "include_synthetic=true&page=2")
 
 	require.Len(t, out.Items, 1)
 	require.False(t, out.Items[0].Synthetic)
@@ -236,14 +147,13 @@ func TestListConsumers_FiltersApplyToTheStoreToo(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	finder := &stubConsumerFinder{}
 
-	llmOnly := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&type=LLM")
+	llmOnly := listConsumersWith(t, gw, finder, "include_synthetic=true&type=LLM")
 	require.Empty(t, llmOnly.Items)
 
-	byKey := listConsumersWith(t, gw, finder, nil,
-		"include_synthetic=true&auth_id="+ids.New[ids.AuthKind]().String())
+	byKey := listConsumersWith(t, gw, finder, "include_synthetic=true&auth_id="+ids.New[ids.AuthKind]().String())
 	require.Empty(t, byKey.Items)
 
-	byName := listConsumersWith(t, gw, finder, nil, "include_synthetic=true&search=store")
+	byName := listConsumersWith(t, gw, finder, "include_synthetic=true&search=store")
 	require.Len(t, byName.Items, 1)
 	require.True(t, byName.Items[0].Synthetic)
 }

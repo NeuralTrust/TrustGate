@@ -221,7 +221,12 @@ func (p *principalPreview) fillConnection(
 	if p.vault == nil {
 		return nil
 	}
-	cred, err := p.vault.Find(ctx, gatewayID, principalSub, registrydomain.ForwardedVaultProvider(reg))
+	// Whose account this instance reads, which is not always the caller's: a
+	// shared instance holds one for everyone, and that is the account the call
+	// will actually use. Reading the caller's own key would show the Portal a
+	// server as unconnected that works, and offer a Connect nobody can complete.
+	subject := registrydomain.CredentialSubject(reg, principalSub)
+	cred, err := p.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
 	switch {
 	case err == nil:
 		conn.Linked = true

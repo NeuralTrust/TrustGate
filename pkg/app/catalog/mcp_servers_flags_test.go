@@ -111,8 +111,11 @@ func TestCuratedCatalogFlagsAgreeWithTheEntry(t *testing.T) {
 	}
 
 	// Canary: a change in this count means entries moved between the two
-	// answers, which is worth looking at deliberately.
-	require.Equal(t, 115, self, "self_service count changed")
+	// answers, which is worth looking at deliberately. 114 since Dropbox moved
+	// to manual registration: it refuses dynamic client registration outright
+	// ("only pre-registered MCP trusted partners"), so an operator's client is
+	// the only way in (RUN-1641).
+	require.Equal(t, 114, self, "self_service count changed")
 }
 
 // The seed answers for a gateway standing on its own. A platform-held OAuth

@@ -146,7 +146,7 @@ func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T)
 		t.Fatalf("build api key auth: %v", err)
 	}
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/api-key/mcp":      {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID), Auths: []*authdomain.Auth{apiKey}}},
 		"/bare/mcp":         {{GatewayID: gatewayID}},
 		"/nil-consumer/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
@@ -200,7 +200,7 @@ func TestProtectedResourceMetadataActsForUsersConsumerWithResidualAPIKey(t *test
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/users/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, platformUsersIdentity()),
+			Consumer:  consumerdomain.BuildStoreConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{apiKey, disabledKey},
 		}},
 	}}
@@ -239,12 +239,12 @@ func TestProtectedResourceMetadataAppSourceConsumerAdvertisesNoLogin(t *testing.
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/app-key/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Consumer:  mcpConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{apiKey},
 		}},
 		"/app-mtls/mcp": {{
 			GatewayID: gatewayID,
-			Consumer:  mcpConsumer(gatewayID, appUsersIdentity()),
+			Consumer:  mcpConsumer(gatewayID),
 			Auths:     []*authdomain.Auth{mtls},
 		}},
 	}}
@@ -274,7 +274,7 @@ func TestProtectedResourceMetadataFallbackDoesNotLeakOtherGatewayScopes(t *testi
 	otherIdP := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://theirs.example.com", RequiredScopes: []string{"theirs:secret-project"}})
 	gatewayID := ourIdP.GatewayID
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/bare/mcp": {{GatewayID: gatewayID, Consumer: mcpConsumer(gatewayID, platformUsersIdentity())}},
+		"/bare/mcp": {{GatewayID: gatewayID, Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}},
 	}}
 	svc := NewMetadataService(
 		&fakeCredentialFinder{oauth2: []*authdomain.Auth{ourIdP, otherIdP}}, paths, nil, newMemFlowStore(),

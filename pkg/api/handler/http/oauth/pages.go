@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"html/template"
 	"net/url"
+	"strconv"
 	"strings"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -82,7 +83,13 @@ type singleConnectView struct {
 	AccountRef     string
 	NeedsReconnect bool
 	Found          bool
-	ResumeURL      template.URL
+	// Waiting is set while a server the ticket names is not on this plane yet
+	// and the page is still retrying: RetryURL reloads it after RetryAfter
+	// seconds, one attempt further on.
+	Waiting    bool
+	RetryAfter int
+	RetryURL   string
+	ResumeURL  template.URL
 	// Description is the catalog one-liner for the server, shown under the
 	// headline so the card says what the user is connecting to.
 	Description string
@@ -144,6 +151,18 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 	if view.ServerName == "" {
 		view.ServerName = serverDisplayName(catalog, page.Code)
 	}
+	// A server connected for the first time was shelved on the control plane a
+	// moment ago, and config-sync may not have brought it to this plane yet: the
+	// page found nothing and said the server needs no connection, until a manual
+	// reload (RUN-1635). While a ticket names a server that is not here, the page
+	// says it is getting ready and reloads itself, a bounded number of times.
+	if !view.Found && page.Code != "" && flash == "" {
+		if attempt := connectWaitAttempt(c); attempt < connectPageWaitAttempts {
+			view.Waiting = true
+			view.RetryAfter = connectPageWaitSeconds
+			view.RetryURL = connectRetryURL(c, attempt+1)
+		}
+	}
 	if catalog != nil {
 		if server, ok := lookupCatalogServer(catalog, page.Code, view.Provider); ok {
 			view.Description = strings.TrimSpace(server.Description)
@@ -151,6 +170,35 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 		}
 	}
 	return renderHTML(c, singleConnectPageTmpl, view)
+}
+
+// connectPageWaitAttempts and connectPageWaitSeconds bound how long the
+// focused page waits for a server that is not on this plane yet: long enough
+// for config-sync to deliver one shelved a moment ago, short enough that a
+// server which really is not here is said so within half a minute.
+const (
+	connectPageWaitAttempts = 8
+	connectPageWaitSeconds  = 2
+	connectWaitParam        = "wait"
+)
+
+func connectWaitAttempt(c *fiber.Ctx) int {
+	attempt, err := strconv.Atoi(c.Query(connectWaitParam))
+	if err != nil || attempt < 0 {
+		return 0
+	}
+	return attempt
+}
+
+// connectRetryURL is this page again, same query, one attempt further on. It is
+// relative to the request's own path, so it can only ever reload this page.
+func connectRetryURL(c *fiber.Ctx, attempt int) string {
+	q := url.Values{}
+	for k, v := range c.Context().QueryArgs().All() {
+		q.Add(string(k), string(v))
+	}
+	q.Set(connectWaitParam, strconv.Itoa(attempt))
+	return c.Path() + "?" + q.Encode()
 }
 
 // maxAccessItems caps the access list so a server with dozens of scopes or

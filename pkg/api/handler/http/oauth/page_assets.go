@@ -458,7 +458,7 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
-<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
+<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title>{{if .Waiting}}<meta http-equiv="refresh" content="{{.RetryAfter}};url={{.RetryURL}}">{{end}}<style>` + pageCSS + `</style></head>
 <body class="dotted"><div class="card flush">
 <div class="card-hero">
   <div class="pair">
@@ -468,7 +468,11 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   </div>
 </div>
 <div class="card-body">
-{{if not .Found}}
+{{if and (not .Found) .Waiting}}
+  <h1 class="title">Getting {{.ServerName}} ready</h1>
+  <p class="lede">{{.ServerName}} was just added and is still reaching this gateway. This page reloads on its own in a moment.</p>
+  <a class="btn primary" href="{{.RetryURL}}">Try again now</a>
+{{else if not .Found}}
   <h1 class="title">Connect your {{.ServerName}} account</h1>
   <p class="lede">This server does not need an account connection, or it is not available on this virtual MCP.</p>
 {{else}}

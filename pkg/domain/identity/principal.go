@@ -258,3 +258,36 @@ func LooksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
 	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " \t\n")
 }
+
+// Subject namespaces the gateway mints for itself.
+//
+// A subject is the key an upstream account hangs off, so two callers with the
+// same subject are the same account. The gateway builds some of them — an
+// application (app:<consumer_id>), an end user an application names
+// (app:<consumer_id>:<end_user>), the account an MCP instance holds for
+// everyone (instance:<registry_id>) — and reads the rest from whatever an
+// identity provider put in a token.
+//
+// Nothing makes those two sets disjoint on their own. An identity provider is
+// free to issue any string, and which claim the subject is read from is
+// configurable per credential (subject_claim), so it may be one a person can
+// edit about themselves. A token naming "app:<some consumer id>" would then be
+// that application, and would read the upstream accounts it had linked.
+//
+// So the namespaces are reserved: a subject the gateway did not mint may not
+// claim to be one it did. The check belongs where a token becomes a principal,
+// before anything keys on it.
+const (
+	AppSubjectPrefix      = "app:"
+	InstanceSubjectPrefix = "instance:"
+)
+
+// ReservedSubject reports whether a subject falls in a namespace only the
+// gateway may mint. Case-insensitive, because the vault key is compared byte
+// for byte and "APP:" would otherwise slip a distinct-but-confusable subject
+// past a reader who trusts the prefix.
+func ReservedSubject(subject string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(subject))
+	return strings.HasPrefix(lowered, AppSubjectPrefix) ||
+		strings.HasPrefix(lowered, InstanceSubjectPrefix)
+}

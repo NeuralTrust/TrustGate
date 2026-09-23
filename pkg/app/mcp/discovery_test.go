@@ -362,3 +362,38 @@ func TestDiscovery_PendingConsentIsNotRemembered(t *testing.T) {
 		t.Fatalf("dialled %d times, want 2: a consent requirement must not be cached", got)
 	}
 }
+
+// The other half of the same rule, and the one that bit: a server whose account
+// an administrator connects on the instance, or one that wants the end user a
+// request did not name, refuses for a reason somebody can clear from outside.
+// Remembering it would keep failing for ten seconds after they did — with
+// nothing in the answer to say that waiting is what is left.
+func TestDiscovery_AnUnconnectedAccountIsNotRemembered(t *testing.T) {
+	t.Parallel()
+	for name, refusal := range map[string]error{
+		"a shared account nobody has connected": &ApplicationNotConnectedError{
+			Provider: "notion", Registry: "Notion", Shared: true,
+		},
+		"an instance that wants the end user": &ApplicationNotConnectedError{
+			Provider: "github", Registry: "GitHub",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+			dialer := newCountingDialer(func(string) (Upstream, error) { return nil, refusal })
+			c := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
+			rc := routable(mcpClient(), reg)
+
+			for range 2 {
+				if _, err := c.ListTools(context.Background(), rc); err == nil {
+					t.Fatal("an unconnected account must refuse")
+				}
+			}
+
+			if got := dialer.count("https://a.example.com/mcp"); got != 2 {
+				t.Fatalf("dialled %d times, want 2: the refusal must not be cached", got)
+			}
+		})
+	}
+}

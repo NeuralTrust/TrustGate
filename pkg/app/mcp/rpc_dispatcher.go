@@ -128,13 +128,32 @@ func (d *RPCDispatcher) Dispatch(
 	return handler(ctx, dispatchRequest{consumer: consumer, baseURL: baseURL, params: params})
 }
 
-func emptySurfaceInsteadOfError(consumer *appconsumer.RoutableConsumer, err error) bool {
+// emptySurfaceInsteadOfError reports whether a listing should come back empty
+// rather than as an error.
+//
+// It is about who is asking, not about how the consumer was configured: a
+// person — or an end user an application named — may simply have connected
+// nothing yet, and an empty list is the honest answer to "what can I use". A
+// request running as the application itself is a different matter: its surface
+// is what an admin bound, so nothing there is a fault worth reporting.
+func emptySurfaceInsteadOfError(ctx context.Context, consumer *appconsumer.RoutableConsumer, err error) bool {
 	if _, ok := errors.AsType[*ConsentRequiredError](err); ok {
 		return true
 	}
-	perUser := consumer != nil && consumer.Consumer != nil &&
-		(consumerdomain.IsStoreConsumer(consumer.Consumer) || consumer.Consumer.ActsForUsers())
-	return perUser && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
+	return perUserCaller(ctx, consumer) && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
+}
+
+// perUserCaller reports whether somebody other than the application itself is
+// behind this request.
+func perUserCaller(ctx context.Context, consumer *appconsumer.RoutableConsumer) bool {
+	if consumer == nil || consumer.Consumer == nil {
+		return false
+	}
+	if consumerdomain.IsStoreConsumer(consumer.Consumer) {
+		return true
+	}
+	p := identity.PrincipalFromContext(ctx)
+	return p != nil && p.Subject != "" && p.Subject != consumerdomain.AppSubject(consumer.Consumer.ID)
 }
 
 func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any, error) {
@@ -143,7 +162,7 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	}
 	tools, err := d.composer.ListTools(ctx, req.consumer)
 	if err != nil {
-		if !emptySurfaceInsteadOfError(req.consumer, err) {
+		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
 			return nil, err
 		}
 		tools = nil
@@ -330,7 +349,7 @@ func (d *RPCDispatcher) listResources(ctx context.Context, req dispatchRequest) 
 	}
 	resources, err := d.composer.ListResources(ctx, req.consumer)
 	if err != nil {
-		if !emptySurfaceInsteadOfError(req.consumer, err) {
+		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
 			return nil, err
 		}
 		resources = nil
@@ -347,7 +366,7 @@ func (d *RPCDispatcher) listResourceTemplates(ctx context.Context, req dispatchR
 	}
 	templates, err := d.composer.ListResourceTemplates(ctx, req.consumer)
 	if err != nil {
-		if !emptySurfaceInsteadOfError(req.consumer, err) {
+		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
 			return nil, err
 		}
 		templates = nil
@@ -377,7 +396,7 @@ func (d *RPCDispatcher) listPrompts(ctx context.Context, req dispatchRequest) (a
 	}
 	prompts, err := d.composer.ListPrompts(ctx, req.consumer)
 	if err != nil {
-		if !emptySurfaceInsteadOfError(req.consumer, err) {
+		if !emptySurfaceInsteadOfError(ctx, req.consumer, err) {
 			return nil, err
 		}
 		prompts = nil

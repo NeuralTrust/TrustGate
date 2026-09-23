@@ -54,6 +54,25 @@ type connectService struct {
 	userinfo    UserInfoClient
 	catalog     authCatalog
 	registries  RegistryLister
+	urlValues   URLValueSource
+}
+
+// URLValueSource returns a principal's values for a registry's URL
+// placeholders — the same ones the dial path substitutes. appmcp's
+// URLValueResolver satisfies it.
+type URLValueSource interface {
+	Values(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (map[string]string, error)
+}
+
+// ConnectOption tunes NewConnectService.
+type ConnectOption func(*connectService)
+
+// WithConnectURLValues lets the connect flow discover a templated server's OAuth
+// server at the URL the principal will dial ({region} filled in) rather than at
+// the template. Without it only a registry that carries its own instance values
+// resolves; any other templated one fails with ErrUpstreamSetupRequired.
+func WithConnectURLValues(v URLValueSource) ConnectOption {
+	return func(s *connectService) { s.urlValues = v }
 }
 
 type authCatalog interface {
@@ -71,8 +90,9 @@ func NewConnectService(
 	userinfo UserInfoClient,
 	catalog authCatalog,
 	registries RegistryLister,
+	opts ...ConnectOption,
 ) ConnectService {
-	return &connectService{
+	s := &connectService{
 		store:       store,
 		vault:       vault,
 		consumers:   consumers,
@@ -84,6 +104,12 @@ func NewConnectService(
 		catalog:     catalog,
 		registries:  registries,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error) {
@@ -274,7 +300,14 @@ func (s *connectService) providerStatuses(
 		if reg.MCPTarget != nil {
 			status.Code = reg.MCPTarget.Code
 		}
-		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
+		// Whose account this instance reads, which is not always the caller's:
+		// a shared instance holds one for everyone, and the runtime injects it
+		// through the same subject. Reading the caller's own key here would
+		// report a connected server as unconnected and stop a batch that gates
+		// on this endpoint — with nothing the caller could do about it.
+		subject := registrydomain.CredentialSubject(reg, ticket.PrincipalSub)
+		status.Shared = subject != ticket.PrincipalSub
+		cred, err := s.vault.Find(ctx, gatewayID, subject, registrydomain.ForwardedVaultProvider(reg))
 		switch {
 		case err == nil:
 			status.Linked = true
@@ -314,7 +347,10 @@ func (s *connectService) Start(
 	if reg == nil {
 		return "", ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+		return "", ErrSharedAccountNotYours
+	}
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, ticket.PrincipalSub, reg)
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +400,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
 	if err != nil {
 		return st.TicketID, err
 	}
@@ -402,6 +438,9 @@ func (s *connectService) Disconnect(ctx context.Context, ticketID, provider, ins
 	// since removed must still be able to clear the stored credential, or the
 	// user is left holding an account they cannot revoke.
 	if reg := connectRegistry(data.EffectiveRegistries(rc), provider, instanceID, ticket.InstanceID); reg != nil {
+		if !ownsSharedAccount(reg, ticket.PrincipalSub) {
+			return ErrSharedAccountNotYours
+		}
 		err = s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, registrydomain.ForwardedVaultProvider(reg))
 	} else {
 		err = s.deleteProviderCredentials(ctx, gatewayID, ticket.PrincipalSub, provider)
@@ -575,7 +614,7 @@ func currentAppIdentity(
 		rc.Consumer.ID.String() != ticket.ConsumerID {
 		return false
 	}
-	if !validMCPConsumer(rc, gatewayID) || rc.Consumer.Identity.ActsForUsers {
+	if !validMCPConsumer(rc, gatewayID) {
 		return false
 	}
 	if ticket.AuthID == "" {
@@ -676,4 +715,17 @@ func providerRegistry(regs []*registrydomain.Registry, provider string) *registr
 
 func connectCallbackURL(baseURL, provider string) string {
 	return baseURL + "/oauth/callback/" + provider
+}
+
+// ownsSharedAccount reports whether this ticket may write the account behind an
+// instance — connect it, or revoke it.
+//
+// An instance that holds one account for everyone has exactly one ticket that
+// may: the one an administrator minted against the instance itself. A caller's
+// own ticket may not, in either direction. Letting them connect it would store
+// a credential under a subject the runtime never reads, so they would walk the
+// whole page and still be told the server is not connected; letting them revoke
+// it would take from every other caller an account none of them can put back.
+func ownsSharedAccount(reg *registrydomain.Registry, principalSub string) bool {
+	return registrydomain.CredentialSubject(reg, principalSub) == principalSub
 }

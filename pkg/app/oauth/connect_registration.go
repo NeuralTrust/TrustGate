@@ -20,11 +20,12 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
+func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil {
 		return nil, ErrProviderNotFound
@@ -34,13 +35,13 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
-		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
 		return manualAuth(effective, meta), nil
 	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -56,18 +57,23 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if cfg == nil {
 		return nil, ErrProviderNotFound
 	}
+	// A refresh runs on the dial path, as the principal the call is for.
+	principalSub := ""
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		principalSub = p.Subject
+	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
 		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
-		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
 		return manualAuth(effective, meta), nil
 	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return nil, err
 	}

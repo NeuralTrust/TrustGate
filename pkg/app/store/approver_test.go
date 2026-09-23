@@ -41,7 +41,9 @@ func newApproverT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries) Ap
 func newApproverWith(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, grants *fakeGrants, ensurer RegistryEnsurer) Approver {
 	t.Helper()
 	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
-		"github": {Code: "github", DisplayName: "GitHub"},
+		"github": {Code: "github", DisplayName: "GitHub", SelfService: true},
+		// Box's OAuth client is registered by hand: no catalog entry carries it.
+		"com.box/mcp": {Code: "com.box/mcp", DisplayName: "Box"},
 	}}
 	var opts []ApproverOption
 	if ensurer != nil {
@@ -173,5 +175,42 @@ func TestApprover_Deny_FlipsRevoked(t *testing.T) {
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusRevoked {
 		t.Fatalf("want one revoked upsert, got %+v", installs.upserts)
+	}
+}
+
+// TestApprover_Approve_NeedsAdminSetup_RefusesBeforeMaterialising: a request
+// for a never-connected server whose registry needs an admin's credential is
+// refused as needing setup, and nothing is materialised, granted or installed.
+func TestApprover_Approve_NeedsAdminSetup_RefusesBeforeMaterialising(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "com.box/mcp")}
+	regs := &fakeRegistries{}
+	ensurer := &fakeEnsurer{addTo: regs}
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, ensurer)
+
+	err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "com.box/mcp"})
+	if !errors.Is(err, ErrNeedsAdminSetup) {
+		t.Fatalf("want ErrNeedsAdminSetup, got %v", err)
+	}
+	if len(ensurer.ensured) != 0 || len(grants.upserts) != 0 || len(installs.upserts) != 0 {
+		t.Fatalf("nothing may be written: ensured=%v grants=%d installs=%d", ensurer.ensured, len(grants.upserts), len(installs.upserts))
+	}
+}
+
+// TestApprover_Approve_NeedsAdminSetup_ShelvedByAdmin: once an admin connected
+// it, the same request approves onto that registry.
+func TestApprover_Approve_NeedsAdminSetup_ShelvedByAdmin(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "com.box/mcp")}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("com.box/mcp")}}
+	ensurer := &fakeEnsurer{addTo: regs}
+	a := newApproverWith(t, installs, regs, &fakeGrants{}, ensurer)
+
+	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "com.box/mcp"}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(ensurer.ensured) != 0 {
+		t.Fatalf("an admin-connected server needs no materialising, ensured=%v", ensurer.ensured)
 	}
 }

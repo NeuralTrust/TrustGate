@@ -127,13 +127,12 @@ func TestIdentityRequest_ToDomain(t *testing.T) {
 	if none.ToDomain() != nil {
 		t.Fatal("an omitted identity maps to nil so the consumer keeps its default")
 	}
-	got := (&IdentityRequest{ActsForUsers: true, Source: " Platform "}).ToDomain()
-	if got == nil || !got.ActsForUsers || got.Source != domain.IdentitySourcePlatform {
-		t.Fatalf("ToDomain() = %+v, want acts_for_users with the platform source", got)
-	}
-	llm := (&IdentityRequest{EndUserHeader: true}).ToDomain()
-	if llm == nil || !llm.EndUserHeader || llm.ActsForUsers {
-		t.Fatalf("ToDomain() = %+v, want only end_user_header", llm)
+	// The old fields are still accepted so a client written against them is not
+	// refused, and they no longer decide anything: who a request runs as is read
+	// from the request.
+	got := (&IdentityRequest{ActsForUsers: true, Source: " Platform ", EndUserHeader: true}).ToDomain()
+	if got == nil || *got != (domain.Identity{}) {
+		t.Fatalf("ToDomain() = %+v, want an empty identity", got)
 	}
 }
 

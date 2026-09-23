@@ -546,24 +546,34 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 	}
-	switch {
-	case rc.Consumer.Identity.AppUsers():
-		if !machineCredential(identity.PrincipalFromContext(c.UserContext())) {
-			return nil, fiber.NewError(fiber.StatusForbidden,
-				"this application identifies its own users; call it with its API key or client certificate, not a user login")
+	// Who the request runs as is read from the request, not from the consumer.
+	//
+	// A verified person — a token an identity provider signed — is already
+	// whoever the token says, and stays that across applications: the upstream
+	// accounts follow the person, which is the whole point of having verified
+	// them. A machine credential proves the application and nothing about a
+	// person, so what it names in the end-user header is taken at face value and
+	// namespaced by the application; naming nobody means the application itself.
+	//
+	// This is what lets one application do both. The flag it replaced had to be
+	// answered when the consumer was created, before anyone had met its callers.
+	if machineCredential(identity.PrincipalFromContext(c.UserContext())) {
+		caller := identity.PrincipalFromContext(c.UserContext())
+		endUser := strings.TrimSpace(c.Get(consumerdomain.EndUserHeader))
+		if endUser == "" {
+			c.SetUserContext(identity.WithPrincipal(c.UserContext(), appPrincipal(rc.Consumer, caller)))
+			return rc, nil
 		}
-		endUser := c.Get(consumerdomain.EndUserHeader)
+		// Named but malformed is refused rather than quietly treated as
+		// unnamed: the difference decides whose account the call reaches.
 		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
 			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
-		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext()), endUser))
+		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, caller, endUser))
 		c.SetUserContext(ctx)
 		if rt := trace.FromContext(ctx); rt != nil {
-			rt.SetEndUser(strings.TrimSpace(endUser))
+			rt.SetEndUser(endUser)
 		}
-	case !rc.Consumer.ActsForUsers() && machineCredential(identity.PrincipalFromContext(c.UserContext())):
-		ctx := identity.WithPrincipal(c.UserContext(), appPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())))
-		c.SetUserContext(ctx)
 	}
 	return rc, nil
 }

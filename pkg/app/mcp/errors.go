@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 var (
@@ -55,8 +56,9 @@ func (e *ToolNotPermittedError) Error() string {
 // consumer that acts as itself has no person behind the request, so there is
 // nobody to walk an OAuth page — and minting a connect ticket for it would drop
 // a bearer capability into the application's error channel and its logs, where
-// it is of no use to the only party who can redeem it. The administrator
-// authorizes the application from Consumers → Routing instead.
+// it is of no use to the only party who can redeem it. Whose account a server's
+// instance uses is settled on that instance instead: an administrator connects a
+// shared account there, or the caller names the person it is acting for.
 type ApplicationNotConnectedError struct {
 	Provider string
 	Registry string
@@ -73,12 +75,17 @@ func (e *ApplicationNotConnectedError) Error() string {
 	}
 	if e.Shared {
 		return fmt.Sprintf(
-			"mcp: %q is set to use one shared account and none is connected; an administrator connects it on the server's instance",
+			"mcp: %q uses one shared account for every caller and nobody has connected it; "+
+				"an administrator connects it in the console, on the server's instance in Registry",
 			server,
 		)
 	}
+	// Every MCP client reads this, not only the SDK, so the remedy is the header
+	// itself rather than a call in one language.
 	return fmt.Sprintf(
-		"mcp: this application has no account on %q; an administrator must authorize it from Consumers → Routing",
-		server,
+		"mcp: %q keeps one account per user, and this request carries only the application's key, "+
+			"so it has no account there. Send the %s header with the id of the end user it acts for, "+
+			"or have an administrator set the server's instance to a shared account",
+		server, consumerdomain.EndUserHeader,
 	)
 }

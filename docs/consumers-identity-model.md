@@ -2,6 +2,15 @@
 
 Status: gateway and app implemented (see §10) · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
 
+> **Read §11, §12.3 and §14.3 for the model as it stands.** Two things named
+> throughout §§2–10 no longer exist. A consumer used to *declare* who its
+> callers were (`identity.acts_for_users`, `identity.source`); it declares
+> nothing now, and each request is read for itself (§11). And an application's
+> upstream account used to be per consumer, linked on an api-key connect page or
+> through `.../consumers/{id}/upstream-accounts`; whose account a server uses is
+> a property of the server's instance now (§12.3). Those sections are kept as
+> the reasoning that got here, not as a description of the code.
+
 Companion to `plan-b-mcp-store-and-identity.md`, which built the Store. This memo
 answers the question that memo left open: now that people are served by the
 Portal + Store + Access, **what is a consumer for, and what does identity mean
@@ -452,16 +461,20 @@ binds them per consumer. Resolved open questions: the attribution header is
 
 ## 11. MCP flow matrix (audit)
 
-Every MCP consumer is one row of identity × credential. What the gateway does at
-each step, and where it is enforced:
+A consumer no longer declares who its callers are: it declares nothing, and each
+request is read for itself. There are three answers, and the credential the
+caller presented decides which:
 
-| Identity | Credential | Who is the principal | Upstream connections | Access rules | Enforced |
-|---|---|---|---|---|---|
-| Acts as the application | API key | the key (`sub` = auth name) | one shared account per key; linked on the API-key connect page `/{slug}/connect` or via the consent error | no | `resolveMCPConsumer`, `apiKeyConnectService` |
-| Acts as the application | Trusted IdP (JWT) or mTLS | the token's `azp`/`sub` or the certificate CN | shared per principal, same page | no | `consumerAdmitsPrincipal` applies the auth binding |
-| Users sign in (platform) | none → NeuralTrust login | the person (`sub`, `groups` from the platform token) | per person; consent error → connect page | no — the consumer's servers are what the admin bound (§15) | `emptySurfaceInsteadOfError` |
-| Users sign in (platform) | Company IdP (oauth2 with a registered client) | the person, groups from that token's claims | per person | no | `ValidateAuthConfig` refuses a validation-only IdP (it cannot broker the login) and refuses api_key / mtls |
-| My app identifies its users (app) | API key or mTLS + `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | header required (400), user login refused (403), API-key connect page refused (409), oauth2 auths refused at attach |
+| What the request carries | Who the principal is | Upstream accounts | Access rules | Enforced |
+|---|---|---|---|---|
+| A machine credential (API key or client certificate), no end-user header | the application — `app:<consumer_id>` | on a `shared` instance, the instance's; on a `user` instance, none, and the call is refused with both remedies | no | `resolveConsumer` → `appPrincipal`, `machineCredential` |
+| A machine credential **+** `X-NeuralTrust-End-User` | that person, under this application — `app:<consumer_id>:<end_user>` | per end user; the app mints links and reads states through `/{slug}/connections/links` and `/{slug}/connections` | no (the app is the boundary) | `endUserPrincipal`; a malformed id is a 400, and a user login may not assert one |
+| A verified token (NeuralTrust login, or a company IdP the consumer admits) | the person the token names, with their own `sub` and groups | per person; the consent error and `trustgate_connect_*` hand them a connect page | Access applies where it applies (§15) | `consumerAdmitsPrincipal`, `emptySurfaceInsteadOfError` |
+
+The namespacing is the point of the second row: the end user's name is
+*asserted* by the application, not verified, so two applications naming
+`user_123` must never reach the same account. A verified person keeps their own
+subject, which is what lets their accounts follow them across applications.
 
 Invariants checked in this audit:
 
@@ -472,22 +485,29 @@ Invariants checked in this audit:
   surface watcher skip when the subject is empty.
 - The end-user swap only happens after the caller proved it is the application
   (API key or certificate); a platform session cannot impersonate an end user.
+- **The gateway's own subject namespaces are reserved.** `app:` and `instance:`
+  are minted here and nowhere else, so a credential whose subject arrives from
+  outside — a token an identity provider signed, a certificate a CA issued —
+  may not wear them (`identity.ReservedSubject`, refused in the auth chain).
+  Without that, a token saying `app:<another team's consumer>` *is* that
+  application at the vault, and `subject_claim` is configurable per credential,
+  so the subject can be a claim a person edits about themselves. An api key is
+  exempt: its subject is this gateway's own label for the key.
 - Per-user credentials are keyed by the principal subject everywhere (vault,
-  consent tickets, connect page, statuses, stream fingerprint), so the three
-  subjects (`auth name`, platform `sub`, `app:…`) never share an account.
+  consent tickets, statuses, stream fingerprint), so the three subjects
+  (`app:<id>`, `app:<id>:<user>`, a verified `sub`) never share an account.
 - The Store is the platform-users row with the catalog as its server set.
 - Client certificates authenticate on both planes: the MCP plane through the
   auth chain, the LLM proxy plane through `MTLSIdentityResolver` (TLS handshake
   or `X-Forwarded-Client-Cert` from a peer in `TRUST_XFCC_FROM`); the binding's
   allowed subjects apply on both.
-- Product decision: consumers whose users sign in use the NeuralTrust login
-  only. The gateway still accepts an interactive company IdP through the API,
-  but the app does not offer one.
-- Product decision: the *My app identifies its users* source is not offered in
-  the app until the client library exists — the pattern is only fit to hand out
-  through an SDK, not as raw connections URLs. The gateway keeps serving it, and
-  a consumer already set to it stays editable. Spec:
-  `trustgate-sdk-spec.md`; flag: `APP_IDENTITY_SOURCE_ENABLED` in the app.
+- The built-in NeuralTrust login only ever rescues the Store, which carries no
+  credential by construction (`WantsSignIn`). Revoking the last key of any other
+  consumer locks it down rather than opening it to every platform login.
+- Naming an end user needs no setting to be turned on: any application holding a
+  machine credential may send the header, per call. Handing that pattern out
+  well is the SDK's job, not a per-consumer flag. Spec:
+  `trustgate-sdk-spec.md`.
 
 ## 12. Upstream MCP authentication for a machine consumer
 
@@ -543,34 +563,42 @@ available behind an identity provider.**
 
 ### 12.3 The linking step for `forwarded`, without a person in the loop
 
-A machine consumer has no browser, but `forwarded` needs an account. Two paths
-already exist and both link to the *application's* principal, so the account is
-shared by every call the application makes:
+A machine consumer has no browser, but `forwarded` needs an account. **Whose
+account it is is settled on the server's instance, not on the consumer**
+(§12.3.1): an instance is either `user` — every caller links their own — or
+`shared` — one account an admin connects once, which every caller rides on.
 
-1. **The connect page** — `GET/POST /{slug}/connect`
-   (`pkg/app/oauth/api_key_connect.go`): a human pastes the consumer's API key
-   and the gateway mints a ticket for the application's principal, covering
-   every forwarded provider of that consumer. One-time, out of band.
-   Since §14.3, an admin can mint the same ticket from the console without
-   holding a key at all (`POST .../upstream-accounts/link`).
-2. **The `trustgate_connect_<provider>` tool** (`pkg/app/mcp/connection_tool.go`),
-   exposed on the consumer's own tool list: calling it returns a connect URL for
-   the current principal. This is also what the first tool call answers with —
-   `ConsentRequiredError` carries a `connect_url` — so the failure is
-   self-describing.
+That leaves exactly two linking paths, and neither of them is a page a machine
+can reach:
 
-For a consumer whose *application* identifies its end users the same linking is
-per end user and goes through the connections API instead; the connect page
-refuses it with 409 (`ErrAPIKeyConnectEndUsers`), see §11.
+1. **The admin connects the instance** —
+   `POST .../registries/{id}/shared-account/connect-link` mints the connect page
+   with the subject pinned to `instance:<registry_id>`. This is the answer for
+   an application that runs as itself: it has no person to walk a consent page,
+   so the account cannot be its own.
+2. **A person links their own** — the `trustgate_connect_<provider>` tool
+   (`pkg/app/mcp/connection_tool.go`) on the consumer's own tool list returns a
+   connect URL for the current principal, and `ConsentRequiredError` carries the
+   same `connect_url`, so the first failing tool call is self-describing. It
+   needs a principal who can complete the page: a verified person, or the end
+   user an application names with `X-NeuralTrust-End-User`.
 
-#### The account an instance holds for everyone
+A request that runs as the application itself against a `user` instance
+therefore has nothing to link and is refused outright
+(`ApplicationNotConnectedError`), naming both remedies: name the end user it
+acts for, or have an admin switch the instance to a shared account. There is no
+per-consumer accounts API any more — the api-key connect page `/{slug}/connect`
+and `.../consumers/{id}/upstream-accounts[/link]` are both gone, because the
+question they answered ("which account does *this consumer* hold?") is now the
+instance's.
 
-Both paths above hang the account off the *caller*, which is the right answer
-when the caller is a person or an application acting for itself, and the wrong
-one when a team wants one Notion login behind a server and does not want to
-answer "whose" at all. So the instance can hold the account instead:
-`MCPTarget.Auth.Account` is `user` (the default, and what every instance was
-before) or `shared`.
+#### 12.3.1 The account an instance holds for everyone
+
+A connect page hangs the account off whoever walks it, which is the right answer
+when that is a person linking their own login, and the wrong one when a team
+wants one Notion login behind a server and does not want to answer "whose" at
+all. So the instance can hold the account instead: `MCPTarget.Auth.Account` is
+`user` (the default, and what every instance was before) or `shared`.
 
 Nothing about the OAuth changes — same client, same scopes, same vault — only
 whose account it is:
@@ -614,10 +642,12 @@ one.
   `none | static | client_credentials` for an OpenAPI source
   (`features/registry/components/CustomMcpSidePanel.tsx`). The two modes that
   make an IdP-JWT consumer worth having are API-only.
-- **Still open — nothing shows the admin the upstream state of a machine
-  consumer.** The Connect tab explains the consumer's own credential but never
-  says which of its bound servers still need an upstream account, nor points at
-  the connect page. The data exists (`ProviderStatus`, `/{slug}/connect`).
+- **Closed, elsewhere than here.** "Which of its bound servers still need an
+  account" stopped being a question about the consumer at all: the account hangs
+  off the server's instance, so the answer lives on the instance
+  (`GET .../registries/{id}/shared-account`) and the console shows it there. The
+  per-consumer reading of it (`.../consumers/{id}/upstream-accounts`) was built
+  and then removed with the model it belonged to.
 - **Operational wart.** The machine principal's subject is the API key's
   **name** (unique per gateway), so renaming that auth orphans its vault
   credentials and silently forces a reconnect. Keying on the auth id would be
@@ -685,7 +715,7 @@ sets `Principal{Subject: auth.Name}` (`pkg/api/middleware/auth_chain.go`), so
 the **display label of a credential** was the durable identity — on the MCP
 plane it is now replaced by the application's own subject (§14.3), and what
 follows is the reason. That string keys: the credential vault (`pkg/app/mcp/credentials.go:195`), connect tickets
-and provider statuses (`pkg/app/oauth/api_key_connect.go:124`), per-user URL
+and provider statuses (`pkg/app/oauth/connect.go`), per-user URL
 variables, Store installs and grants, the per-principal discovery cache
 (`pkg/app/mcp/discovery.go:260`), the upstream session pin
 (`pkg/app/mcp/target.go:92`), the `sub` of any JWT we mint for an upstream
@@ -783,12 +813,12 @@ Fixed in this branch (gateway + app):
    and `x-api-key`, trimmed, through the same helper the proxy plane uses.
 4. **Fail-open no longer swallows the cause** when nothing was reachable, so
    `ErrUpstreamNeedsCallerToken` reaches the caller with the registry named.
-5. **The product says it.** `GET`/`POST
-   /v1/gateways/{gid}/consumers/{id}/upstream-accounts[/link]` report which
-   bound servers want the application's own account and mint the pinned, audited
-   connect ticket for it; the console's Connect tab lists them, shows each
-   account's state, and authorizes them in one click — no api key needed, which
-   is what made this unreachable from the console before.
+5. **The product says it** — though not here any more. A per-consumer
+   `.../upstream-accounts[/link]` pair reported which bound servers wanted the
+   application's own account and minted a pinned, audited ticket for it. It has
+   since been removed along with the question it answered: the account belongs
+   to the server's instance, so the console authorizes it on the instance
+   (§12.3).
 6. **`passthrough`/`exchange` in the UI** read as "caller's own token" instead
    of "no authentication", and saving such a registry no longer strips its
    credential (the payload omits `auth` while the mode is one the panel cannot
@@ -855,10 +885,10 @@ By construction, then:
 - An application's accounts are enumerable by prefix, so deleting the consumer
   can revoke them.
 - The admin API needed no `auth_id` and no api key at all: an application that
-  authenticates only with a client certificate still has accounts to link, and
-  `GET /upstream-accounts` answers for the consumer. The
-  `ErrUpstreamAccountsAmbiguousKey` 409 ("pass auth_id") is gone — the question
-  it asked no longer exists.
+  authenticates only with a client certificate still had accounts to link. That
+  API is itself gone now (§12.3) — whose account a server uses is a property of
+  its instance — but the reasoning is why: once the account stopped hanging off
+  a credential, nothing about a credential could be asked for to reach it.
 
 Ticket authority changed with it. An application connect ticket is pinned to
 the consumer; the api key is now an *optional* pin, present on the in-band
