@@ -136,11 +136,21 @@ type CredentialBackfillParams struct {
 }
 
 // StartCredentialBackfill runs policyrepo.Repository.BackfillCredentialEncryption
-// once in the background at boot, on the same planes and in the same
-// fire-and-forget shape as StartCatalogSync: it must never block or fail
-// startup, because every policy read already tolerates legacy plaintext (see
-// scanPolicy) — this backfill only shortens how long a row stays that way at
-// rest.
+// once in the background, in the same fire-and-forget shape as StartCatalogSync.
+//
+// It is deliberately NOT wired into cmd/trustgate/main.go. Encrypting a
+// credential is a one-way door: once a row is rewritten the plaintext is gone,
+// and a bad encryption is recoverable only from a database backup. Running that
+// over every policy automatically, the first time anyone deploys, makes the
+// irreversible step the one nobody decided to take.
+//
+// It is not needed for correctness. Every read already tolerates legacy
+// plaintext (see scanPolicy), and every write encrypts (see marshalSettings),
+// so a policy converges to ciphertext the next time it is saved. What is left
+// unencrypted at rest is exactly the set of policies nobody touches.
+//
+// Wire this to an explicit operator action — a flag or a command — so that a
+// database snapshot precedes it by construction, not by documentation.
 func StartCredentialBackfill(p CredentialBackfillParams) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), credentialBackfillTimeout)
