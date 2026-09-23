@@ -23,7 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -309,7 +311,7 @@ func fixedHostApp(service appconsumer.APIKeyConsumers, keys keyStore, gateways g
 func callFixedHost(t *testing.T, app *fiber.App, key string) (int, mcphttp.WhoAmIResponse, http.Header) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, mcphttp.WhoAmIPath, nil)
-	request.Host = "agentgateway.neuraltrust.ai"
+	request.Host = "agentgateway-mcp.neuraltrust.ai"
 	request.Header.Set("X-Forwarded-Proto", "https")
 	if key != "" {
 		request.Header.Set("X-AG-API-Key", key)
@@ -391,4 +393,75 @@ func TestWhoAmI_KeepsTheHostsGatewayWhenItNamesOne(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, status)
 	require.Equal(t, "https://gw.mcp.neuraltrust.ai/support-agent/mcp", body.Consumers[0].URL)
 	require.Zero(t, limiter.calls)
+}
+
+// A Hybrid gateway is served only by its own data plane. The cloud still holds
+// its keys, so without this it would answer with its own URLs and every call
+// made on them would be refused: it points the key home instead, in the words
+// the proxy uses for that gateway's traffic.
+func hybridGateway() *gatewaydomain.Gateway {
+	return &gatewaydomain.Gateway{
+		ID:           ids.New[ids.GatewayKind](),
+		Slug:         "acme",
+		Entitlements: gatewaydomain.Entitlements{DataPlane: gatewaydomain.DataPlaneHybrid},
+	}
+}
+
+func callWhoAmIRaw(t *testing.T, app *fiber.App, request *http.Request) (int, httpio.ErrorBody) {
+	t.Helper()
+	response, err := app.Test(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	var body httpio.ErrorBody
+	_ = json.NewDecoder(response.Body).Decode(&body)
+	return response.StatusCode, body
+}
+
+func TestWhoAmI_PointsAHybridKeyAtItsOwnDataPlane(t *testing.T) {
+	t.Parallel()
+	gw := hybridGateway()
+	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}}
+	handler := mcphttp.NewWhoAmIHandler(noGateway{}, service, "acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIGatewayFromKey(keyStore{"ag_secret": {GatewayID: gw.ID}}, gatewaysByID{gw.ID: gw},
+			"mcp.neuraltrust.ai", &countingLimiter{}, func(string, string) string { return "203.0.113.7" }),
+		mcphttp.WithWhoAmIRefuseHybrid(),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+
+	request := httptest.NewRequest(http.MethodGet, mcphttp.WhoAmIPath, nil)
+	request.Host = "agentgateway-mcp.neuraltrust.ai"
+	request.Header.Set("X-AG-API-Key", "ag_secret")
+	status, body := callWhoAmIRaw(t, app, request)
+
+	require.Equal(t, fiber.StatusMisdirectedRequest, status)
+	require.Equal(t, middleware.ErrCodeHybridGateway, body.Error)
+}
+
+// Only a key that holds is told: a wrong one learns nothing about the gateway.
+func TestWhoAmI_TellsNoOneWithoutAKeyThatAGatewayIsHybrid(t *testing.T) {
+	t.Parallel()
+	handler := mcphttp.NewWhoAmIHandler(whoAmIGateway{gw: hybridGateway()},
+		&whoAmIConsumers{err: appconsumer.ErrAPIKeyUnknown}, "acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIRefuseHybrid(),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+
+	status, _ := callWhoAmIRaw(t, app, whoAmIRequest("ag_guess"))
+
+	require.Equal(t, fiber.StatusUnauthorized, status)
+}
+
+// The Hybrid data plane itself serves the gateway, so it answers as usual.
+func TestWhoAmI_AnswersAHybridKeyOnItsOwnDataPlane(t *testing.T) {
+	t.Parallel()
+	app := whoAmIApp(&whoAmIConsumers{consumers: []appconsumer.KeyConsumer{
+		{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true},
+	}}, hybridGateway())
+
+	status, body := callWhoAmI(t, app, "ag_secret")
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.Equal(t, "https://gw.mcp.neuraltrust.ai/support-agent/mcp", body.Consumers[0].URL)
 }
