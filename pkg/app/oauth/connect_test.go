@@ -911,6 +911,31 @@ func TestConnectService_ChainURL(t *testing.T) {
 	}
 }
 
+// A Store login must not detour to another consumer's connect page. The Store is
+// synthetic, so MatchPath misses it, and the resource-less fallback used to pick
+// whichever application had an unlinked account: signing in to /store/mcp from
+// Claude or Cursor landed on that application's /<slug>/mcp/connect instead.
+func TestConnectService_ChainURL_StoreResourceHasNoDetour(t *testing.T) {
+	t.Parallel()
+	svc, _, gw := connectFixture(t, "https://unused")
+	ctx := context.Background()
+	resume := "cursor://anysphere.cursor-mcp/oauth/callback?code=gw-code&state=s"
+
+	// alice has an unlinked account on /dev/mcp, which the fallback would pick.
+	if loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "", "alice", resume); err != nil || loc == "" {
+		t.Fatalf("precondition: expected the fallback to find /dev/mcp, got loc=%q err=%v", loc, err)
+	}
+	for _, resource := range []string{"https://gw.example.com/store/mcp", "https://gw.example.com/store/mcp/"} {
+		loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, resource, "alice", resume)
+		if err != nil {
+			t.Fatalf("resource %q: %v", resource, err)
+		}
+		if loc != "" {
+			t.Fatalf("resource %q: Store login detoured to %q, want none", resource, loc)
+		}
+	}
+}
+
 func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	t.Parallel()
 	svc, vault, gw := connectFixture(t, "https://unused")
