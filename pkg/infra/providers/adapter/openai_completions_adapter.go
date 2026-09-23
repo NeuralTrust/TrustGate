@@ -47,6 +47,17 @@ type openaiMessage struct {
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
+type openaiContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL json.RawMessage `json:"image_url,omitempty"`
+}
+
+type openaiImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type openaiTool struct {
 	Type     string            `json:"type"`
 	Function *openaiFunction   `json:"function,omitempty"`
@@ -264,12 +275,15 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	for _, m := range req.Messages {
-		content := contentToString(m.Content)
+		content, images := decodeOpenAIContent(m.Content)
 
 		cm := CanonicalMessage{
 			Role:       m.Role,
 			Content:    content,
 			ToolCallID: m.ToolCallID,
+		}
+		if m.Role == "user" {
+			cm.Images = images
 		}
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
@@ -312,6 +326,22 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 // Request: Encode (Canonical → Chat Completions)
 // ---------------------------------------------------------------------------
 
+func encodeOpenAIContent(m CanonicalMessage) json.RawMessage {
+	if len(m.Images) == 0 {
+		return stringToContent(m.Content)
+	}
+	parts := make([]openaiContentPart, 0, len(m.Images)+1)
+	for _, img := range m.Images {
+		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
+		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
+	}
+	if m.Content != "" {
+		parts = append(parts, openaiContentPart{Type: "text", Text: m.Content})
+	}
+	b, _ := json.Marshal(parts)
+	return b
+}
+
 func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	out := openaiRequest{
 		Model:       req.Model,
@@ -342,9 +372,13 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 		})
 	}
 	for _, m := range req.Messages {
+		content := stringToContent(m.Content)
+		if m.Role == "user" {
+			content = encodeOpenAIContent(m)
+		}
 		msg := openaiMessage{
 			Role:       m.Role,
-			Content:    stringToContent(m.Content),
+			Content:    content,
 			ToolCallID: m.ToolCallID,
 		}
 		for _, tc := range m.ToolCalls {
