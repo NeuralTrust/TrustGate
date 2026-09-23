@@ -194,9 +194,8 @@ func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 	return cu
 }
 
-// completionsUsage decodes the standard usage object and Groq's x_groq.usage
-// copy, keeping the larger count of each field so a payload carrying both is
-// counted once.
+// completionsUsage merges usage with x_groq.usage field-wise by max: Groq
+// repeats usage under x_groq, and the max counts it once (ENG-1618).
 func completionsUsage(usage *openaiUsage, xGroq json.RawMessage) *CanonicalUsage {
 	var cu *CanonicalUsage
 	if usage != nil {
@@ -708,6 +707,11 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		Object:  "chat.completion.chunk",
 		Model:   chunk.Model,
 		Choices: []openaiStreamChoice{choice},
+	}
+	if chunk.Usage != nil && chunk.FinishReason == "" && chunk.Role == "" && chunk.Delta == "" &&
+		chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
+		// OpenAI sends the include_usage chunk with empty choices.
+		out.Choices = []openaiStreamChoice{}
 	}
 
 	out.Usage = openaiUsageFromCanonical(chunk.Usage)

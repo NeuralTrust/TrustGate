@@ -74,6 +74,8 @@ func TestAdaptStream_GroqUsageReachesObserver(t *testing.T) {
 		{name: "openai client with only x_groq usage", client: adapter.FormatOpenAI, upstream: groqUpstreamLines(false, groqStreamFinishXG)},
 		{name: "anthropic client with include_usage", client: adapter.FormatAnthropic, upstream: groqUpstreamLines(true, groqStreamFinish)},
 		{name: "anthropic client without include_usage", client: adapter.FormatAnthropic, upstream: groqUpstreamLines(false, groqStreamFinish)},
+		{name: "anthropic client with only x_groq usage", client: adapter.FormatAnthropic, upstream: groqUpstreamLines(false, groqStreamFinishXG)},
+		{name: "anthropic client with only x_groq usage and include_usage", client: adapter.FormatAnthropic, upstream: groqUpstreamLines(true, groqStreamFinishXG)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -83,51 +85,125 @@ func TestAdaptStream_GroqUsageReachesObserver(t *testing.T) {
 	}
 }
 
-func TestAdaptStream_GroqOpenAIClientUsageNotDoubled(t *testing.T) {
-	lines, _ := adaptGroqStream(t, adapter.FormatOpenAI, groqUpstreamLines(true, groqStreamFinish))
+type openAIClientChunk struct {
+	Choices []json.RawMessage `json:"choices"`
+	Usage   *struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+}
 
-	assert.Contains(t, lines, "data: [DONE]")
-	var usages int
+func openAIClientChunks(t *testing.T, lines []string) []openAIClientChunk {
+	t.Helper()
+	var chunks []openAIClientChunk
 	for _, line := range lines {
-		assert.NotContains(t, line, "x_groq", "x_groq must not leak to a cross-format client")
 		payload, ok := strings.CutPrefix(line, "data: ")
 		if !ok || strings.TrimSpace(payload) == "[DONE]" {
 			continue
 		}
-		var chunk struct {
-			Usage *struct {
-				PromptTokens        int `json:"prompt_tokens"`
-				CompletionTokens    int `json:"completion_tokens"`
-				TotalTokens         int `json:"total_tokens"`
-				PromptTokensDetails struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"prompt_tokens_details"`
-			} `json:"usage"`
-		}
+		var chunk openAIClientChunk
 		require.NoError(t, json.Unmarshal([]byte(payload), &chunk))
-		if chunk.Usage == nil {
-			continue
-		}
-		usages++
-		assert.Equal(t, 1678, chunk.Usage.PromptTokens)
-		assert.Equal(t, 32, chunk.Usage.CompletionTokens)
-		assert.Equal(t, 1710, chunk.Usage.TotalTokens)
-		assert.Equal(t, 1536, chunk.Usage.PromptTokensDetails.CachedTokens)
+		chunks = append(chunks, chunk)
 	}
-	assert.Positive(t, usages, "the client must receive the Groq usage")
+	return chunks
+}
+
+func TestAdaptStream_GroqOpenAIClientUsageNotDoubled(t *testing.T) {
+	tests := []struct {
+		name             string
+		upstream         []string
+		wantEmptyChoices bool
+	}{
+		{name: "include_usage chunk carries the usage", upstream: groqUpstreamLines(true, groqStreamFinish), wantEmptyChoices: true},
+		{name: "x_groq-only finish with include_usage chunk", upstream: groqUpstreamLines(true, groqStreamFinishXG), wantEmptyChoices: true},
+		{name: "finish chunk keeps the usage without include_usage chunk", upstream: groqUpstreamLines(false, groqStreamFinish)},
+		{name: "x_groq-only finish keeps the usage without include_usage chunk", upstream: groqUpstreamLines(false, groqStreamFinishXG)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines, _ := adaptGroqStream(t, adapter.FormatOpenAI, tt.upstream)
+
+			require.NotEmpty(t, lines)
+			assert.Equal(t, "data: [DONE]", lines[len(lines)-2], "[DONE] must stay last")
+			assert.NotContains(t, strings.Join(lines, "\n"), "x_groq", "x_groq must not leak to a cross-format client")
+			var usages int
+			var finishes int
+			for _, chunk := range openAIClientChunks(t, lines) {
+				for _, choice := range chunk.Choices {
+					if strings.Contains(string(choice), `"finish_reason"`) {
+						finishes++
+					}
+				}
+				if chunk.Usage == nil {
+					continue
+				}
+				usages++
+				if tt.wantEmptyChoices {
+					assert.NotNil(t, chunk.Choices)
+					assert.Empty(t, chunk.Choices, "the include_usage chunk must have choices: []")
+				} else {
+					assert.Len(t, chunk.Choices, 1, "the finish chunk must keep its choice")
+				}
+				assert.Equal(t, 1678, chunk.Usage.PromptTokens)
+				assert.Equal(t, 32, chunk.Usage.CompletionTokens)
+				assert.Equal(t, 1710, chunk.Usage.TotalTokens)
+				assert.Equal(t, 1536, chunk.Usage.PromptTokensDetails.CachedTokens)
+			}
+			assert.Equal(t, 1, usages, "the client must receive the Groq usage exactly once")
+			assert.Equal(t, 1, finishes, "the client must receive one finish")
+		})
+	}
+}
+
+// The OpenAI include_usage stream shape: usage is null until the trailing
+// chunk with empty choices.
+var openAIIncludeUsageStream = []string{
+	`data: {"id":"chatcmpl-oa","object":"chat.completion.chunk","created":1,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null}`,
+	`data: {"id":"chatcmpl-oa","object":"chat.completion.chunk","created":1,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":null,"finish_reason":null}],"usage":null}`,
+	`data: {"id":"chatcmpl-oa","object":"chat.completion.chunk","created":1,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null}`,
+	`data: {"id":"chatcmpl-oa","object":"chat.completion.chunk","created":1,"model":"gpt-4o-mini","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":1,"total_tokens":10,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}`,
+	"data: [DONE]",
+}
+
+func TestAdaptStream_OpenAIIncludeUsageStreamUnchanged(t *testing.T) {
+	t.Run("openai upstream passes through byte-exact", func(t *testing.T) {
+		lines := collectLines(t, adaptStream(linesSeq(openAIIncludeUsageStream...), adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatOpenAI, slog.Default(), nil))
+		assert.Equal(t, openAIIncludeUsageStream, lines)
+	})
+	t.Run("re-encoded stream keeps one usage chunk with empty choices", func(t *testing.T) {
+		lines := collectLines(t, adaptStream(linesSeq(openAIIncludeUsageStream...), adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatGroq, slog.Default(), nil))
+		var usages int
+		for _, chunk := range openAIClientChunks(t, lines) {
+			if chunk.Usage == nil {
+				continue
+			}
+			usages++
+			assert.NotNil(t, chunk.Choices)
+			assert.Empty(t, chunk.Choices)
+			assert.Equal(t, 10, chunk.Usage.TotalTokens)
+		}
+		assert.Equal(t, 1, usages)
+	})
 }
 
 func TestAdaptStream_GroqAnthropicClientGetsOneMessageDelta(t *testing.T) {
 	tests := []struct {
 		name         string
 		includeUsage bool
+		finish       string
 	}{
-		{name: "with include_usage", includeUsage: true},
-		{name: "without include_usage"},
+		{name: "with include_usage", includeUsage: true, finish: groqStreamFinish},
+		{name: "without include_usage", finish: groqStreamFinish},
+		{name: "x_groq-only finish with include_usage", includeUsage: true, finish: groqStreamFinishXG},
+		{name: "x_groq-only finish without include_usage", finish: groqStreamFinishXG},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lines, _ := adaptGroqStream(t, adapter.FormatAnthropic, groqUpstreamLines(tt.includeUsage, groqStreamFinish))
+			lines, _ := adaptGroqStream(t, adapter.FormatAnthropic, groqUpstreamLines(tt.includeUsage, tt.finish))
 
 			joined := strings.Join(lines, "\n")
 			assert.NotContains(t, joined, "x_groq")
