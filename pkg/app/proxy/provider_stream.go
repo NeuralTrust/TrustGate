@@ -157,6 +157,7 @@ func adaptStream(
 ) iter.Seq2[[]byte, error] {
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
+	deferUsage := crossFormat && source == adapter.FormatBedrock
 	// On the cross-format path the adapter re-encodes payload chunks but never
 	// produces the terminating "data: [DONE]" sentinel. OpenAI-wire clients
 	// (openai, azure) rely on it to detect end-of-stream, so re-emit it when the
@@ -174,6 +175,7 @@ func adaptStream(
 		}
 
 		var acc toolCallAccumulator
+		var usage *adapter.CanonicalUsage
 		for line, err := range raw {
 			if err != nil {
 				yield(nil, err)
@@ -210,6 +212,13 @@ func adaptStream(
 				continue
 			}
 
+			if deferUsage {
+				if !emitWithoutUsage(emit, registry, payload, source, target, &usage, logger) {
+					return
+				}
+				continue
+			}
+
 			lines, adaptErr := registry.AdaptStreamChunk(payload, source, target)
 			if adaptErr != nil {
 				logger.Warn("stream adapt chunk failed", slog.String("error", adaptErr.Error()))
@@ -219,6 +228,9 @@ func adaptStream(
 				return
 			}
 			// TODO(B.3): plugin chunk forwarding hook here.
+		}
+		if usage != nil {
+			encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Usage: usage}, source)
 		}
 	}
 
@@ -318,6 +330,32 @@ func emitGeminiToolCalls(
 		}
 	}
 	return true
+}
+
+// emitWithoutUsage holds usage back so a Converse client gets one merged
+// metadata event after messageStop instead of one per usage-bearing chunk, the
+// last of which may lack the cache counts.
+func emitWithoutUsage(
+	emit func([][]byte) bool,
+	registry providerCodec,
+	payload []byte,
+	source, target adapter.Format,
+	merged **adapter.CanonicalUsage,
+	logger *slog.Logger,
+) bool {
+	canonical, err := registry.DecodeStreamChunkFor(payload, target)
+	if err != nil {
+		logger.Warn("stream decode chunk failed", slog.String("error", err.Error()))
+		return true
+	}
+	if canonical == nil {
+		return true
+	}
+	*merged = adapter.MergeUsage(*merged, canonical.Usage)
+	chunk := *canonical
+	chunk.Usage = nil
+	chunk.ProviderExtensions = nil
+	return encodeAndEmit(emit, registry, &chunk, source)
 }
 
 func encodeAndEmit(

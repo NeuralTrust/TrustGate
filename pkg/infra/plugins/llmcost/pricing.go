@@ -18,8 +18,10 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"strings"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	providers "github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -35,6 +37,8 @@ type CustomPrice struct {
 	// CacheWrite1h prices the share written with a one-hour TTL, which Anthropic
 	// bills above its five-minute default. No catalog publishes a rate for it, so
 	// it defaults to CacheWrite and only an explicit override makes it exact.
+	// Claude models are the exception: they default to twice the input rate,
+	// which is what Anthropic and Bedrock charge for a one-hour write.
 	CacheWrite1h *float64 `mapstructure:"cache_write_1h" json:"cache_write_1h,omitempty"`
 }
 
@@ -60,7 +64,7 @@ func orInput(rate, input float64) float64 {
 	return rate
 }
 
-func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float64) Rates {
+func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float64, claude bool) Rates {
 	r := Rates{Input: input, Output: output, CacheRead: input, CacheWrite: input}
 	if cacheRead != nil {
 		r.CacheRead = *cacheRead
@@ -68,11 +72,27 @@ func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float6
 	if cacheWrite != nil {
 		r.CacheWrite = *cacheWrite
 	}
-	r.CacheWrite1h = r.CacheWrite
+	r.CacheWrite1h = defaultCacheWrite1h(r, claude)
 	if cacheWrite1h != nil {
 		r.CacheWrite1h = *cacheWrite1h
 	}
 	return r
+}
+
+func defaultCacheWrite1h(r Rates, claude bool) float64 {
+	if claude {
+		return 2 * r.Input
+	}
+	return r.CacheWrite
+}
+
+func isClaudeModel(provider, slug string) bool {
+	switch provider {
+	case providers.Anthropic, providers.Bedrock:
+		return strings.Contains(strings.ToLower(slug), "claude")
+	default:
+		return false
+	}
 }
 
 // CostUSD prices a canonical usage view. It is correct for every provider
@@ -135,13 +155,13 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
 		if cp, ok := BestMatch(custom, slug); ok {
-			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
+			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h, isClaudeModel(provider, slug)), true
 		}
 	}
 	if registry != nil {
 		for _, slug := range candidates {
 			if cp, ok := BestMatch(registry.Overrides, slug); ok {
-				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
+				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h, isClaudeModel(provider, slug)), true
 			}
 		}
 	}
@@ -159,7 +179,7 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 			CacheRead:  orInput(price.CacheReadPrice, price.InputPrice),
 			CacheWrite: orInput(price.CacheWritePrice, price.InputPrice),
 		}
-		r.CacheWrite1h = r.CacheWrite
+		r.CacheWrite1h = defaultCacheWrite1h(r, isClaudeModel(provider, slug))
 		if registry != nil && registry.Discount > 0 {
 			factor := 1 - registry.Discount
 			r.Input *= factor
