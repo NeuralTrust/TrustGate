@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -236,6 +237,22 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 // Request: Encode (Canonical → Gemini)
 // ---------------------------------------------------------------------------
 
+var generatedToolUseID = regexp.MustCompile(`^toolu_[A-Z2-7]+_[0-9]+$`)
+
+// geminiFunctionResponseName returns the function name Gemini pairs a result
+// for callID with. A call missing from the request keeps its id as the name,
+// unless the id is one AnthropicStreamEncoder generated and only one function
+// is declared, which must then be the one called.
+func geminiFunctionResponseName(callID string, toolNames map[string]string, tools []CanonicalTool) string {
+	if name := toolNames[callID]; name != "" {
+		return name
+	}
+	if len(tools) == 1 && generatedToolUseID.MatchString(callID) {
+		return tools[0].Name
+	}
+	return callID
+}
+
 func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := geminiRequest{
 		Model: req.Model,
@@ -249,6 +266,8 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 
 	// contents (canonical "tool" → Gemini "user" with functionResponse)
+	toolNames := map[string]string{}
+	lastWasToolResult := false
 	for _, m := range req.Messages {
 		role := m.Role
 		if role == "assistant" {
@@ -271,6 +290,9 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 					Args: args,
 				},
 			})
+			if tc.ID != "" {
+				toolNames[tc.ID] = tc.Name
+			}
 		}
 		// Tool result → functionResponse part
 		if m.ToolCallID != "" {
@@ -280,17 +302,28 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			}
 			parts = append(parts, geminiPart{
 				FunctionResponse: &geminiFuncResponse{
-					Name:     m.ToolCallID,
+					Name:     geminiFunctionResponseName(m.ToolCallID, toolNames, req.Tools),
 					Response: resp,
 				},
 			})
 		}
-		if len(parts) > 0 {
-			out.Contents = append(out.Contents, geminiContent{
-				Role:  role,
-				Parts: parts,
-			})
+		isToolResult := m.Role == "tool" && m.ToolCallID != ""
+		if len(parts) == 0 {
+			lastWasToolResult = false
+			continue
 		}
+		if isToolResult && lastWasToolResult {
+			// Gemini requires one content with as many functionResponse parts as
+			// the model turn had functionCall parts.
+			last := &out.Contents[len(out.Contents)-1]
+			last.Parts = append(last.Parts, parts...)
+			continue
+		}
+		out.Contents = append(out.Contents, geminiContent{
+			Role:  role,
+			Parts: parts,
+		})
+		lastWasToolResult = isToolResult
 	}
 
 	// generationConfig

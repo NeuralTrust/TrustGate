@@ -446,3 +446,115 @@ func TestGeminiUsage_EncodeRebuildsDisjointWireCounts(t *testing.T) {
 		u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount+u.ToolUsePromptTokenCount,
 		u.TotalTokenCount, "the re-encoded payload must satisfy Gemini's own arithmetic")
 }
+
+func TestGemini_EncodeRequest_GroupsToolResultsOfOneTurn(t *testing.T) {
+	tests := []struct {
+		name      string
+		calls     []CanonicalToolCall
+		wantNames []string
+	}{
+		{
+			name:      "two functions",
+			calls:     []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`}, {ID: "call_2", Name: "get_time", Arguments: `{"tz":"CET"}`}},
+			wantNames: []string{"get_weather", "get_time"},
+		},
+		{
+			name:      "same function twice",
+			calls:     []CanonicalToolCall{{ID: "get_weather", Name: "get_weather", Arguments: `{"city":"Paris"}`}, {ID: "toolu_ABC_1", Name: "get_weather", Arguments: `{"city":"Rome"}`}},
+			wantNames: []string{"get_weather", "get_weather"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages := []CanonicalMessage{
+				{Role: "user", Content: "question"},
+				{Role: "assistant", ToolCalls: tt.calls},
+			}
+			for _, c := range tt.calls {
+				messages = append(messages, CanonicalMessage{Role: "tool", ToolCallID: c.ID, Content: `{"ok":true}`})
+			}
+			messages = append(messages, CanonicalMessage{Role: "user", Content: "thanks"})
+
+			body, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{Model: "gemini", Messages: messages})
+			require.NoError(t, err)
+
+			var req geminiRequest
+			require.NoError(t, json.Unmarshal(body, &req))
+			require.Len(t, req.Contents, 4)
+			assert.Equal(t, "model", req.Contents[1].Role)
+			assert.Len(t, req.Contents[1].Parts, len(tt.calls))
+			results := req.Contents[2]
+			assert.Equal(t, "user", results.Role)
+			var names []string
+			for _, p := range results.Parts {
+				require.NotNil(t, p.FunctionResponse)
+				names = append(names, p.FunctionResponse.Name)
+			}
+			assert.Equal(t, tt.wantNames, names)
+			assert.Equal(t, "thanks", req.Contents[3].Parts[0].Text)
+		})
+	}
+}
+
+func TestGemini_EncodeRequest_SkippedMessageEndsToolResultGroup(t *testing.T) {
+	messages := []CanonicalMessage{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{
+			{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+			{ID: "call_2", Name: "get_time", Arguments: `{"tz":"CET"}`},
+		}},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
+		{Role: "assistant"},
+		{Role: "tool", ToolCallID: "call_2", Content: `{"ok":true}`},
+	}
+
+	body, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{Model: "gemini", Messages: messages})
+	require.NoError(t, err)
+
+	var req geminiRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.Len(t, req.Contents, 4)
+	for i, want := range []string{"get_weather", "get_time"} {
+		results := req.Contents[2+i]
+		assert.Equal(t, "user", results.Role)
+		require.Len(t, results.Parts, 1)
+		require.NotNil(t, results.Parts[0].FunctionResponse)
+		assert.Equal(t, want, results.Parts[0].FunctionResponse.Name)
+	}
+}
+
+func TestGemini_EncodeRequest_ToolResultNameWithoutItsCall(t *testing.T) {
+	generated := "toolu_ABCDEFGHIJKLMNOPQRSTUVWXYZ_3"
+	tests := []struct {
+		name   string
+		callID string
+		tools  []string
+		want   string
+	}{
+		{name: "generated id with one declared function", callID: generated, tools: []string{"get_weather"}, want: "get_weather"},
+		{name: "generated id with two declared functions", callID: generated, tools: []string{"get_weather", "get_time"}, want: generated},
+		{name: "generated id without declared functions", callID: generated, want: generated},
+		{name: "upstream id with one declared function", callID: "call_1", tools: []string{"get_weather"}, want: "call_1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &CanonicalRequest{
+				Model:    "gemini",
+				Messages: []CanonicalMessage{{Role: "tool", ToolCallID: tt.callID, Content: "sunny"}},
+			}
+			for _, name := range tt.tools {
+				req.Tools = append(req.Tools, CanonicalTool{Name: name})
+			}
+
+			body, err := (&GeminiAdapter{}).EncodeRequest(req)
+			require.NoError(t, err)
+
+			var out geminiRequest
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Len(t, out.Contents, 1)
+			require.Len(t, out.Contents[0].Parts, 1)
+			require.NotNil(t, out.Contents[0].Parts[0].FunctionResponse)
+			assert.Equal(t, tt.want, out.Contents[0].Parts[0].FunctionResponse.Name)
+		})
+	}
+}
