@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -961,6 +962,34 @@ func TestAdaptRequest_Images(t *testing.T) {
 			input:       `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/webp","data":"UklGR"}},{"type":"text","text":"describe"}]}]}`,
 			wantContent: `[{"type":"image_url","image_url":{"url":"data:image/webp;base64,UklGR"}},{"type":"text","text":"describe"}]`,
 		},
+		{
+			name:        "openai data uri to bedrock",
+			source:      FormatOpenAI,
+			target:      FormatBedrock,
+			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"what is this?"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,/9j/4AAQ","detail":"low"}}]}]}`,
+			wantContent: `[{"image":{"format":"jpeg","source":{"bytes":"/9j/4AAQ"}}},{"text":"what is this?"}]`,
+		},
+		{
+			name:    "openai url to bedrock",
+			source:  FormatOpenAI,
+			target:  FormatBedrock,
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg"}},{"type":"text","text":"cat?"}]}]}`,
+			wantErr: ErrUnsupportedContent,
+		},
+		{
+			name:        "openai to openrouter keeps image_url and detail",
+			source:      FormatOpenAI,
+			target:      FormatOpenRouter,
+			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"cat?"},{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}}]}]}`,
+			wantContent: `[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}},{"type":"text","text":"cat?"}]`,
+		},
+		{
+			name:        "anthropic to bedrock",
+			source:      FormatAnthropic,
+			target:      FormatBedrock,
+			input:       `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"describe"}]}]}`,
+			wantContent: `[{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},{"text":"describe"}]`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -984,6 +1013,79 @@ func TestAdaptRequest_Images(t *testing.T) {
 			require.Len(t, got.Messages, 1)
 			assert.Equal(t, "user", got.Messages[0].Role)
 			assert.JSONEq(t, tt.wantContent, string(got.Messages[0].Content))
+		})
+	}
+}
+
+func TestAdaptRequest_ImageRegression(t *testing.T) {
+	t.Parallel()
+
+	const (
+		textPart  = `{"type":"text","text":"what do you see?"}`
+		imagePart = `{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}`
+		request   = `{"model":"gpt-4","max_tokens":64,` +
+			`"tools":[{"type":"function","function":{"name":"lookup","description":"Look up","parameters":{"type":"object","properties":{}}}}],` +
+			`"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[%s]}]}`
+	)
+
+	tests := []struct {
+		name          string
+		target        Format
+		isImage       func(block map[string]json.RawMessage) bool
+		textOnly      func(blocks []map[string]json.RawMessage) any
+		wantPlainText string
+	}{
+		{
+			name:          "anthropic",
+			target:        FormatAnthropic,
+			isImage:       func(b map[string]json.RawMessage) bool { return string(b["type"]) == `"image"` },
+			textOnly:      func(b []map[string]json.RawMessage) any { return b[1]["text"] },
+			wantPlainText: `"what do you see?"`,
+		},
+		{
+			name:          "bedrock",
+			target:        FormatBedrock,
+			isImage:       func(b map[string]json.RawMessage) bool { _, ok := b["image"]; return ok },
+			textOnly:      func(b []map[string]json.RawMessage) any { return b[1:] },
+			wantPlainText: `[{"text":"what do you see?"}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			plain, err := testRegistry().AdaptRequest([]byte(fmt.Sprintf(request, textPart)), FormatOpenAI, tt.target)
+			require.NoError(t, err)
+			withImage, err := testRegistry().AdaptRequest([]byte(fmt.Sprintf(request, textPart+","+imagePart)), FormatOpenAI, tt.target)
+			require.NoError(t, err)
+
+			var plainBody map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(plain, &plainBody))
+			var plainMessages []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(plainBody["messages"], &plainMessages))
+			require.Len(t, plainMessages, 1)
+			assert.JSONEq(t, tt.wantPlainText, string(plainMessages[0]["content"]))
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(withImage, &body))
+			var messages []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(body["messages"], &messages))
+			require.Len(t, messages, 1)
+			var blocks []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(messages[0]["content"], &blocks))
+			require.Len(t, blocks, 2)
+			require.True(t, tt.isImage(blocks[0]), "the image block leads the user turn")
+			require.False(t, tt.isImage(blocks[1]))
+
+			messages[0]["content"], err = json.Marshal(tt.textOnly(blocks))
+			require.NoError(t, err)
+			body["messages"], err = json.Marshal(messages)
+			require.NoError(t, err)
+			stripped, err := json.Marshal(body)
+			require.NoError(t, err)
+
+			assert.JSONEq(t, string(plain), string(stripped))
 		})
 	}
 }
