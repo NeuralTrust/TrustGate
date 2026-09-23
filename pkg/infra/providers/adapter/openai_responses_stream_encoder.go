@@ -31,13 +31,7 @@ const (
 	responsesOutputText       = "output_text"
 )
 
-// ResponsesStreamEncoder encodes one canonical stream as an OpenAI Responses
-// event sequence: response.created and response.in_progress, then each output
-// item added and streamed at its own output_index, and at Finish every item
-// done in output_index order followed by response.completed, or
-// response.incomplete for a length stop, carrying the items and the usage.
-// Every event has the next sequence_number. Reasoning deltas are not emitted.
-// A ResponsesStreamEncoder is not safe for concurrent use.
+// ResponsesStreamEncoder encodes a canonical stream as Responses API events, giving each item its own output_index; not safe for concurrent use.
 type ResponsesStreamEncoder struct {
 	nonce     string
 	id        string
@@ -72,12 +66,7 @@ func NewResponsesStreamEncoder() *ResponsesStreamEncoder {
 	}
 }
 
-// Content encodes the text and tool-call deltas of chunk; its finish reason
-// and usage are ignored. The first chunk with a role or content starts the
-// response. The message item is added on the first non-empty text. A tool
-// call is added once a delta for it carries a name or an id, replaying the
-// arguments held until then; a delta carrying a different id at the index of
-// an earlier call starts a new call.
+// Content encodes the text and tool-call deltas of chunk.
 func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
@@ -96,9 +85,7 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	return lines
 }
 
-// Finish marks every output item done, in output_index order, and ends the
-// response with the items and chunk.Usage. A tool call never announced is
-// dropped. Nothing is emitted once the response has finished.
+// Finish encodes the finish and usage of chunk.
 func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
@@ -231,8 +218,6 @@ func (e *ResponsesStreamEncoder) announce(call *responsesStreamItem) [][]byte {
 	return lines
 }
 
-// callID keeps the upstream id unless it is empty or already used, since a
-// client pairs each function_call_output with one call.
 func (e *ResponsesStreamEncoder) callID(upstream string) string {
 	id := upstream
 	if id == "" || e.callIDs[id] {

@@ -99,8 +99,6 @@ type responsesItemState struct {
 	done       *responsesWireItem
 }
 
-// requireResponsesContract checks events against the OpenAI Responses stream
-// contract and returns the terminal response.
 func requireResponsesContract(t *testing.T, events []responsesWireEvent) *responsesWireResponse {
 	t.Helper()
 	require.GreaterOrEqual(t, len(events), 3)

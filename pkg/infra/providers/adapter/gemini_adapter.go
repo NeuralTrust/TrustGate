@@ -74,11 +74,6 @@ type geminiFuncResponse struct {
 // Gemini bypass for replayed functionCalls lacking canonical thoughtSignature support (ENG-1627).
 const geminiSkipThoughtSignature = "skip_thought_signature_validator"
 
-// geminiCallIDs hands out the canonical ids of the functionCalls of one model
-// turn. A call without an id takes its name, or the name suffixed with _2, _3
-// and so on when an earlier call of the turn already holds it, so parallel
-// calls to one function stay distinct; EncodeRequest never sends these
-// synthetic ids to Gemini.
 type geminiCallIDs map[string]bool
 
 func (u geminiCallIDs) assign(fc *geminiFunctionCall) string {
@@ -98,8 +93,6 @@ func (u geminiCallIDs) synthetic(name string) string {
 	return id
 }
 
-// geminiSyntheticCallID reports whether id is one geminiCallIDs gave a call
-// to name that had no id of its own.
 func geminiSyntheticCallID(id, name string) bool {
 	if id == name {
 		return true
@@ -112,8 +105,6 @@ func geminiSyntheticCallID(id, name string) bool {
 	return err == nil && n >= 2 && strconv.Itoa(n) == suffix
 }
 
-// geminiSyntheticCallName returns the function name a synthetic id with a
-// numeric suffix was made from, when that name is one of tools.
 func geminiSyntheticCallName(id string, tools []CanonicalTool) (string, bool) {
 	cut := strings.LastIndexByte(id, '_')
 	if cut <= 0 {
@@ -854,10 +845,7 @@ type GeminiCallIndexer struct {
 	ids  geminiCallIDs
 }
 
-// Renumber gives each delta that starts a call, one carrying an ID or a Name,
-// the next stream-wide index and, when the call had no id of its own, a
-// synthetic id distinct across the stream; any other delta gets the index of
-// the call it continues.
+// Renumber gives each delta that starts a call the next stream-wide index; other deltas continue the earlier call's index.
 func (g *GeminiCallIndexer) Renumber(deltas []StreamToolCallDelta) {
 	if g == nil {
 		return
