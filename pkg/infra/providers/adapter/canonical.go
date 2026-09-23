@@ -149,10 +149,10 @@ type CanonicalUsage struct {
 	ToolUseInputTokens    int `json:"tool_use_input_tokens,omitempty"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
 
-	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with
-	// Anthropic's one-hour TTL, which bills at 2x input where the five-minute
-	// default bills at 1.25x. Carried because the wire reports it; not yet priced
-	// separately, since the catalog publishes a single cache-write rate.
+	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with a
+	// one-hour TTL rather than the five-minute default: Anthropic reports it as
+	// ephemeral_1h_input_tokens and Bedrock Converse as the cacheDetails entry
+	// whose ttl is 1h. It is never larger than CacheWriteInputTokens.
 	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
 
 	ServiceTier string `json:"service_tier,omitempty"`
@@ -169,6 +169,12 @@ func (u *CanonicalUsage) PlainInputTokens() int {
 		return u.InputTokens
 	}
 	return plain
+}
+
+func (u *CanonicalUsage) setCache(read, write, write1h int) {
+	u.CachedInputTokens, u.CacheWriteInputTokens = read, write
+	u.CacheWrite1hInputTokens = min(write1h, write)
+	u.TotalTokens = max(u.TotalTokens, u.InputTokens+u.OutputTokens)
 }
 
 // MergeUsage folds a later usage report into an earlier one, keeping the larger
