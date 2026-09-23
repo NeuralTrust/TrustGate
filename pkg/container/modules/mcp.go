@@ -227,6 +227,9 @@ type connectServiceParams struct {
 	Userinfo   appoauth.UserInfoClient
 	Catalog    appcatalog.MCPServerCatalog `optional:"true"`
 	Registries registrydomain.Repository   `optional:"true"`
+	// Present where installs are: a templated server's OAuth server is then
+	// discovered at the URL the principal dials, filled in from their install.
+	Installs installationdomain.Repository `optional:"true"`
 }
 
 type rpcGatewayParams struct {
@@ -414,6 +417,10 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 	if p.Registries != nil {
 		registries = p.Registries
 	}
+	var opts []appoauth.ConnectOption
+	if p.Installs != nil {
+		opts = append(opts, appoauth.WithConnectURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
+	}
 	return appoauth.NewConnectService(
 		p.Store,
 		p.Vault,
@@ -425,6 +432,7 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 		p.Userinfo,
 		catalog,
 		registries,
+		opts...,
 	), nil
 }
 

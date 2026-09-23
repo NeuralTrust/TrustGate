@@ -54,6 +54,25 @@ type connectService struct {
 	userinfo    UserInfoClient
 	catalog     authCatalog
 	registries  RegistryLister
+	urlValues   URLValueSource
+}
+
+// URLValueSource returns a principal's values for a registry's URL
+// placeholders — the same ones the dial path substitutes. appmcp's
+// URLValueResolver satisfies it.
+type URLValueSource interface {
+	Values(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (map[string]string, error)
+}
+
+// ConnectOption tunes NewConnectService.
+type ConnectOption func(*connectService)
+
+// WithConnectURLValues lets the connect flow discover a templated server's OAuth
+// server at the URL the principal will dial ({region} filled in) rather than at
+// the template. Without it only a registry that carries its own instance values
+// resolves; any other templated one fails with ErrUpstreamSetupRequired.
+func WithConnectURLValues(v URLValueSource) ConnectOption {
+	return func(s *connectService) { s.urlValues = v }
 }
 
 type authCatalog interface {
@@ -71,8 +90,9 @@ func NewConnectService(
 	userinfo UserInfoClient,
 	catalog authCatalog,
 	registries RegistryLister,
+	opts ...ConnectOption,
 ) ConnectService {
-	return &connectService{
+	s := &connectService{
 		store:       store,
 		vault:       vault,
 		consumers:   consumers,
@@ -84,6 +104,12 @@ func NewConnectService(
 		catalog:     catalog,
 		registries:  registries,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error) {
@@ -324,7 +350,7 @@ func (s *connectService) Start(
 	if !ownsSharedAccount(reg, ticket.PrincipalSub) {
 		return "", ErrSharedAccountNotYours
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, ticket.PrincipalSub, reg)
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +400,7 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
+	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, st.Ticket.PrincipalSub, reg)
 	if err != nil {
 		return st.TicketID, err
 	}

@@ -34,6 +34,7 @@ import (
 // rather than silently hitting a broken URL.
 type URLValueResolver interface {
 	Resolve(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (map[string]string, error)
+	Values(ctx context.Context, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (map[string]string, error)
 }
 
 // installationConfigFinder is the read the resolver needs: the calling
@@ -74,7 +75,24 @@ func (r *urlValueResolver) Resolve(
 	if principal == nil || principal.Subject == "" {
 		return nil, ErrNoPrincipal
 	}
-	gatewayID := rc.Consumer.GatewayID
+	return r.Values(ctx, rc.Consumer.GatewayID, principal.Subject, reg)
+}
+
+// Values is Resolve for a caller that knows the principal but holds no routable
+// consumer — the connect page, which must discover the upstream's OAuth server
+// at the URL this principal will actually dial, not at the template (RUN-1636).
+func (r *urlValueResolver) Values(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	reg *registrydomain.Registry,
+) (map[string]string, error) {
+	if r == nil || r.installs == nil || reg == nil || reg.MCPTarget == nil {
+		return nil, nil
+	}
+	if principalSub == "" {
+		return nil, ErrNoPrincipal
+	}
 	code := reg.MCPTarget.Code
 
 	values := map[string]string{}
@@ -87,7 +105,7 @@ func (r *urlValueResolver) Resolve(
 			values[k] = v
 		}
 	} else {
-		inst, err := r.installs.Find(ctx, gatewayID, principal.Subject, code)
+		inst, err := r.installs.Find(ctx, gatewayID, principalSub, code)
 		switch {
 		case err == nil:
 			for k, v := range inst.Config {
@@ -109,7 +127,7 @@ func (r *urlValueResolver) Resolve(
 			if !v.Secret {
 				continue
 			}
-			cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, registrydomain.URLVariableVaultProvider(code, v.Name))
+			cred, err := r.vault.Find(ctx, gatewayID, principalSub, registrydomain.URLVariableVaultProvider(code, v.Name))
 			if err != nil {
 				if errors.Is(err, vaultdomain.ErrNotFound) {
 					continue
