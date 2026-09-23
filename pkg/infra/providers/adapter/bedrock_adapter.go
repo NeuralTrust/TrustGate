@@ -815,12 +815,15 @@ func converseUsageToCanonical(u *ConverseUsage) *CanonicalUsage {
 	}
 	var write1h int
 	for _, d := range u.CacheDetails {
-		if d.TTL == converseCacheTTL1h {
+		switch d.TTL {
+		case converseCacheTTL1h:
 			write1h += d.InputTokens
+			cu.cacheTTLKnown = true
+		case converseCacheTTL5m:
+			cu.cacheTTLKnown = true
 		}
 	}
 	cu.setCache(read, write, write1h)
-	cu.cacheTTLKnown = len(u.CacheDetails) > 0
 	return cu
 }
 

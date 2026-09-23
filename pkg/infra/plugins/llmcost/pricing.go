@@ -84,13 +84,13 @@ func (r Rates) CostUSD(u *adapter.CanonicalUsage) (promptUSD, completionUSD floa
 	}
 	cached, written := u.CachedInputTokens, u.CacheWriteInputTokens
 	plain := u.PlainInputTokens()
-	if plain == u.InputTokens && cached+written > 0 {
+	if cached+written > u.InputTokens {
 		slog.Warn("llmcost: usage sub-counts exceed the prompt they claim to be part of; "+
 			"billing the whole prompt at the input rate",
 			slog.Int("input_tokens", u.InputTokens),
 			slog.Int("cached_input_tokens", cached),
 			slog.Int("cache_write_input_tokens", written))
-		cached, written = 0, 0
+		plain, cached, written = u.InputTokens, 0, 0
 	}
 	written1h := u.CacheWrite1hInputTokens
 	if written1h > written {
