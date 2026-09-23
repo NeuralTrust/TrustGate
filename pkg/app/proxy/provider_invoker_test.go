@@ -482,3 +482,45 @@ func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 	assert.NotContains(t, body, "anthropic_version")
 	assert.Contains(t, body, "inferenceConfig")
 }
+
+func TestProviderInvoke_UnsupportedImageIsInvalidPayload(t *testing.T) {
+	t.Parallel()
+
+	const ftpImageBody = `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"ftp://example.com/private.png"}}]}]}`
+
+	tests := []struct {
+		name      string
+		provider  string
+		body      string
+		stream    bool
+		leakCheck string
+	}{
+		{name: "anthropic ftp url", provider: "anthropic", body: ftpImageBody, leakCheck: "private.png"},
+		{name: "anthropic ftp url stream", provider: "anthropic", body: ftpImageBody, stream: true, leakCheck: "private.png"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get(tc.provider).Return(providermocks.NewClient(t), nil).Maybe()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			req := &infracontext.RequestContext{Body: []byte(tc.body)}
+
+			var err error
+			if tc.stream {
+				_, err = inv.InvokeStream(context.Background(), apiKeyTarget(tc.provider), req)
+			} else {
+				_, err = inv.Invoke(context.Background(), apiKeyTarget(tc.provider), req)
+			}
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			assert.ErrorIs(t, err, adapter.ErrUnsupportedContent)
+			for _, leak := range []string{tc.leakCheck, tc.provider, "adapter"} {
+				assert.NotContains(t, err.Error(), leak)
+			}
+		})
+	}
+}

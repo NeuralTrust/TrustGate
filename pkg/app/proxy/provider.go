@@ -307,8 +307,14 @@ func (p *providerInvoker) prepare(
 	if crossFormat {
 		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
 		if err != nil {
+			var contentErr *adapter.UnsupportedContentError
+			if errors.As(err, &contentErr) {
+				p.logger.Debug("request content not representable in target format",
+					slog.String("error", err.Error()))
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, contentErr)
+			}
 			if adapter.IsRequestDecodeError(err) {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, err)
 			}
 			return nil, fmt.Errorf("adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
 		}
