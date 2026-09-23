@@ -263,6 +263,13 @@ func TestAdaptStream_AnthropicClientGetsTrailingUsageInMessageDelta(t *testing.T
 	}
 }
 
+var responsesTextOnlyTypes = []string{
+	"response.created", "response.in_progress",
+	"response.output_item.added", "response.content_part.added", "response.output_text.delta",
+	"response.output_text.done", "response.content_part.done", "response.output_item.done",
+	"response.completed",
+}
+
 func TestAdaptStream_ResponsesClientGetsTrailingUsageInCompleted(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -277,7 +284,7 @@ func TestAdaptStream_ResponsesClientGetsTrailingUsageInCompleted(t *testing.T) {
 			name:      "openai include_usage chunk after finish",
 			upstream:  openAIUpstreamWithIncludeUsage(),
 			target:    adapter.FormatOpenAI,
-			wantTypes: []string{"response.output_item.added", "response.output_text.delta", "response.completed"},
+			wantTypes: responsesTextOnlyTypes,
 			wantUsage: `{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000}}`,
 			wantID:    "c",
 			wantModel: "gpt",
@@ -293,7 +300,7 @@ func TestAdaptStream_ResponsesClientGetsTrailingUsageInCompleted(t *testing.T) {
 				`data: {"type":"message_stop"}`,
 			),
 			target:    adapter.FormatAnthropic,
-			wantTypes: []string{"response.output_item.added", "response.output_text.delta", "response.completed"},
+			wantTypes: responsesTextOnlyTypes,
 			wantUsage: `{"input_tokens":1310,"output_tokens":7,"total_tokens":1317,"input_tokens_details":{"cached_tokens":1000,"cache_write_tokens":300}}`,
 			wantID:    "msg_1",
 			wantModel: "claude",
@@ -877,13 +884,12 @@ func TestAdaptStream_ResponsesClientGetsDistinctGeminiOutputIndexes(t *testing.T
 			name:     "parallel calls in separate chunks",
 			upstream: gemini3ParallelFunctionCallsUpstream(),
 			want: []string{
-				"added 0 message",
-				"added 1 function_call call_172274",
-				`arguments 1 {"city":"Paris"}`,
-				"added 2 function_call call_172284",
-				`arguments 2 {"city":"Rome"}`,
-				"added 3 function_call call_172286",
-				`arguments 3 {"city":"Berlin"}`,
+				"added 0 function_call call_172274",
+				`arguments 0 {"city":"Paris"}`,
+				"added 1 function_call call_172284",
+				`arguments 1 {"city":"Rome"}`,
+				"added 2 function_call call_172286",
+				`arguments 2 {"city":"Berlin"}`,
 			},
 		},
 		{

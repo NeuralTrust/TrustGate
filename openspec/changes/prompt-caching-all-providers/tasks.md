@@ -153,6 +153,18 @@ Gemini 2.5 (default thinking) and 3.x attach `thoughtSignature` to `functionCall
 - [x] 3f.6 (found in V4) Gemini 3 streams parallel calls one per chunk, each at part index 0: `adaptStream` gives a Gemini upstream's tool calls stream-wide indexes so OpenAI Chat and Responses clients stop merging them into one call.
 - Out of scope: carrying the real signature through canonical for a proper round-trip (ENG-1627).
 
+## Phase 3g (S1g): Responses client stream contract (found in the S1f review, 2026-09-23)
+
+Cross-format Responses clients got a partial event stream: no `response.created`, no content parts, no `*.done` events, an unscoped `function_call_arguments.done`, `output_index` 0 dropped by `omitempty`, and an empty `output` in `response.completed`. Clients that rebuild the response from the stream (openai-python `ResponseStreamState`, Codex) lost items. Same-format passthrough is unchanged.
+
+- [x] 3g.1 `ResponsesStreamEncoder`: `response.created` and `response.in_progress` first (id, object, created_at, status, model); `sequence_number` on every event, counting up from 0; `output_index`/`content_index` always present.
+- [x] 3g.2 Message item: added on the first non-empty text only (not on a role-only chunk), with `content_part.added`, then `output_text.delta` carrying `item_id`/`output_index`/`content_index`; at finish `output_text.done`, `content_part.done` and `output_item.done` with the full text.
+- [x] 3g.3 Function call items: `output_item.added` (`id`, `call_id`, `name`, empty `arguments`, `in_progress`) once a delta carries a name or id, replaying the arguments held until then; scoped `function_call_arguments.delta`; at finish `function_call_arguments.done` and `output_item.done` with the full arguments. A different call id at the same canonical index starts a new item; a repeated call id gets a generated one. The old unscoped `function_call_arguments.done` is gone from this path.
+- [x] 3g.4 Terminal event: `response.completed` with `output` built from the done items in `output_index` order and the merged usage (S1c-3 deferral kept); a `length` finish ends with `response.incomplete` (`incomplete_details.reason: max_output_tokens`), as the Responses API does. Error paths unchanged (ENG-1626).
+- [x] 3g.5 Tests: contract checker (every item added then done, indexes and item ids consistent across events, sequence numbers, terminal output equals the done items) over golden sequences for text only, text and two tools, tools only (no empty message item), length stop, and Anthropic, Bedrock, Gemini (parallel, with and without ids) and Cohere upstreams; encoder unit tests for held arguments, same-index new calls, finish order. The produced streams were replayed through the openai-python 3.19 `ResponseStreamState` accumulator with strict pydantic validation of every item event and output item.
+- [ ] 3g.6 V1; V2; V3; V4 **openai_responses client** (`matrix-ag` column openai_responses, STREAM=1, against openai, anthropic, google, bedrock, cohere upstreams); V5.
+- Out of scope: custom tool calls stream as `function_call` items (no `custom_tool_call` events yet); reasoning deltas are not emitted.
+
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic
 
 - [ ] 4.1 `adapter/cache_intent.go` (new): `CacheTTL`, `CanonicalCacheBreakpoint`, `CanonicalCacheOptions`, `cacheProfile`, `cacheProfileFor`, `normalizeCacheIntent` (4 steps).
