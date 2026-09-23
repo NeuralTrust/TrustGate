@@ -146,10 +146,13 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // case accumulates incremental tool-call deltas and flushes them on finish.
 //
 // onChunk, when non-nil, is invoked with every decoded upstream chunk in both
-// passthrough and cross-format paths. A cross-format stream to a Bedrock client
-// holds usage back and emits one merged metadata event after the upstream ends,
-// and none when the upstream fails. Outer/mid-stream errors from raw are
-// propagated as the sequence error.
+// passthrough and cross-format paths. Cross-format streams to Bedrock,
+// Anthropic and Responses clients hold the finish and usage back and
+// emit them once, with the merged usage, on an upstream event its format
+// guarantees final or on [DONE], or else before the upstream ends or fails;
+// nothing is flushed unless the upstream sent a finish, and nothing is emitted
+// after the flush. Outer/mid-stream errors from raw
+// are propagated as the sequence error.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
 	registry providerCodec,
@@ -159,7 +162,10 @@ func adaptStream(
 ) iter.Seq2[[]byte, error] {
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
-	deferUsage := crossFormat && source == adapter.FormatBedrock
+	var deferred *finishDeferral
+	if crossFormat {
+		deferred = newFinishDeferral(source, target)
+	}
 	// On the cross-format path the adapter re-encodes payload chunks but never
 	// produces the terminating "data: [DONE]" sentinel. OpenAI-wire clients
 	// (openai, azure) rely on it to detect end-of-stream, so re-emit it when the
@@ -177,9 +183,11 @@ func adaptStream(
 		}
 
 		var acc toolCallAccumulator
-		var usage *adapter.CanonicalUsage
 		for line, err := range raw {
 			if err != nil {
+				if deferred != nil && !deferred.flushOnError(emit, registry, source, logger) {
+					return
+				}
 				yield(nil, err)
 				return
 			}
@@ -195,6 +203,9 @@ func adaptStream(
 			}
 
 			if isSSEDone(line) {
+				if deferred != nil && !deferred.flush(emit, registry, source, logger) {
+					return
+				}
 				if forwardDone && !emit(sseDoneLines()) {
 					return
 				}
@@ -214,8 +225,8 @@ func adaptStream(
 				continue
 			}
 
-			if deferUsage {
-				if !emitWithoutUsage(emit, registry, payload, source, target, &usage, logger) {
+			if deferred != nil {
+				if !emitDeferred(emit, registry, payload, source, target, deferred, logger) {
 					return
 				}
 				continue
@@ -231,8 +242,8 @@ func adaptStream(
 			}
 			// TODO(B.3): plugin chunk forwarding hook here.
 		}
-		if usage != nil {
-			encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Usage: usage}, source)
+		if deferred != nil {
+			deferred.flush(emit, registry, source, logger)
 		}
 	}
 
@@ -312,37 +323,166 @@ func emitGeminiToolCalls(
 	acc.Merge(canonical.ToolCallDeltas)
 
 	if canonical.Role != "" {
-		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Role: canonical.Role}, source) {
+		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Role: canonical.Role}, source, logger) {
 			return false
 		}
 	}
 	if canonical.Delta != "" {
-		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Delta: canonical.Delta}, source) {
+		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Delta: canonical.Delta}, source, logger) {
 			return false
 		}
 	}
 	if canonical.FinishReason != "" && len(*acc) > 0 {
-		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{ToolCallDeltas: acc.Flush()}, source) {
+		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{ToolCallDeltas: acc.Flush()}, source, logger) {
 			return false
 		}
 	}
 	if canonical.FinishReason != "" {
-		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, source) {
+		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, source, logger) {
 			return false
 		}
 	}
 	return true
 }
 
-// emitWithoutUsage holds usage back so a Converse client gets one merged
-// metadata event after messageStop instead of one per usage-bearing chunk, the
-// last of which may lack the cache counts.
-func emitWithoutUsage(
+// finishDeferral holds a cross-format stream's usage, and the finish too when
+// the client's finish event carries usage, until the upstream's usage is final.
+type finishDeferral struct {
+	target        adapter.Format
+	holdFinish    bool
+	keepRoleUsage bool
+	finished      bool
+	flushed       bool
+	dropLogged    bool
+	reason        string
+	id            string
+	model         string
+	usage         *adapter.CanonicalUsage
+}
+
+func newFinishDeferral(source, target adapter.Format) *finishDeferral {
+	switch source {
+	case adapter.FormatBedrock:
+		return &finishDeferral{target: target}
+	case adapter.FormatAnthropic:
+		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true}
+	case adapter.FormatOpenAIResponses:
+		return &finishDeferral{target: target, holdFinish: true}
+	default:
+		return nil
+	}
+}
+
+// record merges chunk into d and reports whether the upstream's usage is now
+// final: the upstream has finished and chunk is an event the target format
+// sends only once, last, with the complete usage.
+func (d *finishDeferral) record(chunk *adapter.CanonicalStreamChunk) bool {
+	if d.id == "" {
+		d.id = chunk.ID
+	}
+	if d.model == "" {
+		d.model = chunk.Model
+	}
+	d.usage = adapter.MergeUsage(d.usage, chunk.Usage)
+	if chunk.FinishReason != "" && !d.finished {
+		d.finished = true
+		d.reason = chunk.FinishReason
+	}
+	return d.finished && finalUsageEvent(d.target, chunk)
+}
+
+// finalUsageEvent reports whether chunk is the target's closing usage event:
+// Anthropic message_delta, Responses response.completed, Bedrock metadata or an
+// OpenAI include_usage chunk. Gemini repeats usageMetadata on every chunk and
+// an OpenAI-wire finish chunk may be followed by a usage chunk, so neither is
+// final; those streams flush on [DONE] or when the upstream ends.
+func finalUsageEvent(target adapter.Format, chunk *adapter.CanonicalStreamChunk) bool {
+	if chunk.Usage == nil {
+		return false
+	}
+	switch {
+	case target == adapter.FormatAnthropic, target == adapter.FormatOpenAIResponses:
+		return chunk.FinishReason != ""
+	case target == adapter.FormatBedrock, adapter.IsSameWireFormat(target, adapter.FormatOpenAI):
+		return chunk.FinishReason == "" && chunk.Role == "" && chunk.Delta == "" &&
+			chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0
+	default:
+		return false
+	}
+}
+
+// dropAfterFlush reports whether chunk arrived after the flushed finish and so
+// must not reach the client, logging the first such chunk.
+func (d *finishDeferral) dropAfterFlush(
+	chunk *adapter.CanonicalStreamChunk,
+	source adapter.Format,
+	logger *slog.Logger,
+) bool {
+	if !d.flushed {
+		return false
+	}
+	if !d.dropLogged {
+		d.dropLogged = true
+		logger.Warn("stream chunk after the flushed finish dropped",
+			slog.String("target", string(d.target)),
+			slog.String("source", string(source)),
+			slog.Bool("content", chunk.Role != "" || chunk.Delta != "" || chunk.ReasoningDelta != "" || len(chunk.ToolCallDeltas) > 0),
+			slog.Bool("usage", chunk.Usage != nil),
+			slog.String("finish_reason", chunk.FinishReason),
+		)
+	}
+	return true
+}
+
+// flushOnError flushes like flush, warning first when the usage merged so far
+// has no output tokens and so is likely incomplete.
+func (d *finishDeferral) flushOnError(
+	emit func([][]byte) bool,
+	registry providerCodec,
+	source adapter.Format,
+	logger *slog.Logger,
+) bool {
+	if d.finished && !d.flushed && (d.usage == nil || d.usage.OutputTokens == 0) {
+		logger.Warn("stream usage may be incomplete: upstream failed before sending output tokens",
+			slog.String("target", string(d.target)),
+			slog.String("source", string(source)),
+		)
+	}
+	return d.flush(emit, registry, source, logger)
+}
+
+// flush emits the held finish with the merged usage at most once, and nothing
+// when the upstream never finished. It returns false when the consumer stopped.
+func (d *finishDeferral) flush(
+	emit func([][]byte) bool,
+	registry providerCodec,
+	source adapter.Format,
+	logger *slog.Logger,
+) bool {
+	if !d.finished || d.flushed {
+		return true
+	}
+	d.flushed = true
+	chunk := &adapter.CanonicalStreamChunk{ID: d.id, Model: d.model, Usage: d.usage}
+	if d.holdFinish {
+		chunk.FinishReason = d.reason
+	}
+	if chunk.FinishReason == "" && chunk.Usage == nil {
+		return true
+	}
+	return encodeAndEmit(emit, registry, chunk, source, logger)
+}
+
+// emitDeferred re-encodes a chunk without its usage, and without its finish
+// when deferred holds it, so the client gets them once from flush with the
+// merged usage instead of per chunk, the last of which may lack the cache
+// counts.
+func emitDeferred(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	payload []byte,
 	source, target adapter.Format,
-	merged **adapter.CanonicalUsage,
+	deferred *finishDeferral,
 	logger *slog.Logger,
 ) bool {
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
@@ -350,13 +490,22 @@ func emitWithoutUsage(
 		logger.Warn("stream decode chunk failed", slog.String("error", err.Error()))
 		return true
 	}
-	if canonical == nil {
+	if canonical == nil || deferred.dropAfterFlush(canonical, source, logger) {
 		return true
 	}
-	*merged = adapter.MergeUsage(*merged, canonical.Usage)
+	terminal := deferred.record(canonical)
 	chunk := *canonical
-	chunk.Usage = nil
-	return encodeAndEmit(emit, registry, &chunk, source)
+	chunk.ProviderExtensions = nil
+	if !deferred.keepRoleUsage || chunk.Role == "" {
+		chunk.Usage = nil
+	}
+	if deferred.holdFinish {
+		chunk.FinishReason = ""
+	}
+	if !encodeAndEmit(emit, registry, &chunk, source, logger) {
+		return false
+	}
+	return !terminal || deferred.flush(emit, registry, source, logger)
 }
 
 func encodeAndEmit(
@@ -364,9 +513,14 @@ func encodeAndEmit(
 	registry providerCodec,
 	chunk *adapter.CanonicalStreamChunk,
 	format adapter.Format,
+	logger *slog.Logger,
 ) bool {
 	lines, err := registry.EncodeStreamChunkFor(chunk, format)
-	if err != nil || len(lines) == 0 {
+	if err != nil {
+		logger.Warn("stream encode chunk failed", slog.String("error", err.Error()))
+		return true
+	}
+	if len(lines) == 0 {
 		return true
 	}
 	return emit(lines)

@@ -625,6 +625,15 @@ func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
 	assert.Same(t, next, MergeUsage(nil, next))
 }
 
+func TestMergeUsage_KeepsCacheTTLKnown(t *testing.T) {
+	known := &CanonicalUsage{InputTokens: 400, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true}
+	unknown := &CanonicalUsage{OutputTokens: 7}
+
+	assert.True(t, MergeUsage(known, unknown).cacheTTLKnown)
+	assert.True(t, MergeUsage(unknown, known).cacheTTLKnown)
+	assert.False(t, MergeUsage(unknown, &CanonicalUsage{OutputTokens: 9}).cacheTTLKnown)
+}
+
 func TestAnthropicEncodeRequest_Images(t *testing.T) {
 	t.Parallel()
 
