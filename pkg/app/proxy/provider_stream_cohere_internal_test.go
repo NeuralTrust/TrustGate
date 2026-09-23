@@ -15,7 +15,9 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -32,6 +34,7 @@ type cohereClientEvent struct {
 	Index *int   `json:"index"`
 	Delta *struct {
 		FinishReason string `json:"finish_reason"`
+		Error        string `json:"error"`
 		Message      *struct {
 			Content *struct {
 				Text string `json:"text"`
@@ -283,21 +286,163 @@ func TestAdaptStream_CohereClientDoneWithoutFinishEndsTheMessage(t *testing.T) {
 	assert.Equal(t, "message-end COMPLETE billed=0/0 tokens=0/0 cached=0", golden[len(golden)-1])
 }
 
-func TestAdaptStream_CohereClientUpstreamErrorGetsNoFinish(t *testing.T) {
-	upstream := linesSeq(
-		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
-		`data: {"error":{"message":"The server had an error","type":"server_error"}}`,
-		`data: [DONE]`,
-	)
-
-	lines := collectLines(t, adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, slog.Default(), nil))
-
-	events := cohereClientEvents(t, lines)
-	assert.Equal(t, []string{"message-start", "content-start 0", "content-delta 0 hi"}, cohereClientGolden(events))
-	for _, ev := range events {
-		assert.NotEqual(t, "message-end", ev.Type, "a failed upstream is not reported as a finished message")
-		assert.NotEqual(t, "[DONE]", ev.Type)
+func collectLinesAndError(seq iter.Seq2[[]byte, error]) ([]string, error) {
+	var lines []string
+	for line, err := range seq {
+		if err != nil {
+			return lines, err
+		}
+		lines = append(lines, string(line))
 	}
+	return lines, nil
+}
+
+func TestAdaptStream_CohereClientUpstreamErrorEndsWithError(t *testing.T) {
+	text := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`
+	tool := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"ci"}}]}}]}`
+	finish := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	errorPayload := `data: {"error":{"message":"The server had an error","type":"server_error","code":"internal"}}`
+	transportErr := errors.New("connection reset")
+	tests := []struct {
+		name      string
+		upstream  []string
+		transport error
+		want      []string
+	}{
+		{
+			name:     "error payload after text",
+			upstream: []string{text, errorPayload, `data: [DONE]`},
+			want: []string{
+				"message-start", "content-start 0", "content-delta 0 hi", "content-end 0",
+				"message-end ERROR billed=5/1 tokens=5/1 cached=0",
+			},
+		},
+		{
+			name:     "error payload with an open tool call",
+			upstream: []string{tool, errorPayload},
+			want: []string{
+				"message-start", "tool-call-start 0 call_1 get_weather", `tool-call-delta 0 {"ci`, "tool-call-end 0",
+				"message-end ERROR billed=0/0 tokens=0/0 cached=0",
+			},
+		},
+		{
+			name:     "error payload after a held finish",
+			upstream: []string{text, finish, errorPayload, `data: [DONE]`},
+			want: []string{
+				"message-start", "content-start 0", "content-delta 0 hi", "content-end 0",
+				"message-end ERROR billed=5/1 tokens=5/1 cached=0",
+			},
+		},
+		{
+			name:     "error payload before any output",
+			upstream: []string{errorPayload, `data: [DONE]`},
+			want:     []string{"message-start", "message-end ERROR billed=0/0 tokens=0/0 cached=0"},
+		},
+		{
+			name:      "transport error after text",
+			upstream:  []string{text},
+			transport: transportErr,
+			want: []string{
+				"message-start", "content-start 0", "content-delta 0 hi", "content-end 0",
+				"message-end ERROR billed=5/1 tokens=5/1 cached=0",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			upstream := func(yield func([]byte, error) bool) {
+				for _, l := range tt.upstream {
+					if !yield([]byte(l), nil) {
+						return
+					}
+				}
+				if tt.transport != nil {
+					yield(nil, tt.transport)
+				}
+			}
+
+			lines, gotErr := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, logger, nil))
+
+			_, notified := errors.AsType[*ClientNotifiedStreamError](gotErr)
+			require.True(t, notified, "the client already has its terminal event")
+			events := cohereClientEvents(t, lines)
+			requireCohereClientContract(t, events)
+			assert.Equal(t, tt.want, cohereClientGolden(events))
+			assert.Equal(t, "upstream stream failed", events[len(events)-2].Delta.Error, "the client does not get the upstream's message")
+			assert.NotContains(t, strings.Join(lines, "\n"), "The server had an error")
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &entry), buf.String())
+			assert.Equal(t, "WARN", entry["level"])
+			assert.Equal(t, true, entry["client_aborted"])
+			if tt.transport != nil {
+				assert.ErrorIs(t, gotErr, tt.transport)
+				assert.Equal(t, "connection reset", entry["error"])
+				return
+			}
+			_, upstreamErr := errors.AsType[*adapter.UpstreamStreamError](gotErr)
+			assert.True(t, upstreamErr, "the sequence error is the upstream's")
+			assert.Equal(t, "server_error", entry["error_type"])
+			assert.Equal(t, "internal", entry["error_code"])
+			assert.Equal(t, "The server had an error", entry["error_message"])
+		})
+	}
+}
+
+func TestAdaptStream_CohereClientTransportErrorBeforeOutputKeepsTheSequenceError(t *testing.T) {
+	transportErr := errors.New("connection reset")
+	upstream := func(yield func([]byte, error) bool) {
+		yield(nil, transportErr)
+	}
+
+	lines, gotErr := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, slog.Default(), nil))
+
+	assert.Empty(t, lines)
+	assert.ErrorIs(t, gotErr, transportErr)
+	_, notified := errors.AsType[*ClientNotifiedStreamError](gotErr)
+	assert.False(t, notified, "the transport reports the failure to a client that got nothing")
+}
+
+func TestAdaptStream_CohereClientGetsEmptyObjectForNoArgumentTools(t *testing.T) {
+	upstreamLines := []string{
+		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude","role":"assistant","usage":{"input_tokens":3,"output_tokens":1}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"list_files","input":{}}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_2","name":"get_time","input":{}}}`,
+		`data: {"type":"content_block_stop","index":1}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}`,
+		`data: {"type":"message_stop"}`,
+	}
+	consumed := 0
+	upstream := func(yield func([]byte, error) bool) {
+		for _, l := range upstreamLines {
+			consumed++
+			if !yield([]byte(l), nil) {
+				return
+			}
+		}
+	}
+
+	var lines []string
+	secondStartedAt := 0
+	for line, err := range adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatAnthropic, slog.Default(), nil) {
+		require.NoError(t, err)
+		lines = append(lines, string(line))
+		if strings.HasPrefix(string(line), "data: ") && strings.Contains(string(line), `"tool-call-start"`) && strings.Contains(string(line), "get_time") {
+			secondStartedAt = consumed
+		}
+	}
+
+	assert.Equal(t, 4, secondStartedAt, "the second call starts when it arrives, not at the finish")
+	events := cohereClientEvents(t, lines)
+	requireCohereClientContract(t, events)
+	assert.Equal(t, []string{
+		"message-start",
+		"tool-call-start 0 toolu_1 list_files", "tool-call-delta 0 {}", "tool-call-end 0",
+		"tool-call-start 1 toolu_2 get_time", "tool-call-delta 1 {}", "tool-call-end 1",
+		"message-end TOOL_CALL billed=3/4 tokens=3/4 cached=0",
+	}, cohereClientGolden(events))
 }
 
 func TestAdaptStream_CohereToCoherePassthroughUnchanged(t *testing.T) {
@@ -387,4 +532,57 @@ func TestAdaptStream_CohereUpstreamToolCallReachesOtherClients(t *testing.T) {
 			"message_delta tool_use", "message_stop",
 		}, anthropicGolden(events))
 	})
+}
+
+func TestAdaptStream_CohereToolPlanRoundTripsThroughAnOpenAIClient(t *testing.T) {
+	registry := adapter.NewRegistry()
+	lines := collectLines(t, adaptStream(linesSeq(strings.Split(cohereUpstreamToolCallStream, "\n")...), registry, adapter.FormatOpenAI, adapter.FormatCohere, slog.Default(), nil))
+	var content, id, name, args string
+	for _, chunk := range dataChunks(t, lines) {
+		for _, c := range chunk["choices"].([]any) {
+			delta, _ := c.(map[string]any)["delta"].(map[string]any)
+			if v, ok := delta["content"].(string); ok {
+				content += v
+			}
+			calls, _ := delta["tool_calls"].([]any)
+			for _, raw := range calls {
+				call := raw.(map[string]any)
+				if v, ok := call["id"].(string); ok && v != "" {
+					id = v
+				}
+				fn := call["function"].(map[string]any)
+				if v, ok := fn["name"].(string); ok && v != "" {
+					name = v
+				}
+				if v, ok := fn["arguments"].(string); ok {
+					args += v
+				}
+			}
+		}
+	}
+	next, err := json.Marshal(map[string]any{
+		"model": "command-a",
+		"messages": []map[string]any{
+			{"role": "user", "content": "who is Juan?"},
+			{"role": "assistant", "content": content, "tool_calls": []map[string]any{
+				{"id": id, "type": "function", "function": map[string]any{"name": name, "arguments": args}},
+			}},
+			{"role": "tool", "tool_call_id": id, "content": "Juan is a user"},
+		},
+	})
+	require.NoError(t, err)
+
+	body, err := registry.AdaptRequest(next, adapter.FormatOpenAI, adapter.FormatCohere)
+	require.NoError(t, err)
+
+	var req struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.Len(t, req.Messages, 3)
+	assistant := req.Messages[1]
+	assert.JSONEq(t, `"assistant"`, string(assistant["role"]))
+	assert.JSONEq(t, `"Voy"`, string(assistant["tool_plan"]))
+	assert.NotContains(t, assistant, "content", "the plan is not sent as assistant content")
+	assert.JSONEq(t, `[{"id":"database_agent_3v76fs3zjrgq","type":"function","function":{"name":"database_agent","arguments":"{\"query\": \"Juan\"}"}}]`, string(assistant["tool_calls"]))
 }

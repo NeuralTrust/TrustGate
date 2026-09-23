@@ -36,6 +36,7 @@ type cohereRequest struct {
 type cohereMessage struct {
 	Role       string          `json:"role"`
 	Content    json.RawMessage `json:"content,omitempty"`
+	ToolPlan   string          `json:"tool_plan,omitempty"`
 	ToolCalls  []cohereToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 }
@@ -77,6 +78,7 @@ type cohereResponse struct {
 type cohereAssistantMessage struct {
 	Role      string                  `json:"role"`
 	Content   []cohereContentBlock    `json:"content,omitempty"`
+	ToolPlan  string                  `json:"tool_plan,omitempty"`
 	ToolCalls []cohereToolCall        `json:"tool_calls,omitempty"`
 }
 
@@ -133,6 +135,7 @@ func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
 			in, out = max(in, t.InputTokens), max(out, t.OutputTokens)
 		}
 	}
+	// Billed input omits uncharged prompt tokens, so without usage.tokens this is only a lower bound.
 	cu := newCanonicalUsage(max(in, u.CachedTokens), out, 0)
 	if cu != nil && u.CachedTokens > 0 {
 		cu.setCache(u.CachedTokens, 0, 0)
@@ -162,6 +165,10 @@ func cohereFinishToCanonical(reason string) string {
 		return "tool_calls"
 	case "STOP_SEQUENCE":
 		return "stop"
+	case "ERROR_TOXIC":
+		return "content_filter"
+	case "TIMEOUT", "ERROR_LIMIT":
+		return "error"
 	default:
 		return strings.ToLower(reason)
 	}
@@ -237,6 +244,9 @@ func (a *CohereAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			for _, cm := range decodeCohereMessageContent(m.Role, m.Content) {
 				msg.Content = cm.Content
 			}
+			if msg.Content == "" {
+				msg.Content = m.ToolPlan
+			}
 			for _, tc := range m.ToolCalls {
 				msg.ToolCalls = append(msg.ToolCalls, CanonicalToolCall{
 					ID:        tc.ID,
@@ -293,11 +303,7 @@ func (a *CohereAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			continue
 		}
 		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			msg := cohereMessage{Role: "assistant"}
-			if m.Content != "" {
-				block, _ := json.Marshal([]cohereContentBlock{{Type: "text", Text: m.Content}})
-				msg.Content = block
-			}
+			msg := cohereMessage{Role: "assistant", ToolPlan: m.Content}
 			for _, tc := range m.ToolCalls {
 				msg.ToolCalls = append(msg.ToolCalls, cohereToolCall{
 					ID:   tc.ID,
@@ -355,6 +361,9 @@ func (a *CohereAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 			cr.Content += block.Text
 		}
 	}
+	if cr.Content == "" {
+		cr.Content = resp.Message.ToolPlan
+	}
 	for _, tc := range resp.Message.ToolCalls {
 		cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
 			ID:        tc.ID,
@@ -381,9 +390,10 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 			},
 		})
 	}
+	finishReason, _ := cohereFinish(resp.FinishReason)
 	out := cohereResponse{
 		ID:           resp.ID,
-		FinishReason: canonicalFinishToCohere(resp.FinishReason),
+		FinishReason: finishReason,
 		Message: cohereAssistantMessage{
 			Role:      "assistant",
 			Content:   content,
