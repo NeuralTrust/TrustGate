@@ -906,3 +906,76 @@ func TestAdaptResponse_AnthropicToResponsesAPI(t *testing.T) {
 	assert.Equal(t, "message", resp.Output[0].Type)
 	assert.Equal(t, "Hello from Claude!", resp.Output[0].Content[0].Text)
 }
+
+func TestAdaptRequest_Images(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		source      Format
+		target      Format
+		input       string
+		wantContent string
+		wantErr     error
+	}{
+		{
+			name:        "openai data uri to anthropic",
+			source:      FormatOpenAI,
+			target:      FormatAnthropic,
+			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"what is this?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA","detail":"high"}}]}]}`,
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"text","text":"what is this?"}]`,
+		},
+		{
+			name:        "openai url to anthropic",
+			source:      FormatOpenAI,
+			target:      FormatAnthropic,
+			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg"}},{"type":"text","text":"cat?"}]}]}`,
+			wantContent: `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"cat?"}]`,
+		},
+		{
+			name:        "openai interleaved parts to anthropic",
+			source:      FormatOpenAI,
+			target:      FormatAnthropic,
+			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"A"},{"type":"image_url","image_url":{"url":"https://example.com/x.png"}},{"type":"text","text":"B"},{"type":"image_url","image_url":{"url":"https://example.com/y.png"}}]}]}`,
+			wantContent: `[{"type":"image","source":{"type":"url","url":"https://example.com/x.png"}},{"type":"image","source":{"type":"url","url":"https://example.com/y.png"}},{"type":"text","text":"A\nB"}]`,
+		},
+		{
+			name:    "openai ftp url to anthropic",
+			source:  FormatOpenAI,
+			target:  FormatAnthropic,
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"ftp://example.com/a.png"}}]}]}`,
+			wantErr: ErrUnsupportedContent,
+		},
+		{
+			name:        "anthropic webp to openai",
+			source:      FormatAnthropic,
+			target:      FormatOpenAI,
+			input:       `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/webp","data":"UklGR"}},{"type":"text","text":"describe"}]}]}`,
+			wantContent: `[{"type":"image_url","image_url":{"url":"data:image/webp;base64,UklGR"}},{"type":"text","text":"describe"}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := testRegistry().AdaptRequest([]byte(tt.input), tt.source, tt.target)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			var got struct {
+				Messages []struct {
+					Role    string          `json:"role"`
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+			require.Len(t, got.Messages, 1)
+			assert.Equal(t, "user", got.Messages[0].Role)
+			assert.JSONEq(t, tt.wantContent, string(got.Messages[0].Content))
+		})
+	}
+}
