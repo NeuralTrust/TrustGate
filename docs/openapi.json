@@ -4882,6 +4882,16 @@
                             }
                         }
                     },
+                    "421": {
+                        "description": "The key's gateway is Hybrid and this plane does not serve it (gateway_served_by_external_data_plane)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
                     "429": {
                         "description": "Too many key lookups from this source (only on a host that names no gateway)",
                         "content": {
