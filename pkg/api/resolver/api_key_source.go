@@ -26,15 +26,24 @@ import (
 // custom headers.
 const HeaderAPIKeyCompat = "x-api-key"
 
+// HeaderAPIKeyGoogle is the header Google's Gemini SDKs and Gemini CLI send
+// their api key in. Accepting it lets a Gemini-dialect client point at an
+// application with nothing but a base URL and a key.
+const HeaderAPIKeyGoogle = "x-goog-api-key"
+
 // APIKeyFromRequest returns the gateway api key presented by the caller, or
 // an empty string when none is present. Precedence is X-AG-API-Key, then
-// x-api-key, then Authorization: Bearer when the token carries the TrustGate
-// api-key prefix. A bearer without that prefix is left for OAuth2/OIDC.
+// x-api-key, then x-goog-api-key, then Authorization: Bearer when the token
+// carries the TrustGate api-key prefix. A bearer without that prefix is left
+// for OAuth2/OIDC.
 func APIKeyFromRequest(c *fiber.Ctx) string {
 	if key := strings.TrimSpace(c.Get(HeaderAPIKey)); key != "" {
 		return key
 	}
 	if key := strings.TrimSpace(c.Get(HeaderAPIKeyCompat)); key != "" {
+		return key
+	}
+	if key := strings.TrimSpace(c.Get(HeaderAPIKeyGoogle)); key != "" {
 		return key
 	}
 	token, err := bearerToken(c.Get(fiber.HeaderAuthorization))
