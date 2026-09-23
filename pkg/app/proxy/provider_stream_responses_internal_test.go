@@ -195,6 +195,11 @@ func requireResponsesContract(t *testing.T, events []responsesWireEvent) *respon
 				require.NotEmpty(t, ev.Item.CallID)
 				require.False(t, callIDs[ev.Item.CallID], "event %d: call_id %s repeats", i, ev.Item.CallID)
 				callIDs[ev.Item.CallID] = true
+				for j, prev := range items {
+					if prev.added.Type == "message" {
+						require.NotNil(t, prev.done, "event %d: message %d is done before a call is added", i, j)
+					}
+				}
 				assert.NotEmpty(t, ev.Item.Name)
 				require.NotNil(t, ev.Item.Arguments)
 				assert.Empty(t, *ev.Item.Arguments)
@@ -389,6 +394,7 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Checking."),
+				responsesMessageDoneGolden(0, "Checking."),
 				[]string{
 					"output_item.added 1 function_call call_1 get_weather",
 					`function_call_arguments.delta 1 {"city":`,
@@ -396,7 +402,6 @@ func responsesStreamCases() []responsesStreamCase {
 					"output_item.added 2 function_call call_2 get_time",
 					"function_call_arguments.delta 2 {}",
 				},
-				responsesMessageDoneGolden(0, "Checking."),
 				responsesCallDoneGolden(1, "call_1", "get_weather", `{"city":"Paris"}`),
 				responsesCallDoneGolden(2, "call_2", "get_time", "{}"),
 				[]string{"completed"},
@@ -467,12 +472,12 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Let me check."),
+				responsesMessageDoneGolden(0, "Let me check."),
 				[]string{
 					"output_item.added 1 function_call toolu_1 get_weather",
 					`function_call_arguments.delta 1 {"city":`,
 					`function_call_arguments.delta 1 "Paris"}`,
 				},
-				responsesMessageDoneGolden(0, "Let me check."),
 				responsesCallDoneGolden(1, "toolu_1", "get_weather", `{"city":"Paris"}`),
 				[]string{"completed"},
 			),
@@ -498,11 +503,11 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Checking."),
+				responsesMessageDoneGolden(0, "Checking."),
 				[]string{
 					"output_item.added 1 function_call tooluse_1 get_weather",
 					`function_call_arguments.delta 1 {"city":"Paris"}`,
 				},
-				responsesMessageDoneGolden(0, "Checking."),
 				responsesCallDoneGolden(1, "tooluse_1", "get_weather", `{"city":"Paris"}`),
 				[]string{"completed"},
 			),
@@ -549,13 +554,13 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Checking both."),
+				responsesMessageDoneGolden(0, "Checking both."),
 				[]string{
 					"output_item.added 1 function_call get_weather get_weather",
 					`function_call_arguments.delta 1 {"city":"Paris"}`,
 					"output_item.added 2 function_call get_weather_2 get_weather",
 					`function_call_arguments.delta 2 {"city":"Rome"}`,
 				},
-				responsesMessageDoneGolden(0, "Checking both."),
 				responsesCallDoneGolden(1, "get_weather", "get_weather", `{"city":"Paris"}`),
 				responsesCallDoneGolden(2, "get_weather_2", "get_weather", `{"city":"Rome"}`),
 				[]string{"completed"},
@@ -576,12 +581,12 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Voy"),
+				responsesMessageDoneGolden(0, "Voy"),
 				[]string{
 					"output_item.added 1 function_call database_agent_3v76fs3zjrgq database_agent",
 					`function_call_arguments.delta 1 {"query":`,
 					`function_call_arguments.delta 1  "Juan"}`,
 				},
-				responsesMessageDoneGolden(0, "Voy"),
 				responsesCallDoneGolden(1, "database_agent_3v76fs3zjrgq", "database_agent", `{"query": "Juan"}`),
 				[]string{"completed"},
 			),
@@ -611,12 +616,12 @@ func responsesStreamCases() []responsesStreamCase {
 			want: joinGolden(
 				[]string{"created", "in_progress"},
 				responsesMessageGolden(0, "Let me check."),
+				responsesMessageDoneGolden(0, "Let me check."),
 				[]string{
 					"output_item.added 1 function_call toolu_1 get_weather",
 					"function_call_arguments.delta 1 {}",
 				},
 				responsesMessageGolden(2, "Done."),
-				responsesMessageDoneGolden(0, "Let me check."),
 				responsesCallDoneGolden(1, "toolu_1", "get_weather", "{}"),
 				responsesMessageDoneGolden(2, "Done."),
 				[]string{"completed"},
