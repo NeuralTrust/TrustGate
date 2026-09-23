@@ -4180,7 +4180,7 @@
                         }
                     },
                     "409": {
-                        "description": "Server is not on the shelf; connect it first",
+                        "description": "Server is not on the shelf, or needs admin setup; connect it first",
                         "content": {
                             "application/json": {
                                 "schema": {

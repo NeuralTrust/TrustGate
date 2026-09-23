@@ -3364,7 +3364,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Server is not on the shelf; connect it first",
+                        "description": "Server is not on the shelf, or needs admin setup; connect it first",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
