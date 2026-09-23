@@ -157,7 +157,7 @@ func TestGroqCapture_GroqClientRoundTripKeepsUsage(t *testing.T) {
 }
 
 func TestEncodeCompletionsStreamChunk_UsageOnlyHasEmptyChoices(t *testing.T) {
-	lines, err := encodeCompletionsStreamChunk(&CanonicalStreamChunk{ID: "c", Model: "m", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}})
+	lines, err := encodeCompletionsStreamChunk(&CanonicalStreamChunk{ID: "c", Model: "m", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}}, true)
 	require.NoError(t, err)
 	require.NotEmpty(t, lines)
 	payload, ok := strings.CutPrefix(string(lines[0]), "data: ")

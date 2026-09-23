@@ -180,7 +180,8 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 //
 // An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
 // the usage once: on the include_usage chunk when one follows the finish,
-// otherwise on the finish chunk.
+// otherwise on the finish chunk. A Mistral client of a Groq or OpenRouter
+// upstream gets it once, on the finish chunk.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
 	registry providerCodec,

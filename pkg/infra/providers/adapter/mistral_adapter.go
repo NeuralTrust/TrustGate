@@ -81,7 +81,7 @@ func (a *MistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 }
 
 func (a *MistralAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	return a.openai.EncodeStreamChunk(chunk)
+	return encodeCompletionsStreamChunk(chunk, false)
 }
 
 // ---------------------------------------------------------------------------

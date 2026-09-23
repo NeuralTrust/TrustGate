@@ -110,7 +110,7 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 }
 
 func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	return encodeCompletionsStreamChunk(chunk)
+	return encodeCompletionsStreamChunk(chunk, true)
 }
 
 // ---------------------------------------------------------------------------
