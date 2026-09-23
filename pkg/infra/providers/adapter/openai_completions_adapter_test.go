@@ -261,6 +261,24 @@ func TestCanonical_OpenAI_Completions_DeveloperAndRefusal(t *testing.T) {
 	assert.Equal(t, "I cannot help with that.", cresp.Content)
 }
 
+func TestDecodeCompletionsRequest_AssistantRefusalPart(t *testing.T) {
+	req := `{
+		"model":"gpt-5-mini",
+		"messages":[
+			{"role":"user","content":"Do the thing."},
+			{"role":"assistant","content":[{"type":"refusal","refusal":"I can't help with that."}]},
+			{"role":"user","content":"Why?"}
+		]
+	}`
+	cr, err := (&OpenAIAdapter{}).DecodeRequest([]byte(req))
+	require.NoError(t, err)
+	assert.Equal(t, []CanonicalMessage{
+		{Role: "user", Content: "Do the thing."},
+		{Role: "assistant", Content: "I can't help with that."},
+		{Role: "user", Content: "Why?"},
+	}, cr.Messages)
+}
+
 func TestDecodeCompletionsStreamChunk_ReasoningOnly(t *testing.T) {
 	t.Parallel()
 

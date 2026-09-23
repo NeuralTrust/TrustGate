@@ -438,6 +438,48 @@ func TestAnthropicThinkingDeltaReachesOpenAIStream(t *testing.T) {
 	assert.Empty(t, chunk.Choices[0].Delta.Content, "reasoning must not leak into content")
 }
 
+func TestAnthropicEncodeRequest_ToolUseWithoutArguments(t *testing.T) {
+	body, err := (&AnthropicAdapter{}).EncodeRequest(&CanonicalRequest{
+		Model: "claude-opus-4-5",
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "toolu_1", Name: "now", Arguments: ""}}},
+			{Role: "tool", ToolCallID: "toolu_1", Content: "noon"},
+		},
+	})
+	require.NoError(t, err)
+
+	var out struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &out))
+	require.Len(t, out.Messages, 3)
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Input json.RawMessage `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(out.Messages[1].Content, &blocks))
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "tool_use", blocks[0].Type)
+	assert.JSONEq(t, `{}`, string(blocks[0].Input))
+
+	resp, err := (&AnthropicAdapter{}).EncodeResponse(&CanonicalResponse{
+		Role:      "assistant",
+		ToolCalls: []CanonicalToolCall{{ID: "toolu_1", Name: "now"}},
+	})
+	require.NoError(t, err)
+	var encoded struct {
+		Content []struct {
+			Input json.RawMessage `json:"input"`
+		} `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(resp, &encoded))
+	require.Len(t, encoded.Content, 1)
+	assert.JSONEq(t, `{}`, string(encoded.Content[0].Input))
+}
+
 func TestAnthropicEncodeRequest_MaxTokensDefault(t *testing.T) {
 	tests := []struct {
 		name      string

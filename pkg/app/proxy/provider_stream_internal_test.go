@@ -769,7 +769,7 @@ func TestAdaptStream_DeferredFinishDropsChunksAfterFlush(t *testing.T) {
 			assert.Contains(t, data[len(data)-1], tt.terminal, "nothing follows the terminal event")
 			joined := strings.Join(data, "\n")
 			assert.NotContains(t, joined, "late")
-			assert.NotContains(t, joined, "99")
+			assert.NotRegexp(t, `":\s*(99|109)[,}]`, joined, "no usage from after the terminal event")
 		})
 	}
 }

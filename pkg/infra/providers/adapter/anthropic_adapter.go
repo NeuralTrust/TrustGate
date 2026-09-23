@@ -492,7 +492,7 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 					Type:  "tool_use",
 					ID:    tc.ID,
 					Name:  tc.Name,
-					Input: json.RawMessage(tc.Arguments),
+					Input: anthropicToolInput(tc.Arguments),
 				})
 			}
 			raw, _ := json.Marshal(blocks)
@@ -624,7 +624,7 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Name,
-			Input: json.RawMessage(tc.Arguments),
+			Input: anthropicToolInput(tc.Arguments),
 		})
 	}
 
@@ -872,4 +872,14 @@ func anthropicToolResultText(raw json.RawMessage) string {
 		return strings.Join(parts, "\n")
 	}
 	return contentToString(raw)
+}
+
+// anthropicToolInput returns the input of a tool_use block for arguments. A
+// call with no arguments gets an empty object: Anthropic requires the input,
+// and omitempty would drop an empty one.
+func anthropicToolInput(arguments string) json.RawMessage {
+	if strings.TrimSpace(arguments) == "" {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(arguments)
 }
