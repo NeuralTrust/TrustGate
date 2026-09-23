@@ -1286,7 +1286,8 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			wantReleased: 3,
 			wantTail: []string{
 				"event: message-end",
-				`data: {"type":"message-end","delta":{"finish_reason":"ERROR"}}`, "",
+				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
+					`"error":"response blocked by content filter"}}`, "",
 			},
 		},
 		{
