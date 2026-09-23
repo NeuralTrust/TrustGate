@@ -449,7 +449,7 @@ func TestResolve_OneHourCacheWriteRate(t *testing.T) {
 	}{
 		{name: "anthropic claude doubles the input rate", provider: "anthropic", model: "claude-sonnet-4-5", want: 6.00 / 1e6},
 		{name: "bedrock claude doubles the input rate", provider: "bedrock", model: "us.anthropic.claude-haiku-4-5-20251001-v1:0", want: 6.00 / 1e6},
-		{name: "non-claude model keeps the cache write rate", provider: "openai", model: "gpt-5", want: 3.75 / 1e6},
+		{name: "non-anthropic/bedrock provider keeps the cache write rate", provider: "openai", model: "gpt-5", want: 3.75 / 1e6},
 		{name: "bedrock doubles the input rate whatever the model id", provider: "bedrock", model: "amazon.nova-pro-v1:0", want: 6.00 / 1e6},
 		{
 			name: "bedrock application inference profile override without a 1h rate doubles its input", provider: "bedrock", model: profileARN,
