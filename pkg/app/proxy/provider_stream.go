@@ -177,6 +177,10 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // an ERROR finish. Once an Anthropic or Cohere client has its terminal event
 // for a failed upstream, the sequence error is wrapped in
 // ClientNotifiedStreamError.
+//
+// An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
+// the usage once: on the include_usage chunk when one follows the finish,
+// otherwise on the finish chunk.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
 	registry providerCodec,
@@ -190,6 +194,7 @@ func adaptStream(
 	if crossFormat {
 		deferred = newFinishDeferral(source, target)
 	}
+	usage := newUsageOnce(registry, source, target, crossFormat, logger)
 	// On the cross-format path the adapter re-encodes payload chunks but never
 	// produces the terminating "data: [DONE]" sentinel. OpenAI-wire clients
 	// (openai, azure) rely on it to detect end-of-stream, so re-emit it when the
@@ -216,6 +221,9 @@ func adaptStream(
 					}
 					err = streamErr
 				}
+				if usage != nil && !usage.flush(emit) {
+					return
+				}
 				yield(nil, err)
 				return
 			}
@@ -232,6 +240,9 @@ func adaptStream(
 
 			if isSSEDone(line) {
 				if deferred != nil && !deferred.done(emit, registry, source, logger) {
+					return
+				}
+				if usage != nil && !usage.flush(emit) {
 					return
 				}
 				if forwardDone && !emit(sseDoneLines()) {
@@ -267,6 +278,13 @@ func adaptStream(
 				continue
 			}
 
+			if usage != nil {
+				if !usage.adapt(emit, payload) {
+					return
+				}
+				continue
+			}
+
 			lines, adaptErr := registry.AdaptStreamChunk(payload, source, target)
 			if adaptErr != nil {
 				logger.Warn("stream adapt chunk failed", slog.String("error", adaptErr.Error()))
@@ -279,6 +297,9 @@ func adaptStream(
 		}
 		if deferred != nil {
 			deferred.end(emit, registry, source, logger)
+		}
+		if usage != nil {
+			usage.flush(emit)
 		}
 	}
 

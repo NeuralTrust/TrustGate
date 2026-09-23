@@ -33,14 +33,20 @@ const groqFinishWithUsage = `data: {"id":"chatcmpl-groq","object":"chat.completi
 	`"x_groq":{"usage":{"prompt_tokens":1678,"completion_tokens":32,"total_tokens":1710,"prompt_tokens_details":{"cached_tokens":1536},"completion_tokens_details":{"reasoning_tokens":30}}},` +
 	`"usage":{"prompt_tokens":1678,"completion_tokens":32,"total_tokens":1710,"prompt_tokens_details":{"cached_tokens":1536},"completion_tokens_details":{"reasoning_tokens":30}}}`
 
+const groqFinishXGroqOnly = `data: {"id":"chatcmpl-groq","object":"chat.completion.chunk","model":"openai/gpt-oss-120b","choices":[{"index":0,"delta":{},"finish_reason":"length"}],` +
+	`"x_groq":{"usage":{"prompt_tokens":1678,"completion_tokens":32,"total_tokens":1710,"prompt_tokens_details":{"cached_tokens":1536},"completion_tokens_details":{"reasoning_tokens":30}}}}`
+
 func TestInvokeStream_GroqRequestsIncludeUsageAndRecordsCachedUsage(t *testing.T) {
 	tests := []struct {
 		name         string
 		sourceFormat string
 		body         string
+		finish       string
 	}{
-		{name: "openai client", body: openaiRequestBody},
-		{name: "anthropic client", sourceFormat: "anthropic", body: anthropicRequestBody},
+		{name: "openai client", body: openaiRequestBody, finish: groqFinishWithUsage},
+		{name: "anthropic client", sourceFormat: "anthropic", body: anthropicRequestBody, finish: groqFinishWithUsage},
+		{name: "openai client with only x_groq usage", body: openaiRequestBody, finish: groqFinishXGroqOnly},
+		{name: "anthropic client with only x_groq usage", sourceFormat: "anthropic", body: anthropicRequestBody, finish: groqFinishXGroqOnly},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,7 +56,7 @@ func TestInvokeStream_GroqRequestsIncludeUsageAndRecordsCachedUsage(t *testing.T
 				CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
 				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) (iter.Seq2[[]byte, error], error) {
 					sent = body
-					return seqOf([]byte(groqFinishWithUsage), []byte("data: [DONE]")), nil
+					return seqOf([]byte(tc.finish), []byte("data: [DONE]")), nil
 				}).
 				Once()
 			inv := newStreamInvoker(t, "groq", client)

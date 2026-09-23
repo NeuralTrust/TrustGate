@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,11 @@ const (
 	groqCaptureFinishNoCache = `{"object":"chat.completion.chunk","model":"openai/gpt-oss-120b","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"length"}],` +
 		`"x_groq":{"usage":{"queue_time":0.152286074,"prompt_tokens":1702,"prompt_time":0.087556678,"completion_tokens":64,"completion_time":0.140797528,"total_tokens":1766,"total_time":0.228354206,"completion_tokens_details":{"reasoning_tokens":62}}},` +
 		`"usage":{"queue_time":0.152286074,"prompt_tokens":1702,"prompt_time":0.087556678,"completion_tokens":64,"completion_time":0.140797528,"total_tokens":1766,"total_time":0.228354206,"completion_tokens_details":{"reasoning_tokens":62}}}`
+)
+
+// Synthetic fixtures, not captured: Groq buffered responses and a finish
+// chunk whose standard usage undercounts x_groq.usage, to pin the max merge.
+const (
 	groqBufferedBoth = `{"object":"chat.completion","model":"openai/gpt-oss-120b","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"finish_reason":"length"}],` +
 		`"usage":{"queue_time":0.2,"prompt_tokens":1678,"completion_tokens":32,"total_tokens":1710,"prompt_tokens_details":{"cached_tokens":1536},"completion_tokens_details":{"reasoning_tokens":30}},` +
 		`"x_groq":{"usage":{"prompt_tokens":1678,"completion_tokens":32,"total_tokens":1710,"prompt_tokens_details":{"cached_tokens":1536},"completion_tokens_details":{"reasoning_tokens":30}}}}`
@@ -127,4 +133,34 @@ func TestGroqCapture_TimingOnlyXGroqUsageAddsNoTokens(t *testing.T) {
 	cr, err := a.DecodeResponse([]byte(groqResponseWithXGroq))
 	require.NoError(t, err)
 	assertUsage(t, CanonicalUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}, cr.Usage)
+}
+
+func TestGroqCapture_GroqClientRoundTripKeepsUsage(t *testing.T) {
+	a := groqAdapter(t)
+	for _, chunk := range []string{groqCaptureFinishBoth, groqCaptureFinishXGroqOnly, groqCaptureIncludeUsage} {
+		first, err := a.DecodeStreamChunk([]byte(chunk))
+		require.NoError(t, err)
+		require.NotNil(t, first)
+
+		lines, err := a.EncodeStreamChunk(first)
+		require.NoError(t, err)
+		require.NotEmpty(t, lines)
+		payload, ok := strings.CutPrefix(string(lines[0]), "data: ")
+		require.True(t, ok)
+
+		second, err := a.DecodeStreamChunk([]byte(payload))
+		require.NoError(t, err)
+		require.NotNil(t, second)
+		assertUsage(t, groqCacheHitUsage(), second.Usage)
+		assert.Equal(t, first.FinishReason, second.FinishReason)
+	}
+}
+
+func TestEncodeCompletionsStreamChunk_UsageOnlyHasEmptyChoices(t *testing.T) {
+	lines, err := encodeCompletionsStreamChunk(&CanonicalStreamChunk{ID: "c", Model: "m", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}})
+	require.NoError(t, err)
+	require.NotEmpty(t, lines)
+	payload, ok := strings.CutPrefix(string(lines[0]), "data: ")
+	require.True(t, ok)
+	assert.JSONEq(t, `{"id":"c","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`, payload)
 }
