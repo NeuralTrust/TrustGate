@@ -50,23 +50,23 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 
 ## Phase E: multi-agent-tests prompt_caching suite (`/Users/edu/Neuraltrust/multi-agent-tests-eng1618`)
 
-- [ ] E.1 `pyproject.toml`: add marker `prompt_caching: cached-prefix accounting across providers`.
-- [ ] E.2 `src/e2e/tests/test_prompt_caching.py`: session fixture checks `upstreams.unavailable(X)` for selected upstreams; any missing → `pytest.exit(reason, returncode=2)` naming the vars (never skip). Bedrock also runs `sts get-caller-identity`.
-- [ ] E.3 Same file: ~5k-token static prefix builder; HS256 `X-AG-Playground-Token` (purpose `playground`, consumer slug, local `SERVER_SECRET_KEY`).
-- [ ] E.4 Parametrize (upstream, client format ∈ {native, openai, anthropic}, stream); Bedrock variants implicit / explicit 5m / explicit 1h; plugin cases Anthropic+OpenAI with regexreplace and toolallowlist.
-- [ ] E.5 Assertions: second call R>0 in provider body; `GET {E2E_ADMIN_URL}/v1/playground/traces/{X-AG-Trace-Id}` with admin Bearer `E2E_ADMIN_TOKEN`; trace I/R/W/W1h == provider usage; cost per D10. Groq cache assertion only for gpt-oss.
-- [ ] E.6 `README.md` + `.env.example`: local-gateway notes (localhost admin/proxy, sandbox domain, never prod, `-k` per slice since later slices' cases fail until landed).
-- [ ] E.7 `src/agentgateway/catalog.py` only if needed: cache-capable default models (Claude Haiku 4.5 on Bedrock, GPT-5.6 for Responses breakpoints, Groq gpt-oss).
+- [x] E.1 `pyproject.toml`: add marker `prompt_caching: cached-prefix accounting across providers`.
+- [x] E.2 `src/e2e/tests/test_prompt_caching.py`: session fixture checks `upstreams.unavailable(X)` for selected upstreams; any missing → `pytest.exit(reason, returncode=2)` naming the vars (never skip). Bedrock also runs `sts get-caller-identity`.
+- [x] E.3 Same file: ~5k-token static prefix builder; HS256 `X-AG-Playground-Token` (purpose `playground`, consumer slug, local `SERVER_SECRET_KEY`).
+- [x] E.4 Parametrize (upstream, client format ∈ {native, openai, anthropic}, stream); Bedrock variants implicit / explicit 5m / explicit 1h; plugin cases Anthropic+OpenAI with regexreplace and toolallowlist.
+- [x] E.5 Assertions: second call R>0 in provider body; `GET {E2E_ADMIN_URL}/v1/playground/traces/{X-AG-Trace-Id}` with admin Bearer `E2E_ADMIN_TOKEN`; trace I/R/W/W1h == provider usage; cost per D10. Groq cache assertion only for gpt-oss.
+- [x] E.6 `README.md` + `.env.example`: local-gateway notes (localhost admin/proxy, sandbox domain, never prod, `-k` per slice since later slices' cases fail until landed).
+- [x] E.7 `src/agentgateway/catalog.py` only if needed: cache-capable default models (Claude Haiku 4.5 on Bedrock, GPT-5.6 for Responses breakpoints, Groq gpt-oss).
 - [ ] E.8 V: `make lint`, `uv run pytest -m prompt_caching --collect-only`; V2–V3; V4 = `-k bedrock` against S1a local build; V5.
 
 ## Phase 1 (S1a): Bedrock usage fold
 
-- [ ] 1.1 `providers/adapter/canonical.go`: `(*CanonicalUsage).setCache(read, write, write1h)`.
-- [ ] 1.2 `providers/adapter/bedrock_adapter.go`: `ConverseUsage.CacheDetails []ConverseCacheDetail`; `converseUsageToCanonical` folds I=in+R+W, W1h from `ttl=="1h"`, Total=max(total, I+O).
-- [ ] 1.3 Same file: encoder writes `inputTokens=PlainInputTokens()` and rebuilds `cacheDetails`.
-- [ ] 1.4 `providers/bedrock/converse.go`: `wireUsage` copies `TokenUsage.CacheDetails`.
-- [ ] 1.5 Tests: rewrite `bedrock_adapter_test.go:382-403`, `converse_test.go:178-193`; add 12+4+2→18/25 and 1h split, buffered + stream.
-- [ ] 1.6 `providers/bedrock/live_test.go`: same prefix twice, R>0, raw `inputTokens` excludes R+W, Total≥I+O.
+- [x] 1.1 `providers/adapter/canonical.go`: `(*CanonicalUsage).setCache(read, write, write1h)`.
+- [x] 1.2 `providers/adapter/bedrock_adapter.go`: `ConverseUsage.CacheDetails []ConverseCacheDetail`; `converseUsageToCanonical` folds I=in+R+W, W1h from `ttl=="1h"`, Total=max(total, I+O).
+- [x] 1.3 Same file: encoder writes `inputTokens=PlainInputTokens()` and rebuilds `cacheDetails`.
+- [x] 1.4 `providers/bedrock/converse.go`: `wireUsage` copies `TokenUsage.CacheDetails`.
+- [x] 1.5 Tests: rewrite `bedrock_adapter_test.go:382-403`, `converse_test.go:178-193`; add 12+4+2→18/25 and 1h split, buffered + stream.
+- [x] 1.6 `providers/bedrock/live_test.go`: same prefix twice, R>0, raw `inputTokens` excludes R+W, Total≥I+O.
 - [ ] 1.7 V1 (adapter, bedrock; `go test -tags bedrock_live`); V2; V3; V4 **Bedrock**; V5.
 
 ## Phase 2 (S1b): OpenAI-family and Cohere usage decode
@@ -86,6 +86,10 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 - [ ] 3.4 `adapter_test.go`: `decode(encode(u))==u` table for Chat, Responses, Cohere, Anthropic, Bedrock.
 - [ ] 3.5 `plugins/llmcost/pricing.go`: `ratesFor(..., cw1h, claude)`, `isClaudeModel`; tests $0.006, non-Claude, discount $4.80/M, override wins.
 - [ ] 3.6 `plugins/tokenratelimit/budget_test.go`: Anthropic upstream R=1000 → OpenAI client, `CountCacheReads=false`, real registry.
+- [ ] 3.6b Same test with a **Bedrock** upstream (buffered + stream) → OpenAI/Responses/Cohere clients, `CountCacheReads=false` (S1a review: until S1c the client body lacks R, so budgets would charge cache reads; S1a must not reach main without S1c).
+- [ ] 3.6d `anthropic_adapter.go` decode: clamp `CacheWrite1hInputTokens` to `CacheWriteInputTokens` (route through `setCache`); unify the R+W>I unfold rule (`PlainInputTokens` → `max(0, I-R-W)`, Bedrock reuses it) (S1a round-2 review).
+- [ ] 3.6e Bedrock encoder: only emit `cacheDetails` when the canonical usage carries a TTL breakdown source; otherwise omit (S1a round-2 review, TTL unknown ≠ 5m).
+- [ ] 3.6c `bedrock_adapter.go` `EncodeStreamChunk`: buffer usage and emit a single merged Converse `metadata` event after `messageStop` (S1a review: Anthropic upstream → Bedrock client currently emits one metadata per usage chunk and the last one loses cache fields).
 - [ ] 3.7 V1 (adapter, llmcost, tokenratelimit); V2; V3; V4 **Anthropic, OpenAI, openai_responses, Cohere, Bedrock** (1h pricing); V5.
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic

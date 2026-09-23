@@ -172,10 +172,15 @@ func TestConverseResponseJSON(t *testing.T) {
 			},
 		}},
 		Usage: &bedrockTypes.TokenUsage{
-			InputTokens:          aws.Int32(12),
-			OutputTokens:         aws.Int32(7),
-			TotalTokens:          aws.Int32(19),
-			CacheReadInputTokens: aws.Int32(4),
+			InputTokens:           aws.Int32(12),
+			OutputTokens:          aws.Int32(7),
+			TotalTokens:           aws.Int32(19),
+			CacheReadInputTokens:  aws.Int32(4),
+			CacheWriteInputTokens: aws.Int32(300),
+			CacheDetails: []bedrockTypes.CacheDetail{
+				{InputTokens: aws.Int32(200), Ttl: bedrockTypes.CacheTTLOneHour},
+				{InputTokens: aws.Int32(100), Ttl: bedrockTypes.CacheTTLFiveMinutes},
+			},
 		},
 		Metrics: &bedrockTypes.ConverseMetrics{LatencyMs: aws.Int64(321)},
 	}
@@ -190,9 +195,35 @@ func TestConverseResponseJSON(t *testing.T) {
 			{"toolUse": {"toolUseId": "call_1", "name": "get_weather", "input": {"city": "Madrid"}}}
 		]}},
 		"stopReason": "tool_use",
-		"usage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19, "cacheReadInputTokens": 4},
+		"usage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19, "cacheReadInputTokens": 4, "cacheWriteInputTokens": 300,
+			"cacheDetails": [{"inputTokens": 200, "ttl": "1h"}, {"inputTokens": 100, "ttl": "5m"}]},
 		"metrics": {"latencyMs": 321}
 	}`, string(body))
+}
+
+func TestWireUsage_CacheSplit(t *testing.T) {
+	wire := wireUsage(&bedrockTypes.TokenUsage{
+		InputTokens:           aws.Int32(10),
+		OutputTokens:          aws.Int32(5),
+		TotalTokens:           aws.Int32(15),
+		CacheWriteInputTokens: aws.Int32(300),
+		CacheDetails: []bedrockTypes.CacheDetail{
+			{InputTokens: aws.Int32(200), Ttl: bedrockTypes.CacheTTLOneHour},
+			{InputTokens: aws.Int32(100), Ttl: bedrockTypes.CacheTTLFiveMinutes},
+		},
+	})
+	body, err := json.Marshal(adapter.ConverseResponse{StopReason: "end_turn", Usage: wire})
+	require.NoError(t, err)
+
+	cr, err := (&adapter.BedrockAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+	assert.Equal(t, &adapter.CanonicalUsage{
+		InputTokens:             310,
+		OutputTokens:            5,
+		TotalTokens:             315,
+		CacheWriteInputTokens:   300,
+		CacheWrite1hInputTokens: 200,
+	}, cr.Usage)
 }
 
 func TestConverseStreamEventJSON(t *testing.T) {
@@ -255,6 +286,21 @@ func TestConverseStreamEventJSON(t *testing.T) {
 				Metrics: &bedrockTypes.ConverseStreamMetrics{LatencyMs: aws.Int64(100)},
 			}},
 			want: `{"metadata":{"usage":{"inputTokens":5,"outputTokens":9,"totalTokens":14},"metrics":{"latencyMs":100}}}`,
+		},
+		{
+			name: "metadata with cache details",
+			event: &bedrockTypes.ConverseStreamOutputMemberMetadata{Value: bedrockTypes.ConverseStreamMetadataEvent{
+				Usage: &bedrockTypes.TokenUsage{
+					InputTokens:           aws.Int32(12),
+					OutputTokens:          aws.Int32(7),
+					TotalTokens:           aws.Int32(19),
+					CacheReadInputTokens:  aws.Int32(4),
+					CacheWriteInputTokens: aws.Int32(2),
+					CacheDetails:          []bedrockTypes.CacheDetail{{InputTokens: aws.Int32(2), Ttl: bedrockTypes.CacheTTLOneHour}},
+				},
+			}},
+			want: `{"metadata":{"usage":{"inputTokens":12,"outputTokens":7,"totalTokens":19,"cacheReadInputTokens":4,"cacheWriteInputTokens":2,
+				"cacheDetails":[{"inputTokens":2,"ttl":"1h"}]}}}`,
 		},
 	}
 
