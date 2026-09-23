@@ -666,7 +666,10 @@ func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChun
 // Stream: Encode (Canonical → Chat Completions chunk)
 // ---------------------------------------------------------------------------
 
-func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
+// encodeCompletionsStreamChunk encodes chunk as a Chat Completions chunk. With
+// emptyUsageChoices a usage-only chunk gets choices: [], the OpenAI
+// include_usage shape; Mistral clients keep the single empty choice.
+func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk, emptyUsageChoices bool) ([][]byte, error) {
 	delta := openaiStreamDelta{
 		Role:             chunk.Role,
 		Content:          chunk.Delta,
@@ -708,9 +711,8 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		Model:   chunk.Model,
 		Choices: []openaiStreamChoice{choice},
 	}
-	if chunk.Usage != nil && chunk.FinishReason == "" && chunk.Role == "" && chunk.Delta == "" &&
+	if emptyUsageChoices && chunk.Usage != nil && chunk.FinishReason == "" && chunk.Role == "" && chunk.Delta == "" &&
 		chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
-		// OpenAI sends the include_usage chunk with empty choices.
 		out.Choices = []openaiStreamChoice{}
 	}
 

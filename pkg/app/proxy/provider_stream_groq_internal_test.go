@@ -16,6 +16,8 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
+	"iter"
 	"log/slog"
 	"strings"
 	"testing"
@@ -212,6 +214,247 @@ func TestAdaptStream_GroqAnthropicClientGetsOneMessageDelta(t *testing.T) {
 			assert.JSONEq(t, `{"input_tokens":142,"output_tokens":32,"cache_read_input_tokens":1536}`, string(delta.Usage))
 			assert.Contains(t, joined, `"stop_reason":"max_tokens"`)
 			eventOfType(t, events, "message_stop")
+		})
+	}
+}
+
+// OpenRouter shapes: the finish chunk may repeat the usage, and some providers
+// send the include_usage chunk with a role delta and an empty content.
+const (
+	openRouterStreamText        = `data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-4o-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}`
+	openRouterStreamUsageJSON   = `{"prompt_tokens":9,"completion_tokens":1,"total_tokens":10,"prompt_tokens_details":{"cached_tokens":4}}`
+	openRouterStreamFinish      = `data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-4o-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop","native_finish_reason":"stop"}]}`
+	openRouterStreamFinishUsage = `data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-4o-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":` + openRouterStreamUsageJSON + `}`
+	openRouterStreamRoleUsage   = `data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-4o-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"native_finish_reason":null}],"usage":` + openRouterStreamUsageJSON + `}`
+	openRouterStreamUsage       = `data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-4o-mini","provider":"OpenAI","choices":[],"usage":` + openRouterStreamUsageJSON + `}`
+	upstreamErrorOnlyPayload    = `data: {"error":{"message":"transient upstream hiccup","code":500}}`
+)
+
+type clientUsageSummary struct {
+	usages       int
+	finishes     int
+	emptyChoices int
+	roles        int
+	usageChunk   openAIClientChunk
+	usageFinish  bool
+}
+
+func summarizeClientUsage(t *testing.T, lines []string) clientUsageSummary {
+	t.Helper()
+	var s clientUsageSummary
+	for _, chunk := range openAIClientChunks(t, lines) {
+		finish := false
+		for _, choice := range chunk.Choices {
+			if strings.Contains(string(choice), `"finish_reason"`) {
+				finish = true
+				s.finishes++
+			}
+			if strings.Contains(string(choice), `"role"`) {
+				s.roles++
+			}
+		}
+		if chunk.Choices != nil && len(chunk.Choices) == 0 {
+			s.emptyChoices++
+		}
+		if chunk.Usage != nil {
+			s.usages++
+			s.usageChunk = chunk
+			s.usageFinish = finish
+		}
+	}
+	return s
+}
+
+func TestAdaptStream_MistralClientUsageOnlyChunkKeepsItsChoice(t *testing.T) {
+	lines := collectLines(t, adaptStream(linesSeq(openAIIncludeUsageStream...), adapter.NewRegistry(), adapter.FormatMistral, adapter.FormatOpenAI, slog.Default(), nil))
+
+	s := summarizeClientUsage(t, lines)
+	assert.Zero(t, s.emptyChoices, "a Mistral client must not get choices: []")
+	require.Equal(t, 1, s.usages)
+	assert.Len(t, s.usageChunk.Choices, 1)
+	assert.Equal(t, 10, s.usageChunk.Usage.TotalTokens)
+}
+
+func TestAdaptStream_MistralClientGetsUsageOnTheFinish(t *testing.T) {
+	tests := []struct {
+		name       string
+		upstream   adapter.Format
+		lines      []string
+		wantPrompt int
+		wantTotal  int
+		wantCached int
+	}{
+		{name: "groq with include_usage", upstream: adapter.FormatGroq, lines: groqUpstreamLines(true, groqStreamFinish), wantPrompt: 1678, wantTotal: 1710, wantCached: 1536},
+		{name: "groq without include_usage", upstream: adapter.FormatGroq, lines: groqUpstreamLines(false, groqStreamFinish), wantPrompt: 1678, wantTotal: 1710, wantCached: 1536},
+		{name: "groq x_groq-only finish with include_usage", upstream: adapter.FormatGroq, lines: groqUpstreamLines(true, groqStreamFinishXG), wantPrompt: 1678, wantTotal: 1710, wantCached: 1536},
+		{
+			name: "openrouter usage chunk after the finish", upstream: adapter.FormatOpenRouter,
+			lines:      []string{openRouterStreamText, openRouterStreamFinish, openRouterStreamUsage, "data: [DONE]"},
+			wantPrompt: 9, wantTotal: 10, wantCached: 4,
+		},
+		{
+			name: "openrouter role-bearing usage chunk after the finish", upstream: adapter.FormatOpenRouter,
+			lines:      []string{openRouterStreamText, openRouterStreamFinish, openRouterStreamRoleUsage, "data: [DONE]"},
+			wantPrompt: 9, wantTotal: 10, wantCached: 4,
+		},
+		{
+			name: "openrouter finish with usage then a role-bearing usage chunk", upstream: adapter.FormatOpenRouter,
+			lines:      []string{openRouterStreamText, openRouterStreamFinishUsage, openRouterStreamRoleUsage, "data: [DONE]"},
+			wantPrompt: 9, wantTotal: 10, wantCached: 4,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(linesSeq(tt.lines...), adapter.NewRegistry(), adapter.FormatMistral, tt.upstream, slog.Default(), nil))
+
+			joined := strings.Join(lines, "\n")
+			assert.NotContains(t, joined, "x_groq")
+			s := summarizeClientUsage(t, lines)
+			assert.Zero(t, s.emptyChoices, "a Mistral client must not get choices: []")
+			assert.Equal(t, 1, s.finishes)
+			assert.Equal(t, 1, s.roles, "only the first chunk carries the role")
+			require.Equal(t, 1, s.usages, "the client must receive the usage exactly once")
+			assert.True(t, s.usageFinish, "the usage must ride on the finish chunk")
+			assert.Equal(t, tt.wantPrompt, s.usageChunk.Usage.PromptTokens)
+			assert.Equal(t, tt.wantTotal, s.usageChunk.Usage.TotalTokens)
+			assert.Equal(t, tt.wantCached, s.usageChunk.Usage.PromptTokensDetails.CachedTokens)
+		})
+	}
+}
+
+func TestAdaptStream_OpenAIClientFoldsRoleBearingUsageChunk(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{name: "held finish with usage", lines: []string{openRouterStreamText, openRouterStreamFinishUsage, openRouterStreamRoleUsage, "data: [DONE]"}},
+		{name: "finish without usage", lines: []string{openRouterStreamText, openRouterStreamFinish, openRouterStreamRoleUsage, "data: [DONE]"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(linesSeq(tt.lines...), adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatOpenRouter, slog.Default(), nil))
+
+			assert.Equal(t, "data: [DONE]", lines[len(lines)-2])
+			s := summarizeClientUsage(t, lines)
+			assert.Equal(t, 1, s.finishes)
+			assert.Equal(t, 1, s.roles, "the usage chunk must not repeat the role after the finish")
+			require.Equal(t, 1, s.usages, "the client must receive the usage exactly once")
+			assert.False(t, s.usageFinish)
+			assert.NotNil(t, s.usageChunk.Choices)
+			assert.Empty(t, s.usageChunk.Choices, "the usage chunk must have choices: []")
+			assert.Equal(t, 10, s.usageChunk.Usage.TotalTokens)
+			assert.Equal(t, 4, s.usageChunk.Usage.PromptTokensDetails.CachedTokens)
+		})
+	}
+}
+
+func heldFinishClients() []adapter.Format {
+	return []adapter.Format{adapter.FormatOpenAI, adapter.FormatMistral}
+}
+
+func linesThenError(err error, lines ...string) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		for _, l := range lines {
+			if !yield([]byte(l), nil) {
+				return
+			}
+		}
+		yield(nil, err)
+	}
+}
+
+func TestAdaptStream_HeldFinishFlushedBeforeRawError(t *testing.T) {
+	for _, client := range heldFinishClients() {
+		t.Run(string(client), func(t *testing.T) {
+			upstreamErr := errors.New("upstream reset")
+			seq := adaptStream(linesThenError(upstreamErr, groqStreamRole, groqStreamFinish), adapter.NewRegistry(), client, adapter.FormatGroq, slog.Default(), nil)
+
+			lines, err := collectLinesAndError(seq)
+			require.Error(t, err)
+			assert.Same(t, upstreamErr, err, "the raw error must reach the caller unwrapped")
+			var notified *ClientNotifiedStreamError
+			assert.False(t, errors.As(err, &notified))
+			s := summarizeClientUsage(t, lines)
+			assert.Equal(t, 1, s.finishes, "the held finish must be emitted once before the error")
+			assert.Equal(t, 1, s.usages)
+			assert.True(t, s.usageFinish)
+			assert.NotContains(t, strings.Join(lines, "\n"), "[DONE]")
+		})
+	}
+}
+
+func TestAdaptStream_HeldFinishFlushedWhenUpstreamEndsWithoutDone(t *testing.T) {
+	for _, client := range heldFinishClients() {
+		t.Run(string(client), func(t *testing.T) {
+			lines := collectLines(t, adaptStream(linesSeq(groqStreamRole, groqStreamReasoning, groqStreamFinish), adapter.NewRegistry(), client, adapter.FormatGroq, slog.Default(), nil))
+
+			assert.NotContains(t, strings.Join(lines, "\n"), "[DONE]", "no [DONE] the upstream did not send")
+			s := summarizeClientUsage(t, lines)
+			assert.Equal(t, 1, s.finishes)
+			require.Equal(t, 1, s.usages)
+			assert.True(t, s.usageFinish)
+			assert.Equal(t, 1710, s.usageChunk.Usage.TotalTokens)
+		})
+	}
+}
+
+func TestAdaptStream_ConsumerStopsOnFlushedFinish(t *testing.T) {
+	upstreams := []struct {
+		name string
+		seq  func() iter.Seq2[[]byte, error]
+	}{
+		{name: "flushed on [DONE]", seq: func() iter.Seq2[[]byte, error] { return linesSeq(groqUpstreamLines(false, groqStreamFinish)...) }},
+		{name: "flushed on include_usage chunk", seq: func() iter.Seq2[[]byte, error] { return linesSeq(groqUpstreamLines(true, groqStreamFinish)...) }},
+		{name: "flushed on upstream end", seq: func() iter.Seq2[[]byte, error] { return linesSeq(groqStreamRole, groqStreamFinish) }},
+		{name: "flushed on raw error", seq: func() iter.Seq2[[]byte, error] {
+			return linesThenError(errors.New("upstream reset"), groqStreamRole, groqStreamFinish)
+		}},
+		{name: "flushed on a later content chunk", seq: func() iter.Seq2[[]byte, error] {
+			return linesSeq(groqStreamRole, groqStreamFinish, groqStreamReasoning, "data: [DONE]")
+		}},
+	}
+	for _, client := range heldFinishClients() {
+		for _, up := range upstreams {
+			t.Run(string(client)+" "+up.name, func(t *testing.T) {
+				var afterStop int
+				stopped := false
+				for line, err := range adaptStream(up.seq(), adapter.NewRegistry(), client, adapter.FormatGroq, slog.Default(), nil) {
+					if stopped {
+						afterStop++
+						continue
+					}
+					require.NoError(t, err)
+					if strings.Contains(string(line), `"finish_reason"`) {
+						stopped = true
+						break
+					}
+				}
+				assert.True(t, stopped, "the consumer must see the flushed finish")
+				assert.Zero(t, afterStop)
+			})
+		}
+	}
+}
+
+func TestAdaptStream_UpstreamErrorOnlyPayloadBetweenFinishAndUsage(t *testing.T) {
+	upstream := []string{groqStreamRole, groqStreamFinish, upstreamErrorOnlyPayload, groqStreamTrailing, "data: [DONE]"}
+	tests := []struct {
+		client          adapter.Format
+		wantUsageFinish bool
+	}{
+		{client: adapter.FormatOpenAI},
+		{client: adapter.FormatMistral, wantUsageFinish: true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.client), func(t *testing.T) {
+			lines := collectLines(t, adaptStream(linesSeq(upstream...), adapter.NewRegistry(), tt.client, adapter.FormatGroq, slog.Default(), nil))
+
+			assert.NotContains(t, strings.Join(lines, "\n"), "transient upstream hiccup")
+			s := summarizeClientUsage(t, lines)
+			assert.Equal(t, 1, s.finishes)
+			require.Equal(t, 1, s.usages, "the error-only payload must not break the usage fold")
+			assert.Equal(t, tt.wantUsageFinish, s.usageFinish)
+			assert.Equal(t, 1710, s.usageChunk.Usage.TotalTokens)
 		})
 	}
 }

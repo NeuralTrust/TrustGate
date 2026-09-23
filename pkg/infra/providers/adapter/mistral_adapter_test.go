@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -428,6 +429,16 @@ func TestMistralAdapter_EncodeStreamChunk(t *testing.T) {
 	lines, err := adapter.EncodeStreamChunk(chunk)
 	require.NoError(t, err)
 	require.NotEmpty(t, lines)
+}
+
+func TestMistralAdapter_EncodeStreamChunk_UsageOnlyKeepsItsChoice(t *testing.T) {
+	adapter := &MistralAdapter{}
+	lines, err := adapter.EncodeStreamChunk(&CanonicalStreamChunk{ID: "c", Model: "m", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}})
+	require.NoError(t, err)
+	require.NotEmpty(t, lines)
+	payload, ok := strings.CutPrefix(string(lines[0]), "data: ")
+	require.True(t, ok)
+	assert.JSONEq(t, `{"id":"c","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{}}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`, payload)
 }
 
 func TestRegistry_MistralAdapterRegistered(t *testing.T) {
