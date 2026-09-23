@@ -27,3 +27,17 @@ base:
   revalidate_before: [S2b (openai_responses_adapter differs ~28 lines), S3 (registry.go 12 lines, format.go 4 lines)]
 bedrock_validation:
   decision_2026-09-23: validate with Amazon Nova for now; Claude-on-Bedrock blocked (AWS Marketplace INVALID_PAYMENT_INSTRUMENT on the SSO account) -> pending, re-run explicit Claude cases once access is fixed
+size_exceptions:
+  S1c-3a: approved by user 2026-09-23 (single deferral unit; majority tests) -> label size:exception with prod/test line breakdown in PR body
+follow_ups_in_scope:
+  S1f: Gemini stream decoder drops functionCall/text parts that carry thoughtSignature (Gemini 2.5/3) -> tool calls lost cross-format (found in S1e review)
+  thinking_signature: Anthropic clients get no thinking blocks until signatures can be carried through canonical (S1e decision 2026-09-23)
+investigations_2026-09-23:
+  groq_stream_usage: NOT lost (usage on finish chunk top-level + x_groq.usage; include_usage adds trailing chunk; cached_tokens parsed; MergeUsage max). S1b-2 reduced to regression tests from real captures + optional x_groq.usage fallback. Captures in scratchpad/groq/.
+  groq_other: reasoning delta.reasoning (channel analysis) dropped by openaiStreamDelta (reads reasoning_content only) -> follow-up; trailing usage chunk re-encoded as choices:[{index0,delta{}}] vs []; Anthropic->groq trims trailing whitespace of system prompt (1677 vs 1678 tokens) -> different cache prefix across client formats -> handle in S2a.
+  gemini_thought_signature: CONFIRMED. Stream decoder drops signed functionCall parts (2.5-flash default and 3.x) -> tool calls lost in cross-format streams; buffered Gemini 3 duplicates signed answer text as reasoning+content; Gemini 3 400 on 2nd tool turn without signature. S1f = decode fixes + sentinel skip_thought_signature_validator; proper round-trip -> ENG-1627.
+  matrix_false_positives: matrix-ag passes on HTTP 200 only; being changed to require an executed tool call.
+tickets:
+  ENG-1626: mid-stream error propagation for non-Anthropic clients
+  ENG-1627: Gemini thought signature round-trip
+delivery_update_2026-09-23: single integration branch, one PR to main (size:exception); slice PRs #846-#852 to be closed

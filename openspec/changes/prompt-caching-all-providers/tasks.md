@@ -11,7 +11,7 @@ Contract: Linear ENG-1618. Inputs: `proposal.md`, `specs/*`, `design.md` (slice 
 | Chained PRs recommended | Yes |
 | Suggested split | S1a → S1b → S1c → S2a → S2b → S3 → S4a → S4b → S5; E (multi-agent-tests) in parallel with S1a |
 | Delivery strategy | ask-on-risk (none received; default) |
-| Chain strategy | feature-branch (user decision 2026-09-23): integration branch `fix/eng-1618-prompt-caching-all-providers`; each slice is a PR into it; one final PR integration → `main` (base is `origin/main`, nothing from develop). ENG-1608 stays a separate branch with its own path. |
+| Chain strategy | single integration PR (user decision 2026-09-23, later the same day): all phases land as commits on `fix/eng-1618-prompt-caching-all-providers` and go to `main` in ONE PR labelled `size:exception`, reviewed commit by commit; slice PRs #846–#852 closed. Earlier plan, superseded: feature-branch integration branch `fix/eng-1618-prompt-caching-all-providers`; each slice is a PR into it; one final PR integration → `main` (base is `origin/main`, nothing from develop). ENG-1608 stays a separate branch with its own path. |
 
 Decision needed before apply: No (approved 2026-09-23)
 Chained PRs recommended: Yes
@@ -37,7 +37,9 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 | S1e-2 | Upstream stream error marker + shared Anthropic stop reasons (~170 prod / ~150 test) | PR 3e-2 | S1e-1 |
 | S1e-3 | Stateful Anthropic stream encoder (~470 prod / ~260 test) | PR 3e-3 | S1e-2 |
 | S1e-4 | Proxy streams Anthropic clients through the encoder (~260 prod / ~1,230 test) | PR 3e-4 | S1e-3 |
-| S1b-2 | Groq stream usage (`x_groq.usage`) | PR after S1d | S1d |
+| S1d | Cohere v2 stream contract | PR 3d | S1e-4 |
+| S1f | Gemini thought-signature decode + sentinel | integration PR | S1d |
+| S1b-2 | Groq regression tests from captures (+ optional `x_groq.usage` fallback) | integration PR | S1f |
 | S2a | Canonical intent + Anthropic | PR 4 | S1c (+1608) |
 | S2b | OpenAI Chat/Responses intent | PR 5 | S2a |
 | S3 | Request passthrough, Mistral/OpenRouter/Azure | PR 6 | S2b |
@@ -121,7 +123,7 @@ Found in the S1c-3 review; affects Claude Code behind any non-Anthropic upstream
 
 - [x] 3d.1 Block indices: text block and each tool_use block get distinct Anthropic indices (offset tool indices past an open text block; no collision between the role-opened text block 0 and upstream tool index 0).
 - [x] 3d.2 Close every open block: one `content_block_stop` per open block, in order, before `message_delta` (parallel tool calls).
-- [x] 3d.3 Thinking: encode canonical `ReasoningDelta` as a `thinking` block with `thinking_delta` (and close it before the next block).
+- [x] 3d.3 Thinking: canonical `ReasoningDelta` is deliberately NOT emitted to Anthropic clients (decision 2026-09-23). A `thinking` block needs a `signature`, and canonical cannot carry one yet, so an unsigned block would be rejected when the client replays it. Tracked under `thinking_signature` in state.yaml.
 - [x] 3d.4 stop_reason: a finish that comes with tool calls maps to `tool_use` even when the upstream reason is a generic stop (Gemini `STOP` + functionCall).
 - [x] 3d.5 Tests: text + tool, 2 parallel tools, thinking then text, Gemini STOP + functionCall, Bedrock/OpenAI/Responses upstreams; golden event sequences validated against the Anthropic streaming contract.
 - [x] 3d.5a Mid-stream upstream errors (Anthropic clients): decoders mark an error object sent as a stream payload on `CanonicalStreamChunk.UpstreamError` (`adapter.UpstreamStreamError`); the proxy sends the content that came with it, then aborts the client stream with an `event: error` (or ends it normally when the finish was already held, with the merged usage) and yields `ClientNotifiedStreamError`, on which `writeStream` stops without appending its generic error frame.
@@ -131,9 +133,24 @@ Found in the S1c-3 review; affects Claude Code behind any non-Anthropic upstream
 
 ## Phase 3e (S1b-2): Groq stream usage (found in S1c-3 round 3)
 
-- [ ] 3e.1 Live-check a Groq stream through TrustGate (with the injected stream_options.include_usage): does usage arrive as a standard usage chunk, only in `x_groq.usage`, or both? Capture it.
-- [ ] 3e.2 If usage is only (or also) in `x_groq.usage`, decode it into canonical usage (incl. prompt_tokens_details.cached_tokens) in the Groq stream path, max-not-sum with any standard usage chunk.
-- [ ] 3e.3 Tests (buffered + stream) and V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss).
+Reduced scope (investigation 2026-09-23, captures in the scratchpad `groq/`): stream usage is NOT lost. It arrives top-level on the finish chunk and in `x_groq.usage`; `include_usage` adds a trailing usage chunk; `cached_tokens` is parsed and `MergeUsage` takes the max.
+
+- [x] 3e.1 Live-check a Groq stream through TrustGate (with the injected stream_options.include_usage): usage arrives as a standard usage chunk and in `x_groq.usage`. Captured.
+- [ ] 3e.2 Regression tests from the real captures (buffered + stream): usage and `cached_tokens` on the finish chunk, the trailing `include_usage` chunk, max-not-sum merge.
+- [ ] 3e.3 Optional: fall back to `x_groq.usage` when the standard usage fields are absent (max-not-sum with any standard usage chunk).
+- [ ] 3e.4 V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss).
+- Follow-ups noted, not in this phase: `delta.reasoning` (analysis channel) dropped by `openaiStreamDelta`; trailing usage chunk re-encoded as `choices:[{index:0,delta:{}}]` instead of `[]`; Anthropic→Groq trims the system prompt's trailing whitespace (different cache prefix across client formats, handle in S2a).
+
+## Phase 3f (S1f): Gemini thought signatures (found in the S1e review, confirmed 2026-09-23)
+
+Gemini 2.5 (default thinking) and 3.x attach `thoughtSignature` to `functionCall` and text parts. Today the stream decoder drops signed `functionCall` parts (tool calls lost cross-format), buffered Gemini 3 duplicates the signed answer text as reasoning and content, and Gemini 3 returns 400 on the second tool turn when the signature is missing.
+
+- [ ] 3f.1 Gemini decode (stream, buffered and request): only parts with `thought: true` are reasoning; a `thoughtSignature` alone does not make a part reasoning, so signed `functionCall` and text parts keep their normal meaning.
+- [ ] 3f.2 Gemini encode: when a model turn has no signature to replay, put the sentinel `skip_thought_signature_validator` on the first `functionCall` part of that turn.
+- [ ] 3f.3 Buffered Gemini 3: stop duplicating signed answer text as reasoning plus content.
+- [ ] 3f.4 Tests: stream and buffered decode of signed `functionCall`/text parts (real captures), request decode, sentinel placement (one per model turn, first `functionCall` only, not when a signature exists), cross-format tool-call stream from Gemini 3 to OpenAI and Anthropic clients.
+- [ ] 3f.5 V1; V2; V3; V4 **Gemini** (2.5-flash and 3.x, native + matrix with STREAM on/off, 2-turn tool loop); V5.
+- Out of scope: carrying the real signature through canonical for a proper round-trip (ENG-1627).
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic
 
