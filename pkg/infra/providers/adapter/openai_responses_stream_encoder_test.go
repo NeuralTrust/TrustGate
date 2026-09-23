@@ -130,6 +130,24 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			},
 		},
 		{
+			name: "an id-only call waits for its name",
+			chunks: []*CanonicalStreamChunk{
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", ArgumentsDelta: "{"}}},
+				{Delta: "hi"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, Name: "a", ArgumentsDelta: "}"}}},
+			},
+			want: []string{"added 0 message", "text 0 hi", "added 1 function_call call_1", "arguments 1 {}"},
+		},
+		{
+			name: "text after a call opens a new message",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Checking."},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
+				{Delta: "Done."},
+			},
+			want: []string{"added 0 message", "text 0 Checking.", "added 1 function_call call_1", "arguments 1 {}", "added 2 message", "text 2 Done."},
+		},
+		{
 			name: "a call before any text",
 			chunks: []*CanonicalStreamChunk{
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
@@ -211,7 +229,13 @@ func TestResponsesStreamEncoder_Finish(t *testing.T) {
 		require.Len(t, completed.Response.Output, 2)
 		assert.Equal(t, "function_call", completed.Response.Output[0].Type)
 		assert.Equal(t, "message", completed.Response.Output[1].Type)
-		assert.Equal(t, &openaiResponsesUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}, completed.Response.Usage)
+		assert.Equal(t, &openaiResponsesUsage{
+			InputTokens:         1,
+			OutputTokens:        2,
+			TotalTokens:         3,
+			InputTokensDetails:  &openaiResponsesInputTokensDetails{},
+			OutputTokensDetails: &openaiResponsesOutputTokensDetails{},
+		}, completed.Response.Usage)
 	})
 	t.Run("once", func(t *testing.T) {
 		enc := NewResponsesStreamEncoder()
@@ -244,4 +268,155 @@ func jsonField(t *testing.T, payload string, path ...string) string {
 	out, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(out)
+}
+
+func TestResponsesStreamEncoder_MessageIDsAreDistinct(t *testing.T) {
+	enc := NewResponsesStreamEncoder()
+	lines := enc.Content(&CanonicalStreamChunk{Delta: "a"})
+	lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f"}}})...)
+	lines = append(lines, enc.Content(&CanonicalStreamChunk{Delta: "b"})...)
+	ids := map[string]bool{}
+	for _, line := range lines {
+		payload, ok := strings.CutPrefix(string(line), "data: ")
+		if !ok || !strings.Contains(payload, `"response.output_item.added"`) {
+			continue
+		}
+		id := jsonField(t, payload, "item", "id")
+		assert.False(t, ids[id], "item id %s repeats", id)
+		ids[id] = true
+	}
+	assert.Len(t, ids, 3)
+}
+
+func TestResponsesStreamEncoder_FinishStatus(t *testing.T) {
+	tests := []struct {
+		reason         string
+		wantEvent      string
+		wantStatus     string
+		wantIncomplete string
+		wantError      string
+	}{
+		{reason: "stop", wantEvent: "response.completed", wantStatus: "completed"},
+		{reason: "tool_calls", wantEvent: "response.completed", wantStatus: "completed"},
+		{reason: "length", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "max_output_tokens"},
+		{reason: "content_filter", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
+		{reason: "refusal", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
+		{reason: "SAFETY", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
+		{reason: "RECITATION", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
+		{reason: "error", wantEvent: "response.failed", wantStatus: "failed", wantError: "upstream reported an error while generating the message"},
+		{reason: "MALFORMED_FUNCTION_CALL", wantEvent: "response.failed", wantStatus: "failed", wantError: "upstream generated a malformed tool call"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			enc := NewResponsesStreamEncoder()
+			lines := enc.Content(&CanonicalStreamChunk{Delta: "hi"})
+			lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: tt.reason, Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}})...)
+			types := responsesEncoderTypes(t, lines)
+			require.Equal(t, tt.wantEvent, types[len(types)-1])
+			payload, ok := strings.CutPrefix(string(lines[len(lines)-2]), "data: ")
+			require.True(t, ok)
+			assert.JSONEq(t, `"`+tt.wantStatus+`"`, jsonField(t, payload, "response", "status"))
+			assert.JSONEq(t, `2`, jsonField(t, payload, "response", "usage", "total_tokens"))
+			if tt.wantIncomplete == "" {
+				assert.Equal(t, "null", jsonField(t, payload, "response", "incomplete_details"))
+			} else {
+				assert.JSONEq(t, `{"reason":"`+tt.wantIncomplete+`"}`, jsonField(t, payload, "response", "incomplete_details"))
+			}
+			if tt.wantError == "" {
+				assert.Equal(t, "null", jsonField(t, payload, "response", "error"))
+				assert.NotContains(t, types, "error")
+				assert.False(t, enc.Aborted())
+				return
+			}
+			assert.JSONEq(t, `{"code":"server_error","message":"`+tt.wantError+`"}`, jsonField(t, payload, "response", "error"))
+			assert.Equal(t, "error", types[len(types)-2])
+			assert.True(t, enc.Aborted())
+		})
+	}
+}
+
+func TestResponsesStreamEncoder_Abort(t *testing.T) {
+	t.Run("nothing before the response started", func(t *testing.T) {
+		enc := NewResponsesStreamEncoder()
+		assert.Empty(t, enc.Abort("upstream stream failed", nil))
+		assert.False(t, enc.Started())
+		assert.False(t, enc.Aborted())
+	})
+	t.Run("error then response.failed with every item incomplete", func(t *testing.T) {
+		enc := NewResponsesStreamEncoder()
+		lines := enc.Content(&CanonicalStreamChunk{ID: "resp_1", Delta: "hi"})
+		lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f", ArgumentsDelta: `{"a"`}}})...)
+		lines = append(lines, enc.Abort("upstream stream failed", &CanonicalUsage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4})...)
+		assert.True(t, enc.Aborted())
+
+		types := responsesEncoderTypes(t, lines)
+		assert.Equal(t, []string{
+			"response.created", "response.in_progress",
+			"response.output_item.added", "response.content_part.added", "response.output_text.delta",
+			"response.output_item.added", "response.function_call_arguments.delta",
+			"response.output_text.done", "response.content_part.done", "response.output_item.done",
+			"response.function_call_arguments.done", "response.output_item.done",
+			"error", "response.failed",
+		}, types)
+
+		var payloads []string
+		for _, line := range lines {
+			if payload, ok := strings.CutPrefix(string(line), "data: "); ok {
+				payloads = append(payloads, payload)
+			}
+		}
+		for i, payload := range payloads {
+			assert.JSONEq(t, fmt.Sprint(i), jsonField(t, payload, "sequence_number"))
+		}
+		errEvent := payloads[len(payloads)-2]
+		assert.JSONEq(t, `"server_error"`, jsonField(t, errEvent, "code"))
+		assert.JSONEq(t, `"upstream stream failed"`, jsonField(t, errEvent, "message"))
+		failed := payloads[len(payloads)-1]
+		assert.JSONEq(t, `"resp_1"`, jsonField(t, failed, "response", "id"))
+		assert.JSONEq(t, `"failed"`, jsonField(t, failed, "response", "status"))
+		assert.JSONEq(t, `{"code":"server_error","message":"upstream stream failed"}`, jsonField(t, failed, "response", "error"))
+		assert.JSONEq(t, `4`, jsonField(t, failed, "response", "usage", "total_tokens"))
+		var output []struct {
+			Status string `json:"status"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(jsonField(t, failed, "response", "output")), &output))
+		require.Len(t, output, 2)
+		for _, item := range output {
+			assert.Equal(t, "incomplete", item.Status)
+		}
+
+		assert.Empty(t, enc.Abort("again", nil))
+		assert.Empty(t, enc.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
+	})
+}
+
+func TestResponsesStreamEncoder_DroppedNamelessCalls(t *testing.T) {
+	enc := NewResponsesStreamEncoder()
+	enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", ArgumentsDelta: "{}"}}})
+	enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "f", ArgumentsDelta: "{}"}}})
+	lines := enc.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"})
+
+	assert.Equal(t, 1, enc.Dropped())
+	payload, ok := strings.CutPrefix(string(lines[len(lines)-2]), "data: ")
+	require.True(t, ok)
+	var output []struct {
+		CallID string `json:"call_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(jsonField(t, payload, "response", "output")), &output))
+	require.Len(t, output, 1)
+	assert.Equal(t, "call_2", output[0].CallID)
+}
+
+func TestOpenAIResponsesUsageFromCanonical_AlwaysHasDetails(t *testing.T) {
+	enc := NewResponsesStreamEncoder()
+	lines := enc.Finish(&CanonicalStreamChunk{FinishReason: "stop", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}})
+	payload, ok := strings.CutPrefix(string(lines[len(lines)-2]), "data: ")
+	require.True(t, ok)
+	assert.JSONEq(t, `{"input_tokens":1,"output_tokens":1,"total_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
+		jsonField(t, payload, "response", "usage"))
+
+	body, err := encodeResponsesResponse(&CanonicalResponse{ID: "r", Content: "hi", FinishReason: "stop", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"input_tokens":1,"output_tokens":1,"total_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`,
+		jsonField(t, string(body), "usage"))
 }

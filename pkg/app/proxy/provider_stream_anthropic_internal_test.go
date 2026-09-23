@@ -953,9 +953,8 @@ func TestAdaptStream_UpstreamErrorPayloadIgnoredForOtherDeferredClients(t *testi
 	usage := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`
 	errorPayload := `data: {"error":{"message":"The server had an error","type":"server_error"}}`
 	terminal := map[adapter.Format]string{
-		adapter.FormatGemini:          `"finishReason":"STOP"`,
-		adapter.FormatOpenAIResponses: `"type":"response.completed"`,
-		adapter.FormatBedrock:         "messageStop",
+		adapter.FormatGemini:  `"finishReason":"STOP"`,
+		adapter.FormatBedrock: "messageStop",
 	}
 	tests := []struct {
 		name     string
@@ -1153,7 +1152,6 @@ func TestAdaptStream_UpstreamErrorWithFailureFinishGetsOneTerminalForOtherDeferr
 		usage    string
 	}{
 		{source: adapter.FormatGemini, terminal: `"finishReason":`, finish: `"finishReason":"error"`, usage: `"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}`},
-		{source: adapter.FormatOpenAIResponses, terminal: `"type":"response.completed"`, finish: `"status":"completed"`, usage: `"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}`},
 		{source: adapter.FormatBedrock, terminal: `"messageStop"`, finish: `"stopReason":"error"`, usage: `"usage":{"inputTokens":5,"outputTokens":1,"totalTokens":6}`},
 	}
 	for _, tt := range tests {

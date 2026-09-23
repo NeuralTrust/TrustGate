@@ -26,6 +26,8 @@ const (
 	responsesStatusInProgress = "in_progress"
 	responsesStatusCompleted  = "completed"
 	responsesStatusIncomplete = "incomplete"
+	responsesStatusFailed     = "failed"
+	responsesErrorCode        = "server_error"
 	responsesItemMessage      = "message"
 	responsesItemFunctionCall = "function_call"
 	responsesOutputText       = "output_text"
@@ -39,6 +41,8 @@ type ResponsesStreamEncoder struct {
 	createdAt int64
 	started   bool
 	done      bool
+	aborted   bool
+	dropped   int
 	sequence  int
 	items     []*responsesStreamItem
 	message   *responsesStreamItem
@@ -85,34 +89,106 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	return lines
 }
 
-// Finish encodes the finish and usage of chunk.
+// Finish encodes the finish and usage of chunk: response.completed, or
+// response.incomplete for a length or content filter stop. A finish reason
+// reporting a failure (see FinishFailure) ends the stream as Abort does.
 func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
 	}
 	e.remember(chunk)
 	lines := e.start()
+	if message, failed := FinishFailure(chunk.FinishReason); failed {
+		return append(lines, e.fail(message, chunk.Usage)...)
+	}
 	e.done = true
-	status := responsesStatusCompleted
-	if chunk.FinishReason == "length" {
-		status = responsesStatusIncomplete
-	}
-	output := make([]map[string]any, 0, len(e.items))
-	for _, item := range e.items {
-		lines = append(lines, e.finishItem(item, status)...)
-		output = append(output, item.snapshot(status))
-	}
-	response := e.response(status)
-	response["output"] = output
-	if usage := openaiResponsesUsageFromCanonical(chunk.Usage); usage != nil {
-		response["usage"] = usage
-	}
+	status, reason := responsesFinishStatus(chunk.FinishReason)
+	lines = append(lines, e.finishItems(status)...)
+	response := e.terminalResponse(status, chunk.Usage)
 	event := "response.completed"
 	if status == responsesStatusIncomplete {
 		event = "response.incomplete"
-		response["incomplete_details"] = map[string]string{"reason": "max_output_tokens"}
+		response["incomplete_details"] = map[string]string{"reason": reason}
 	}
 	return append(lines, e.event(event, map[string]any{"response": response})...)
+}
+
+// Abort ends a started stream with an error event carrying message, then
+// response.failed with usage, marking every item incomplete. Nothing is
+// emitted before response.created or once the stream has ended.
+func (e *ResponsesStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
+	if e.done || !e.started {
+		return nil
+	}
+	return e.fail(message, usage)
+}
+
+// Started reports whether the client has been sent response.created.
+func (e *ResponsesStreamEncoder) Started() bool {
+	return e.started
+}
+
+// Aborted reports whether the stream ended with response.failed.
+func (e *ResponsesStreamEncoder) Aborted() bool {
+	return e.aborted
+}
+
+// Dropped reports the tool calls the client never got because they never
+// got a name.
+func (e *ResponsesStreamEncoder) Dropped() int {
+	return e.dropped
+}
+
+func responsesFinishStatus(reason string) (status, incompleteReason string) {
+	switch {
+	case reason == "length":
+		return responsesStatusIncomplete, "max_output_tokens"
+	case refusalFinish(reason):
+		return responsesStatusIncomplete, "content_filter"
+	default:
+		return responsesStatusCompleted, ""
+	}
+}
+
+func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][]byte {
+	e.done = true
+	e.aborted = true
+	lines := e.finishItems(responsesStatusIncomplete)
+	lines = append(lines, e.event("error", map[string]any{
+		"code":    responsesErrorCode,
+		"message": message,
+		"param":   nil,
+	})...)
+	response := e.terminalResponse(responsesStatusIncomplete, usage)
+	response["status"] = responsesStatusFailed
+	response["error"] = map[string]string{"code": responsesErrorCode, "message": message}
+	return append(lines, e.event("response.failed", map[string]any{"response": response})...)
+}
+
+func (e *ResponsesStreamEncoder) finishItems(status string) [][]byte {
+	for _, call := range e.calls {
+		if !call.announced {
+			e.dropped++
+		}
+	}
+	var lines [][]byte
+	for _, item := range e.items {
+		lines = append(lines, e.finishItem(item, status)...)
+	}
+	return lines
+}
+
+func (e *ResponsesStreamEncoder) terminalResponse(itemStatus string, usage *CanonicalUsage) map[string]any {
+	output := make([]map[string]any, 0, len(e.items))
+	for _, item := range e.items {
+		output = append(output, item.snapshot(itemStatus))
+	}
+	response := e.response(itemStatus)
+	response["output"] = output
+	if u := openaiResponsesUsageFromCanonical(usage); u != nil {
+		response["usage"] = u
+	}
+	return response
 }
 
 func (e *ResponsesStreamEncoder) remember(chunk *CanonicalStreamChunk) {
@@ -151,7 +227,11 @@ func (e *ResponsesStreamEncoder) response(status string) map[string]any {
 func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 	var lines [][]byte
 	if e.message == nil {
-		e.message = e.addItem(&responsesStreamItem{kind: responsesItemMessage, id: "msg_" + e.nonce})
+		id := "msg_" + e.nonce
+		if len(e.items) > 0 {
+			id = fmt.Sprintf("msg_%s_%d", e.nonce, len(e.items))
+		}
+		e.message = e.addItem(&responsesStreamItem{kind: responsesItemMessage, id: id})
 		lines = e.event("response.output_item.added", map[string]any{
 			"output_index": e.message.outputIndex,
 			"item":         e.message.snapshot(responsesStatusInProgress),
@@ -176,6 +256,9 @@ func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 	call := e.calls[tc.Index]
 	if call == nil || (tc.ID != "" && call.upstreamID != "" && tc.ID != call.upstreamID) {
+		if call != nil && !call.announced {
+			e.dropped++
+		}
 		call = &responsesStreamItem{kind: responsesItemFunctionCall, upstreamID: tc.ID, name: tc.Name}
 		e.calls[tc.Index] = call
 	} else {
@@ -194,7 +277,7 @@ func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 		return e.argumentsDelta(call, tc.ArgumentsDelta)
 	}
 	call.text.WriteString(tc.ArgumentsDelta)
-	if call.upstreamID == "" && call.name == "" {
+	if call.name == "" {
 		return nil
 	}
 	return e.announce(call)
@@ -208,6 +291,7 @@ func (e *ResponsesStreamEncoder) announce(call *responsesStreamItem) [][]byte {
 		call.id = "fc_" + call.id
 	}
 	e.addItem(call)
+	e.message = nil
 	lines := e.event("response.output_item.added", map[string]any{
 		"output_index": call.outputIndex,
 		"item":         call.functionCall("", responsesStatusInProgress),
