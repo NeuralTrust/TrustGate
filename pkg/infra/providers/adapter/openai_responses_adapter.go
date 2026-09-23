@@ -15,8 +15,10 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -42,14 +44,14 @@ type openaiTextFormat struct {
 
 type openaiResponsesInputItem struct {
 	Role      string          `json:"role,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"` // string or []contentPart
-	Type      string          `json:"type,omitempty"`    // "input_text", "function_call", "function_call_output"
+	Content   json.RawMessage `json:"content,omitempty"`
+	Type      string          `json:"type,omitempty"`
 	Text      string          `json:"text,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
-	Arguments string          `json:"arguments,omitempty"`
-	Output    json.RawMessage `json:"output,omitempty"` // string or []contentPart
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
 	Status    string          `json:"status,omitempty"`
 }
 
@@ -175,36 +177,46 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 		cr.ResponseFormat = &CanonicalRespFormat{Type: req.Text.Format.Type}
 	}
 
+	cr.Tools = decodeResponsesTools(req.Tools)
 	if err := decodeResponsesInput(req.Input, cr); err != nil {
 		return nil, err
 	}
+	return cr, nil
+}
 
-	// tools: internally-tagged format (type may be omitted — shorthand for "function")
-	for _, raw := range req.Tools {
+// decodeResponsesTools decodes the function and custom tools of a request.
+// The type may be omitted, as shorthand for a function tool.
+func decodeResponsesTools(raws []json.RawMessage) []CanonicalTool {
+	var tools []CanonicalTool
+	for _, raw := range raws {
 		var tool openaiResponsesTool
 		if json.Unmarshal(raw, &tool) != nil || tool.Name == "" {
 			continue
 		}
 		switch tool.Type {
 		case "custom":
-			cr.Tools = append(cr.Tools, CanonicalTool{
+			tools = append(tools, CanonicalTool{
 				Kind:        ToolKindCustom,
 				Name:        tool.Name,
 				Description: tool.Description,
 				Format:      tool.Format,
 			})
 		case "", "function":
-			cr.Tools = append(cr.Tools, CanonicalTool{
+			tools = append(tools, CanonicalTool{
 				Name:        tool.Name,
 				Description: tool.Description,
 				Schema:      tool.Parameters,
 			})
 		}
 	}
-
-	return cr, nil
+	return tools
 }
 
+// decodeResponsesInput appends the messages of input, a string or a list of
+// items, to cr. Items are decoded one by one: an item whose shape the gateway
+// does not know, such as a hosted tool call with object arguments, is left
+// out instead of failing the request or dropping the rest of the history.
+// Only an input that is neither a string, a list nor null is an error.
 func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 	if len(input) == 0 || string(input) == "null" {
 		return nil
@@ -214,89 +226,130 @@ func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "user", Content: text})
 		return nil
 	}
-	var items []openaiResponsesInputItem
-	if err := json.Unmarshal(input, &items); err != nil {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(input, &raws); err != nil {
 		return fmt.Errorf("decode responses input: %w", err)
 	}
-	turn := false
-	for _, item := range items {
-		cr.Messages, turn = appendResponsesInputItem(cr, item, turn)
+	turn, malformed := false, 0
+	for _, raw := range raws {
+		var item openaiResponsesInputItem
+		ok := json.Unmarshal(raw, &item) == nil
+		if ok {
+			turn, ok = appendResponsesInputItem(cr, item, turn)
+		}
+		if !ok {
+			malformed++
+		}
+	}
+	if malformed > 0 {
+		slog.Debug("responses input items left out", slog.Int("malformed_items", malformed))
 	}
 	return nil
 }
 
-// appendResponsesInputItem appends item to the messages of cr and reports
-// whether the last message is an assistant turn later assistant items may
-// join. Only reasoning items keep a turn open: any other item between two
-// assistant items, even one that is skipped or goes to the system prompt,
-// ends it, so the assistant messages on either side of it stay apart.
-func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputItem, turn bool) ([]CanonicalMessage, bool) {
-	msgs := cr.Messages
+// appendResponsesInputItem appends item to the messages of cr and returns
+// whether the last message is an assistant message that later assistant
+// message and function_call items join, so a Chat Completions upstream gets
+// one assistant message per turn. Only an item that adds a message other than
+// an assistant one ends the turn: a user message, an input_text or a
+// function_call_output. Items that add no message leave the turn as it is:
+// reasoning, item references, hosted and custom tool calls, unknown items, an
+// empty assistant message and developer or system messages, whose text goes
+// to the system prompt wherever they appear. It reports false, adding
+// nothing, for a function_call whose arguments are not a string.
+func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputItem, turn bool) (bool, bool) {
 	switch {
 	case item.Type == "function_call":
+		arguments, ok := responsesCallArguments(item.Arguments)
+		if !ok {
+			return turn, false
+		}
 		callID := item.CallID
 		if callID == "" {
 			callID = item.ID
 		}
-		arguments := item.Arguments
-		if strings.TrimSpace(arguments) == "" {
-			arguments = responsesEmptyArguments
-		}
-		return appendResponsesAssistant(msgs, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: arguments}), true
+		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: arguments}), true
 	case item.Type == "function_call_output":
-		return append(msgs, CanonicalMessage{Role: "tool", Content: responsesToolOutput(item.Output), ToolCallID: item.CallID}), false
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "tool", Content: responsesToolOutput(item.Output), ToolCallID: item.CallID})
+		return false, true
 	case item.Type == "reasoning":
-		return msgs, turn
+		return turn, true
 	case item.Role == "assistant":
-		return appendResponsesAssistant(msgs, turn, contentToString(item.Content)), true
+		return appendResponsesAssistant(cr, turn, contentToString(item.Content)), true
 	case item.Role == "system", item.Role == "developer":
 		if cr.System != "" {
 			cr.System += "\n"
 		}
 		cr.System += contentToString(item.Content)
-		return msgs, false
+		return turn, true
 	case item.Role != "":
-		return append(msgs, CanonicalMessage{Role: item.Role, Content: contentToString(item.Content)}), false
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: item.Role, Content: contentToString(item.Content)})
+		return false, true
 	case item.Type == "input_text":
-		return append(msgs, CanonicalMessage{Role: "user", Content: item.Text}), false
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "user", Content: item.Text})
+		return false, true
 	default:
-		return msgs, false
+		return turn, true
 	}
 }
 
-// responsesToolOutput returns the text of a function_call_output, whose
-// output is a string or a list of content parts. Parts with no text, such as
-// images or files, are left out; an output made only of them becomes a
+// responsesCallArguments returns the arguments of a function_call item, which
+// the Responses API sends as a JSON-encoded string. Missing, null or blank
+// arguments become an empty object. It reports false for any other value.
+func responsesCallArguments(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return responsesEmptyArguments, true
+	}
+	var arguments string
+	if json.Unmarshal(raw, &arguments) != nil {
+		return "", false
+	}
+	if strings.TrimSpace(arguments) == "" {
+		return responsesEmptyArguments, true
+	}
+	return arguments, true
+}
+
+// responsesToolOutput returns the text of a function_call_output. A string
+// output is used as it is and a list of content parts becomes the text of its
+// parts, leaving out images and files. Any other value, such as an object, is
+// passed on as its JSON text. An output without text, whether missing, null,
+// an empty list or a list of parts none of which has text, becomes a
 // placeholder so the tool result is not empty.
 func responsesToolOutput(output json.RawMessage) string {
-	text := contentToString(output)
-	var parts []openaiContentPart
-	if text != "" || json.Unmarshal(output, &parts) != nil || len(parts) == 0 {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return responsesNonTextToolOutput
+	}
+	text := contentToString(trimmed)
+	if text != "" || trimmed[0] != '[' {
 		return text
 	}
 	return responsesNonTextToolOutput
 }
 
-// appendResponsesAssistant folds an assistant item into the last message when
-// turn reports it is an assistant message of the same turn, so a Chat
-// Completions upstream gets one assistant message with the text and every
-// tool call. OpenAI-compatible upstreams such as DeepSeek reject an assistant
-// message with tool calls that is not followed by their results, and an empty
-// assistant message, so empty items are dropped (ENG-1618).
-func appendResponsesAssistant(msgs []CanonicalMessage, turn bool, content string, calls ...CanonicalToolCall) []CanonicalMessage {
+// appendResponsesAssistant folds an assistant item into the last message of
+// cr when turn reports it is an assistant message of the same turn, and
+// returns whether cr now ends with an assistant message of this turn.
+// OpenAI-compatible upstreams such as DeepSeek reject an assistant message
+// with tool calls that is not followed by their results, and an empty
+// assistant message, so an empty item is dropped and leaves turn unchanged
+// (ENG-1618).
+func appendResponsesAssistant(cr *CanonicalRequest, turn bool, content string, calls ...CanonicalToolCall) bool {
 	if content == "" && len(calls) == 0 {
-		return msgs
+		return turn
 	}
-	if n := len(msgs); turn && n > 0 && msgs[n-1].Role == "assistant" {
-		last := &msgs[n-1]
+	if n := len(cr.Messages); turn && n > 0 && cr.Messages[n-1].Role == "assistant" {
+		last := &cr.Messages[n-1]
 		if content != "" && last.Content != "" {
 			last.Content += "\n"
 		}
 		last.Content += content
 		last.ToolCalls = append(last.ToolCalls, calls...)
-		return msgs
+		return true
 	}
-	return append(msgs, CanonicalMessage{Role: "assistant", Content: content, ToolCalls: calls})
+	cr.Messages = append(cr.Messages, CanonicalMessage{Role: "assistant", Content: content, ToolCalls: calls})
+	return true
 }
 
 // ---------------------------------------------------------------------------

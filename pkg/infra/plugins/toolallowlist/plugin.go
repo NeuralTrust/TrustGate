@@ -84,6 +84,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if adapter.IsRequestDecodeError(err) {
+		return undecodable(in)
+	}
 	if err != nil || canonical == nil || len(canonical.Tools) == 0 {
 		return okResult(), nil
 	}
@@ -176,6 +179,22 @@ func rewriteEmpty(originalBody []byte, deleteTools bool) (*appplugins.Result, er
 		return nil, fmt.Errorf("tool_allowlist: rewrite: %w", err)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+// undecodable fails closed on a body that does not decode in its wire
+// format: the tools it declares cannot be filtered, and the upstream may
+// still accept it. An observe policy only records it.
+func undecodable(in appplugins.ExecInput) (*appplugins.Result, error) {
+	setExtras(in.Event, ToolAllowlistData{
+		Provider: in.Request.Provider,
+		Action:   actionUndecodable,
+		Decision: appplugins.DecisionForMode(in.Mode),
+	})
+	if !appplugins.Blocks(in.Mode) {
+		appplugins.SetDecision(in.Event, in.Mode)
+		return okResult(), nil
+	}
+	return nil, appplugins.UndecodableRequestError(PluginName)
 }
 
 func newRejectResult(requested []string) (*appplugins.Result, error) {

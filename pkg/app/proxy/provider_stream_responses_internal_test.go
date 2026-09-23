@@ -16,12 +16,14 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -775,6 +777,36 @@ func responsesStreamCases() []responsesStreamCase {
 			),
 			wantText: "Hel",
 		},
+		{
+			name:   "openai done without a finish fails a truncated held call",
+			target: adapter.FormatOpenAI,
+			upstream: func() iter.Seq2[[]byte, error] {
+				return linesSeq(
+					`data: {"id":"c","model":"m","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Par"}}]}}]}`,
+					``,
+					`data: [DONE]`,
+				)
+			},
+			want:       joinGolden([]string{"created", "in_progress", "error", "failed"}),
+			wantStatus: "failed",
+			wantError:  "upstream stream ended before its tool call arguments were complete",
+		},
+		{
+			name:   "openai done without a finish completes a whole held call",
+			target: adapter.FormatOpenAI,
+			upstream: func() iter.Seq2[[]byte, error] {
+				return linesSeq(
+					`data: {"id":"c","model":"m","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+					`data: [DONE]`,
+				)
+			},
+			want: joinGolden(
+				[]string{"created", "in_progress"},
+				responsesCallGolden(0, "call_1", "get_weather", `{"city":"Paris"}`),
+				[]string{"completed"},
+			),
+			wantCalls: []string{`call_1 get_weather {"city":"Paris"}`},
+		},
 	}
 }
 
@@ -901,10 +933,7 @@ func TestAdaptStream_ResponsesClientUpstreamErrorAfterFinishCompletesOnce(t *tes
 }
 
 func TestAdaptStream_ResponsesClientGetsKeepalivesWhileNothingIsSent(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	previous := streamClock
-	streamClock = func() time.Time { return now }
-	t.Cleanup(func() { streamClock = previous })
+	clock := newFakeStreamClock()
 
 	chunk := func(delta string) string {
 		return `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":` + delta + `}]}`
@@ -925,14 +954,14 @@ func TestAdaptStream_ResponsesClientGetsKeepalivesWhileNothingIsSent(t *testing.
 	}
 	slow := func(yield func([]byte, error) bool) {
 		for _, line := range upstream {
-			now = now.Add(6 * time.Second)
+			clock.advance(6 * time.Second)
 			if !yield([]byte(line), nil) {
 				return
 			}
 		}
 	}
 
-	lines := collectLines(t, adaptStream(slow, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil))
+	lines := collectLines(t, adaptStream(slow, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil, clock.option()))
 
 	var keepalives []int
 	for i, line := range lines {
@@ -983,4 +1012,175 @@ func TestAdaptStream_ResponsesClientLogsWithheldToolCalls(t *testing.T) {
 	assert.Equal(t, "responses stream dropped tool calls", entry.Msg)
 	assert.Equal(t, 1, entry.Nameless)
 	assert.Equal(t, 1, entry.Withheld)
+}
+
+type fakeStreamClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	ticks chan time.Time
+}
+
+func newFakeStreamClock() *fakeStreamClock {
+	return &fakeStreamClock{now: time.Unix(1_700_000_000, 0), ticks: make(chan time.Time)}
+}
+
+func (c *fakeStreamClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeStreamClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func (c *fakeStreamClock) tick(d time.Duration) {
+	c.advance(d)
+	c.ticks <- c.Now()
+}
+
+func (c *fakeStreamClock) Chan() <-chan time.Time { return c.ticks }
+
+func (c *fakeStreamClock) Stop() {}
+
+func (c *fakeStreamClock) option() streamOption {
+	return withStreamClock(c.Now, func(time.Duration) streamTicker { return c })
+}
+
+func TestAdaptStream_ResponsesClientGetsKeepalivesFromSilentUpstream(t *testing.T) {
+	clock := newFakeStreamClock()
+	resume := make(chan struct{})
+	upstreamDone := make(chan struct{})
+	upstream := func(yield func([]byte, error) bool) {
+		defer close(upstreamDone)
+		if !yield([]byte(`data: {"id":"c","model":"gemini","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Checking."}}]}`), nil) {
+			return
+		}
+		<-resume
+		for _, line := range []string{
+			`data: {"id":"c","model":"gemini","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+			`data: {"id":"c","model":"gemini","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+			`data: [DONE]`,
+		} {
+			if !yield([]byte(line), nil) {
+				return
+			}
+		}
+	}
+
+	var lines []string
+	keepalives := 0
+	for line, err := range adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil, clock.option()) {
+		require.NoError(t, err)
+		lines = append(lines, string(line))
+		switch {
+		case strings.HasPrefix(string(line), "data: ") && strings.Contains(string(line), `"response.output_text.delta"`):
+			go func() {
+				clock.tick(4 * time.Second)
+				clock.tick(7 * time.Second)
+			}()
+		case string(line) == ": keepalive":
+			keepalives++
+			close(resume)
+		}
+	}
+	<-upstreamDone
+
+	assert.Equal(t, 1, keepalives, "the upstream was silent for 11s: one comment, at the tick past 10s")
+	events := responsesWireEvents(t, lines)
+	requireResponsesContract(t, events)
+	assert.Equal(t, joinGolden(
+		[]string{"created", "in_progress"},
+		responsesMessageGolden(0, "Checking."),
+		responsesMessageDoneGolden(0, "Checking."),
+		responsesCallGolden(1, "call_1", "get_weather", `{"city":"Paris"}`),
+		[]string{"completed"},
+	), responsesGolden(events))
+}
+
+func TestAdaptStream_ResponsesClientStopReleasesTheUpstreamReader(t *testing.T) {
+	t.Run("on a line", func(t *testing.T) {
+		upstreamDone := make(chan struct{})
+		upstream := func(yield func([]byte, error) bool) {
+			defer close(upstreamDone)
+			for {
+				if !yield([]byte(`data: {"id":"c","model":"m","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"x"}}]}`), nil) {
+					return
+				}
+			}
+		}
+		for range adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil, newFakeStreamClock().option()) {
+			break
+		}
+		select {
+		case <-upstreamDone:
+		default:
+			t.Fatal("the upstream still runs after the stream returned")
+		}
+	})
+
+	t.Run("on a keepalive while the upstream is silent", func(t *testing.T) {
+		clock := newFakeStreamClock()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		upstreamDone := make(chan struct{})
+		upstream := func(yield func([]byte, error) bool) {
+			defer close(upstreamDone)
+			<-ctx.Done()
+			yield(nil, ctx.Err())
+		}
+		stream := adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil, clock.option())
+		go clock.tick(11 * time.Second)
+		for line := range stream {
+			assert.Equal(t, ": keepalive", string(line))
+			break
+		}
+		cancel()
+		select {
+		case <-upstreamDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the upstream reader did not exit once its read returned")
+		}
+	})
+
+	t.Run("on context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		upstreamDone := make(chan struct{})
+		release := make(chan struct{})
+		upstream := func(yield func([]byte, error) bool) {
+			defer close(upstreamDone)
+			if !yield([]byte(`data: {"id":"c","model":"m","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"}}]}`), nil) {
+				return
+			}
+			<-release
+			yield(nil, context.Canceled)
+		}
+		var lines []string
+		var streamErr error
+		for line, err := range adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil, withStreamContext(ctx), newFakeStreamClock().option()) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+			lines = append(lines, string(line))
+			if strings.Contains(string(line), `"response.output_text.delta"`) {
+				cancel()
+			}
+		}
+		require.ErrorIs(t, streamErr, context.Canceled)
+		_, notified := errors.AsType[*ClientNotifiedStreamError](streamErr)
+		assert.True(t, notified)
+		final := requireResponsesContract(t, responsesWireEvents(t, lines))
+		assert.Equal(t, "failed", final.Status)
+
+		close(release)
+		select {
+		case <-upstreamDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the upstream reader did not exit once its read returned")
+		}
+	})
 }

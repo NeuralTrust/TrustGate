@@ -189,9 +189,12 @@ func (e *ResponsesStreamEncoder) Withheld() int {
 }
 
 // Keepalive returns an SSE comment line once the open stream has sent the
-// client nothing for responsesKeepaliveInterval, and nothing otherwise. SSE
-// clients skip comments, so it only keeps idle timeouts from cutting a
-// stream whose calls are held or whose reasoning is not forwarded.
+// client nothing for responsesKeepaliveInterval, and nothing otherwise. The
+// interval runs from the encoder's creation until the first event, so an
+// upstream silent before its first content gets a comment ahead of
+// response.created. SSE clients skip comments, so it only keeps idle timeouts
+// from cutting a stream whose calls are held or whose reasoning is not
+// forwarded.
 func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 	if e.done {
 		return nil
@@ -202,6 +205,18 @@ func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 	}
 	e.lastSent = now
 	return [][]byte{[]byte(": keepalive"), {}}
+}
+
+// HeldCallsComplete reports whether the arguments of every named tool call
+// held back are empty or valid JSON. An upstream that ends without a finish
+// leaves no other sign that a held call was cut short.
+func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
+	for _, call := range e.pending {
+		if call.name != "" && call.text.Len() > 0 && !json.Valid([]byte(call.text.String())) {
+			return false
+		}
+	}
+	return true
 }
 
 func responsesFinishStatus(reason string) (status, incompleteReason string) {

@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -495,7 +496,10 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 					Input: anthropicToolInput(tc.Arguments),
 				})
 			}
-			raw, _ := json.Marshal(blocks)
+			raw, err := json.Marshal(blocks)
+			if err != nil {
+				return nil, fmt.Errorf("encode anthropic assistant message: %w", err)
+			}
 			out.Messages = append(out.Messages, anthropicMessage{
 				Role:    "assistant",
 				Content: raw,
@@ -874,12 +878,18 @@ func anthropicToolResultText(raw json.RawMessage) string {
 	return contentToString(raw)
 }
 
-// anthropicToolInput returns the input of a tool_use block for arguments. A
-// call with no arguments gets an empty object: Anthropic requires the input,
-// and omitempty would drop an empty one.
+// anthropicToolInput returns the input of a tool_use block for arguments.
+// Anthropic requires an object, and a raw value that is not valid JSON would
+// fail to encode the whole message, so a call whose arguments are empty,
+// invalid or not an object gets an empty object.
 func anthropicToolInput(arguments string) json.RawMessage {
-	if strings.TrimSpace(arguments) == "" {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
 		return json.RawMessage("{}")
 	}
-	return json.RawMessage(arguments)
+	if trimmed[0] != '{' || !json.Valid([]byte(trimmed)) {
+		slog.Debug("anthropic tool_use input replaced with an empty object", slog.Int("arguments_bytes", len(arguments)))
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(trimmed)
 }

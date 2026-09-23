@@ -251,6 +251,15 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
+			if adapter.IsRequestDecodeError(decErr) {
+				p.warn(ctx, "trustguard request body decode failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.String("stage", string(in.Stage)),
+					slog.Any("error", decErr),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
 			}

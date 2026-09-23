@@ -353,8 +353,21 @@ func TestPlugin_Execute(t *testing.T) {
 			},
 		},
 		{
-			name:     "no-op undecodable body",
+			name:     "undecodable body fails closed",
 			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				assert.Nil(t, res)
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "err = %v", err)
+				assert.Equal(t, 400, pe.StatusCode)
+				assert.Equal(t, "invalid_request_body", pe.Type)
+			},
+		},
+		{
+			name:     "observe records an undecodable body",
+			mode:     policy.ModeObserve,
 			settings: map[string]any{"allow_tools": []string{"search_*"}},
 			req:      reqFor("openai", `{"messages":123}`),
 			check: func(t *testing.T, res *appplugins.Result, err error) {
@@ -396,4 +409,28 @@ func TestPlugin_Execute(t *testing.T) {
 			tt.check(t, res, err)
 		})
 	}
+}
+
+func TestPlugin_Execute_ResponsesInputItemItCannotDecode(t *testing.T) {
+	body := `{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"find my calendar tool"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"calendar"}},` +
+		`{"type":"function_call","call_id":"c1","name":"search_web","arguments":{"q":1}}` +
+		`],"tools":[{"type":"function","name":"search_web","parameters":{"type":"object"}},{"type":"function","name":"delete_db","parameters":{"type":"object"}}]}`
+	p := New(adapter.NewRegistry())
+
+	res, err := run(p, policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, reqFor(string(adapter.FormatOpenAIResponses), body))
+
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "the disallowed tool is stripped, not let through")
+	var out struct {
+		Input []json.RawMessage `json:"input"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(res.RequestBody, &out))
+	require.Len(t, out.Tools, 1)
+	assert.Equal(t, "search_web", out.Tools[0].Name)
+	assert.Len(t, out.Input, 3, "the input items are kept as the client sent them")
 }
