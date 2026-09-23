@@ -332,9 +332,9 @@ func TestCohereStreamEncoder_EventSequence(t *testing.T) {
 			},
 			want: []string{
 				"message-start",
-				"tool-call-start 0 call_1 a", "tool-call-end 0",
-				"tool-call-start 1 call_2 b", "tool-call-end 1",
-				"tool-call-start 2 call_3 c", "tool-call-end 2",
+				"tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
+				"tool-call-start 1 call_2 b", "tool-call-delta 1 {}", "tool-call-end 1",
+				"tool-call-start 2 call_3 c", "tool-call-delta 2 {}", "tool-call-end 2",
 				"message-end TOOL_CALL",
 			},
 		},
@@ -351,6 +351,58 @@ func TestCohereStreamEncoder_EventSequence(t *testing.T) {
 				"message-start",
 				"tool-call-start 0 call_1 get_weather", `tool-call-delta 0 {"city":"Paris"}`, "tool-call-end 0",
 				"content-start 0", "content-delta 0 note", "content-end 0",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "held text after a later tool call follows it",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{"y":2}`}}},
+				{Delta: "T"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `1}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, `tool-call-delta 0 1}`, "tool-call-end 0",
+				"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`, "tool-call-end 1",
+				"content-start 0", "content-delta 0 T", "content-end 0",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "held text before a later tool call precedes it",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":`}}},
+				{Delta: "T"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{"y":2}`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `1}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, `tool-call-delta 0 1}`, "tool-call-end 0",
+				"content-start 0", "content-delta 0 T", "content-end 0",
+				"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`, "tool-call-end 1",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "zero-argument tool calls in a row get empty objects",
+			target: FormatAnthropic,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "toolu_1", Name: "a"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "toolu_2", Name: "b"}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 toolu_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
+				"tool-call-start 1 toolu_2 b", "tool-call-delta 1 {}", "tool-call-end 1",
 				"message-end TOOL_CALL",
 			},
 		},
@@ -492,4 +544,29 @@ func TestCohereStreamEncoder_MessageEndWithoutUsage(t *testing.T) {
 	assert.Equal(t,
 		`{"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`,
 		events[len(events)-2].raw)
+}
+
+func TestCohereStreamEncoder_Abort(t *testing.T) {
+	e := NewCohereStreamEncoder(FormatOpenAI)
+	assert.False(t, e.Started())
+	lines := e.Content(&CanonicalStreamChunk{Role: "assistant", Delta: "hi"})
+	lines = append(lines, e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":`}}})...)
+	lines = append(lines, e.Content(&CanonicalStreamChunk{Delta: "held"})...)
+	lines = append(lines, e.Abort("upstream stream failed", &CanonicalUsage{InputTokens: 5, OutputTokens: 1, TotalTokens: 6})...)
+
+	events := cohereEvents(t, lines)
+	requireCohereContract(t, events)
+	assert.Equal(t, []string{
+		"message-start",
+		"content-start 0", "content-delta 0 hi", "content-end 0",
+		"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, "tool-call-end 0",
+		"message-end ERROR",
+	}, cohereGolden(t, events))
+	assert.JSONEq(t,
+		`{"finish_reason":"ERROR","error":"upstream stream failed","usage":{"billed_units":{"input_tokens":5,"output_tokens":1},"tokens":{"input_tokens":5,"output_tokens":1}}}`,
+		string(events[len(events)-2].Delta))
+	assert.True(t, e.Started())
+	assert.True(t, e.Aborted())
+	assert.Empty(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
+	assert.Empty(t, e.Abort("again", nil))
 }

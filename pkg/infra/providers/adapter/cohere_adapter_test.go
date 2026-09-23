@@ -328,3 +328,103 @@ func TestCohereAdapter_EncodeStreamChunkShapes(t *testing.T) {
 		`{"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{}"}}}}}`,
 	}, got)
 }
+
+func TestCohereAdapter_ToolPlan(t *testing.T) {
+	a := &CohereAdapter{}
+
+	t.Run("encode request sends assistant text with tool calls as the plan", func(t *testing.T) {
+		body, err := a.EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{
+			{Role: "assistant", Content: "Voy", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+			{Role: "assistant", Content: "done"},
+		}})
+		require.NoError(t, err)
+		var req struct {
+			Messages []map[string]json.RawMessage `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.Len(t, req.Messages, 2)
+		assert.JSONEq(t, `"Voy"`, string(req.Messages[0]["tool_plan"]))
+		assert.NotContains(t, req.Messages[0], "content")
+		assert.NotContains(t, req.Messages[1], "tool_plan")
+		assert.JSONEq(t, `"done"`, string(req.Messages[1]["content"]))
+	})
+
+	t.Run("decode request reads the plan as assistant content", func(t *testing.T) {
+		req, err := a.DecodeRequest([]byte(`{"messages":[{"role":"assistant","tool_plan":"Voy","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]}]}`))
+		require.NoError(t, err)
+		require.Len(t, req.Messages, 1)
+		assert.Equal(t, "Voy", req.Messages[0].Content)
+		require.Len(t, req.Messages[0].ToolCalls, 1)
+	})
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "decode response folds the plan into empty content",
+			body: `{"id":"r","finish_reason":"TOOL_CALL","message":{"role":"assistant","tool_plan":"Voy","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]}}`,
+			want: "Voy",
+		},
+		{
+			name: "decode response keeps content over the plan",
+			body: `{"id":"r","finish_reason":"TOOL_CALL","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"tool_plan":"Voy"}}`,
+			want: "hi",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := a.DecodeResponse([]byte(tt.body))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resp.Content)
+		})
+	}
+}
+
+func TestCohereAdapter_EncodeResponseFinishReason(t *testing.T) {
+	tests := []struct {
+		finish string
+		want   string
+	}{
+		{finish: "stop", want: "COMPLETE"},
+		{finish: "length", want: "MAX_TOKENS"},
+		{finish: "tool_calls", want: "TOOL_CALL"},
+		{finish: "error", want: "ERROR"},
+		{finish: "MALFORMED_FUNCTION_CALL", want: "ERROR"},
+		{finish: "content_filter", want: "ERROR"},
+		{finish: "refusal", want: "ERROR"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.finish, func(t *testing.T) {
+			body, err := (&CohereAdapter{}).EncodeResponse(&CanonicalResponse{Content: "hi", FinishReason: tt.finish})
+			require.NoError(t, err)
+			var resp struct {
+				FinishReason string `json:"finish_reason"`
+			}
+			require.NoError(t, json.Unmarshal(body, &resp))
+			assert.Equal(t, tt.want, resp.FinishReason)
+		})
+	}
+}
+
+func TestCohereFinishToCanonical(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   string
+	}{
+		{reason: "COMPLETE", want: "stop"},
+		{reason: "STOP_SEQUENCE", want: "stop"},
+		{reason: "MAX_TOKENS", want: "length"},
+		{reason: "TOOL_CALL", want: "tool_calls"},
+		{reason: "ERROR", want: "error"},
+		{reason: "ERROR_TOXIC", want: "content_filter"},
+		{reason: "ERROR_LIMIT", want: "error"},
+		{reason: "TIMEOUT", want: "error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			assert.Equal(t, tt.want, cohereFinishToCanonical(tt.reason))
+		})
+	}
+}

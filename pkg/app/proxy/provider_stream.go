@@ -73,8 +73,8 @@ func injectStreamIncludeUsage(body []byte) []byte {
 	return out
 }
 
-// ClientNotifiedStreamError wraps an upstream stream failure an Anthropic
-// client has already been sent a terminal event for in its own format, so the
+// ClientNotifiedStreamError wraps an upstream stream failure an Anthropic or
+// Cohere client has already been sent a terminal event for in its own format, so the
 // transport must not append a generic error frame of its own.
 type ClientNotifiedStreamError struct {
 	Err error
@@ -172,8 +172,10 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // An Anthropic client whose upstream ends before a finish gets an error event
 // instead, and [DONE] without a finish ends its message with end_turn. An
 // error object its upstream sends as a payload (adapter.UpstreamStreamError)
-// ends the stream like a mid-stream error. Once an Anthropic client has its
-// terminal event for a failed upstream, the sequence error is wrapped in
+// ends the stream like a mid-stream error. A Cohere client whose upstream sent
+// such an error, or failed after its message started, gets a message-end with
+// an ERROR finish. Once an Anthropic or Cohere client has its terminal event
+// for a failed upstream, the sequence error is wrapped in
 // ClientNotifiedStreamError.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
@@ -413,7 +415,6 @@ type finishDeferral struct {
 	holdFinish    bool
 	keepRoleUsage bool
 	finished      bool
-	failed        bool
 	flushed       bool
 	dropLogged    bool
 	reason        string
@@ -458,8 +459,8 @@ func (d *finishDeferral) record(chunk *adapter.CanonicalStreamChunk) bool {
 }
 
 // recordUsage merges the usage of a chunk that arrived with an upstream error,
-// whose finish an Anthropic client does not get, so a finish already recorded
-// is flushed with it.
+// whose finish an Anthropic or Cohere client does not get, so a finish already
+// recorded, or a Cohere client's ERROR message-end, carries it.
 func (d *finishDeferral) recordUsage(chunk *adapter.CanonicalStreamChunk) {
 	if d.flushed {
 		return
@@ -553,14 +554,14 @@ func (d *finishDeferral) end(
 
 // done flushes on the upstream's [DONE]. Anthropic and Cohere clients whose
 // upstream sent [DONE] without a finish get a stop, since it closed the
-// stream cleanly, unless the upstream sent an error.
+// stream cleanly.
 func (d *finishDeferral) done(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if (d.anthropic != nil || d.cohere != nil) && !d.finished && !d.failed {
+	if (d.anthropic != nil || d.cohere != nil) && !d.finished {
 		d.finished = true
 		d.reason = "stop"
 	}
@@ -568,14 +569,15 @@ func (d *finishDeferral) done(
 }
 
 // clientAborted reports whether an Anthropic client got an error event in
-// place of message_stop.
+// place of message_stop, or a Cohere client an ERROR message-end.
 func (d *finishDeferral) clientAborted() bool {
-	return d.anthropic != nil && d.anthropic.Aborted()
+	return (d.anthropic != nil && d.anthropic.Aborted()) || (d.cohere != nil && d.cohere.Aborted())
 }
 
 // fail flushes or aborts the client stream for an upstream that failed with
 // err, or sent upstreamErr as a payload, and returns the sequence error to
-// yield. It returns false when the consumer stopped.
+// yield. A Cohere client gets an ERROR message-end, unless the transport failed
+// before its message started. It returns false when the consumer stopped.
 func (d *finishDeferral) fail(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -585,10 +587,17 @@ func (d *finishDeferral) fail(
 	upstreamErr *adapter.UpstreamStreamError,
 ) (bool, error) {
 	terminated := d.flushed
-	if !d.flushOnError(emit, registry, source, logger) {
+	notify := d.anthropic != nil || (d.cohere != nil && (upstreamErr != nil || d.cohere.Started()))
+	var ok bool
+	if d.cohere != nil && notify {
+		ok = d.abortCohere(emit)
+	} else {
+		ok = d.flushOnError(emit, registry, source, logger)
+	}
+	if !ok {
 		return false, nil
 	}
-	if d.anthropic == nil {
+	if !notify {
 		return true, err
 	}
 	aborted := d.clientAborted()
@@ -601,6 +610,17 @@ func (d *finishDeferral) fail(
 	}
 	logStreamFailure(logger, message, source, d.target, err, upstreamErr, aborted)
 	return true, &ClientNotifiedStreamError{Err: err}
+}
+
+// abortCohere ends a Cohere client's message with an ERROR finish and the usage
+// merged so far, whether or not the upstream had finished: its message is not
+// known to be whole.
+func (d *finishDeferral) abortCohere(emit func([][]byte) bool) bool {
+	if d.flushed {
+		return true
+	}
+	d.flushed = true
+	return emit(d.cohere.Abort("upstream stream failed", d.usage))
 }
 
 func (d *finishDeferral) abort(emit func([][]byte) bool, message string) bool {
@@ -702,10 +722,10 @@ func (d *finishDeferral) encode(
 // emitDeferred re-encodes a chunk without its usage, and without its finish
 // when deferred holds it, so the client gets them once from flush with the
 // merged usage instead of per chunk, the last of which may lack the cache
-// counts. It returns false when the consumer stopped, and, for an Anthropic
-// client, the error the upstream sent in payload, if any, after emitting the
-// content that came with it; other clients get the rest of that payload as
-// usual, and a Cohere client no stop on the [DONE] that follows.
+// counts. It returns false when the consumer stopped, and, for an Anthropic or
+// Cohere client, the error the upstream sent in payload, if any, after emitting
+// the content that came with it; other clients get the rest of that payload as
+// usual.
 func emitDeferred(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -723,7 +743,7 @@ func emitDeferred(
 		return true, nil
 	}
 	if canonical.UpstreamError != nil {
-		if deferred.anthropic != nil {
+		if deferred.anthropic != nil || deferred.cohere != nil {
 			deferred.recordUsage(canonical)
 			content := adapter.CanonicalStreamChunk{
 				ID:             canonical.ID,
@@ -736,9 +756,6 @@ func emitDeferred(
 				return false, nil
 			}
 			return true, canonical.UpstreamError
-		}
-		if deferred.cohere != nil {
-			deferred.failed = true
 		}
 		if canonical.UpstreamErrorOnly() {
 			return true, nil
