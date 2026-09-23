@@ -45,6 +45,11 @@ func TestDetectStream(t *testing.T) {
 			false,
 		},
 		{
+			"vertex path streamGenerateContent",
+			&infracontext.RequestContext{Path: "/slug/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent", Body: []byte(`{"contents":[]}`)},
+			true,
+		},
+		{
 			"streamGenerateContent without colon is not a stream signal",
 			&infracontext.RequestContext{Path: "/v1/logs/streamGenerateContentAudit", Body: []byte(`{"contents":[]}`)},
 			false,

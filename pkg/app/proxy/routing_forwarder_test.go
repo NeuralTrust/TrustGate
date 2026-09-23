@@ -429,6 +429,43 @@ func TestForward_GeminiAutoFromPathUsesBackendDefault(t *testing.T) {
 	}
 }
 
+func TestForward_VertexNativePathTakesModelFromPath(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	vertex := backendFor(gatewayID, "vertex")
+	rc := routableConsumerWith(gatewayID, vertex)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		vertex.ID: {Allowed: []string{"gemini-2.5-flash"}},
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
+			if !strings.Contains(string(req.Body), `"model":"gemini-2.5-flash"`) {
+				t.Fatalf("model from the Vertex path was not stamped into the body: %s", req.Body)
+			}
+		}).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Path:         "/slug/v1/projects/any-project/locations/any-region/publishers/google/models/gemini-2.5-flash:generateContent",
+			Body:         []byte(`{"contents":[]}`),
+			SourceFormat: string(adapter.FormatGemini),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
 func TestForward_PoolAliasBalancesAcrossMembers(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	memberA := backendFor(gatewayID, "openai")
