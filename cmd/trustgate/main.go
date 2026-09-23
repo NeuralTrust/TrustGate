@@ -98,6 +98,9 @@ func main() {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
+		if err := c.Invoke(modules.StartCredentialBackfill); err != nil {
+			log.Fatalf("failed to start policy credential backfill: %v", err)
+		}
 		if err := c.Invoke(runAdmin); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
@@ -117,6 +120,9 @@ func main() {
 	if plane == serverRun {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
+		}
+		if err := c.Invoke(modules.StartCredentialBackfill); err != nil {
+			log.Fatalf("failed to start policy credential backfill: %v", err)
 		}
 		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
 			log.Fatalf("failed to start metrics worker: %v", err)

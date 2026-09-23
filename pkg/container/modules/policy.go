@@ -15,7 +15,9 @@
 package modules
 
 import (
+	"context"
 	"log/slog"
+	"time"
 
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -25,11 +27,22 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
+	"go.uber.org/dig"
 )
+
+// credentialBackfillTimeout bounds the one-shot startup pass that converges
+// legacy plaintext policy credentials to encrypted (see
+// policyrepo.Repository.BackfillCredentialEncryption). It is generous
+// compared to catalogSyncTimeout because it walks every policy row rather
+// than calling one external API; a timeout mid-pass is not data loss — it
+// just leaves the remaining rows for the next boot, same as before this
+// feature existed for those rows.
+const credentialBackfillTimeout = 5 * time.Minute
 
 func Policy(c *container.Container) error {
 	if err := providePolicyRepository(c); err != nil {
@@ -39,8 +52,13 @@ func Policy(c *container.Container) error {
 }
 
 func providePolicyRepository(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *policyrepo.Repository {
-		return policyrepo.NewRepository(conn, appender)
+	if err := c.Provide(func(
+		conn *database.Connection,
+		appender outboxrepo.Appender,
+		cipher vaultdomain.Encrypter,
+		registry appplugins.Registry,
+	) *policyrepo.Repository {
+		return policyrepo.NewRepository(conn, appender, cipher, registry)
 	}); err != nil {
 		return err
 	}
@@ -108,4 +126,33 @@ func providePolicyServices(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+// CredentialBackfillParams is the dig.In for StartCredentialBackfill.
+type CredentialBackfillParams struct {
+	dig.In
+	Logger *slog.Logger
+	Repo   *policyrepo.Repository
+}
+
+// StartCredentialBackfill runs policyrepo.Repository.BackfillCredentialEncryption
+// once in the background at boot, on the same planes and in the same
+// fire-and-forget shape as StartCatalogSync: it must never block or fail
+// startup, because every policy read already tolerates legacy plaintext (see
+// scanPolicy) — this backfill only shortens how long a row stays that way at
+// rest.
+func StartCredentialBackfill(p CredentialBackfillParams) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), credentialBackfillTimeout)
+		defer cancel()
+		n, err := p.Repo.BackfillCredentialEncryption(ctx)
+		if err != nil {
+			p.Logger.Warn("policy credential backfill failed, will retry on next boot",
+				slog.String("error", err.Error()))
+			return
+		}
+		if n > 0 {
+			p.Logger.Info("policy credential backfill encrypted legacy rows", slog.Int("rows", n))
+		}
+	}()
 }
