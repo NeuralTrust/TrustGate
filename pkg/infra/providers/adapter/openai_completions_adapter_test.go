@@ -141,7 +141,7 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 		name  string
 		usage string
 		want  *CanonicalUsage
-		plain int
+		plain *int
 	}{
 		{
 			name:  "deepseek hit reported twice counts once",
@@ -167,6 +167,7 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 			name:  "input kept as reported when read plus write exceeds it",
 			usage: `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":40}}`,
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 10, TotalTokens: 110, CachedInputTokens: 80, CacheWriteInputTokens: 40},
+			plain: new(0),
 		},
 		{
 			name:  "deepseek miss only",
@@ -192,8 +193,8 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 				cr, err := a.DecodeResponse(body)
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, cr.Usage)
-				if tc.plain != 0 {
-					assert.Equal(t, tc.plain, cr.Usage.PlainInputTokens())
+				if tc.plain != nil {
+					assert.Equal(t, *tc.plain, cr.Usage.PlainInputTokens())
 				}
 			})
 			t.Run(adapterName+"/"+tc.name+"/stream", func(t *testing.T) {
@@ -202,8 +203,8 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, sc)
 				assert.Equal(t, tc.want, sc.Usage)
-				if tc.plain != 0 {
-					assert.Equal(t, tc.plain, sc.Usage.PlainInputTokens())
+				if tc.plain != nil {
+					assert.Equal(t, *tc.plain, sc.Usage.PlainInputTokens())
 				}
 			})
 		}
