@@ -408,6 +408,38 @@ func TestCohereAdapter_EncodeResponseFinishReason(t *testing.T) {
 	}
 }
 
+func TestCohereAdapter_EncodeResponseWithToolCalls(t *testing.T) {
+	tests := []struct {
+		finish string
+		want   string
+	}{
+		{finish: "stop", want: "TOOL_CALL"},
+		{finish: "tool_calls", want: "TOOL_CALL"},
+		{finish: "length", want: "MAX_TOKENS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.finish, func(t *testing.T) {
+			body, err := (&CohereAdapter{}).EncodeResponse(&CanonicalResponse{
+				Content:      "Voy",
+				FinishReason: tt.finish,
+				ToolCalls:    []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}},
+			})
+			require.NoError(t, err)
+			var resp struct {
+				FinishReason string `json:"finish_reason"`
+				Message      struct {
+					Content  []cohereContentBlock `json:"content"`
+					ToolPlan string               `json:"tool_plan"`
+				} `json:"message"`
+			}
+			require.NoError(t, json.Unmarshal(body, &resp))
+			assert.Equal(t, tt.want, resp.FinishReason)
+			assert.Equal(t, "Voy", resp.Message.ToolPlan)
+			assert.Empty(t, resp.Message.Content, "a tool call's text is its plan")
+		})
+	}
+}
+
 func TestCohereFinishToCanonical(t *testing.T) {
 	tests := []struct {
 		reason string

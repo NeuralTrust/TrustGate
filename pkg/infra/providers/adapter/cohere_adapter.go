@@ -376,7 +376,11 @@ func (a *CohereAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 
 func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
 	var content []cohereContentBlock
-	if resp.Content != "" {
+	var toolPlan string
+	switch {
+	case len(resp.ToolCalls) > 0:
+		toolPlan = resp.Content
+	case resp.Content != "":
 		content = append(content, cohereContentBlock{Type: "text", Text: resp.Content})
 	}
 	var toolCalls []cohereToolCall
@@ -391,12 +395,16 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 		})
 	}
 	finishReason, _ := cohereFinish(resp.FinishReason)
+	if len(toolCalls) > 0 {
+		finishReason, _ = cohereStreamFinishReason(resp.FinishReason, true)
+	}
 	out := cohereResponse{
 		ID:           resp.ID,
 		FinishReason: finishReason,
 		Message: cohereAssistantMessage{
 			Role:      "assistant",
 			Content:   content,
+			ToolPlan:  toolPlan,
 			ToolCalls: toolCalls,
 		},
 	}

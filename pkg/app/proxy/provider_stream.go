@@ -533,23 +533,29 @@ func (d *finishDeferral) flushOnError(
 }
 
 // end flushes when the upstream ends; an Anthropic client whose upstream ended
-// without a finish gets an error event instead.
+// without a finish gets an error event instead, and a Cohere client whose
+// message started an ERROR message-end.
 func (d *finishDeferral) end(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if !d.finished {
-		if d.anthropic != nil && !d.flushed {
-			logger.Warn("upstream stream ended without a finish; aborted the client stream with an error event",
-				slog.String("target", string(d.target)),
-				slog.String("source", string(source)),
-			)
-		}
-		return d.abort(emit, "upstream stream ended before the message finished")
+	if d.finished {
+		return d.flush(emit, registry, source, logger)
 	}
-	return d.flush(emit, registry, source, logger)
+	const message = "upstream stream ended before the message finished"
+	cohereStarted := d.cohere != nil && d.cohere.Started()
+	if !d.flushed && (d.anthropic != nil || cohereStarted) {
+		logger.Warn("upstream stream ended without a finish; aborted the client stream with an error event",
+			slog.String("target", string(d.target)),
+			slog.String("source", string(source)),
+		)
+	}
+	if cohereStarted {
+		return d.abortCohere(emit, message, source, logger)
+	}
+	return d.abort(emit, message)
 }
 
 // done flushes on the upstream's [DONE]. Anthropic and Cohere clients whose
@@ -576,8 +582,10 @@ func (d *finishDeferral) clientAborted() bool {
 
 // fail flushes or aborts the client stream for an upstream that failed with
 // err, or sent upstreamErr as a payload, and returns the sequence error to
-// yield. A Cohere client gets an ERROR message-end, unless the transport failed
-// before its message started. It returns false when the consumer stopped.
+// yield. A Cohere client whose upstream finished before its transport failed
+// gets that finish; otherwise it gets an ERROR message-end, unless the
+// transport failed before its message started. It returns false when the
+// consumer stopped.
 func (d *finishDeferral) fail(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -587,16 +595,19 @@ func (d *finishDeferral) fail(
 	upstreamErr *adapter.UpstreamStreamError,
 ) (bool, error) {
 	terminated := d.flushed
-	notify := d.anthropic != nil || (d.cohere != nil && (upstreamErr != nil || d.cohere.Started()))
 	var ok bool
-	if d.cohere != nil && notify {
-		ok = d.abortCohere(emit)
-	} else {
+	switch {
+	case d.cohere == nil, upstreamErr == nil && d.finished:
 		ok = d.flushOnError(emit, registry, source, logger)
+	case upstreamErr != nil || d.cohere.Started():
+		ok = d.abortCohere(emit, "upstream stream failed", source, logger)
+	default:
+		ok = true
 	}
 	if !ok {
 		return false, nil
 	}
+	notify := d.anthropic != nil || (d.cohere != nil && (d.flushed || d.finished || d.cohere.Started()))
 	if !notify {
 		return true, err
 	}
@@ -612,15 +623,35 @@ func (d *finishDeferral) fail(
 	return true, &ClientNotifiedStreamError{Err: err}
 }
 
-// abortCohere ends a Cohere client's message with an ERROR finish and the usage
-// merged so far, whether or not the upstream had finished: its message is not
-// known to be whole.
-func (d *finishDeferral) abortCohere(emit func([][]byte) bool) bool {
+// abortCohere ends a Cohere client's message with an ERROR finish carrying
+// message and the usage merged so far, whether or not the upstream had
+// finished: its message is not known to be whole.
+func (d *finishDeferral) abortCohere(
+	emit func([][]byte) bool,
+	message string,
+	source adapter.Format,
+	logger *slog.Logger,
+) bool {
 	if d.flushed {
 		return true
 	}
 	d.flushed = true
-	return emit(d.cohere.Abort("upstream stream failed", d.usage))
+	lines := d.cohere.Abort(message, d.usage)
+	d.logCohereDropped(source, logger)
+	return emit(lines)
+}
+
+func (d *finishDeferral) logCohereDropped(source adapter.Format, logger *slog.Logger) {
+	deltas, tools := d.cohere.Dropped()
+	if deltas == 0 && tools == 0 {
+		return
+	}
+	logger.Warn("cohere stream dropped tool call content",
+		slog.String("target", string(d.target)),
+		slog.String("source", string(source)),
+		slog.Int("argument_deltas", deltas),
+		slog.Int("dropped_tool_calls", tools),
+	)
 }
 
 func (d *finishDeferral) abort(emit func([][]byte) bool, message string) bool {
@@ -657,14 +688,7 @@ func (d *finishDeferral) flush(
 	}
 	if d.cohere != nil {
 		lines := d.cohere.Finish(chunk)
-		if deltas, tools := d.cohere.Dropped(); deltas > 0 || tools > 0 {
-			logger.Warn("cohere stream dropped tool call content",
-				slog.String("target", string(d.target)),
-				slog.String("source", string(source)),
-				slog.Int("argument_deltas", deltas),
-				slog.Int("nameless_tool_calls", tools),
-			)
-		}
+		d.logCohereDropped(source, logger)
 		return emit(lines)
 	}
 	return encodeAndEmit(emit, registry, chunk, source, logger)
