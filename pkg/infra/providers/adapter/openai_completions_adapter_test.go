@@ -135,6 +135,101 @@ func TestUsageSubCounts_OpenAIChat_CachedInput(t *testing.T) {
 	assert.Equal(t, 12, cr.Usage.InputTokens, "CachedInputTokens is a sub-count; InputTokens must not be reduced")
 }
 
+func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
+	const choice = `"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]`
+	cases := []struct {
+		name  string
+		usage string
+		want  *CanonicalUsage
+		plain int
+	}{
+		{
+			name:  "deepseek hit reported twice counts once",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20,"prompt_tokens_details":{"cached_tokens":80}}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
+		},
+		{
+			name:  "deepseek hit without details",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
+		},
+		{
+			name:  "deepseek prompt below hit plus miss",
+			usage: `{"prompt_tokens":0,"completion_tokens":5,"total_tokens":0,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
+		},
+		{
+			name:  "cache write in details",
+			usage: `{"prompt_tokens":2000,"completion_tokens":10,"total_tokens":2010,"prompt_tokens_details":{"cached_tokens":1000,"cache_write_tokens":500}}`,
+			want:  &CanonicalUsage{InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010, CachedInputTokens: 1000, CacheWriteInputTokens: 500},
+		},
+		{
+			name:  "input kept as reported when read plus write exceeds it",
+			usage: `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":40}}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 10, TotalTokens: 110, CachedInputTokens: 80, CacheWriteInputTokens: 40},
+			plain: 100,
+		},
+		{
+			name:  "deepseek miss only",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":100}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105},
+		},
+		{
+			name:  "deepseek miss only with total below input",
+			usage: `{"prompt_tokens":0,"completion_tokens":5,"total_tokens":5,"prompt_cache_miss_tokens":100}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105},
+		},
+		{
+			name:  "deepseek hit with zero cached details",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20,"prompt_tokens_details":{"cached_tokens":0}}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
+		},
+	}
+	adapters := map[string]ProviderAdapter{"openai": &OpenAIAdapter{}, "openrouter": &OpenRouterAdapter{}}
+	for adapterName, a := range adapters {
+		for _, tc := range cases {
+			t.Run(adapterName+"/"+tc.name+"/buffered", func(t *testing.T) {
+				body := []byte(`{"id":"c1","object":"chat.completion","model":"m",` + choice + `,"usage":` + tc.usage + `}`)
+				cr, err := a.DecodeResponse(body)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, cr.Usage)
+				if tc.plain != 0 {
+					assert.Equal(t, tc.plain, cr.Usage.PlainInputTokens())
+				}
+			})
+			t.Run(adapterName+"/"+tc.name+"/stream", func(t *testing.T) {
+				chunk := []byte(`{"id":"c1","object":"chat.completion.chunk","choices":[],"usage":` + tc.usage + `}`)
+				sc, err := a.DecodeStreamChunk(chunk)
+				require.NoError(t, err)
+				require.NotNil(t, sc)
+				assert.Equal(t, tc.want, sc.Usage)
+				if tc.plain != 0 {
+					assert.Equal(t, tc.plain, sc.Usage.PlainInputTokens())
+				}
+			})
+		}
+	}
+}
+
+func TestUsageCache_OpenAIChat_IncludeUsageChunkWrite(t *testing.T) {
+	a := &OpenAIAdapter{}
+	var merged *CanonicalUsage
+	for _, chunk := range []string{
+		`{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}],"usage":null}`,
+		`{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}`,
+		`{"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":6000,"completion_tokens":20,"total_tokens":6020,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":500}}}`,
+	} {
+		sc, err := a.DecodeStreamChunk([]byte(chunk))
+		require.NoError(t, err)
+		if sc != nil {
+			merged = MergeUsage(merged, sc.Usage)
+		}
+	}
+	require.NotNil(t, merged)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 6000, OutputTokens: 20, TotalTokens: 6020, CacheWriteInputTokens: 500}, merged)
+	assert.Equal(t, 5500, merged.PlainInputTokens())
+}
+
 func TestUsageSubCounts_OpenAIChat_ReasoningOutput(t *testing.T) {
 	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":20,"total_tokens":25,"completion_tokens_details":{"reasoning_tokens":12}}}`)
 	cr, err := (&OpenAIAdapter{}).DecodeResponse(body)

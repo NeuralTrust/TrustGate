@@ -86,7 +86,8 @@ type cohereContentBlock struct {
 }
 
 type cohereUsage struct {
-	Tokens *cohereUsageTokens `json:"tokens,omitempty"`
+	Tokens       *cohereUsageTokens `json:"tokens,omitempty"`
+	CachedTokens int                `json:"cached_tokens,omitempty"`
 }
 
 type cohereUsageTokens struct {
@@ -122,7 +123,11 @@ func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
 	if u == nil || u.Tokens == nil {
 		return nil
 	}
-	return newCanonicalUsage(u.Tokens.InputTokens, u.Tokens.OutputTokens, 0)
+	cu := newCanonicalUsage(u.Tokens.InputTokens, u.Tokens.OutputTokens, 0)
+	if cu != nil && u.CachedTokens > 0 {
+		cu.setCache(u.CachedTokens, 0, 0)
+	}
+	return cu
 }
 
 func cohereFinishToCanonical(reason string) string {

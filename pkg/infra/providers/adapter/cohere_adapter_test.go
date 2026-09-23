@@ -68,6 +68,31 @@ func TestCohereAdapter_StreamChunkContentDelta(t *testing.T) {
 	assert.Equal(t, "hi", got.Delta)
 }
 
+func TestUsageCache_Cohere_CachedTokens(t *testing.T) {
+	const usage = `{"billed_units":{"input_tokens":1480,"output_tokens":12},"tokens":{"input_tokens":1500,"output_tokens":12},"cached_tokens":600}`
+	want := &CanonicalUsage{InputTokens: 1500, OutputTokens: 12, TotalTokens: 1512, CachedInputTokens: 600}
+	runUsageCases(t, &CohereAdapter{}, []usageCase{
+		{
+			name:      "buffered",
+			body:      []byte(`{"id":"co-1","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"usage":` + usage + `}`),
+			path:      "response",
+			wantUsage: want,
+		},
+		{
+			name:      "stream message-end",
+			body:      []byte(`{"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":` + usage + `}}`),
+			path:      "stream",
+			wantUsage: want,
+		},
+		{
+			name:      "no cached tokens",
+			body:      []byte(`{"id":"co-1","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"usage":{"tokens":{"input_tokens":10,"output_tokens":2}}}`),
+			path:      "response",
+			wantUsage: &CanonicalUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
+		},
+	})
+}
+
 func TestCohereEmbedAdapter_OpenAIToCohere(t *testing.T) {
 	reg := NewRegistry()
 	openaiReq := `{"model":"embed-english-v3.0","input":["hello","world"]}`

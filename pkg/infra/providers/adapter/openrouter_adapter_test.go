@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -168,6 +169,66 @@ func TestOpenRouterAdapter_StreamFinalChunkPreservesProvider(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(payload), &parsed))
 	require.NotNil(t, parsed["provider"])
 	require.NotNil(t, parsed["usage"])
+}
+
+func TestOpenRouterAdapter_ReportedCostIsLoggedNotBilled(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const usage = `{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010,"cost":0.0042,"cache_discount":0.0021,"prompt_tokens_details":{"cached_tokens":900}}`
+	want := &CanonicalUsage{InputTokens: 1000, OutputTokens: 10, TotalTokens: 1010, CachedInputTokens: 900}
+	a := openRouterAdapter(t)
+
+	cr, err := a.DecodeResponse([]byte(`{"id":"gen-1","object":"chat.completion","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":` + usage + `}`))
+	require.NoError(t, err)
+	assert.Equal(t, want, cr.Usage)
+
+	sc, err := a.DecodeStreamChunk([]byte(`data: {"id":"gen-1","object":"chat.completion.chunk","choices":[],"usage":` + usage + `}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, want, sc.Usage)
+
+	assert.Equal(t, 2, strings.Count(logs.String(), "openrouter reported billing"))
+	assert.Contains(t, logs.String(), "cost=0.0042")
+	assert.Contains(t, logs.String(), "cache_discount=0.0021")
+}
+
+func TestOpenRouterAdapter_TopLevelCacheDiscountIsLogged(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	a := openRouterAdapter(t)
+	cr, err := a.DecodeResponse([]byte(`{"id":"gen-1","object":"chat.completion","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"cache_discount":0.0017,"usage":{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010}}`))
+	require.NoError(t, err)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 1000, OutputTokens: 10, TotalTokens: 1010}, cr.Usage)
+
+	assert.Equal(t, 1, strings.Count(logs.String(), "openrouter reported billing"))
+	assert.Contains(t, logs.String(), "cache_discount=0.0017")
+	assert.NotContains(t, logs.String(), "cost=")
+}
+
+func TestOpenRouterAdapter_NoBillingFieldsNoLog(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const usage = `{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010}`
+	a := openRouterAdapter(t)
+	cr, err := a.DecodeResponse([]byte(`{"id":"gen-1","object":"chat.completion","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":` + usage + `}`))
+	require.NoError(t, err)
+	require.NotNil(t, cr.Usage)
+
+	sc, err := a.DecodeStreamChunk([]byte(`data: {"id":"gen-1","object":"chat.completion.chunk","choices":[],"usage":` + usage + `}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Usage)
+
+	assert.NotContains(t, logs.String(), "openrouter reported billing")
 }
 
 func TestOpenRouterAdapter_DecodeStreamChunk_SkipsSSEComments(t *testing.T) {
