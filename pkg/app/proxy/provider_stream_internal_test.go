@@ -17,6 +17,7 @@ package proxy
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -839,6 +840,119 @@ func TestAdaptStream_ResponsesUpstreamSeveralFinishesGetOneTerminal(t *testing.T
 				assert.Equal(t, want, strings.Count(joined, needle), needle)
 			}
 			assert.Contains(t, joined, tt.wantUsage)
+		})
+	}
+}
+
+func gemini3SignedFunctionCallUpstream() iter.Seq2[[]byte, error] {
+	return linesSeq(
+		`data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather","args": {"city": "Paris"},"id": "call_235554"},"thoughtSignature": "EoUECoIEAWkUfRO7MhDV6KaJ"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 56,"candidatesTokenCount": 16,"totalTokenCount": 161,"thoughtsTokenCount": 89},"modelVersion": "gemini-3-flash-preview","responseId": "c9izarDqFZvR28oP9_Wo-QQ"}`,
+		`data: {"candidates": [{"content": {"parts": [{"text": ""}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 56,"candidatesTokenCount": 16,"totalTokenCount": 161,"thoughtsTokenCount": 89},"modelVersion": "gemini-3-flash-preview","responseId": "c9izarDqFZvR28oP9_Wo-QQ"}`,
+	)
+}
+
+func gemini25ThoughtThenSignedFunctionCallUpstream() iter.Seq2[[]byte, error] {
+	return linesSeq(
+		`data: {"candidates": [{"content": {"parts": [{"text": "**Determining Paris' Weather**","thought": true}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 51,"totalTokenCount": 106,"thoughtsTokenCount": 55},"modelVersion": "gemini-2.5-flash","responseId": "btizasv6FNPBkdUPqr-csQw"}`,
+		`data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather","args": {"city": "Paris"}},"thoughtSignature": "CiQBaRR9Eyw3lLUkDcQv"}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 51,"candidatesTokenCount": 15,"totalTokenCount": 121,"thoughtsTokenCount": 55},"modelVersion": "gemini-2.5-flash","responseId": "btizasv6FNPBkdUPqr-csQw"}`,
+	)
+}
+
+func gemini3ParallelFunctionCallsUpstream() iter.Seq2[[]byte, error] {
+	return linesSeq(
+		`data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather","args": {"city": "Paris"},"id": "call_172274"},"thoughtSignature": "EpYECpMEAWkUfRO7"}],"role": "model"},"index": 0}],"modelVersion": "gemini-3-flash-preview"}`,
+		`data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather","args": {"city": "Rome"},"id": "call_172284"}}],"role": "model"},"index": 0}],"modelVersion": "gemini-3-flash-preview"}`,
+		`data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather","args": {"city": "Berlin"},"id": "call_172286"}}],"role": "model"},"index": 0}],"modelVersion": "gemini-3-flash-preview"}`,
+		`data: {"candidates": [{"content": {"parts": [{"text": ""}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 60,"candidatesTokenCount": 30,"totalTokenCount": 90},"modelVersion": "gemini-3-flash-preview"}`,
+	)
+}
+
+func TestAdaptStream_ResponsesClientGetsParallelGeminiFunctionCalls(t *testing.T) {
+	lines := collectLines(t, adaptStream(gemini3ParallelFunctionCallsUpstream(), adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatGemini, slog.Default(), nil))
+
+	var calls []string
+	for _, chunk := range dataChunks(t, lines) {
+		if chunk["type"] != "response.output_item.added" {
+			continue
+		}
+		item, _ := chunk["item"].(map[string]any)
+		if item["type"] != "function_call" {
+			continue
+		}
+		index, _ := chunk["output_index"].(float64)
+		callID, _ := item["call_id"].(string)
+		calls = append(calls, fmt.Sprintf("%v %s", index, callID))
+	}
+	assert.Equal(t, []string{"0 call_172274", "1 call_172284", "2 call_172286"}, calls)
+}
+
+func TestAdaptStream_OpenAIClientGetsSignedGeminiFunctionCall(t *testing.T) {
+	type call struct {
+		Index               float64
+		ID, Name, Arguments string
+	}
+	tests := []struct {
+		name          string
+		upstream      iter.Seq2[[]byte, error]
+		wantCalls     []call
+		wantReasoning string
+	}{
+		{
+			name:      "gemini 3",
+			upstream:  gemini3SignedFunctionCallUpstream(),
+			wantCalls: []call{{ID: "call_235554", Name: "get_weather", Arguments: `{"city":"Paris"}`}},
+		},
+		{
+			name:     "gemini 3 parallel calls in separate chunks",
+			upstream: gemini3ParallelFunctionCallsUpstream(),
+			wantCalls: []call{
+				{Index: 0, ID: "call_172274", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+				{Index: 1, ID: "call_172284", Name: "get_weather", Arguments: `{"city":"Rome"}`},
+				{Index: 2, ID: "call_172286", Name: "get_weather", Arguments: `{"city":"Berlin"}`},
+			},
+		},
+		{
+			name:          "gemini 2.5 with thought",
+			upstream:      gemini25ThoughtThenSignedFunctionCallUpstream(),
+			wantCalls:     []call{{ID: "get_weather", Name: "get_weather", Arguments: `{"city":"Paris"}`}},
+			wantReasoning: "**Determining Paris' Weather**",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(tt.upstream, adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatGemini, slog.Default(), nil))
+
+			var calls []call
+			var content, reasoning string
+			var finishes []string
+			for _, chunk := range dataChunks(t, lines) {
+				choices, _ := chunk["choices"].([]any)
+				if len(choices) == 0 {
+					continue
+				}
+				choice, _ := choices[0].(map[string]any)
+				if fr, _ := choice["finish_reason"].(string); fr != "" {
+					finishes = append(finishes, fr)
+				}
+				delta, _ := choice["delta"].(map[string]any)
+				c, _ := delta["content"].(string)
+				content += c
+				r, _ := delta["reasoning_content"].(string)
+				reasoning += r
+				for _, raw := range chunkToolCalls(chunk) {
+					tc, _ := raw.(map[string]any)
+					fn, _ := tc["function"].(map[string]any)
+					id, _ := tc["id"].(string)
+					name, _ := fn["name"].(string)
+					args, _ := fn["arguments"].(string)
+					index, _ := tc["index"].(float64)
+					calls = append(calls, call{Index: index, ID: id, Name: name, Arguments: args})
+				}
+			}
+			assert.Equal(t, tt.wantCalls, calls)
+			assert.Empty(t, content, "a signed functionCall carries no text")
+			assert.Equal(t, tt.wantReasoning, reasoning)
+			assert.Len(t, finishes, 1)
 		})
 	}
 }

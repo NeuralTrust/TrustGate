@@ -192,8 +192,15 @@ func adaptStream(
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
 	var deferred *finishDeferral
+	var geminiCalls *geminiCallIndexer
 	if crossFormat {
 		deferred = newFinishDeferral(source, target)
+		if adapter.IsSameWireFormat(target, adapter.FormatGemini) {
+			geminiCalls = &geminiCallIndexer{}
+		}
+	}
+	if deferred != nil {
+		deferred.geminiCalls = geminiCalls
 	}
 	usage := newUsageOnce(registry, source, target, crossFormat, logger)
 	// On the cross-format path the adapter re-encodes payload chunks but never
@@ -274,6 +281,13 @@ func adaptStream(
 					if ok, streamErr := deferred.fail(emit, registry, source, logger, upstreamErr, upstreamErr); ok {
 						yield(nil, streamErr)
 					}
+					return
+				}
+				continue
+			}
+
+			if geminiCalls != nil {
+				if !emitGeminiUpstream(emit, registry, payload, source, target, geminiCalls, logger) {
 					return
 				}
 				continue
@@ -445,6 +459,42 @@ type finishDeferral struct {
 	usage         *adapter.CanonicalUsage
 	anthropic     *adapter.AnthropicStreamEncoder
 	cohere        *adapter.CohereStreamEncoder
+	geminiCalls   *geminiCallIndexer
+}
+
+type geminiCallIndexer struct {
+	next int
+}
+
+func (g *geminiCallIndexer) renumber(deltas []adapter.StreamToolCallDelta) {
+	if g == nil {
+		return
+	}
+	for i := range deltas {
+		deltas[i].Index = g.next
+		g.next++
+	}
+}
+
+func emitGeminiUpstream(
+	emit func([][]byte) bool,
+	registry providerCodec,
+	payload []byte,
+	source, target adapter.Format,
+	calls *geminiCallIndexer,
+	logger *slog.Logger,
+) bool {
+	canonical, err := registry.DecodeStreamChunkFor(payload, target)
+	if err != nil {
+		logger.Warn("stream decode chunk failed", slog.String("error", err.Error()))
+		return true
+	}
+	if canonical == nil || canonical.UpstreamErrorOnly() {
+		return true
+	}
+	canonical.ProviderExtensions = nil
+	calls.renumber(canonical.ToolCallDeltas)
+	return encodeAndEmit(emit, registry, canonical, source, logger)
 }
 
 func newFinishDeferral(source, target adapter.Format) *finishDeferral {
@@ -788,6 +838,7 @@ func emitDeferred(
 	if canonical == nil {
 		return true, nil
 	}
+	deferred.geminiCalls.renumber(canonical.ToolCallDeltas)
 	if canonical.UpstreamError != nil {
 		if deferred.anthropic != nil || deferred.cohere != nil {
 			deferred.recordUsage(canonical)

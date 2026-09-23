@@ -277,6 +277,38 @@ func TestAdaptStream_AnthropicClientEventSequence(t *testing.T) {
 			},
 		},
 		{
+			name:     "gemini 3 signed functionCall",
+			target:   adapter.FormatGemini,
+			upstream: gemini3SignedFunctionCallUpstream(),
+			want: []string{
+				"message_start",
+				"start 0 tool_use call_235554 get_weather", `delta 0 input_json_delta {"city":"Paris"}`, "stop 0",
+				"message_delta tool_use", "message_stop",
+			},
+		},
+		{
+			name:     "gemini 3 parallel calls in separate chunks",
+			target:   adapter.FormatGemini,
+			upstream: gemini3ParallelFunctionCallsUpstream(),
+			want: []string{
+				"message_start",
+				"start 0 tool_use call_172274 get_weather", `delta 0 input_json_delta {"city":"Paris"}`, "stop 0",
+				"start 1 tool_use call_172284 get_weather", `delta 1 input_json_delta {"city":"Rome"}`, "stop 1",
+				"start 2 tool_use call_172286 get_weather", `delta 2 input_json_delta {"city":"Berlin"}`, "stop 2",
+				"message_delta tool_use", "message_stop",
+			},
+		},
+		{
+			name:     "gemini 2.5 thought then signed functionCall",
+			target:   adapter.FormatGemini,
+			upstream: gemini25ThoughtThenSignedFunctionCallUpstream(),
+			want: []string{
+				"message_start",
+				"start 0 tool_use get_weather get_weather", `delta 0 input_json_delta {"city":"Paris"}`, "stop 0",
+				"message_delta tool_use", "message_stop",
+			},
+		},
+		{
 			name:   "gemini function calls reusing part index 0",
 			target: adapter.FormatGemini,
 			upstream: linesSeq(

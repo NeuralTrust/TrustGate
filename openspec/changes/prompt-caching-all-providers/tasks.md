@@ -145,11 +145,12 @@ Reduced scope (investigation 2026-09-23, captures in the scratchpad `groq/`): st
 
 Gemini 2.5 (default thinking) and 3.x attach `thoughtSignature` to `functionCall` and text parts. Today the stream decoder drops signed `functionCall` parts (tool calls lost cross-format), buffered Gemini 3 duplicates the signed answer text as reasoning and content, and Gemini 3 returns 400 on the second tool turn when the signature is missing.
 
-- [ ] 3f.1 Gemini decode (stream, buffered and request): only parts with `thought: true` are reasoning; a `thoughtSignature` alone does not make a part reasoning, so signed `functionCall` and text parts keep their normal meaning.
-- [ ] 3f.2 Gemini encode: when a model turn has no signature to replay, put the sentinel `skip_thought_signature_validator` on the first `functionCall` part of that turn.
-- [ ] 3f.3 Buffered Gemini 3: stop duplicating signed answer text as reasoning plus content.
-- [ ] 3f.4 Tests: stream and buffered decode of signed `functionCall`/text parts (real captures), request decode, sentinel placement (one per model turn, first `functionCall` only, not when a signature exists), cross-format tool-call stream from Gemini 3 to OpenAI and Anthropic clients.
+- [x] 3f.1 Gemini decode (stream, buffered and request): only parts with `thought: true` are reasoning; a `thoughtSignature` alone does not make a part reasoning, so signed `functionCall` and text parts keep their normal meaning.
+- [x] 3f.2 Gemini encode: when a model turn has no signature to replay, put the sentinel `skip_thought_signature_validator` on the first `functionCall` part of that turn.
+- [x] 3f.3 Buffered Gemini 3: stop duplicating signed answer text as reasoning plus content.
+- [x] 3f.4 Tests: stream and buffered decode of signed `functionCall`/text parts (real captures), request decode, sentinel placement (one per model turn, first `functionCall` only, not when a signature exists), cross-format tool-call stream from Gemini 3 to OpenAI and Anthropic clients.
 - [ ] 3f.5 V1; V2; V3; V4 **Gemini** (2.5-flash and 3.x, native + matrix with STREAM on/off, 2-turn tool loop); V5.
+- [x] 3f.6 (found in V4) Gemini 3 streams parallel calls one per chunk, each at part index 0: `adaptStream` gives a Gemini upstream's tool calls stream-wide indexes so OpenAI Chat and Responses clients stop merging them into one call.
 - Out of scope: carrying the real signature through canonical for a proper round-trip (ENG-1627).
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic

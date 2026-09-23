@@ -346,6 +346,151 @@ func TestGemini_DecodeStreamChunk_SkipsThoughtParts(t *testing.T) {
 	require.NotNil(t, sc)
 	assert.Equal(t, "hello", sc.Delta)
 	assert.NotContains(t, sc.Delta, "secret")
+	assert.Equal(t, "secret", sc.ReasoningDelta)
+}
+
+func TestGemini_DecodeStreamChunk_ThoughtSignature(t *testing.T) {
+	tests := []struct {
+		name          string
+		chunk         string
+		wantDelta     string
+		wantReasoning string
+		wantCalls     []StreamToolCallDelta
+	}{
+		{
+			name:      "gemini 3 signed functionCall",
+			chunk:     `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_235554"},"thoughtSignature":"EoUECoIEAWkUfRO7"}],"role":"model"},"index":0}],"modelVersion":"gemini-3-flash-preview","responseId":"c9izarDqFZvR28oP9_Wo-QQ"}`,
+			wantCalls: []StreamToolCallDelta{{Index: 0, ID: "call_235554", Name: "get_weather", ArgumentsDelta: `{"city":"Paris"}`}},
+		},
+		{
+			name:      "gemini 2.5 signed functionCall without id",
+			chunk:     `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}},"thoughtSignature":"CiQBaRR9Eyw3lLUk"}],"role":"model"},"finishReason":"STOP","index":0}],"modelVersion":"gemini-2.5-flash"}`,
+			wantCalls: []StreamToolCallDelta{{Index: 0, ID: "get_weather", Name: "get_weather", ArgumentsDelta: `{"city":"Paris"}`}},
+		},
+		{
+			name:      "signed text",
+			chunk:     `{"candidates":[{"content":{"parts":[{"text":"Hi there, friend.","thoughtSignature":"EqQHCqEHAWkUfRNY"}],"role":"model"},"index":0}],"modelVersion":"gemini-3-flash-preview"}`,
+			wantDelta: "Hi there, friend.",
+		},
+		{
+			name:          "thought part",
+			chunk:         `{"candidates":[{"content":{"parts":[{"text":"**Determining Paris' Weather**","thought":true}],"role":"model"},"index":0}],"modelVersion":"gemini-2.5-flash"}`,
+			wantReasoning: "**Determining Paris' Weather**",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc, err := (&GeminiAdapter{}).DecodeStreamChunk([]byte(tt.chunk))
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			assert.Equal(t, tt.wantDelta, sc.Delta)
+			assert.Equal(t, tt.wantReasoning, sc.ReasoningDelta)
+			assert.Equal(t, tt.wantCalls, sc.ToolCallDeltas)
+		})
+	}
+}
+
+func TestGemini_DecodeResponse_ThoughtSignature(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantContent   string
+		wantReasoning *CanonicalReasoning
+		wantCalls     []CanonicalToolCall
+	}{
+		{
+			name:        "gemini 3 signed answer is content only",
+			body:        `{"candidates":[{"content":{"parts":[{"text":"Hi there, friend.","thoughtSignature":"EqQHCqEHAWkUfRNY"}],"role":"model"},"finishReason":"STOP","index":0}],"modelVersion":"gemini-3-flash-preview"}`,
+			wantContent: "Hi there, friend.",
+		},
+		{
+			name:      "gemini 3 signed functionCall keeps its id",
+			body:      `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_260240"},"thoughtSignature":"EpUCCpICAWkUfRPy"}],"role":"model"},"finishReason":"STOP","index":0}],"modelVersion":"gemini-3-flash-preview"}`,
+			wantCalls: []CanonicalToolCall{{ID: "call_260240", Name: "get_weather", Arguments: `{"city":"Paris"}`}},
+		},
+		{
+			name:          "thought part is reasoning",
+			body:          `{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"answer","thoughtSignature":"CiQBaRR9"}],"role":"model"},"finishReason":"STOP","index":0}]}`,
+			wantContent:   "answer",
+			wantReasoning: &CanonicalReasoning{ThinkingText: "thinking"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cr, err := (&GeminiAdapter{}).DecodeResponse([]byte(tt.body))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantContent, cr.Content)
+			assert.Equal(t, tt.wantReasoning, cr.Reasoning)
+			assert.Equal(t, tt.wantCalls, cr.ToolCalls)
+		})
+	}
+}
+
+func TestGemini_DecodeRequest_KeepsSignedParts(t *testing.T) {
+	input := `{
+		"contents":[
+			{"role":"user","parts":[{"text":"Weather in Paris?"}]},
+			{"role":"model","parts":[
+				{"thought":true,"text":"secret"},
+				{"text":"Checking.","thoughtSignature":"EqQHCqEHAWkUfRNY"},
+				{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_235554"},"thoughtSignature":"EoUECoIEAWkUfRO7"}
+			]},
+			{"role":"user","parts":[{"functionResponse":{"name":"get_weather","id":"call_235554","response":{"result":"sunny"}}}]}
+		]
+	}`
+	cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 3)
+	assistant := cr.Messages[1]
+	assert.Equal(t, "assistant", assistant.Role)
+	assert.Equal(t, "Checking.", assistant.Content)
+	assert.Equal(t, []CanonicalToolCall{{ID: "call_235554", Name: "get_weather", Arguments: `{"city":"Paris"}`}}, assistant.ToolCalls)
+	assert.Equal(t, CanonicalMessage{Role: "tool", ToolCallID: "call_235554", Content: `{"result":"sunny"}`}, cr.Messages[2])
+}
+
+func TestGemini_EncodeRequest_ThoughtSignatureSentinel(t *testing.T) {
+	messages := []CanonicalMessage{
+		{Role: "user", Content: "Weather in Paris and Rome?"},
+		{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{
+			{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+			{ID: "call_2", Name: "get_weather", Arguments: `{"city":"Rome"}`},
+		}},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
+		{Role: "tool", ToolCallID: "call_2", Content: `{"ok":true}`},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "get_time", Name: "get_time", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "get_time", Content: `{"ok":true}`},
+		{Role: "assistant", Content: "Sunny in both."},
+	}
+
+	body, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{Model: "gemini", Messages: messages})
+	require.NoError(t, err)
+
+	var req geminiRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.Len(t, req.Contents, 6)
+	signatures := make([][]string, len(req.Contents))
+	for i, c := range req.Contents {
+		for _, p := range c.Parts {
+			signatures[i] = append(signatures[i], p.ThoughtSignature)
+		}
+	}
+	assert.Equal(t, [][]string{
+		{""},
+		{"", geminiSkipThoughtSignature, ""},
+		{"", ""},
+		{geminiSkipThoughtSignature},
+		{""},
+		{""},
+	}, signatures)
+
+	firstTurn := req.Contents[1].Parts
+	assert.Equal(t, "call_1", firstTurn[1].FunctionCall.ID)
+	assert.Equal(t, "call_2", firstTurn[2].FunctionCall.ID)
+	results := req.Contents[2].Parts
+	assert.Equal(t, geminiFuncResponse{ID: "call_1", Name: "get_weather", Response: map[string]interface{}{"ok": true}}, *results[0].FunctionResponse)
+	assert.Equal(t, geminiFuncResponse{ID: "call_2", Name: "get_weather", Response: map[string]interface{}{"ok": true}}, *results[1].FunctionResponse)
+	assert.Empty(t, req.Contents[3].Parts[0].FunctionCall.ID, "an id that is the function name is not sent")
+	assert.Empty(t, req.Contents[4].Parts[0].FunctionResponse.ID)
 }
 
 // Gemini reports thoughtsTokenCount and toolUsePromptTokenCount DISJOINT from
