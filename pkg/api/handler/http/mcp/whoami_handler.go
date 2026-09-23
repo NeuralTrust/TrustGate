@@ -15,7 +15,9 @@
 package mcp
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +25,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -44,6 +49,57 @@ type WhoAmIHandler struct {
 	gateways    resolver.GatewayResolver
 	consumers   appconsumer.APIKeyConsumers
 	proxyDomain string
+	byKey       *whoAmIKeyLookup
+}
+
+// WhoAmIKeyFinder finds the credential behind a raw API key, whichever gateway
+// holds it. appauth.APIKeyFinder satisfies it.
+type WhoAmIKeyFinder interface {
+	FindByAPIKey(ctx context.Context, rawKey string) (*authdomain.Auth, error)
+}
+
+// WhoAmIGatewayFinder loads a gateway by id. appgateway.Finder satisfies it.
+type WhoAmIGatewayFinder interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
+}
+
+// whoAmIKeyLookup is what lets /whoami answer on a host that names no gateway:
+// the key is unique across gateways, so it says which one it belongs to.
+type whoAmIKeyLookup struct {
+	keys      WhoAmIKeyFinder
+	gateways  WhoAmIGatewayFinder
+	mcpDomain string
+	limiter   appoauth.ConnectAttemptLimiter
+	source    func(peer, forwardedFor string) string
+}
+
+// WhoAmIOption tunes NewWhoAmIHandler.
+type WhoAmIOption func(*WhoAmIHandler)
+
+// WithWhoAmIGatewayFromKey lets /whoami be reached on a fixed host — one that
+// carries no gateway slug — by finding the gateway from the key itself. That
+// is what lets a client start from its key alone, with no gateway URL to be
+// given: the answer carries the URL of every plane, and nothing else is ever
+// called on that host.
+//
+// mcpDomain is MCP_BASE_DOMAIN, the suffix a gateway's MCP plane is published
+// under: the request's own host is the fixed one and addresses no gateway, so
+// the MCP URL is built from it instead. Attempts on this path are counted per
+// source, like the connect pages', because an unknown key is never cached and
+// each one reaches the key store.
+func WithWhoAmIGatewayFromKey(
+	keys WhoAmIKeyFinder,
+	gateways WhoAmIGatewayFinder,
+	mcpDomain string,
+	limiter appoauth.ConnectAttemptLimiter,
+	source func(peer, forwardedFor string) string,
+) WhoAmIOption {
+	return func(h *WhoAmIHandler) {
+		if keys == nil || gateways == nil {
+			return
+		}
+		h.byKey = &whoAmIKeyLookup{keys: keys, gateways: gateways, mcpDomain: mcpDomain, limiter: limiter, source: source}
+	}
 }
 
 // proxyDomain is GATEWAY_BASE_DOMAIN: the suffix the LLM plane is published
@@ -52,8 +108,15 @@ func NewWhoAmIHandler(
 	gateways resolver.GatewayResolver,
 	consumers appconsumer.APIKeyConsumers,
 	proxyDomain string,
+	opts ...WhoAmIOption,
 ) *WhoAmIHandler {
-	return &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain}
+	h := &WhoAmIHandler{gateways: gateways, consumers: consumers, proxyDomain: proxyDomain}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
 // WhoAmIConsumer is one consumer the key reaches, with the address to use it.
@@ -111,17 +174,31 @@ type WhoAmIResponse struct {
 
 // Handle godoc
 // @Summary      Describe what an API key reaches
-// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which.
+// @Description  Returns the consumers this API key is attached to, one per plane, each with the URL it is served on — plus when the key itself expires and, for an MCP consumer, which of its bound servers still need an account connected and by whom. A key is attached to consumers and a consumer has one type, so an agent that calls both tools and models holds an MCP consumer and an LLM one behind the same key; this is how a client learns their slugs and addresses instead of being configured with them. Carries no identifiers and no credentials. An unknown, disabled, expired or foreign key is refused without saying which. On a host that names no gateway (the fixed entry point), the gateway is found from the key itself and the answer carries that gateway's own plane URLs.
 // @Tags         mcp
 // @Produce      json
 // @Success      200  {object}  WhoAmIResponse
 // @Failure      401  {object}  httpio.ErrorBody
+// @Failure      429  {object}  httpio.ErrorBody  "Too many key lookups from this source (only on a host that names no gateway)"
 // @Router       /whoami [get]
 func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
 	gateway, err := h.gateways.Resolve(c)
-	if err != nil || gateway == nil {
+	fromKey := false
+	if (err != nil || gateway == nil) && h.byKey != nil {
+		// The host names no gateway: this is the fixed entry point, and the key
+		// is what says which gateway the caller belongs to.
+		if answered, err := h.checkAttempt(c); answered {
+			return err
+		}
+		gateway = h.gatewayForKey(c)
+		if gateway == nil {
+			return writeWhoAmIError(c, fiber.StatusUnauthorized, "invalid API key")
+		}
+		fromKey = true
+	}
+	if gateway == nil {
 		return writeWhoAmIError(c, fiber.StatusUnauthorized, "unknown gateway")
 	}
 	described, err := h.consumers.ForAPIKey(
@@ -145,7 +222,7 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 			Name:      cons.Name,
 			Type:      string(cons.Type),
 			Active:    cons.Active,
-			URL:       h.consumerURL(c, gateway, cons),
+			URL:       h.consumerURL(c, gateway, cons, fromKey),
 			Upstreams: whoAmIUpstreams(cons.Upstreams),
 		})
 	}
@@ -186,13 +263,24 @@ func whoAmIUpstreams(upstreams []appconsumer.KeyUpstream) []WhoAmIUpstream {
 // plane, which is a different host, and is the reason this endpoint returns
 // URLs at all rather than slugs: a client cannot compose that one from what it
 // has.
+//
+// Reached on the fixed host (fromKey), the origin the caller used addresses no
+// gateway, so the MCP address is the gateway's own MCP host instead.
 func (h *WhoAmIHandler) consumerURL(
 	c *fiber.Ctx,
 	gateway *gatewaydomain.Gateway,
 	cons appconsumer.KeyConsumer,
+	fromKey bool,
 ) string {
 	switch cons.Type {
 	case consumerdomain.TypeMCP:
+		if fromKey {
+			host := h.mcpHost(gateway)
+			if host == "" {
+				return ""
+			}
+			return c.Protocol() + "://" + host + "/" + cons.Slug + "/mcp"
+		}
 		return strings.TrimRight(c.BaseURL(), "/") + "/" + cons.Slug + "/mcp"
 	case consumerdomain.TypeLLM:
 		host := h.proxyHost(gateway)
@@ -214,6 +302,67 @@ func (h *WhoAmIHandler) proxyHost(gateway *gatewaydomain.Gateway) string {
 		return ""
 	}
 	return gateway.Slug + "." + base
+}
+
+// mcpHost is where a gateway's MCP plane is published.
+func (h *WhoAmIHandler) mcpHost(gateway *gatewaydomain.Gateway) string {
+	if h.byKey == nil {
+		return ""
+	}
+	base := strings.Trim(strings.TrimSpace(h.byKey.mcpDomain), ".")
+	if base == "" || gateway.Slug == "" {
+		return ""
+	}
+	return gateway.Slug + "." + base
+}
+
+// gatewayForKey is the gateway the presented key belongs to, or nil when there
+// is no such key (or it is disabled or expired) — which is said as an invalid
+// key, not as a missing gateway.
+func (h *WhoAmIHandler) gatewayForKey(c *fiber.Ctx) *gatewaydomain.Gateway {
+	key := resolver.APIKeyFromRequest(c)
+	if key == "" {
+		return nil
+	}
+	auth, err := h.byKey.keys.FindByAPIKey(c.UserContext(), key)
+	if err != nil || auth == nil || auth.GatewayID.IsNil() {
+		return nil
+	}
+	gateway, err := h.byKey.gateways.FindByID(c.UserContext(), auth.GatewayID)
+	if err != nil {
+		return nil
+	}
+	return gateway
+}
+
+// checkAttempt counts a key lookup against the caller's source. It reports
+// whether it already answered the request (over the limit, or the limiter is
+// down), in which case the handler returns what it gives back.
+func (h *WhoAmIHandler) checkAttempt(c *fiber.Ctx) (bool, error) {
+	if h.byKey.limiter == nil {
+		return false, nil
+	}
+	source := c.IP()
+	if h.byKey.source != nil {
+		source = h.byKey.source(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor))
+	}
+	err := h.byKey.limiter.Check(c.UserContext(), appoauth.ConnectAttemptScopeSource, source)
+	if err == nil {
+		return false, nil
+	}
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	if errors.As(err, &exceeded) {
+		retryAfter := int64(exceeded.RetryAfter / time.Second)
+		if exceeded.RetryAfter%time.Second != 0 {
+			retryAfter++
+		}
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		c.Set(fiber.HeaderRetryAfter, strconv.FormatInt(retryAfter, 10))
+		return true, c.Status(fiber.StatusTooManyRequests).JSON(httpio.ErrorBody{Error: "rate_limited", Message: "too many attempts; retry later"})
+	}
+	return true, writeWhoAmIError(c, fiber.StatusServiceUnavailable, "rate limiter unavailable")
 }
 
 func writeWhoAmIError(c *fiber.Ctx, status int, message string) error {

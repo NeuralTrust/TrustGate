@@ -5868,6 +5868,8 @@ paths:
         one behind the same key; this is how a client learns their slugs and addresses
         instead of being configured with them. Carries no identifiers and no credentials.
         An unknown, disabled, expired or foreign key is refused without saying which.
+        On a host that names no gateway (the fixed entry point), the gateway is found
+        from the key itself and the answer carries that gateway's own plane URLs.
       produces:
       - application/json
       responses:
@@ -5877,6 +5879,11 @@ paths:
             $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIResponse'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "429":
+          description: Too many key lookups from this source (only on a host that
+            names no gateway)
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       summary: Describe what an API key reaches
