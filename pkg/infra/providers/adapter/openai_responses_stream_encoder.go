@@ -208,11 +208,13 @@ func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 }
 
 // HeldCallsComplete reports whether the arguments of every named tool call
-// held back are empty or valid JSON. An upstream that ends without a finish
-// leaves no other sign that a held call was cut short.
+// held back are valid JSON. It is only asked of an upstream that ended without
+// a finish, which leaves no other sign that a call was cut short, so a call
+// with no argument bytes counts as incomplete: it may have been cut before its
+// first delta. After a finish such a call gets empty-object arguments.
 func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 	for _, call := range e.pending {
-		if call.name != "" && call.text.Len() > 0 && !json.Valid([]byte(call.text.String())) {
+		if call.name != "" && !json.Valid([]byte(call.text.String())) {
 			return false
 		}
 	}

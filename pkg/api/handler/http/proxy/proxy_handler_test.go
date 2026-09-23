@@ -15,16 +15,19 @@
 package proxy_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
@@ -570,6 +573,100 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 				t.Fatalf("body = %q, want %q", string(body), tt.want)
 			}
 		})
+	}
+}
+
+func TestHandle_ForwardContextEndsWithTheResponse(t *testing.T) {
+	t.Run("buffered", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the response")
+		}
+	})
+
+	t.Run("streamed", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		var errDuringStream error
+		stream := func(yield func([]byte, error) bool) {
+			errDuringStream = forwardCtx.Err()
+			yield([]byte("data: [DONE]"), nil)
+		}
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if errDuringStream != nil {
+			t.Fatalf("the forward context ended before the stream was written: %v", errDuringStream)
+		}
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the stream")
+		}
+	})
+}
+
+func TestHandle_StreamingClientDisconnectCancelsTheForwardContext(t *testing.T) {
+	app, fwd := newTestApp(t)
+	forwardCtx := make(chan context.Context, 1)
+	stream := func(yield func([]byte, error) bool) {
+		ctx := <-forwardCtx
+		forwardCtx <- ctx
+		for ctx.Err() == nil {
+			if !yield([]byte(": keepalive"), nil) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx <- ctx }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = app.Listener(listener) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: gw\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"model\":\"gpt\"}", proxyPath)
+	if err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if _, err := bufio.NewReader(conn).ReadString(':'); err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	_ = conn.Close()
+
+	ctx := <-forwardCtx
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forward context was not cancelled after the client went away")
 	}
 }
 

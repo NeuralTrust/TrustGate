@@ -264,7 +264,9 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallOutput(t *testi
 		{name: "only non-text parts", output: `[{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: responsesNonTextToolOutput},
 		{name: "empty list", output: `[]`, want: responsesNonTextToolOutput},
 		{name: "null", output: `null`, want: responsesNonTextToolOutput},
-		{name: "empty string", output: `""`, want: ""},
+		{name: "empty string", output: `""`, want: responsesNonTextToolOutput},
+		{name: "blank string", output: `" \n\t "`, want: responsesNonTextToolOutput},
+		{name: "blank text parts", output: `[{"type": "input_text", "text": "  "}]`, want: responsesNonTextToolOutput},
 		{name: "object", output: `{"stdout": "a"}`, want: `{"stdout": "a"}`},
 	}
 	for _, tt := range tests {
@@ -304,7 +306,6 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_LeavesOutItemsItCannotDecod
 		{"role": "user", "content": "Find my calendar tool."},
 		{"type": "tool_search_call", "call_id": "ts1", "execution": "client", "arguments": {"query": "calendar"}, "status": "completed"},
 		{"type": "tool_search_output", "call_id": "ts1", "execution": "client", "status": "completed", "tools": []},
-		{"type": "function_call", "call_id": "bad", "name": "f", "arguments": {"a": 1}},
 		{"type": "input_text", "text": 42},
 		"stray",
 		{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Found it."}]},
@@ -321,6 +322,7 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_LeavesOutItemsItCannotDecod
 		{Role: "tool", Content: "booked", ToolCallID: "c1"},
 		{Role: "user", Content: "Thanks."},
 	}, canonical.Messages)
+	assert.Equal(t, 2, canonical.DroppedInputItems)
 	require.Len(t, canonical.Tools, 1)
 	assert.Equal(t, "book", canonical.Tools[0].Name)
 
@@ -328,6 +330,99 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_LeavesOutItemsItCannotDecod
 		_, err := NewRegistry().AdaptRequest([]byte(body), FormatOpenAIResponses, target)
 		assert.NoError(t, err, target)
 	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallNonStringArguments(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments string
+		want      string
+	}{
+		{name: "object", arguments: `{"city": "Paris", "days": [1, 2]}`, want: `{"city":"Paris","days":[1,2]}`},
+		{name: "array", arguments: `[1, 2]`, want: `[1,2]`},
+		{name: "number", arguments: `42`, want: `42`},
+		{name: "null", arguments: `null`, want: `{}`},
+		{name: "blank string", arguments: `"  "`, want: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"model": "m", "input": [
+				{"role": "user", "content": "weather?"},
+				{"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": ` + tt.arguments + `},
+				{"type": "function_call_output", "call_id": "c1", "output": "sunny"}
+			]}`
+
+			canonical, err := NewRegistry().DecodeRequestFor([]byte(body), FormatOpenAIResponses)
+			require.NoError(t, err)
+			assert.Equal(t, []CanonicalMessage{
+				{Role: "user", Content: "weather?"},
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "get_weather", Arguments: tt.want}}},
+				{Role: "tool", Content: "sunny", ToolCallID: "c1"},
+			}, canonical.Messages)
+			assert.Zero(t, canonical.DroppedInputItems)
+		})
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_FunctionCallObjectArgumentsFanOut(t *testing.T) {
+	body := []byte(`{"model": "m", "input": [
+		{"role": "user", "content": "weather?"},
+		{"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": {"city": "Paris"}},
+		{"type": "function_call_output", "call_id": "c1", "output": "sunny"}
+	]}`)
+
+	t.Run("openai", func(t *testing.T) {
+		out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatOpenAI)
+		require.NoError(t, err)
+		var req struct {
+			Messages []struct {
+				Role       string `json:"role"`
+				ToolCallID string `json:"tool_call_id"`
+				ToolCalls  []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(out, &req))
+		require.Len(t, req.Messages, 3)
+		require.Len(t, req.Messages[1].ToolCalls, 1)
+		assert.Equal(t, "c1", req.Messages[1].ToolCalls[0].ID)
+		assert.JSONEq(t, `{"city":"Paris"}`, req.Messages[1].ToolCalls[0].Function.Arguments)
+		assert.Equal(t, "tool", req.Messages[2].Role)
+		assert.Equal(t, "c1", req.Messages[2].ToolCallID)
+	})
+
+	t.Run("anthropic", func(t *testing.T) {
+		out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatAnthropic)
+		require.NoError(t, err)
+		var req struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(out, &req))
+		require.Len(t, req.Messages, 3)
+		type block struct {
+			Type      string          `json:"type"`
+			ID        string          `json:"id"`
+			Input     json.RawMessage `json:"input"`
+			ToolUseID string          `json:"tool_use_id"`
+		}
+		var call, result []block
+		require.NoError(t, json.Unmarshal(req.Messages[1].Content, &call))
+		require.NoError(t, json.Unmarshal(req.Messages[2].Content, &result))
+		require.Len(t, call, 1)
+		assert.Equal(t, "tool_use", call[0].Type)
+		assert.Equal(t, "c1", call[0].ID)
+		assert.JSONEq(t, `{"city":"Paris"}`, string(call[0].Input))
+		require.Len(t, result, 1)
+		assert.Equal(t, "tool_result", result[0].Type)
+		assert.Equal(t, "c1", result[0].ToolUseID)
+	})
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {

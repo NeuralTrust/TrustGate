@@ -17,7 +17,6 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 )
 
@@ -878,17 +877,15 @@ func anthropicToolResultText(raw json.RawMessage) string {
 	return contentToString(raw)
 }
 
-// anthropicToolInput returns the input of a tool_use block for arguments.
-// Anthropic requires an object, and a raw value that is not valid JSON would
-// fail to encode the whole message, so a call whose arguments are empty,
-// invalid or not an object gets an empty object.
+// anthropicToolInput falls back to an empty object for arguments that are not
+// a JSON object: Anthropic requires one, and invalid raw JSON would fail to
+// marshal the whole message.
 func anthropicToolInput(arguments string) json.RawMessage {
 	trimmed := strings.TrimSpace(arguments)
 	if trimmed == "" {
 		return json.RawMessage("{}")
 	}
 	if trimmed[0] != '{' || !json.Valid([]byte(trimmed)) {
-		slog.Debug("anthropic tool_use input replaced with an empty object", slog.Int("arguments_bytes", len(arguments)))
 		return json.RawMessage("{}")
 	}
 	return json.RawMessage(trimmed)

@@ -17,6 +17,7 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1865,4 +1866,60 @@ func TestExecuteResponsesInputItemItCannotDecodeIsInspected(t *testing.T) {
 	if f.count() != 1 {
 		t.Fatalf("expected one guard call, got %d", f.count())
 	}
+}
+
+func TestExecuteEmbeddingsRequestsPassThroughWithoutWarning(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+			srv := newServer(t, f)
+			var logs strings.Builder
+			var mu sync.Mutex
+			logger := slog.New(slog.NewTextHandler(&lockedWriter{mu: &mu, w: &logs}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", logger)
+			req := requestContext()
+			req.SourceFormat = "openai_embeddings"
+			req.ProxyCapability = "embeddings"
+			req.Body = []byte(body)
+			event, span := newEvent()
+
+			res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event))
+
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+				t.Fatalf("expected pass-through, got %+v", res)
+			}
+			if f.count() != 0 {
+				t.Fatalf("expected no guard call, got %d hits", f.count())
+			}
+			if extras, ok := span.PluginAttrsCopy().Extras.(guardData); ok && extras.FailedOpen {
+				t.Fatalf("extras = %+v, want no failed_open", extras)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if logs.Len() != 0 {
+				t.Fatalf("unexpected warning: %s", logs.String())
+			}
+		})
+	}
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *strings.Builder
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

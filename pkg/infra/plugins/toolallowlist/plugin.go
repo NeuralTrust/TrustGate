@@ -84,7 +84,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
-	if adapter.IsRequestDecodeError(err) {
+	if adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
 		return undecodable(in)
 	}
 	if err != nil || canonical == nil || len(canonical.Tools) == 0 {

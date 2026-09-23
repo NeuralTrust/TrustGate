@@ -186,9 +186,9 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // forwarded; its upstream is read on a goroutine of its own for that, while
 // every line still reaches the client from the goroutine ranging over the
 // returned sequence, one upstream line at a time. A Responses client whose
-// upstream sent [DONE] without a finish while a held tool call had arguments
-// that are not valid JSON gets response.failed, as for an upstream that ended
-// without one.
+// upstream sent [DONE] without a finish while a held tool call had no
+// arguments or arguments that are not valid JSON gets response.failed, as for
+// an upstream that ended without one.
 //
 // An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
 // the usage once: on the include_usage chunk when one follows the finish,
@@ -224,6 +224,7 @@ func adaptStream(
 	forwardDone := crossFormat && adapter.IsSameWireFormat(source, adapter.FormatOpenAI)
 
 	stream := func(yield func([]byte, error) bool) {
+		defer options.cancel()
 		emit := func(lines [][]byte) bool {
 			for _, l := range lines {
 				if !yield(l, nil) {
@@ -643,9 +644,9 @@ func (d *finishDeferral) end(
 // done flushes on the upstream's [DONE]. Anthropic, Cohere and Responses
 // clients whose upstream sent [DONE] without a finish get a stop, since it
 // closed the stream cleanly, unless a Responses client has a held tool call
-// whose arguments are not valid JSON: nothing but a finish tells a whole call
-// from a cut one, and a client executes the calls it gets, so that response
-// fails as one whose upstream ended without a finish does.
+// whose arguments are missing or not valid JSON: nothing but a finish tells a
+// whole call from a cut one, and a client executes the calls it gets, so that
+// response fails as one whose upstream ended without a finish does.
 func (d *finishDeferral) done(
 	emit func([][]byte) bool,
 	registry providerCodec,

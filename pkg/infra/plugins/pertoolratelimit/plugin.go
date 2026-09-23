@@ -195,7 +195,7 @@ func (p *Plugin) preRequest(
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
-	if adapter.IsRequestDecodeError(err) {
+	if adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
 		return nil, appplugins.UndecodableRequestError(PluginName)
 	}
 	if err != nil || canonical == nil {

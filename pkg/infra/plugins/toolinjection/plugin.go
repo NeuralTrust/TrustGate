@@ -89,7 +89,7 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		return okResult(), nil
 	}
 	format := wireFormat(in.Request)
-	if format == "" {
+	if format == "" || !adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))

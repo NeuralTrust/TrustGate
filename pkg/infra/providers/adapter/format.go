@@ -130,6 +130,23 @@ func (f Format) IsOpenAIFamily() bool {
 	return f == FormatOpenAIResponses || IsSameWireFormat(f, FormatOpenAI)
 }
 
+// IsChatRequest reports whether a request of the proxy capability, sent in
+// wire format f, is a chat request, the only kind that declares tools. The
+// capability decides when set; a caller that does not route by capability
+// leaves it to the format.
+func IsChatRequest(capability string, f Format) bool {
+	if capability != "" {
+		return capability == "chat"
+	}
+	switch f {
+	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed:
+		return false
+	default:
+		return true
+	}
+}
+
 func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
