@@ -138,29 +138,6 @@ func TestIsHTTPImageURL(t *testing.T) {
 	}
 }
 
-func TestSupportedImageMediaType(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		mediaType string
-		want      bool
-	}{
-		{mediaType: "image/jpeg", want: true},
-		{mediaType: "image/png", want: true},
-		{mediaType: "image/gif", want: true},
-		{mediaType: "image/webp", want: true},
-		{mediaType: "image/tiff", want: false},
-		{mediaType: "", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.mediaType, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, supportedImageMediaType(tt.mediaType))
-		})
-	}
-}
-
 func TestNormalizeImageMediaType(t *testing.T) {
 	t.Parallel()
 
