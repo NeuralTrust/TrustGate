@@ -98,7 +98,7 @@ Chat, Responses, Cohere and Anthropic response encoders (buffered and SSE) MUST 
 
 ### Requirement: Pricing rules
 
-`CostUSD` MUST price (I−R−W)·Input + R·CacheRead + (W−W1h)·CacheWrite + W1h·CacheWrite1h + O·Output. `CacheWrite1h` precedence: registry override, else 2×Input for Claude models (Anthropic direct or Bedrock), else CacheWrite. The registry discount MUST apply to catalog-derived rates after resolution; override prices stay as configured (current override behaviour).
+`CostUSD` MUST price (I−R−W)·Input + R·CacheRead + (W−W1h)·CacheWrite + W1h·CacheWrite1h + O·Output. `CacheWrite1h` precedence: registry override, else 2×Input for the Anthropic and Bedrock providers (only Claude reports a 1h TTL, and a Bedrock application inference profile ARN hides the model), else CacheWrite. The registry discount MUST apply to catalog-derived rates after resolution; override prices stay as configured (current override behaviour).
 
 #### Scenario: Claude 1h without override
 
