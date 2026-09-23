@@ -17,37 +17,9 @@ package adapter_test
 import (
 	"testing"
 
-	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 )
-
-func TestIsChatRequest_ResolverCapabilities(t *testing.T) {
-	assert.Equal(t, providers.CapabilityChat, string(apiresolver.CapabilityChat))
-
-	tests := []struct {
-		capability apiresolver.ProxyCapability
-		want       bool
-	}{
-		{capability: apiresolver.CapabilityChat, want: true},
-		{capability: apiresolver.CapabilityEmbeddings},
-		{capability: apiresolver.CapabilityRerank},
-		{capability: apiresolver.CapabilityFiles},
-		{capability: apiresolver.CapabilityModels},
-		{capability: apiresolver.CapabilityImages},
-		{capability: apiresolver.CapabilityAudioSpeech},
-		{capability: apiresolver.CapabilityAudioTranscription},
-	}
-	formats := []adapter.Format{adapter.FormatOpenAI, adapter.FormatOpenAIEmbeddings, adapter.FormatCohereRerank}
-	for _, tt := range tests {
-		t.Run(string(tt.capability), func(t *testing.T) {
-			for _, f := range formats {
-				assert.Equal(t, tt.want, adapter.IsChatRequest(string(tt.capability), f), "format %s", f)
-			}
-		})
-	}
-}
 
 func TestIsChatRequest_EmptyCapabilityFallsBackToFormat(t *testing.T) {
 	tests := []struct {

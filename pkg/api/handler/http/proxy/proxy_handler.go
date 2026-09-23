@@ -197,7 +197,8 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 //
 // fasthttp runs the writer on a goroutine of its own that does not recover,
 // so a panic from the stream, including one a Responses reader raises again,
-// is recovered here, logged and ended with the stream error event.
+// is recovered here and logged, and ends the stream with the stream error
+// event unless the stream had already ended.
 func writeStream(
 	c *fiber.Ctx,
 	result *appproxy.ForwardResult,
@@ -205,6 +206,9 @@ func writeStream(
 	cancel context.CancelFunc,
 	logger *slog.Logger,
 ) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
 	statusCode := result.StatusCode
 	headers := result.Headers
@@ -225,20 +229,29 @@ func writeStream(
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
+		// A stream that already ended, with an error event, a failed write or
+		// a client already told, can still panic while its iterator unwinds;
+		// a second error event after that would corrupt what the client got.
+		terminated := false
 		defer func() {
 			if r := recover(); r != nil {
+				value, stack := appproxy.PanicDetails(r, debug.Stack())
 				logger.Error("panic writing proxy stream",
-					slog.Any("panic", r),
-					slog.String("stack", string(debug.Stack())))
-				writeStreamError(w, &captured, finalizer != nil)
+					slog.Any("panic", value),
+					slog.String("stack", string(stack)))
+				if !terminated {
+					writeStreamError(w, &captured, finalizer != nil)
+				}
 			}
 		}()
 		for line, err := range result.Stream {
 			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
+				terminated = true
 				_ = w.Flush()
 				return
 			}
 			if err != nil {
+				terminated = true
 				writeStreamError(w, &captured, finalizer != nil)
 				return
 			}
@@ -246,18 +259,23 @@ func writeStream(
 				captured.Write(line)
 				captured.Write(newline)
 			}
-			if _, werr := w.Write(line); werr != nil {
-				return
-			}
-			if _, werr := w.Write(newline); werr != nil {
-				return
-			}
-			if flushErr := w.Flush(); flushErr != nil {
+			if !writeStreamLine(w, line) {
+				terminated = true
 				return
 			}
 		}
 	})
 	return nil
+}
+
+func writeStreamLine(w *bufio.Writer, line []byte) bool {
+	if _, err := w.Write(line); err != nil {
+		return false
+	}
+	if _, err := w.Write(newline); err != nil {
+		return false
+	}
+	return w.Flush() == nil
 }
 
 // writeStreamError ends a stream that failed after its 200 went out. The
