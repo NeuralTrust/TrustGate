@@ -17,6 +17,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,6 +25,8 @@ import (
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -254,4 +257,138 @@ func TestWhoAmI_SaysNothingAboutUpstreamsThatNeedNoAccount(t *testing.T) {
 	_, body := callWhoAmI(t, app, "ag_secret")
 
 	require.Nil(t, body.Consumers[0].Upstreams)
+}
+
+// --- The fixed entry point: a host that names no gateway ---
+
+type noGateway struct{}
+
+func (noGateway) Resolve(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+	return nil, errors.New("host names no gateway")
+}
+
+type keyStore map[string]*authdomain.Auth
+
+func (k keyStore) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	if a, ok := k[rawKey]; ok {
+		return a, nil
+	}
+	return nil, authdomain.ErrNotFound
+}
+
+type gatewaysByID map[ids.GatewayID]*gatewaydomain.Gateway
+
+func (g gatewaysByID) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	if gw, ok := g[id]; ok {
+		return gw, nil
+	}
+	return nil, errors.New("not found")
+}
+
+type countingLimiter struct {
+	calls   int
+	subject string
+	err     error
+}
+
+func (l *countingLimiter) Check(_ context.Context, _ appoauth.ConnectAttemptScope, subject string) error {
+	l.calls++
+	l.subject = subject
+	return l.err
+}
+
+func fixedHostApp(service appconsumer.APIKeyConsumers, keys keyStore, gateways gatewaysByID, limiter *countingLimiter) *fiber.App {
+	handler := mcphttp.NewWhoAmIHandler(noGateway{}, service, "acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIGatewayFromKey(keys, gateways, "mcp.neuraltrust.ai", limiter, func(string, string) string { return "203.0.113.7" }),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+	return app
+}
+
+func callFixedHost(t *testing.T, app *fiber.App, key string) (int, mcphttp.WhoAmIResponse, http.Header) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, mcphttp.WhoAmIPath, nil)
+	request.Host = "gateway.neuraltrust.ai"
+	request.Header.Set("X-Forwarded-Proto", "https")
+	if key != "" {
+		request.Header.Set("X-AG-API-Key", key)
+	}
+	response, err := app.Test(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	var body mcphttp.WhoAmIResponse
+	_ = json.NewDecoder(response.Body).Decode(&body)
+	return response.StatusCode, body, response.Header
+}
+
+// A client can start from its key alone: on a host that names no gateway the
+// key says which one it belongs to, and the answer addresses that gateway's own
+// planes — never the fixed host, which serves nothing but this.
+func TestWhoAmI_FindsTheGatewayFromTheKeyOnAFixedHost(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	service := &whoAmIConsumers{consumers: []appconsumer.KeyConsumer{
+		{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true},
+		{Slug: "support-llm", Type: consumerdomain.TypeLLM, Active: true},
+	}}
+	limiter := &countingLimiter{}
+	app := fixedHostApp(service, keyStore{"ag_secret": {GatewayID: gw.ID}}, gatewaysByID{gw.ID: gw}, limiter)
+
+	status, body, _ := callFixedHost(t, app, "ag_secret")
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.Equal(t, "acme", body.Gateway)
+	require.Equal(t, "https://acme.mcp.neuraltrust.ai/support-agent/mcp", body.Consumers[0].URL)
+	require.Equal(t, "https://acme.acme.neuraltrust.ai/support-llm/v1", body.Consumers[1].URL)
+	require.Equal(t, 1, limiter.calls)
+	require.Equal(t, "203.0.113.7", limiter.subject)
+}
+
+func TestWhoAmI_RefusesAnUnknownKeyOnTheFixedHost(t *testing.T) {
+	t.Parallel()
+	limiter := &countingLimiter{}
+	app := fixedHostApp(&whoAmIConsumers{}, keyStore{}, gatewaysByID{}, limiter)
+
+	status, _, _ := callFixedHost(t, app, "ag_nobody")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+
+	status, _, _ = callFixedHost(t, app, "")
+	require.Equal(t, fiber.StatusUnauthorized, status)
+	require.Equal(t, 2, limiter.calls, "every lookup is counted, a failed one included")
+}
+
+// An unknown key is never cached, so each guess reaches the key store: the
+// fixed host counts them per source and stops answering past the limit.
+func TestWhoAmI_RateLimitsKeyLookupsOnTheFixedHost(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	limiter := &countingLimiter{err: &appoauth.ConnectRateLimitExceeded{RetryAfter: 1500 * time.Millisecond}}
+	app := fixedHostApp(&whoAmIConsumers{}, keyStore{"ag_secret": {GatewayID: gw.ID}}, gatewaysByID{gw.ID: gw}, limiter)
+
+	status, _, header := callFixedHost(t, app, "ag_secret")
+
+	require.Equal(t, fiber.StatusTooManyRequests, status)
+	require.Equal(t, "2", header.Get("Retry-After"))
+}
+
+// A host that does name the gateway never takes the key path: nothing is
+// looked up by key and nothing is counted.
+func TestWhoAmI_KeepsTheHostsGatewayWhenItNamesOne(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	limiter := &countingLimiter{}
+	handler := mcphttp.NewWhoAmIHandler(whoAmIGateway{gw: gw},
+		&whoAmIConsumers{consumers: []appconsumer.KeyConsumer{{Slug: "support-agent", Type: consumerdomain.TypeMCP, Active: true}}},
+		"acme.neuraltrust.ai",
+		mcphttp.WithWhoAmIGatewayFromKey(keyStore{}, gatewaysByID{}, "mcp.neuraltrust.ai", limiter, nil),
+	)
+	app := fiber.New()
+	app.Get(mcphttp.WhoAmIPath, handler.Handle)
+
+	status, body := callWhoAmI(t, app, "ag_secret")
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.Equal(t, "https://gw.mcp.neuraltrust.ai/support-agent/mcp", body.Consumers[0].URL)
+	require.Zero(t, limiter.calls)
 }
