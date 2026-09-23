@@ -1,5 +1,7 @@
 # Proposal: Prompt caching and cache usage accounting across all providers (ENG-1618)
 
+> Base: `origin/main` (user decision 2026-09-23). Final PR: integration branch → `main`. Nothing from develop.
+
 ## Intent
 
 TrustGate drops the cache markers that clients send when it translates between formats (and in some same-format hops). It also misreports cached tokens for several providers. Bedrock is the worst case: cached reads and writes are billed at $0 and token budgets are skewed, on current traffic. The fix covers every provider, not only Bedrock for ISDIN.
