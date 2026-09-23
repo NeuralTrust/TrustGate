@@ -17,11 +17,74 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAnthropicStreamEvents_WireShape(t *testing.T) {
+	tests := []struct {
+		name      string
+		lines     [][]byte
+		wantEvent string
+		wantData  string
+	}{
+		{
+			name:      "text block start",
+			lines:     anthropicTextBlockStartEvent(0),
+			wantEvent: "content_block_start",
+			wantData:  `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		},
+		{
+			name:      "tool_use block start",
+			lines:     anthropicToolUseBlockStartEvent(2, "call_1", "get_weather"),
+			wantEvent: "content_block_start",
+			wantData:  `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"call_1","name":"get_weather","input":{}}}`,
+		},
+		{
+			name:      "text delta",
+			lines:     anthropicContentBlockDeltaEvent(1, anthropicBlockText, "hi"),
+			wantEvent: "content_block_delta",
+			wantData:  `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}`,
+		},
+		{
+			name:      "input json delta",
+			lines:     anthropicContentBlockDeltaEvent(2, anthropicBlockToolUse, `{"a":1}`),
+			wantEvent: "content_block_delta",
+			wantData:  `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}`,
+		},
+		{
+			name:      "block stop",
+			lines:     anthropicContentBlockStopEvent(2),
+			wantEvent: "content_block_stop",
+			wantData:  `{"type":"content_block_stop","index":2}`,
+		},
+		{
+			name:      "message start",
+			lines:     anthropicMessageStartEvent("msg_1", "m", &CanonicalUsage{InputTokens: 10}),
+			wantEvent: "message_start",
+			wantData:  `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"m","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		},
+		{
+			name:      "error",
+			lines:     anthropicErrorEvent("upstream failed"),
+			wantEvent: "error",
+			wantData:  `{"type":"error","error":{"type":"api_error","message":"upstream failed"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Len(t, tt.lines, 3)
+			assert.Equal(t, "event: "+tt.wantEvent, string(tt.lines[0]))
+			data, ok := strings.CutPrefix(string(tt.lines[1]), "data: ")
+			require.True(t, ok)
+			assert.JSONEq(t, tt.wantData, data)
+			assert.Empty(t, tt.lines[2])
+		})
+	}
+}
 
 func TestAnthropicStopReason_SharedByEveryEncoder(t *testing.T) {
 	tests := []struct {
@@ -47,6 +110,13 @@ func TestAnthropicStopReason_SharedByEveryEncoder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.finish, func(t *testing.T) {
+			lines := anthropicMessageEndEvents(tt.finish, &CanonicalUsage{OutputTokens: 5})
+			require.Len(t, lines, 6)
+			assert.Equal(t, "event: message_delta", string(lines[0]))
+			assert.JSONEq(t, `{"type":"message_delta","delta":{"stop_reason":"`+tt.want+`","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":5}}`, strings.TrimPrefix(string(lines[1]), "data: "))
+			assert.Equal(t, "event: message_stop", string(lines[3]))
+			assert.JSONEq(t, `{"type":"message_stop"}`, strings.TrimPrefix(string(lines[4]), "data: "))
+
 			a := &AnthropicAdapter{}
 			body, err := a.EncodeResponse(&CanonicalResponse{Content: "ok", FinishReason: tt.finish})
 			require.NoError(t, err)
