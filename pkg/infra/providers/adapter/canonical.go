@@ -156,6 +156,8 @@ type CanonicalUsage struct {
 	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
 
 	ServiceTier string `json:"service_tier,omitempty"`
+
+	cacheTTLKnown bool
 }
 
 // PlainInputTokens is the share of the prompt that bills at the plain input
@@ -164,11 +166,11 @@ func (u *CanonicalUsage) PlainInputTokens() int {
 	if u == nil {
 		return 0
 	}
-	plain := u.InputTokens - u.CachedInputTokens - u.CacheWriteInputTokens
-	if plain < 0 {
-		return u.InputTokens
-	}
-	return plain
+	return max(0, u.InputTokens-u.CachedInputTokens-u.CacheWriteInputTokens)
+}
+
+func (u *CanonicalUsage) hasCacheTTLBreakdown() bool {
+	return u.cacheTTLKnown || u.CacheWrite1hInputTokens > 0
 }
 
 func (u *CanonicalUsage) setCache(read, write, write1h int) {
@@ -199,6 +201,7 @@ func MergeUsage(prev, next *CanonicalUsage) *CanonicalUsage {
 	out.CacheWrite1hInputTokens = maxTokens(prev.CacheWrite1hInputTokens, next.CacheWrite1hInputTokens)
 	out.ToolUseInputTokens = maxTokens(prev.ToolUseInputTokens, next.ToolUseInputTokens)
 	out.ReasoningOutputTokens = maxTokens(prev.ReasoningOutputTokens, next.ReasoningOutputTokens)
+	out.cacheTTLKnown = prev.cacheTTLKnown || next.cacheTTLKnown
 	if next.ServiceTier != "" {
 		out.ServiceTier = next.ServiceTier
 	}

@@ -118,6 +118,27 @@ func openaiResponsesUsageToCanonical(u openaiResponsesUsage) *CanonicalUsage {
 	return cu
 }
 
+func openaiResponsesUsageFromCanonical(u *CanonicalUsage) *openaiResponsesUsage {
+	if u == nil {
+		return nil
+	}
+	out := &openaiResponsesUsage{
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+	}
+	if u.CachedInputTokens+u.CacheWriteInputTokens > 0 {
+		out.InputTokensDetails = &openaiResponsesInputTokensDetails{
+			CachedTokens:     u.CachedInputTokens,
+			CacheWriteTokens: u.CacheWriteInputTokens,
+		}
+	}
+	if u.ReasoningOutputTokens > 0 {
+		out.OutputTokensDetails = &openaiResponsesOutputTokensDetails{ReasoningTokens: u.ReasoningOutputTokens}
+	}
+	return out
+}
+
 type openaiResponsesStreamEvent struct {
 	Type         string          `json:"type"`
 	Delta        string          `json:"delta,omitempty"`
@@ -557,13 +578,7 @@ func encodeResponsesResponse(resp *CanonicalResponse) ([]byte, error) {
 		})
 	}
 
-	if resp.Usage != nil {
-		out.Usage = &openaiResponsesUsage{
-			InputTokens:  resp.Usage.InputTokens,
-			OutputTokens: resp.Usage.OutputTokens,
-			TotalTokens:  resp.Usage.TotalTokens,
-		}
-	}
+	out.Usage = openaiResponsesUsageFromCanonical(resp.Usage)
 
 	return json.Marshal(out)
 }
@@ -653,11 +668,7 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 			respObj["model"] = chunk.Model
 		}
 		if chunk.Usage != nil {
-			respObj["usage"] = map[string]int{
-				"input_tokens":  chunk.Usage.InputTokens,
-				"output_tokens": chunk.Usage.OutputTokens,
-				"total_tokens":  chunk.Usage.TotalTokens,
-			}
+			respObj["usage"] = openaiResponsesUsageFromCanonical(chunk.Usage)
 		}
 
 		event := openaiResponsesStreamEvent{

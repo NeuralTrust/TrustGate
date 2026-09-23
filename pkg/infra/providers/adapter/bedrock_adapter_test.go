@@ -425,25 +425,25 @@ func TestBedrock_UsageFold(t *testing.T) {
 			name: "1h details split the write",
 			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
 				"cacheDetails":[{"inputTokens":200,"ttl":"1h"},{"inputTokens":100,"ttl":"5m"}]}`,
-			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200},
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true},
 		},
 		{
 			name: "1h share never exceeds the write",
 			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":50,
 				"cacheDetails":[{"inputTokens":200,"ttl":"1h"}]}`,
-			want: &CanonicalUsage{InputTokens: 60, OutputTokens: 5, TotalTokens: 65, CacheWriteInputTokens: 50, CacheWrite1hInputTokens: 50},
+			want: &CanonicalUsage{InputTokens: 60, OutputTokens: 5, TotalTokens: 65, CacheWriteInputTokens: 50, CacheWrite1hInputTokens: 50, cacheTTLKnown: true},
 		},
 		{
 			name: "unknown or empty ttl entries are ignored for 1h",
 			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
 				"cacheDetails":[{"inputTokens":100,"ttl":""},{"inputTokens":150,"ttl":"24h"},{"inputTokens":50}]}`,
-			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300},
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, cacheTTLKnown: true},
 		},
 		{
 			name: "multiple 1h entries are summed",
 			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
 				"cacheDetails":[{"inputTokens":200,"ttl":"1h"},{"inputTokens":50,"ttl":"1h"},{"inputTokens":50,"ttl":"5m"}]}`,
-			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 250},
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 250, cacheTTLKnown: true},
 		},
 		{
 			name: "cache-only usage is not dropped",
@@ -493,7 +493,7 @@ func TestBedrock_UsageUnfold(t *testing.T) {
 			name: "consistent usage splits the write by ttl",
 			usage: &CanonicalUsage{
 				InputTokens: 318, OutputTokens: 7, TotalTokens: 325,
-				CachedInputTokens: 4, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200,
+				CachedInputTokens: 4, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true,
 			},
 			want: &ConverseUsage{
 				InputTokens: 14, OutputTokens: 7, TotalTokens: 325,
@@ -504,11 +504,17 @@ func TestBedrock_UsageUnfold(t *testing.T) {
 		},
 		{
 			name:  "five-minute-only write",
-			usage: &CanonicalUsage{InputTokens: 110, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100},
+			usage: &CanonicalUsage{InputTokens: 110, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100, cacheTTLKnown: true},
 			want: &ConverseUsage{
 				InputTokens: 10, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100,
 				CacheDetails: []ConverseCacheDetail{{InputTokens: 100, TTL: "5m"}},
 			},
+			roundTrips: true,
+		},
+		{
+			name:       "write with an unknown ttl carries no details",
+			usage:      &CanonicalUsage{InputTokens: 110, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100},
+			want:       &ConverseUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 115, CacheWriteInputTokens: 100},
 			roundTrips: true,
 		},
 		{
@@ -536,7 +542,6 @@ func TestBedrock_UsageUnfold(t *testing.T) {
 			usage: &CanonicalUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CachedInputTokens: 8, CacheWriteInputTokens: 5},
 			want: &ConverseUsage{
 				InputTokens: 0, OutputTokens: 2, TotalTokens: 12, CacheReadInputTokens: 8, CacheWriteInputTokens: 5,
-				CacheDetails: []ConverseCacheDetail{{InputTokens: 5, TTL: "5m"}},
 			},
 		},
 	}
