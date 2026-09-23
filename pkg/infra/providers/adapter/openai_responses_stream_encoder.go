@@ -59,6 +59,7 @@ type responsesStreamItem struct {
 	upstreamID  string
 	text        strings.Builder
 	announced   bool
+	closed      bool
 }
 
 // NewResponsesStreamEncoder returns an encoder for one Responses stream.
@@ -114,7 +115,7 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Abort ends a started stream with an error event carrying message, then
-// response.failed with usage, marking every item incomplete. Nothing is
+// response.failed with usage, marking every item still open incomplete. Nothing is
 // emitted before response.created or once the stream has ended.
 func (e *ResponsesStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
 	if e.done || !e.started {
@@ -173,7 +174,9 @@ func (e *ResponsesStreamEncoder) finishItems(status string) [][]byte {
 	}
 	var lines [][]byte
 	for _, item := range e.items {
-		lines = append(lines, e.finishItem(item, status)...)
+		if !item.closed {
+			lines = append(lines, e.finishItem(item, status)...)
+		}
 	}
 	return lines
 }
@@ -181,7 +184,11 @@ func (e *ResponsesStreamEncoder) finishItems(status string) [][]byte {
 func (e *ResponsesStreamEncoder) terminalResponse(itemStatus string, usage *CanonicalUsage) map[string]any {
 	output := make([]map[string]any, 0, len(e.items))
 	for _, item := range e.items {
-		output = append(output, item.snapshot(itemStatus))
+		status := itemStatus
+		if item.closed {
+			status = responsesStatusCompleted
+		}
+		output = append(output, item.snapshot(status))
 	}
 	response := e.response(itemStatus)
 	response["output"] = output
@@ -290,12 +297,20 @@ func (e *ResponsesStreamEncoder) announce(call *responsesStreamItem) [][]byte {
 	if !strings.HasPrefix(call.id, "fc_") {
 		call.id = "fc_" + call.id
 	}
+	var lines [][]byte
+	if e.message != nil {
+		// LangChain keeps an open message as an empty content block once a
+		// function_call item is added, and replays it as an empty assistant
+		// message that DeepSeek and Cohere reject (ENG-1618).
+		lines = e.finishItem(e.message, responsesStatusCompleted)
+		e.message.closed = true
+		e.message = nil
+	}
 	e.addItem(call)
-	e.message = nil
-	lines := e.event("response.output_item.added", map[string]any{
+	lines = append(lines, e.event("response.output_item.added", map[string]any{
 		"output_index": call.outputIndex,
 		"item":         call.functionCall("", responsesStatusInProgress),
-	})
+	})...)
 	if call.text.Len() > 0 {
 		lines = append(lines, e.argumentsDelta(call, call.text.String())...)
 	}

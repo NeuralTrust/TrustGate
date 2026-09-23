@@ -214,7 +214,7 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 								cr.System += "\n"
 							}
 							cr.System += content
-						} else {
+						} else if item.Role != "assistant" || content != "" {
 							cr.Messages = append(cr.Messages, CanonicalMessage{
 								Role:    item.Role,
 								Content: content,

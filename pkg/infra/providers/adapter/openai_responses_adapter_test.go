@@ -69,6 +69,35 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_ArrayInput(t *testing.T) {
 	assert.Equal(t, "Tell me more.", canonical.Messages[2].Content)
 }
 
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_DropsEmptyAssistantMessages(t *testing.T) {
+	input := `{
+		"model": "deepseek-chat",
+		"input": [
+			{"role": "user", "content": "Find the client."},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+			{"type": "function_call", "call_id": "call_1", "name": "query_clients", "arguments": "{}"},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+			{"type": "function_call_output", "call_id": "call_1", "output": "Ana"}
+		]
+	}`
+
+	canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+
+	var roles []string
+	for _, m := range canonical.Messages {
+		roles = append(roles, m.Role)
+		if m.Role == "assistant" {
+			assert.True(t, m.Content != "" || len(m.ToolCalls) > 0, "empty assistant message")
+		}
+	}
+	assert.Equal(t, []string{"user", "assistant", "assistant", "tool"}, roles)
+	assert.Equal(t, "Checking.", canonical.Messages[1].Content)
+	require.Len(t, canonical.Messages[2].ToolCalls, 1)
+	assert.Equal(t, "call_1", canonical.Messages[2].ToolCalls[0].ID)
+	assert.Equal(t, "call_1", canonical.Messages[3].ToolCallID)
+}
+
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {
 	input := `{
 		"model": "gpt-4o",
