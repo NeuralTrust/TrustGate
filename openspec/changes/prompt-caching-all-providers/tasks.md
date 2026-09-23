@@ -11,14 +11,14 @@ Contract: Linear ENG-1618. Inputs: `proposal.md`, `specs/*`, `design.md` (slice 
 | Chained PRs recommended | Yes |
 | Suggested split | S1a → S1b → S1c → S2a → S2b → S3 → S4a → S4b → S5; E (multi-agent-tests) in parallel with S1a |
 | Delivery strategy | ask-on-risk (none received; default) |
-| Chain strategy | feature-branch (user decision 2026-09-23): integration branch `fix/eng-1618-prompt-caching-all-providers`; each slice is a PR into it; one final PR integration → `develop`. ENG-1608 stays a separate branch with its own path. |
+| Chain strategy | feature-branch (user decision 2026-09-23): integration branch `fix/eng-1618-prompt-caching-all-providers`; each slice is a PR into it; one final PR integration → `main` (base is `origin/main`, nothing from develop). ENG-1608 stays a separate branch with its own path. |
 
 Decision needed before apply: No (approved 2026-09-23)
 Chained PRs recommended: Yes
 Chain strategy: feature-branch
 400-line budget risk: High
 
-Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (parent = `origin/develop` for S1a, the previous slice branch otherwise); openspec/ is excluded. Over 400 → split along task lines before the PR.
+Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (parent = the integration branch for S1a, the previous slice branch otherwise); openspec/ is excluded. Over 400 → split along task lines before the PR.
 
 ### Dependencies
 
@@ -30,7 +30,7 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 | Unit | Goal | PR | Base |
 |------|------|----|------|
 | E | e2e `prompt_caching` suite | multi-agent-tests PR | `main` of multi-agent-tests |
-| S1a | Bedrock usage correct | PR 1 | develop |
+| S1a | Bedrock usage correct | PR 1 | integration (from main) |
 | S1b | OpenAI-family/Cohere usage decode | PR 2 | S1a |
 | S1c | Client encoders + 1h pricing | PR 3 | S1b |
 | S2a | Canonical intent + Anthropic | PR 4 | S1c (+1608) |
@@ -45,7 +45,7 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 - **V1** `go vet`, `golangci-lint run`, `go test -race` on the phase packages; `make test` before the PR.
 - **V2** clean-comments pass on touched Go (orchestrator, haiku).
 - **V3** adversarial review of the phase diff (orchestrator: judgment-day dual review / reviewer).
-- **V4** per listed provider X, against LOCAL TrustGate from the worktree (`make run-all` + `run-proxy-sandbox`; never prod; `E2E_ADMIN_URL`/`AG_ADMIN_URL` = localhost): `make matrix-ag UPSTREAM=X AGENT=X`, same with `STREAM=1`, `make matrix-ag PROVIDER=X`, same with `STREAM=1`, `uv run pytest -m prompt_caching -k X`. Missing/expired key → STOP and report. Bedrock: `aws sts get-caller-identity` first. Moonshot and openai_compatible unit-only; Vertex covered by Gemini.
+- **V4** per listed provider X, against LOCAL TrustGate from the worktree (`make run-all` + `run-proxy-sandbox`; never prod; `E2E_ADMIN_URL`/`AG_ADMIN_URL` = localhost): `make matrix-ag UPSTREAM=X AGENT=X`, same with `STREAM=1`, `make matrix-ag PROVIDER=X`, same with `STREAM=1`, `uv run pytest -m prompt_caching -k X`. Missing/expired key → STOP and report. Bedrock: `aws sts get-caller-identity` first. Moonshot out of scope (provider not on main); openai_compatible unit-only; Vertex covered by Gemini.
 - **V5** commit as one work unit (Conventional Commit, attribution lines).
 
 ## Phase E: multi-agent-tests prompt_caching suite (`/Users/edu/Neuraltrust/multi-agent-tests-eng1618`)

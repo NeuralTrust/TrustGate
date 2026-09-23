@@ -16,6 +16,12 @@ delivery:
   strategy: integration-branch
   integration_branch: fix/eng-1618-prompt-caching-all-providers
   slice_prs_target: fix/eng-1618-prompt-caching-all-providers
-  final_pr: integration -> develop
+  final_pr: integration -> main (user decision 2026-09-23: base is origin/main; nothing from develop)
   eng_1608: separate branch, independent path; whichever lands second rebases
 artifacts_done: [exploration, proposal, specs, design, tasks]
+base:
+  branch: origin/main
+  rebased_at: 2026-09-23
+  note: develop is 634 commits ahead of main and blocks the environment; ENG-1618 is branched from main and PR'd to main; develop catches up via back-merge (review manually).
+  moonshot: provider does not exist on main -> out of scope
+  revalidate_before: [S2b (openai_responses_adapter differs ~28 lines), S3 (registry.go 12 lines, format.go 4 lines)]
