@@ -15,10 +15,34 @@
 package secret_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
+
+// fakeEncrypter is a reversible stand-in for the real AES-GCM cipher
+// (pkg/infra/crypto), letting these tests exercise EncryptSettings /
+// DecryptSettings without depending on the crypto package. The real cipher is
+// exercised end-to-end by the policy repository's functional tests.
+type fakeEncrypter struct {
+	failDecrypt bool
+}
+
+func (f fakeEncrypter) Encrypt(plaintext string) (string, error) {
+	return "ct:" + plaintext, nil
+}
+
+func (f fakeEncrypter) Decrypt(ciphertext string) (string, error) {
+	if f.failDecrypt {
+		return "", errors.New("fake: decrypt failed")
+	}
+	if !strings.HasPrefix(ciphertext, "ct:") {
+		return "", errors.New("fake: not our ciphertext")
+	}
+	return strings.TrimPrefix(ciphertext, "ct:"), nil
+}
 
 func bedrockCredsSettings(accessKey, secretKey, sessionToken string) map[string]any {
 	return map[string]any{
@@ -215,4 +239,110 @@ func TestRejectMaskedSettings(t *testing.T) {
 			t.Fatalf("unexpected error with no declared paths: %v", err)
 		}
 	})
+}
+
+func TestEncryptSettings_EncryptsDeclaredPlaintextLeaves(t *testing.T) {
+	t.Parallel()
+	settings := bedrockCredsSettings("AKIAREALVALUE", "sk-supersecretvalue1234", "")
+	out, err := secret.EncryptSettings(settings, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	creds := out["credentials"].(map[string]any)
+	if got := creds["access_key_id"]; got != secret.EncVersionPrefix+"ct:AKIAREALVALUE" {
+		t.Fatalf("access_key_id = %v, want version-prefixed ciphertext", got)
+	}
+	if got := creds["secret_access_key"]; got != secret.EncVersionPrefix+"ct:sk-supersecretvalue1234" {
+		t.Fatalf("secret_access_key = %v, want version-prefixed ciphertext", got)
+	}
+	// session_token was empty; EncryptSettings must leave it alone same as MaskSettings.
+	if got, ok := creds["session_token"]; !ok || got != "" {
+		t.Fatalf("session_token = %v, want empty string left alone", got)
+	}
+	if got := out["guardrail_id"]; got != "gr-123" {
+		t.Fatalf("guardrail_id = %v, want untouched", got)
+	}
+}
+
+func TestEncryptSettings_NeverMutatesTheInputMap(t *testing.T) {
+	t.Parallel()
+	settings := bedrockCredsSettings("AKIAREALVALUE", "sk-supersecretvalue1234", "sess-token-value")
+	_, err := secret.EncryptSettings(settings, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	creds := settings["credentials"].(map[string]any)
+	if creds["access_key_id"] != "AKIAREALVALUE" {
+		t.Fatalf("original access_key_id = %v, want it untouched (the same map is handed to plugin execution)", creds["access_key_id"])
+	}
+}
+
+func TestEncryptSettings_IsIdempotent(t *testing.T) {
+	t.Parallel()
+	settings := bedrockCredsSettings("AKIAREALVALUE", "sk-supersecretvalue1234", "")
+	once, err := secret.EncryptSettings(settings, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("first encrypt: %v", err)
+	}
+	twice, err := secret.EncryptSettings(once, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("second encrypt: %v", err)
+	}
+	// A leaf already carrying EncVersionPrefix must not be re-encrypted (that
+	// would double-wrap it and make it undecryptable); this is what makes the
+	// startup backfill safe to run repeatedly.
+	onceCreds := once["credentials"].(map[string]any)
+	twiceCreds := twice["credentials"].(map[string]any)
+	if onceCreds["access_key_id"] != twiceCreds["access_key_id"] {
+		t.Fatalf("re-encrypting a declared path changed it: %v -> %v", onceCreds["access_key_id"], twiceCreds["access_key_id"])
+	}
+}
+
+func TestDecryptSettings_RoundTrip(t *testing.T) {
+	t.Parallel()
+	settings := bedrockCredsSettings("AKIAREALVALUE", "sk-supersecretvalue1234", "")
+	encrypted, err := secret.EncryptSettings(settings, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	decrypted, err := secret.DecryptSettings(encrypted, bedrockPaths, fakeEncrypter{})
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	creds := decrypted["credentials"].(map[string]any)
+	if creds["access_key_id"] != "AKIAREALVALUE" {
+		t.Fatalf("access_key_id = %v, want the original plaintext back", creds["access_key_id"])
+	}
+	if creds["secret_access_key"] != "sk-supersecretvalue1234" {
+		t.Fatalf("secret_access_key = %v, want the original plaintext back", creds["secret_access_key"])
+	}
+}
+
+// This is the non-negotiable tolerant-read requirement: a legacy row written
+// before encryption existed carries plain values with no prefix at all, and
+// DecryptSettings must pass them through unchanged rather than attempting
+// (and failing) to decrypt them.
+func TestDecryptSettings_LegacyPlaintextPassesThroughUntouched(t *testing.T) {
+	t.Parallel()
+	settings := bedrockCredsSettings("AKIALEGACYVALUE", "sk-legacysecretvalue1234", "")
+	out, err := secret.DecryptSettings(settings, bedrockPaths, fakeEncrypter{failDecrypt: true})
+	if err != nil {
+		t.Fatalf("unexpected error decrypting legacy plaintext: %v", err)
+	}
+	creds := out["credentials"].(map[string]any)
+	if creds["access_key_id"] != "AKIALEGACYVALUE" {
+		t.Fatalf("access_key_id = %v, want the legacy plaintext untouched", creds["access_key_id"])
+	}
+	if creds["secret_access_key"] != "sk-legacysecretvalue1234" {
+		t.Fatalf("secret_access_key = %v, want the legacy plaintext untouched", creds["secret_access_key"])
+	}
+}
+
+func TestDecryptSettings_PrefixedButUndecryptableIsAnError(t *testing.T) {
+	t.Parallel()
+	settings := map[string]any{"api_key": secret.EncVersionPrefix + "garbage"}
+	_, err := secret.DecryptSettings(settings, []string{"api_key"}, fakeEncrypter{failDecrypt: true})
+	if err == nil {
+		t.Fatal("want an error for a version-prefixed value that fails to decrypt")
+	}
 }

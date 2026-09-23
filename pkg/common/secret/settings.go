@@ -30,6 +30,39 @@ import (
 // handed straight to plugin execution (see app/plugins/plan.go); mutating it
 // in place would hand the plugin its own mask instead of the real credential.
 func MaskSettings(settings map[string]any, paths []string) map[string]any {
+	// Mask never fails, so the error from TransformSettings is unreachable here.
+	out, _ := TransformSettings(settings, paths, nil, func(s string) (string, error) {
+		return Mask(s), nil
+	})
+	return out
+}
+
+// TransformSettings is the copy-on-write walk MaskSettings, EncryptSettings
+// and DecryptSettings all share: for each declared credential path present in
+// settings whose leaf is a non-empty string, it applies transform and writes
+// the result back. shouldApply, when non-nil, gates which leaves transform
+// runs on (EncryptSettings skips an already-encrypted leaf; DecryptSettings
+// skips a leaf without its version prefix — legacy plaintext, left exactly as
+// found); nil means "apply to every declared leaf", MaskSettings's behavior.
+//
+// It never mutates settings: every map along a path that changes is copied
+// before the new value is written, and settings itself is returned unchanged
+// (the same map, same reference) when nothing changes. This matters because
+// the caller's map is often also the *policy.Policy.Settings handed straight
+// to plugin execution (see app/plugins/plan.go) or persisted straight to the
+// repository; mutating it in place would leak a mask, a ciphertext, or a
+// plaintext where the other side expects something else.
+//
+// A transform error aborts the walk and returns it wrapped with the path
+// that failed; the caller decides whether that is fatal (see the tolerant
+// read in the policy repository's scanPolicy, which treats a decrypt failure
+// differently from a missing prefix).
+func TransformSettings(
+	settings map[string]any,
+	paths []string,
+	shouldApply func(value string) bool,
+	transform func(value string) (string, error),
+) (map[string]any, error) {
 	var out map[string]any
 	for _, path := range paths {
 		v, ok := settingsPathGet(settings, path)
@@ -40,15 +73,86 @@ func MaskSettings(settings map[string]any, paths []string) map[string]any {
 		if !ok || s == "" {
 			continue
 		}
+		if shouldApply != nil && !shouldApply(s) {
+			continue
+		}
+		newVal, err := transform(s)
+		if err != nil {
+			return nil, fmt.Errorf("secret: settings.%s: %w", path, err)
+		}
 		if out == nil {
 			out = cloneMapShallow(settings)
 		}
-		settingsPathSetCOW(out, path, Mask(s))
+		settingsPathSetCOW(out, path, newVal)
 	}
 	if out == nil {
-		return settings
+		return settings, nil
 	}
-	return out
+	return out, nil
+}
+
+// EncVersionPrefix marks a settings leaf as ciphertext produced by
+// EncryptSettings, so a reader can tell "encrypted" from "legacy plaintext"
+// by construction instead of inferring it from a failed decrypt. The version
+// number gives a key-rotation path: a future v2 can coexist with v1
+// ciphertext already at rest, decrypted by whichever cipher its own prefix
+// names. The underlying AES-GCM cipher (pkg/infra/crypto) carries no such
+// marker on its own — this prefix is deliberately layered on top of it here,
+// at the one call site that persists settings, rather than folded into the
+// cipher's wire format.
+const EncVersionPrefix = "entg:v1:"
+
+// Encrypter is the minimal capability EncryptSettings and DecryptSettings
+// need. It is satisfied structurally by vaultdomain.Encrypter (and by
+// pkg/infra/crypto.Cipher through it) without this leaf package importing the
+// domain layer.
+type Encrypter interface {
+	Encrypt(plaintext string) (string, error)
+	Decrypt(ciphertext string) (string, error)
+}
+
+// EncryptSettings returns settings with the value at each declared credential
+// path replaced by its version-prefixed ciphertext, for every path present
+// whose leaf is a non-empty plaintext string. A leaf that already carries
+// EncVersionPrefix is left untouched — this is what makes the operation
+// idempotent, which the startup backfill (see the policy repository) relies
+// on to be safe to run repeatedly and concurrently with live writes.
+//
+// Like MaskSettings, it never mutates settings.
+func EncryptSettings(settings map[string]any, paths []string, enc Encrypter) (map[string]any, error) {
+	return TransformSettings(settings, paths,
+		func(v string) bool { return !strings.HasPrefix(v, EncVersionPrefix) },
+		func(v string) (string, error) {
+			ct, err := enc.Encrypt(v)
+			if err != nil {
+				return "", err
+			}
+			return EncVersionPrefix + ct, nil
+		},
+	)
+}
+
+// DecryptSettings returns settings with the value at each declared credential
+// path decrypted, for every path whose leaf carries EncVersionPrefix. A leaf
+// without the prefix is legacy plaintext (or simply absent) and is passed
+// through untouched — this is the tolerant read RUN-1646 requires: a policy
+// written before encryption existed must keep loading exactly as it did
+// before, with no migration step required to unblock it.
+//
+// A leaf that does carry the prefix but fails to decrypt (wrong key after
+// rotation, corrupted ciphertext) is a real error and is returned as one; the
+// caller decides how to handle it (see scanPolicy).
+func DecryptSettings(settings map[string]any, paths []string, enc Encrypter) (map[string]any, error) {
+	return TransformSettings(settings, paths,
+		func(v string) bool { return strings.HasPrefix(v, EncVersionPrefix) },
+		func(v string) (string, error) {
+			pt, err := enc.Decrypt(strings.TrimPrefix(v, EncVersionPrefix))
+			if err != nil {
+				return "", err
+			}
+			return pt, nil
+		},
+	)
 }
 
 // ResolveSettings applies the merge-on-omit rule (see Resolve) at each

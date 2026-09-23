@@ -21,9 +21,13 @@ import (
 	"fmt"
 	"strings"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -50,15 +54,34 @@ const mcpScopeReferencesRegistry = `(mcp_scope->'registry_ids' ? $%[1]d::text
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn   *database.Connection
-	outbox outbox.Appender
+	conn     *database.Connection
+	outbox   outbox.Appender
+	cipher   vaultdomain.Encrypter
+	registry appplugins.Registry
 }
 
 // NewRepository builds the pgx policy repository from the shared connection.
 // Each write commits its config-snapshot change marker in the same transaction
 // via the injected outbox appender.
-func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
-	return &Repository{conn: conn, outbox: appender}
+//
+// cipher and registry back the RUN-1646 leaf-level credential encryption
+// (see marshalSettings and scanPolicy): registry is how this repository
+// learns which dot-separated settings paths a policy's plugin declared as
+// credential-bearing (appplugins.CredentialSettings) — the repository has
+// only the policy's slug, not the plugin's shape. Depending on
+// appplugins.Registry here (an app-layer interface) rather than duplicating
+// that lookup mirrors the existing pkg/infra/repository/gatewaystate ->
+// pkg/app/gateway precedent, and does not create an import cycle: the plugin
+// registry's own dependencies (adapters, embeddings, cache, config) never
+// reach back into pkg/infra/repository (verified via `go list -deps`).
+// Either may be nil (functional tests that do not exercise credential
+// plugins, or a caller that genuinely has neither); a nil registry makes
+// PluginCredentialPaths return no paths, and a nil cipher is checked
+// explicitly, so settings pass through exactly as before — the same
+// unaffected-by-default posture CredentialSettings already has everywhere
+// else.
+func NewRepository(conn *database.Connection, appender outbox.Appender, cipher vaultdomain.Encrypter, registry appplugins.Registry) *Repository {
+	return &Repository{conn: conn, outbox: appender, cipher: cipher, registry: registry}
 }
 
 // withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
@@ -76,7 +99,7 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
-	settingsBytes, err := marshalSettings(p.Settings)
+	settingsBytes, err := r.marshalSettings(p.Slug, p.Settings)
 	if err != nil {
 		return fmt.Errorf("policy repository: marshal settings: %w", err)
 	}
@@ -109,7 +132,7 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
-	settingsBytes, err := marshalSettings(p.Settings)
+	settingsBytes, err := r.marshalSettings(p.Slug, p.Settings)
 	if err != nil {
 		return fmt.Errorf("policy repository: marshal settings: %w", err)
 	}
@@ -185,7 +208,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.PolicyID) (*domain.Pol
 		  FROM policies p
 		 WHERE p.id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
-	p, err := scanPolicy(row)
+	p, err := r.scanPolicy(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -211,7 +234,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 
 	out := make([]*domain.Policy, 0, len(policyIDs))
 	for rows.Next() {
-		p, err := scanPolicy(rows)
+		p, err := r.scanPolicy(rows)
 		if err != nil {
 			return nil, fmt.Errorf("policy repository: scan: %w", err)
 		}
@@ -236,7 +259,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 
 	out := make([]*domain.Policy, 0)
 	for rows.Next() {
-		p, err := scanPolicy(rows)
+		p, err := r.scanPolicy(rows)
 		if err != nil {
 			return nil, fmt.Errorf("policy repository: scan: %w", err)
 		}
@@ -319,7 +342,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 
 	items := make([]*domain.Policy, 0, page.Size)
 	for rows.Next() {
-		p, err := scanPolicy(rows)
+		p, err := r.scanPolicy(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("policy repository: scan: %w", err)
 		}
@@ -335,7 +358,10 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanPolicy(s rowScanner) (*domain.Policy, error) {
+// scanPolicy is a method (not a free function) because decrypting settings
+// needs r.registry to resolve the policy's declared credential paths from its
+// slug, and r.cipher to decrypt them.
+func (r *Repository) scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
 	var settingsRaw []byte
 	var stagesRaw []byte
@@ -356,6 +382,9 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	if len(settingsRaw) > 0 {
 		if err := json.Unmarshal(settingsRaw, &p.Settings); err != nil {
 			return nil, fmt.Errorf("scan settings: %w", err)
+		}
+		if err := r.decryptSettingsInPlace(p); err != nil {
+			return nil, err
 		}
 	}
 	if len(stagesRaw) > 0 {
@@ -391,11 +420,59 @@ func unmarshalMCPScope(raw []byte) (*domain.MCPScope, error) {
 	return scope, nil
 }
 
-func marshalSettings(s map[string]any) ([]byte, error) {
+// marshalSettings encrypts every settings leaf slug's plugin declared as
+// credential-bearing (appplugins.CredentialSettings) before marshalling.
+// Only those declared leaves are touched — settings stays JSONB with every
+// other key readable and migratable in plain SQL (see
+// 20260902120000_trustguard_direction_only.go, which rewrites keys inside
+// this same column with jsonb operators; whole-blob encryption would make
+// that kind of migration permanently impossible). It never mutates s: s is
+// frequently the same map the caller also hands to plugin execution (see
+// app/plugins/plan.go), which needs the real credential.
+func (r *Repository) marshalSettings(slug string, s map[string]any) ([]byte, error) {
 	if len(s) == 0 {
 		return []byte("{}"), nil
 	}
+	if paths := appplugins.PluginCredentialPaths(r.registry, slug); len(paths) > 0 && r.cipher != nil {
+		encrypted, err := secret.EncryptSettings(s, paths, r.cipher)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt settings: %w", err)
+		}
+		s = encrypted
+	}
 	return json.Marshal(s)
+}
+
+// decryptSettingsInPlace is the tolerant read RUN-1646 requires: it decrypts
+// only the settings leaves p.Slug's plugin declared as credential-bearing,
+// and only the ones that actually carry secret.EncVersionPrefix. A leaf
+// without the prefix is legacy plaintext (written before this feature
+// existed, or before the backfill reached that row) and is left exactly as
+// found — never attempted, never an error.
+//
+// A leaf that does carry the prefix but fails to decrypt (wrong
+// SERVER_SECRET_KEY after an unplanned rotation, or corrupted data) is
+// returned as a wrapped commonerrors.ErrCorruptData, the same convention
+// pkg/infra/repository/registry already uses for its own encrypted column.
+// Every caller of scanPolicy (FindByID, FindByIDs, ListByGateway, List) is
+// already in the row-loop-aborts-on-any-error shape that convention implies;
+// that is the pre-existing blast radius tracked as RUN-1662/RUN-1663, not
+// something this change introduces. What this change guarantees is that the
+// realistic universe of rows able to hit that path — genuinely corrupted or
+// mis-keyed ciphertext — is exactly the rows that carry the version prefix;
+// every legacy plaintext row, which is every row before the backfill
+// finishes, never reaches Decrypt at all.
+func (r *Repository) decryptSettingsInPlace(p *domain.Policy) error {
+	paths := appplugins.PluginCredentialPaths(r.registry, p.Slug)
+	if len(paths) == 0 || r.cipher == nil {
+		return nil
+	}
+	decrypted, err := secret.DecryptSettings(p.Settings, paths, r.cipher)
+	if err != nil {
+		return fmt.Errorf("decrypt settings: %w: %w", commonerrors.ErrCorruptData, err)
+	}
+	p.Settings = decrypted
+	return nil
 }
 
 func marshalStages(stages []domain.Stage) ([]byte, error) {

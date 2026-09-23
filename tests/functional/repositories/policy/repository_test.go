@@ -5,21 +5,27 @@ package policy_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -27,6 +33,41 @@ import (
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// credentialSlug and credentialPath name the one real plugin these tests use
+// to exercise RUN-1646's leaf-level settings encryption: openai_moderation
+// declares "api_key" as its only credential path (see
+// pkg/infra/plugins/openaimoderation/plugin.go), and its constructor takes no
+// live dependency these tests need to satisfy (the plugin is never Executed
+// here, only registered so PluginCredentialPaths can resolve its slug).
+const (
+	credentialSlug           = openaimoderation.PluginName
+	credentialPath           = "api_key"
+	credentialNonSecretField = "model"
+)
+
+func newTestCipher(t *testing.T) vaultdomain.Encrypter {
+	t.Helper()
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	return cipher
+}
+
+// newTestPluginRegistry registers exactly the one plugin these tests need
+// (see credentialSlug) rather than the full production catalog
+// (pkg/container/modules.Plugins), keeping this package's dependency surface
+// to what it actually exercises.
+func newTestPluginRegistry(t *testing.T) appplugins.Registry {
+	t.Helper()
+	reg := appplugins.NewRegistry()
+	plugin := openaimoderation.New(nil, "", time.Second, slog.Default())
+	if err := reg.Register(plugin); err != nil {
+		t.Fatalf("register %s: %v", credentialSlug, err)
+	}
+	return reg
+}
 
 func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
@@ -72,7 +113,41 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 	})
 
 	appender := outboxrepo.NewRepository(conn)
-	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender), conn
+	r := repo.NewRepository(conn, appender, newTestCipher(t), newTestPluginRegistry(t))
+	return r, gatewayrepo.NewRepository(conn, appender), conn
+}
+
+// credentialPolicy builds a policy whose slug declares a credential path
+// (see credentialSlug), with secret as the credential value and a sibling
+// plain field (credentialNonSecretField) that must stay queryable as normal
+// JSON after RUN-1646 — proving the design only touches declared leaves, not
+// the whole settings blob.
+func credentialPolicy(t *testing.T, gwID ids.GatewayID, name, secretValue string) *domain.Policy {
+	t.Helper()
+	p, err := domain.NewPolicy(gwID, name, credentialSlug, true, 0, false,
+		map[string]any{credentialPath: secretValue, credentialNonSecretField: "omni-moderation-latest"},
+		[]domain.Stage{domain.StagePreRequest}, "", domain.ModeEnforce, nil)
+	if err != nil {
+		t.Fatalf("policy domain.NewPolicy: %v", err)
+	}
+	return p
+}
+
+// rawSettingsField reads settings->>field directly with SQL, bypassing the
+// repository entirely — this is what proves a credential leaf is genuinely
+// unreadable in the raw column rather than merely masked by the Go layer.
+func rawSettingsField(t *testing.T, conn *database.Connection, id ids.PolicyID, field string) string {
+	t.Helper()
+	var val *string
+	if err := conn.Pool.QueryRow(context.Background(),
+		"SELECT settings->>$2 FROM policies WHERE id = $1", id, field,
+	).Scan(&val); err != nil {
+		t.Fatalf("read raw settings.%s: %v", field, err)
+	}
+	if val == nil {
+		return ""
+	}
+	return *val
 }
 
 func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
@@ -859,5 +934,237 @@ func TestRepository_DeleteRegistry_PrunesMCPScopeInSameTx(t *testing.T) {
 	}
 	if _, err := newRegistryRepo(conn).FindByID(ctx, victim); !errors.Is(err, registrydomain.ErrNotFound) {
 		t.Fatalf("registry FindByID after delete err = %v, want ErrNotFound", err)
+	}
+}
+
+// --- RUN-1646: leaf-level credential encryption at rest -------------------
+
+func TestRepository_CredentialSettings_RawColumnDoesNotHoldThePlaintext(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-raw")
+
+	const secretValue = "sk-real-secret-abcdef1234"
+	p := credentialPolicy(t, gwID, "cred-raw", secretValue)
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	raw := rawSettingsField(t, conn, p.ID, credentialPath)
+	if raw == secretValue {
+		t.Fatalf("settings->>%q returned the plaintext secret directly from SQL: %q", credentialPath, raw)
+	}
+	if raw == "" {
+		t.Fatal("settings->>credentialPath was empty; expected version-prefixed ciphertext")
+	}
+}
+
+// This is the test that proves the design choice in the briefing held: a
+// non-credential key must stay plain, queryable JSON in the raw column after
+// RUN-1646, not folded into an opaque encrypted blob.
+func TestRepository_CredentialSettings_NonCredentialFieldStaysPlainJSON(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-plain")
+
+	p := credentialPolicy(t, gwID, "cred-plain", "sk-real-secret-abcdef1234")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	raw := rawSettingsField(t, conn, p.ID, credentialNonSecretField)
+	if raw != "omni-moderation-latest" {
+		t.Fatalf("settings->>%q = %q, want the plain value directly queryable from SQL", credentialNonSecretField, raw)
+	}
+}
+
+func TestRepository_CredentialSettings_RoundTrip(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-rt")
+
+	const secretValue = "sk-real-secret-roundtrip-9876"
+	p := credentialPolicy(t, gwID, "cred-rt", secretValue)
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Settings[credentialPath] != secretValue {
+		t.Fatalf("Settings[%q] = %v, want the original secret back", credentialPath, got.Settings[credentialPath])
+	}
+
+	// This is also the "plugin execution path receives the real decrypted
+	// secret" guarantee: app/plugins/plan.go hands *domain.Policy.Settings
+	// straight to policy.PluginConfig.Settings with no further transform, so
+	// whatever scanPolicy put in got.Settings is exactly what a plugin sees.
+	if got.Settings[credentialNonSecretField] != "omni-moderation-latest" {
+		t.Fatalf("sibling non-secret field lost on round trip: %+v", got.Settings)
+	}
+}
+
+// Most important test in the set: a row written before RUN-1646 (or before
+// the backfill reached it) holds its credential as raw plaintext JSON, with
+// no version prefix at all. It must load exactly as it did before, with no
+// error and no data loss.
+func TestRepository_CredentialSettings_LegacyPlaintextRowStillLoads(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-legacy")
+
+	p := credentialPolicy(t, gwID, "cred-legacy", "placeholder-will-be-overwritten")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Bypass the repository entirely and write raw plaintext JSON directly,
+	// simulating a row that predates leaf-level encryption.
+	const legacySecret = "sk-legacy-plaintext-value-5555"
+	legacyJSON := fmt.Sprintf(`{"api_key":%q,"model":"omni-moderation-latest"}`, legacySecret)
+	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET settings = $1::jsonb WHERE id = $2`, legacyJSON, p.ID); err != nil {
+		t.Fatalf("force legacy plaintext row: %v", err)
+	}
+
+	// Confirm the raw column really has no version prefix, i.e. this is a
+	// faithful simulation of a pre-RUN-1646 row.
+	if raw := rawSettingsField(t, conn, p.ID, credentialPath); raw != legacySecret {
+		t.Fatalf("test setup broken: raw settings.%s = %q, want the legacy plaintext %q", credentialPath, raw, legacySecret)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID on a legacy plaintext row returned an error, want the tolerant read to pass it through: %v", err)
+	}
+	if got.Settings[credentialPath] != legacySecret {
+		t.Fatalf("Settings[%q] = %v, want the legacy plaintext returned untouched", credentialPath, got.Settings[credentialPath])
+	}
+}
+
+func TestRepository_CredentialSettings_BackfillEncryptsLegacyRowsAndIsIdempotent(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-backfill")
+
+	p := credentialPolicy(t, gwID, "cred-backfill", "placeholder")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	const legacySecret = "sk-legacy-backfill-target-7777"
+	legacyJSON := fmt.Sprintf(`{"api_key":%q,"model":"omni-moderation-latest"}`, legacySecret)
+	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET settings = $1::jsonb WHERE id = $2`, legacyJSON, p.ID); err != nil {
+		t.Fatalf("force legacy plaintext row: %v", err)
+	}
+
+	n, err := r.BackfillCredentialEncryption(ctx)
+	if err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("first backfill updated %d rows, want at least 1", n)
+	}
+	rawAfterFirst := rawSettingsField(t, conn, p.ID, credentialPath)
+	if rawAfterFirst == legacySecret {
+		t.Fatal("backfill did not encrypt the legacy leaf")
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after backfill: %v", err)
+	}
+	if got.Settings[credentialPath] != legacySecret {
+		t.Fatalf("Settings[%q] = %v, want the original secret readable after backfill", credentialPath, got.Settings[credentialPath])
+	}
+
+	// Idempotency: a second pass must not touch a row it already converged,
+	// and the ciphertext must not change underneath a concurrent process
+	// that might be relying on it.
+	n2, err := r.BackfillCredentialEncryption(ctx)
+	if err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second backfill updated %d rows, want 0 (already converged)", n2)
+	}
+	rawAfterSecond := rawSettingsField(t, conn, p.ID, credentialPath)
+	if rawAfterSecond != rawAfterFirst {
+		t.Fatalf("second backfill pass changed the ciphertext: %q -> %q", rawAfterFirst, rawAfterSecond)
+	}
+
+	got2, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after second backfill: %v", err)
+	}
+	if got2.Settings[credentialPath] != legacySecret {
+		t.Fatalf("Settings[%q] = %v, want the original secret still readable", credentialPath, got2.Settings[credentialPath])
+	}
+}
+
+// The first half of RUN-1646 (response masking) must keep working end to end
+// on top of leaf-level encryption: the domain still holds the real,
+// decrypted value after FindByID, and secret.MaskSettings (what the HTTP
+// response layer calls) still masks it for display without touching the
+// stored value.
+func TestRepository_CredentialSettings_MaskingStillWorksOnTopOfDecryption(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-mask")
+
+	const secretValue = "sk-real-secret-for-masking-4242"
+	p := credentialPolicy(t, gwID, "cred-mask", secretValue)
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Settings[credentialPath] != secretValue {
+		t.Fatalf("domain.Policy.Settings[%q] = %v, want the real secret held in the domain", credentialPath, got.Settings[credentialPath])
+	}
+
+	masked := secret.MaskSettings(got.Settings, []string{credentialPath})
+	if masked[credentialPath] == secretValue {
+		t.Fatal("MaskSettings did not mask the decrypted value")
+	}
+	if !secret.IsMasked(masked[credentialPath].(string)) {
+		t.Fatalf("masked[%q] = %v, want a masked literal", credentialPath, masked[credentialPath])
+	}
+	// MaskSettings must not have mutated what plugin execution would see.
+	if got.Settings[credentialPath] != secretValue {
+		t.Fatalf("MaskSettings mutated the domain's own settings map: %v", got.Settings[credentialPath])
+	}
+}
+
+func TestRepository_CredentialSettings_UpdateReEncryptsTheNewValue(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cred-update")
+
+	p := credentialPolicy(t, gwID, "cred-update", "sk-old-secret-0001")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	p.Settings[credentialPath] = "sk-new-secret-0002"
+	p.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, p, true); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	raw := rawSettingsField(t, conn, p.ID, credentialPath)
+	if raw == "sk-new-secret-0002" {
+		t.Fatal("Update stored the new credential as plaintext")
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Settings[credentialPath] != "sk-new-secret-0002" {
+		t.Fatalf("Settings[%q] = %v, want the new secret readable after update", credentialPath, got.Settings[credentialPath])
 	}
 }
