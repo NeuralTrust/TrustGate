@@ -142,9 +142,19 @@ func anthropicStopReason(finishReason string) string {
 		return "stop_sequence"
 	case "model_context_window_exceeded":
 		return "model_context_window_exceeded"
-	case "content_filter", "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY":
-		return "refusal"
 	default:
+		if refusalFinish(finishReason) {
+			return "refusal"
+		}
 		return "end_turn"
+	}
+}
+
+func refusalFinish(reason string) bool {
+	switch reason {
+	case "content_filter", "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY":
+		return true
+	default:
+		return false
 	}
 }

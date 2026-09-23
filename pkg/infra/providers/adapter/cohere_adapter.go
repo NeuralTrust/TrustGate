@@ -113,7 +113,14 @@ type cohereContentDeltaMessage struct {
 
 type cohereMessageEndDelta struct {
 	FinishReason string       `json:"finish_reason,omitempty"`
+	Error        string       `json:"error,omitempty"`
 	Usage        *cohereUsage `json:"usage,omitempty"`
+}
+
+type cohereToolPlanDelta struct {
+	Message *struct {
+		ToolPlan string `json:"tool_plan"`
+	} `json:"message"`
 }
 
 func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
@@ -126,7 +133,7 @@ func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
 			in, out = max(in, t.InputTokens), max(out, t.OutputTokens)
 		}
 	}
-	cu := newCanonicalUsage(in, out, 0)
+	cu := newCanonicalUsage(max(in, u.CachedTokens), out, 0)
 	if cu != nil && u.CachedTokens > 0 {
 		cu.setCache(u.CachedTokens, 0, 0)
 	}
@@ -407,6 +414,12 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 			return nil, nil
 		}
 		return &CanonicalStreamChunk{Delta: delta.Message.Content.Text}, nil
+	case "tool-plan-delta":
+		var delta cohereToolPlanDelta
+		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolPlan == "" {
+			return nil, nil
+		}
+		return &CanonicalStreamChunk{Delta: delta.Message.ToolPlan}, nil
 	case "tool-call-start", "tool-call-delta":
 		var delta cohereToolCallsDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.ToolCalls == nil {
@@ -463,7 +476,8 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		}
 	}
 	if chunk.FinishReason != "" || chunk.Usage != nil {
-		lines = append(lines, cohereMessageEnd(canonicalFinishToCohere(chunk.FinishReason), chunk.Usage)...)
+		reason, errMessage := cohereFinish(chunk.FinishReason)
+		lines = append(lines, cohereMessageEnd(reason, errMessage, chunk.Usage)...)
 	}
 	if len(lines) == 0 {
 		return nil, nil

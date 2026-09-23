@@ -49,6 +49,11 @@ func cohereEvents(t *testing.T, lines [][]byte) []cohereWireEvent {
 		if !ok {
 			continue
 		}
+		if payload == "[DONE]" {
+			require.Empty(t, name, "[DONE] has no event: line")
+			events = append(events, cohereWireEvent{Type: payload, raw: payload})
+			continue
+		}
 		var ev cohereWireEvent
 		require.NoError(t, json.Unmarshal([]byte(payload), &ev))
 		require.Equal(t, name, ev.Type, "event: line names the data type")
@@ -61,12 +66,24 @@ func cohereEvents(t *testing.T, lines [][]byte) []cohereWireEvent {
 
 func requireCohereContract(t *testing.T, events []cohereWireEvent) {
 	t.Helper()
-	require.GreaterOrEqual(t, len(events), 2)
+	require.GreaterOrEqual(t, len(events), 3)
 	require.Equal(t, "message-start", events[0].Type)
-	require.Equal(t, "message-end", events[len(events)-1].Type)
+	require.Equal(t, "[DONE]", events[len(events)-1].Type, "[DONE] follows message-end")
+	end := events[len(events)-2]
+	require.Equal(t, "message-end", end.Type)
+	var endDelta struct {
+		Usage *struct {
+			BilledUnits *struct{} `json:"billed_units"`
+			Tokens      *struct{} `json:"tokens"`
+		} `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(end.Delta, &endDelta))
+	require.NotNil(t, endDelta.Usage, "message-end carries usage")
+	require.NotNil(t, endDelta.Usage.BilledUnits, "message-end carries usage.billed_units")
+	require.NotNil(t, endDelta.Usage.Tokens, "message-end carries usage.tokens")
 	openContent, openTool := -1, -1
 	nextContent, nextTool := 0, 0
-	for i, ev := range events[1 : len(events)-1] {
+	for i, ev := range events[1 : len(events)-2] {
 		require.NotNil(t, ev.Index, "event %d %s carries an index", i, ev.Type)
 		index := *ev.Index
 		switch ev.Type {
@@ -265,6 +282,79 @@ func TestCohereStreamEncoder_EventSequence(t *testing.T) {
 			},
 		},
 		{
+			name:   "parallel tools announced with empty arguments stream one after another",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{
+					{Index: 0, ID: "call_1", Name: "get_weather", ArgumentsDelta: ""},
+					{Index: 1, ID: "call_2", Name: "get_time", ArgumentsDelta: ""},
+				}},
+				{ToolCallDeltas: []StreamToolCallDelta{
+					{Index: 0, ArgumentsDelta: `{"city":"Paris"}`},
+					{Index: 1, ArgumentsDelta: `{"tz":"CET"}`},
+				}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 get_weather", `tool-call-delta 0 {"city":"Paris"}`, "tool-call-end 0",
+				"tool-call-start 1 call_2 get_time", `tool-call-delta 1 {"tz":"CET"}`, "tool-call-end 1",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "interleaved tool arguments wait for the open call",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{"y":`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ArgumentsDelta: `2}`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `1}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, `tool-call-delta 0 1}`, "tool-call-end 0",
+				"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`, "tool-call-end 1",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "held tools whose arguments never complete start in index order at the finish",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{
+					{Index: 0, ID: "call_1", Name: "a"},
+					{Index: 2, ID: "call_3", Name: "c"},
+					{Index: 1, ID: "call_2", Name: "b"},
+				}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", "tool-call-end 0",
+				"tool-call-start 1 call_2 b", "tool-call-end 1",
+				"tool-call-start 2 call_3 c", "tool-call-end 2",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "text after a tool start with empty arguments waits for them",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "get_weather", ArgumentsDelta: ""}}},
+				{Delta: "note"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `{"city":"Paris"}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 get_weather", `tool-call-delta 0 {"city":"Paris"}`, "tool-call-end 0",
+				"content-start 0", "content-delta 0 note", "content-end 0",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
 			name:   "finish without content still starts the message",
 			target: FormatOpenAI,
 			chunks: []*CanonicalStreamChunk{{FinishReason: "stop"}},
@@ -294,7 +384,8 @@ func TestCohereStreamEncoder_FinishReasons(t *testing.T) {
 		{finish: "tool_calls", want: "COMPLETE"},
 		{finish: "error", want: "ERROR"},
 		{finish: "MALFORMED_FUNCTION_CALL", want: "ERROR"},
-		{finish: "content_filter", want: "COMPLETE"},
+		{finish: "content_filter", want: "ERROR"},
+		{finish: "refusal", want: "ERROR"},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s tool=%v", tt.finish, tt.withTool), func(t *testing.T) {
@@ -331,10 +422,11 @@ func TestCohereStreamEncoder_WireShape(t *testing.T) {
 		`{"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{\"q\":1}"}}}}}`,
 		`{"type":"tool-call-end","index":0}`,
 		`{"type":"message-end","delta":{"finish_reason":"TOOL_CALL","usage":{"billed_units":{"input_tokens":793,"output_tokens":61},"tokens":{"input_tokens":793,"output_tokens":61},"cached_tokens":176}}}`,
+		`[DONE]`,
 	}
 	assert.Equal(t, want, raw)
 
-	back, err := (&CohereAdapter{}).DecodeStreamChunk([]byte(raw[len(raw)-1]))
+	back, err := (&CohereAdapter{}).DecodeStreamChunk([]byte(raw[len(raw)-2]))
 	require.NoError(t, err)
 	require.NotNil(t, back)
 	assert.Equal(t, usage, back.Usage)
@@ -352,13 +444,52 @@ func TestCohereStreamEncoder_NothingAfterFinish(t *testing.T) {
 
 func TestCohereStreamEncoder_Dropped(t *testing.T) {
 	e := NewCohereStreamEncoder(FormatOpenAI)
-	e.Content(&CanonicalStreamChunk{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":`}}})
+	e.Content(&CanonicalStreamChunk{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":1}`}}})
 	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{}`}}})
-	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `1}`}}})
+	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: ` `}}})
 	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 2, ArgumentsDelta: `{}`}}})
 	e.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"})
 
 	deltas, tools := e.Dropped()
 	assert.Equal(t, 1, deltas)
 	assert.Equal(t, 1, tools)
+}
+
+func TestCohereStreamEncoder_FailureCarriesError(t *testing.T) {
+	tests := []struct {
+		finish string
+		want   string
+	}{
+		{finish: "error", want: "upstream reported an error while generating the message"},
+		{finish: "MALFORMED_FUNCTION_CALL", want: "upstream generated a malformed tool call"},
+		{finish: "content_filter", want: "content filtered"},
+		{finish: "stop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.finish, func(t *testing.T) {
+			events := cohereEvents(t, encodeCohereStream(FormatOpenAI,
+				&CanonicalStreamChunk{Role: "assistant", Delta: "hi"},
+				&CanonicalStreamChunk{FinishReason: tt.finish},
+			))
+			requireCohereContract(t, events)
+			var delta struct {
+				Error *string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(events[len(events)-2].Delta, &delta))
+			if tt.want == "" {
+				assert.Nil(t, delta.Error, "error is omitted when the message did not fail")
+				return
+			}
+			require.NotNil(t, delta.Error)
+			assert.Equal(t, tt.want, *delta.Error)
+		})
+	}
+}
+
+func TestCohereStreamEncoder_MessageEndWithoutUsage(t *testing.T) {
+	events := cohereEvents(t, encodeCohereStream(FormatOpenAI, &CanonicalStreamChunk{FinishReason: "stop"}))
+
+	assert.Equal(t,
+		`{"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`,
+		events[len(events)-2].raw)
 }

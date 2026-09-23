@@ -52,7 +52,7 @@ type cohereStreamTool struct {
 
 func (t *cohereStreamTool) complete() bool {
 	if t.args.Len() == 0 {
-		return true
+		return false
 	}
 	if t.checkedLen != t.args.Len() {
 		t.checkedLen = t.args.Len()
@@ -93,7 +93,8 @@ func (e *CohereStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	return lines
 }
 
-// Finish ends the message with finish reason and usage from chunk.
+// Finish ends the message with the finish reason and usage from chunk, followed
+// by the [DONE] a Cohere stream closes with.
 func (e *CohereStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
@@ -102,6 +103,9 @@ func (e *CohereStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 		e.id = chunk.ID
 	}
 	lines := e.start()
+	for tool := e.nextHeld(); tool != nil; tool = e.nextHeld() {
+		lines = append(lines, e.startTool(tool)...)
+	}
 	lines = append(lines, e.closeTool()...)
 	lines = append(lines, e.releaseText()...)
 	lines = append(lines, e.closeContent()...)
@@ -111,7 +115,9 @@ func (e *CohereStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 		}
 	}
 	e.done = true
-	return append(lines, cohereMessageEnd(cohereStreamFinishReason(chunk.FinishReason, e.usedTool), chunk.Usage)...)
+	reason, errMessage := cohereStreamFinishReason(chunk.FinishReason, e.usedTool)
+	lines = append(lines, cohereMessageEnd(reason, errMessage, chunk.Usage)...)
+	return append(lines, SSEData([]byte("[DONE]"))...)
 }
 
 // Dropped reports dropped tool call deltas and nameless tool calls.
@@ -119,17 +125,14 @@ func (e *CohereStreamEncoder) Dropped() (deltas, tools int) {
 	return e.droppedDeltas, e.droppedTools
 }
 
-func cohereStreamFinishReason(reason string, usedTool bool) string {
-	if _, failed := FinishFailure(reason); failed {
-		return "ERROR"
-	}
+func cohereStreamFinishReason(reason string, usedTool bool) (string, string) {
 	switch {
 	case usedTool && reason == "stop":
-		return "TOOL_CALL"
+		return "TOOL_CALL", ""
 	case !usedTool && reason == "tool_calls":
-		return "COMPLETE"
+		return "COMPLETE", ""
 	default:
-		return canonicalFinishToCohere(reason)
+		return cohereFinish(reason)
 	}
 }
 
@@ -146,7 +149,7 @@ func (e *CohereStreamEncoder) start() [][]byte {
 }
 
 func (e *CohereStreamEncoder) textDelta(text string) [][]byte {
-	if e.open != nil && !e.open.complete() {
+	if e.open != nil && !e.toolComplete(e.open) {
 		e.heldText.WriteString(text)
 		return nil
 	}
@@ -203,13 +206,46 @@ func (e *CohereStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 			return nil
 		}
 		tool.args.WriteString(tc.ArgumentsDelta)
-		return cohereToolCallDeltaEvent(e.nextTool-1, tc.ArgumentsDelta)
+		return append(cohereToolCallDeltaEvent(e.nextTool-1, tc.ArgumentsDelta), e.startHeld()...)
 	}
 	tool.args.WriteString(tc.ArgumentsDelta)
-	if tool.name == "" {
-		return nil
+	return e.startHeld()
+}
+
+// startHeld starts the named tool calls not yet started, in index order, while
+// the open call's arguments are complete: a Cohere client gets one call at a
+// time, so a call that starts while another is still streaming its arguments
+// waits for it instead of cutting it short.
+func (e *CohereStreamEncoder) startHeld() [][]byte {
+	var lines [][]byte
+	for e.open == nil || e.toolComplete(e.open) {
+		tool := e.nextHeld()
+		if tool == nil {
+			break
+		}
+		lines = append(lines, e.startTool(tool)...)
 	}
-	return e.startTool(tool)
+	return lines
+}
+
+func (e *CohereStreamEncoder) nextHeld() *cohereStreamTool {
+	var next *cohereStreamTool
+	nextIndex := 0
+	for index, tool := range e.tools {
+		if tool.name == "" || tool.started || tool.ended {
+			continue
+		}
+		if next == nil || index < nextIndex {
+			next, nextIndex = tool, index
+		}
+	}
+	return next
+}
+
+// toolComplete reports whether t's arguments are whole. Calls from an upstream
+// that sends each call complete in one chunk always are.
+func (e *CohereStreamEncoder) toolComplete(t *cohereStreamTool) bool {
+	return e.completeToolCalls || t.complete()
 }
 
 func (e *CohereStreamEncoder) startsNewCall(tc StreamToolCallDelta, tool *cohereStreamTool) bool {

@@ -204,11 +204,11 @@ func TestCohereAdapter_DecodeStreamToolCall(t *testing.T) {
 	assert.Equal(t, "assistant", chunks[0].Role)
 	assert.Equal(t, "93b3f521-090e-4ebc-bac4-f7c557e63c00", chunks[0].ID)
 
-	var id, name, args string
+	var id, name, args, plan string
 	var finish string
 	var usage *CanonicalUsage
 	for _, c := range chunks {
-		assert.Empty(t, c.Delta, "tool plan is not content")
+		plan += c.Delta
 		for _, tc := range c.ToolCallDeltas {
 			assert.Equal(t, 0, tc.Index)
 			if tc.ID != "" {
@@ -227,8 +227,36 @@ func TestCohereAdapter_DecodeStreamToolCall(t *testing.T) {
 	assert.Equal(t, "database_agent_3v76fs3zjrgq", id)
 	assert.Equal(t, "database_agent", name)
 	assert.JSONEq(t, `{"query":"Juan"}`, args)
+	assert.Equal(t, "Voy", plan, "the tool plan reaches other clients as text")
 	assert.Equal(t, "tool_calls", finish)
 	assert.Equal(t, &CanonicalUsage{InputTokens: 793, OutputTokens: 61, TotalTokens: 854, CachedInputTokens: 176}, usage)
+}
+
+func TestCohereAdapter_DecodeStreamToolPlan(t *testing.T) {
+	chunks := decodeCohereSSE(t, `event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"Voy"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" a"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" buscar"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":""}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{}}
+`)
+
+	require.Len(t, chunks, 3)
+	var plan string
+	for _, c := range chunks {
+		assert.Empty(t, c.ToolCallDeltas)
+		assert.Empty(t, c.FinishReason)
+		plan += c.Delta
+	}
+	assert.Equal(t, "Voy a buscar", plan)
 }
 
 func TestCohereAdapter_DecodeStreamText(t *testing.T) {
@@ -249,6 +277,31 @@ func TestCohereUsage_BilledUnitsOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, chunk)
 	assert.Equal(t, &CanonicalUsage{InputTokens: 9, OutputTokens: 3, TotalTokens: 12}, chunk.Usage)
+}
+
+func TestCohereUsage_BilledUnitsOnlyWithCacheCountsCachedAsInput(t *testing.T) {
+	chunk, err := (&CohereAdapter{}).DecodeStreamChunk([]byte(`{"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":50,"output_tokens":26},"cached_tokens":176}}}`))
+	require.NoError(t, err)
+	require.NotNil(t, chunk)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 176, OutputTokens: 26, TotalTokens: 202, CachedInputTokens: 176}, chunk.Usage)
+}
+
+func TestCohereAdapter_EncodeResponseUsageShape(t *testing.T) {
+	body, err := (&CohereAdapter{}).EncodeResponse(&CanonicalResponse{
+		ID:           "gen-1",
+		Content:      "hi",
+		FinishReason: "stop",
+		Usage:        &CanonicalUsage{InputTokens: 793, OutputTokens: 61, TotalTokens: 854, CachedInputTokens: 176},
+	})
+	require.NoError(t, err)
+
+	var got struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(body, &got))
+	assert.JSONEq(t,
+		`{"billed_units":{"input_tokens":793,"output_tokens":61},"tokens":{"input_tokens":793,"output_tokens":61},"cached_tokens":176}`,
+		string(got.Usage))
 }
 
 func TestCohereAdapter_EncodeStreamChunkShapes(t *testing.T) {
