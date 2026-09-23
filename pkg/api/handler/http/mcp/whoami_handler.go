@@ -50,6 +50,10 @@ type WhoAmIHandler struct {
 	consumers   appconsumer.APIKeyConsumers
 	proxyDomain string
 	byKey       *whoAmIKeyLookup
+	// refuseHybrid is set on a plane that does not serve Hybrid gateways, so
+	// their keys are pointed at their own data plane instead of being handed
+	// this plane's URLs, which would refuse every call made on them.
+	refuseHybrid bool
 }
 
 // WhoAmIKeyFinder finds the credential behind a raw API key, whichever gateway
@@ -100,6 +104,14 @@ func WithWhoAmIGatewayFromKey(
 		}
 		h.byKey = &whoAmIKeyLookup{keys: keys, gateways: gateways, mcpDomain: mcpDomain, limiter: limiter, source: source}
 	}
+}
+
+// WithWhoAmIRefuseHybrid makes /whoami answer a Hybrid gateway's key the way
+// the proxy answers its traffic: 421 gateway_served_by_external_data_plane.
+// Set it on a plane that does not serve Hybrid gateways. Only a key that holds
+// is told, so the answer reveals nothing to a caller without one.
+func WithWhoAmIRefuseHybrid() WhoAmIOption {
+	return func(h *WhoAmIHandler) { h.refuseHybrid = true }
 }
 
 // proxyDomain is GATEWAY_BASE_DOMAIN: the suffix the LLM plane is published
@@ -179,6 +191,7 @@ type WhoAmIResponse struct {
 // @Produce      json
 // @Success      200  {object}  WhoAmIResponse
 // @Failure      401  {object}  httpio.ErrorBody
+// @Failure      421  {object}  httpio.ErrorBody  "The key's gateway is Hybrid and this plane does not serve it (gateway_served_by_external_data_plane)"
 // @Failure      429  {object}  httpio.ErrorBody  "Too many key lookups from this source (only on a host that names no gateway)"
 // @Router       /whoami [get]
 func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
@@ -209,6 +222,12 @@ func (h *WhoAmIHandler) Handle(c *fiber.Ctx) error {
 			return writeWhoAmIError(c, fiber.StatusUnauthorized, "invalid API key for this gateway")
 		}
 		return writeWhoAmIError(c, fiber.StatusInternalServerError, "failed to describe this API key")
+	}
+	if h.refuseHybrid && gateway.ServedByHybridDataPlane() {
+		return c.Status(fiber.StatusMisdirectedRequest).JSON(httpio.ErrorBody{
+			Error:   middleware.ErrCodeHybridGateway,
+			Message: "this gateway is served by its own data plane; ask that data plane's MCP host instead",
+		})
 	}
 
 	out := WhoAmIResponse{

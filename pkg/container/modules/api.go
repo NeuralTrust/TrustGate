@@ -359,10 +359,13 @@ func provideWhoAmIHandler(
 	resolveSource := func(peer, forwardedFor string) string {
 		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
 	}
-	return mcphttp.NewWhoAmIHandler(
-		gateways, consumers, cfg.Server.GatewayBaseDomain,
+	opts := []mcphttp.WhoAmIOption{
 		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
-	)
+	}
+	if !cfg.Server.ServeHybridGateways {
+		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())
+	}
+	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain, opts...)
 }
 
 func provideEndUserConnectionsHandler(
