@@ -780,28 +780,40 @@ func responsesTwoToolCallsUpstream() iter.Seq2[[]byte, error] {
 
 func TestAdaptStream_ResponsesUpstreamSeveralFinishesGetOneTerminal(t *testing.T) {
 	tests := []struct {
-		source    adapter.Format
-		terminal  string
-		wantStop  string
-		wantUsage string
+		source     adapter.Format
+		terminal   string
+		wantStop   string
+		wantUsage  string
+		wantCounts map[string]int
 	}{
 		{
 			source:    adapter.FormatAnthropic,
 			terminal:  `"type":"message_delta"`,
 			wantStop:  `"stop_reason":"tool_use"`,
 			wantUsage: `"usage":{"input_tokens":1000,"output_tokens":10,"cache_read_input_tokens":1000}`,
+			wantCounts: map[string]int{
+				`"usage"`: 2,
+				`"usage":{"input_tokens":0,"output_tokens":0}`: 1,
+				`"type":"message_start"`:                       1,
+				`"type":"message_stop"`:                        1,
+				`"type":"content_block_stop"`:                  2,
+				`"type":"content_block_stop","index":0`:        1,
+				`"type":"content_block_stop","index":1`:        1,
+			},
 		},
 		{
-			source:    adapter.FormatOpenAIResponses,
-			terminal:  `"type":"response.completed"`,
-			wantStop:  `"status":"completed"`,
-			wantUsage: `"usage":{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000}}`,
+			source:     adapter.FormatOpenAIResponses,
+			terminal:   `"type":"response.completed"`,
+			wantStop:   `"status":"completed"`,
+			wantUsage:  `"usage":{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000}}`,
+			wantCounts: map[string]int{`"usage"`: 1},
 		},
 		{
-			source:    adapter.FormatBedrock,
-			terminal:  `"messageStop"`,
-			wantStop:  `"stopReason":"tool_use"`,
-			wantUsage: `"usage":{"inputTokens":1000,"outputTokens":10,"totalTokens":2010,"cacheReadInputTokens":1000}`,
+			source:     adapter.FormatBedrock,
+			terminal:   `"messageStop"`,
+			wantStop:   `"stopReason":"tool_use"`,
+			wantUsage:  `"usage":{"inputTokens":1000,"outputTokens":10,"totalTokens":2010,"cacheReadInputTokens":1000}`,
+			wantCounts: map[string]int{`"usage"`: 1},
 		},
 	}
 	for _, tt := range tests {
@@ -823,7 +835,9 @@ func TestAdaptStream_ResponsesUpstreamSeveralFinishesGetOneTerminal(t *testing.T
 			require.Len(t, terminals, 1, "exactly one %s", tt.terminal)
 			assert.Contains(t, terminals[0], tt.wantStop)
 			joined := strings.Join(data, "\n")
-			assert.Equal(t, 1, strings.Count(joined, `"usage"`), "usage is sent once")
+			for needle, want := range tt.wantCounts {
+				assert.Equal(t, want, strings.Count(joined, needle), needle)
+			}
 			assert.Contains(t, joined, tt.wantUsage)
 		})
 	}

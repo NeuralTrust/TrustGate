@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -525,6 +526,50 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 	}
 	if string(gotReqBody) != `{"model":"gpt"}` {
 		t.Fatalf("finalizer req body = %q, want detached request body", string(gotReqBody))
+	}
+}
+
+func TestHandle_Streaming_MidStreamError(t *testing.T) {
+	upstreamErr := errors.New("upstream reset")
+	const genericFrame = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+	const clientFrame = "event: error\ndata: {\"type\":\"error\"}\n"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
+		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, fwd := newTestApp(t)
+			stream := func(yield func([]byte, error) bool) {
+				for _, l := range [][]byte{[]byte("event: error"), []byte(`data: {"type":"error"}`)} {
+					if !yield(l, nil) {
+						return
+					}
+				}
+				yield(nil, tt.err)
+			}
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{
+					StatusCode: 200,
+					Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+					Stream:     stream,
+				}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tt.want {
+				t.Fatalf("body = %q, want %q", string(body), tt.want)
+			}
+		})
 	}
 }
 

@@ -33,6 +33,11 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 | S1a | Bedrock usage correct | PR 1 | integration (from main) |
 | S1b | OpenAI-family/Cohere usage decode | PR 2 | S1a |
 | S1c | Client encoders + 1h pricing | PR 3 | S1b |
+| S1e-1 | Gemini tool results paired by name, grouped per turn (~40 prod / ~110 test) | PR 3e-1 | S1c-3b |
+| S1e-2 | Upstream stream error marker + shared Anthropic stop reasons (~170 prod / ~150 test) | PR 3e-2 | S1e-1 |
+| S1e-3 | Stateful Anthropic stream encoder (~470 prod / ~260 test) | PR 3e-3 | S1e-2 |
+| S1e-4 | Proxy streams Anthropic clients through the encoder (~260 prod / ~1,230 test) | PR 3e-4 | S1e-3 |
+| S1b-2 | Groq stream usage (`x_groq.usage`) | PR after S1d | S1d |
 | S2a | Canonical intent + Anthropic | PR 4 | S1c (+1608) |
 | S2b | OpenAI Chat/Responses intent | PR 5 | S2a |
 | S3 | Request passthrough, Mistral/OpenRouter/Azure | PR 6 | S2b |
@@ -92,23 +97,6 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 - [x] 3.6c `pkg/app/proxy/provider_stream.go` `emitWithoutUsage`: buffer usage and emit a single merged Converse `metadata` event after `messageStop` (S1a review: Anthropic upstream → Bedrock client currently emits one metadata per usage chunk and the last one loses cache fields).
 - [ ] 3.7 V1 (adapter, llmcost, tokenratelimit); V2; V3; V4 **Anthropic, OpenAI, openai_responses, Cohere, Bedrock** (1h pricing); V5.
 
-## Phase 3c (S1c-3): stream usage for Anthropic and Responses clients (S1c review, both judges)
-
-- [x] 3c.1 `pkg/app/proxy/provider_stream.go`: generalize the Bedrock-client `deferUsage` path to Anthropic and Responses clients: on the finish chunk hold back the closing events, merge usage until upstream ends, then emit the finish with the merged usage (Anthropic: one `message_delta` + `message_stop`; Responses: `response.completed`).
-- [x] 3c.2 Tests: Bedrock upstream → Anthropic client (R/W/W1h reach `message_delta`); OpenAI `include_usage` → Anthropic and → Responses clients; upstream error mid-stream (no trailing usage event); client disconnect (yield false) emits nothing more; OpenAI `include_usage` → Bedrock client emits exactly one `metadata` after `messageStop`.
-- [ ] 3c.3 V1; V2; V3; V4 **Anthropic, openai_responses, Bedrock** (streams); V5.
-
-## Phase 3d (S1e): Anthropic client stream encoder (added 2026-09-23, user request)
-
-Found in the S1c-3 review; affects Claude Code behind any non-Anthropic upstream. Builds on the S1c-3 stateful stream path.
-
-- [ ] 3d.1 Block indices: text block and each tool_use block get distinct Anthropic indices (offset tool indices past an open text block; no collision between the role-opened text block 0 and upstream tool index 0).
-- [ ] 3d.2 Close every open block: one `content_block_stop` per open block, in order, before `message_delta` (parallel tool calls).
-- [ ] 3d.3 Thinking: encode canonical `ReasoningDelta` as a `thinking` block with `thinking_delta` (and close it before the next block).
-- [ ] 3d.4 stop_reason: a finish that comes with tool calls maps to `tool_use` even when the upstream reason is a generic stop (Gemini `STOP` + functionCall).
-- [ ] 3d.5 Tests: text + tool, 2 parallel tools, thinking then text, Gemini STOP + functionCall, Bedrock/OpenAI/Responses upstreams; golden event sequences validated against the Anthropic streaming contract.
-- [ ] 3d.6 V1; V2; V3; V4 **Anthropic client** (`matrix-ag` column anthropic, STREAM=1, against openai, openai_responses, google, bedrock, deepseek, openrouter, groq, xai, mistral, cerebras, cohere upstreams); V5.
-
 ## Phase 3b (S1d): Cohere v2 stream contract (added 2026-09-23, user request)
 
 Evidence: scratchpad capture `gw_openai.sse` (openai upstream → Cohere client) vs real `direct.sse`. multi-agent-tests PR #16 fixes the separate langchain-cohere client bug.
@@ -120,6 +108,32 @@ Evidence: scratchpad capture `gw_openai.sse` (openai upstream → Cohere client)
 - [ ] 3b.4 `DecodeStreamChunk`: read `delta.message.tool_calls` and handle `tool-call-start` (Cohere upstream → non-Cohere client keeps id/name/args).
 - [ ] 3b.5 Tests: encoder unit tests per event shape; `provider_stream_test.go` golden (openai tool-call stream → Cohere client sequence, incl. 2 parallel calls); decoder test fed real `direct.sse` events.
 - [ ] 3b.6 V1; V2; V3; V4 **Cohere** (native + `matrix-ag -p cohere` with STREAM on/off, incl. `openai → cohere`, `openai_responses → cohere`, `cohere → openai_completions`) using the multi-agent server with PR #16; V5.
+
+## Phase 3c (S1c-3): stream usage for Anthropic and Responses clients (S1c review, both judges)
+
+- [x] 3c.1 `pkg/app/proxy/provider_stream.go`: generalize the Bedrock-client `deferUsage` path to Anthropic and Responses clients: on the finish chunk hold back the closing events, merge usage until upstream ends, then emit the finish with the merged usage (Anthropic: one `message_delta` + `message_stop`; Responses: `response.completed`).
+- [x] 3c.2 Tests: Bedrock upstream → Anthropic client (R/W/W1h reach `message_delta`); OpenAI `include_usage` → Anthropic and → Responses clients; upstream error mid-stream (no trailing usage event); client disconnect (yield false) emits nothing more; OpenAI `include_usage` → Bedrock client emits exactly one `metadata` after `messageStop`.
+- [ ] 3c.3 V1; V2; V3; V4 **Anthropic, openai_responses, Bedrock** (streams); V5.
+
+## Phase 3d (S1e): Anthropic client stream encoder (added 2026-09-23, user request)
+
+Found in the S1c-3 review; affects Claude Code behind any non-Anthropic upstream. Builds on the S1c-3 stateful stream path.
+
+- [x] 3d.1 Block indices: text block and each tool_use block get distinct Anthropic indices (offset tool indices past an open text block; no collision between the role-opened text block 0 and upstream tool index 0).
+- [x] 3d.2 Close every open block: one `content_block_stop` per open block, in order, before `message_delta` (parallel tool calls).
+- [x] 3d.3 Thinking: encode canonical `ReasoningDelta` as a `thinking` block with `thinking_delta` (and close it before the next block).
+- [x] 3d.4 stop_reason: a finish that comes with tool calls maps to `tool_use` even when the upstream reason is a generic stop (Gemini `STOP` + functionCall).
+- [x] 3d.5 Tests: text + tool, 2 parallel tools, thinking then text, Gemini STOP + functionCall, Bedrock/OpenAI/Responses upstreams; golden event sequences validated against the Anthropic streaming contract.
+- [x] 3d.5a Mid-stream upstream errors (Anthropic clients): decoders mark an error object sent as a stream payload on `CanonicalStreamChunk.UpstreamError` (`adapter.UpstreamStreamError`); the proxy sends the content that came with it, then aborts the client stream with an `event: error` (or ends it normally when the finish was already held, with the merged usage) and yields `ClientNotifiedStreamError`, on which `writeStream` stops without appending its generic error frame.
+- [x] 3d.5b Gemini tool results: pair each `functionResponse` with its call by function name (request id→name map; a generated `toolu_` id falls back to the only declared tool) and group a turn's results into one content.
+- Out of scope: payload errors for non-Anthropic clients keep their previous behaviour (tracked in ENG-1626).
+- [ ] 3d.6 V1; V2; V3; V4 **Anthropic client** (`matrix-ag` column anthropic, STREAM=1, against openai, openai_responses, google, bedrock, deepseek, openrouter, groq, xai, mistral, cerebras, cohere upstreams); V5.
+
+## Phase 3e (S1b-2): Groq stream usage (found in S1c-3 round 3)
+
+- [ ] 3e.1 Live-check a Groq stream through TrustGate (with the injected stream_options.include_usage): does usage arrive as a standard usage chunk, only in `x_groq.usage`, or both? Capture it.
+- [ ] 3e.2 If usage is only (or also) in `x_groq.usage`, decode it into canonical usage (incl. prompt_tokens_details.cached_tokens) in the Groq stream path, max-not-sum with any standard usage chunk.
+- [ ] 3e.3 Tests (buffered + stream) and V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss).
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic
 
