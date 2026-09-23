@@ -47,15 +47,6 @@ func normalizeImageMediaType(mt string) string {
 	return mt
 }
 
-func supportedImageMediaType(mt string) bool {
-	switch mt {
-	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		return true
-	default:
-		return false
-	}
-}
-
 func parseImageURL(raw, detail string) CanonicalImage {
 	rest, ok := strings.CutPrefix(raw, "data:")
 	if !ok {
