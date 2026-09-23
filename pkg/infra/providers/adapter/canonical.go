@@ -39,10 +39,20 @@ type CanonicalRequest struct {
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
 }
 
+// CanonicalImage is one image attached to a message. Exactly one of Data or
+// URL is set; Data is standard base64 and requires MediaType.
+type CanonicalImage struct {
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
 // CanonicalMessage represents a single turn in the conversation.
 type CanonicalMessage struct {
 	Role       string              `json:"role"`
 	Content    string              `json:"content"`
+	Images     []CanonicalImage    `json:"images,omitempty"`
 	ToolCalls  []CanonicalToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string              `json:"tool_call_id,omitempty"`
 }
