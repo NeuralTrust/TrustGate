@@ -74,22 +74,41 @@ type geminiFuncResponse struct {
 // Gemini bypass for replayed functionCalls lacking canonical thoughtSignature support (ENG-1627).
 const geminiSkipThoughtSignature = "skip_thought_signature_validator"
 
-type geminiCallIDs map[string]bool
+// geminiCallIDs gives Gemini calls without an id a synthetic one, unique
+// among the ids it has seen; a suffixed id never names a declared tool, since
+// geminiSyntheticCallName would then read it as that tool.
+type geminiCallIDs struct {
+	used  map[string]bool
+	tools map[string]bool
+}
 
-func (u geminiCallIDs) assign(fc *geminiFunctionCall) string {
+func newGeminiCallIDs(tools []geminiToolGroup) *geminiCallIDs {
+	u := &geminiCallIDs{used: map[string]bool{}}
+	for _, tg := range tools {
+		for _, d := range tg.FunctionDeclarations {
+			if u.tools == nil {
+				u.tools = map[string]bool{}
+			}
+			u.tools[d.Name] = true
+		}
+	}
+	return u
+}
+
+func (u *geminiCallIDs) assign(fc *geminiFunctionCall) string {
 	if fc.ID != "" {
-		u[fc.ID] = true
+		u.used[fc.ID] = true
 		return fc.ID
 	}
 	return u.synthetic(fc.Name)
 }
 
-func (u geminiCallIDs) synthetic(name string) string {
+func (u *geminiCallIDs) synthetic(name string) string {
 	id := name
-	for n := 2; u[id]; n++ {
+	for n := 2; u.used[id] || (id != name && u.tools[id]); n++ {
 		id = name + "_" + strconv.Itoa(n)
 	}
-	u[id] = true
+	u.used[id] = true
 	return id
 }
 
@@ -251,9 +270,9 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 
 	// contents → messages (Gemini "user" with functionResponse must become canonical "tool" for OpenAI)
 	pending := geminiPendingCalls{}
+	ids := newGeminiCallIDs(req.Tools)
 	for _, c := range req.Contents {
 		role := c.Role
-		ids := geminiCallIDs{}
 		if role == "model" {
 			role = "assistant"
 			pending = geminiPendingCalls{}
@@ -499,7 +518,7 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 	if len(resp.Candidates) > 0 {
 		cand := resp.Candidates[0]
 		var thinkingParts []string
-		ids := geminiCallIDs{}
+		ids := newGeminiCallIDs(nil)
 		parts := cand.Content.Parts
 		if parts == nil {
 			parts = []geminiPart{}
@@ -631,7 +650,7 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		}
 
 		var text, reasoning string
-		ids := geminiCallIDs{}
+		ids := newGeminiCallIDs(nil)
 		for i, p := range content.Parts {
 			if p.Thought {
 				reasoning += p.Text
@@ -842,7 +861,7 @@ func jsonSchemaToGeminiSchema(schema map[string]interface{}) map[string]interfac
 // concurrent use.
 type GeminiCallIndexer struct {
 	next int
-	ids  geminiCallIDs
+	ids  *geminiCallIDs
 }
 
 // Renumber gives each delta that starts a call the next stream-wide index; other deltas continue the earlier call's index.
@@ -851,7 +870,7 @@ func (g *GeminiCallIndexer) Renumber(deltas []StreamToolCallDelta) {
 		return
 	}
 	if g.ids == nil {
-		g.ids = geminiCallIDs{}
+		g.ids = newGeminiCallIDs(nil)
 	}
 	for i := range deltas {
 		d := &deltas[i]
@@ -864,7 +883,7 @@ func (g *GeminiCallIndexer) Renumber(deltas []StreamToolCallDelta) {
 		if d.Name != "" && geminiSyntheticCallID(d.ID, d.Name) {
 			d.ID = g.ids.synthetic(d.Name)
 		} else if d.ID != "" {
-			g.ids[d.ID] = true
+			g.ids.used[d.ID] = true
 		}
 	}
 }
