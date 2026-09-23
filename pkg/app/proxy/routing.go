@@ -73,17 +73,18 @@ func (f *forwarder) resolveRouting(
 		return intent, nil, err
 	}
 	if needed != "" {
-		candidates = filterCandidatesByCapability(candidates, needed)
+		capable := filterCandidatesByCapability(candidates, needed)
+		if capable.Len() == 0 && candidates.Len() > 0 {
+			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
+			f.logRejectedIntent(in.Consumer, ref, err)
+			return intent, nil, err
+		}
+		candidates = capable
 	}
 	if needed == capabilityFiles {
 		candidates = filterCandidatesByFilesID(candidates, in.Request)
 	}
 	if candidates.Len() == 0 {
-		if needed != "" && intent.IsQualified() {
-			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
-			f.logRejectedIntent(in.Consumer, ref, err)
-			return intent, nil, err
-		}
 		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}

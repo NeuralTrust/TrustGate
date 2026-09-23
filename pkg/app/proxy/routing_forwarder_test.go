@@ -1217,7 +1217,7 @@ func TestForward_AudioTranscriptionPinnedIncapableIsTerminal(t *testing.T) {
 	}
 }
 
-func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
+func TestForward_EmbeddingsEmptyCapablePoolIsCapabilityNotSupported(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, anthropic)
@@ -1231,12 +1231,12 @@ func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 			ProxyCapability: "embeddings",
 		},
 	})
-	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
-		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
 	}
 }
 
-func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
+func TestForward_AudioSpeechEmptyCapablePoolIsCapabilityNotSupported(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, anthropic)
@@ -1252,7 +1252,39 @@ func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
 			ProxyCapability: "audio_speech",
 		},
 	})
-	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
-		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
+func TestForward_UnsupportedCapabilityWithoutModelIsCapabilityNotSupported(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		capability string
+	}{
+		{"files list", "/acme/v1/files", "files"},
+		{"files retrieve", "/acme/v1/files/abc", "files"},
+		{"rerank", "/acme/v1/rerank", "rerank"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai_compatible"))
+
+			fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+			_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request: &infracontext.RequestContext{
+					Method:          "GET",
+					Path:            tc.path,
+					ProxyCapability: tc.capability,
+				},
+			})
+			if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+				t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+			}
+		})
 	}
 }
