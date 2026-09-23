@@ -433,6 +433,14 @@ func TestAdaptStream_DeferredFinishFlushedOnTerminalSignal(t *testing.T) {
 			terminal: `"type":"message_stop"`,
 		},
 		{
+			name: "gemini client on openai [DONE] without usage", source: adapter.FormatGemini, target: adapter.FormatOpenAI,
+			lines: []string{
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`,
+				`data: [DONE]`,
+			},
+			terminal: `"finishReason"`,
+		},
+		{
 			name: "responses response.completed", source: adapter.FormatAnthropic, target: adapter.FormatOpenAIResponses,
 			lines: []string{
 				`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","role":"assistant"}}`,
@@ -490,6 +498,61 @@ func openAIToolCallUpstream() iter.Seq2[[]byte, error] {
 		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":2000,"completion_tokens":10,"total_tokens":2010,"prompt_tokens_details":{"cached_tokens":1000}}}`,
 		`data: [DONE]`,
 	)
+}
+
+func TestAdaptStream_GeminiClientGetsUsageMetadataWithFinish(t *testing.T) {
+	tests := []struct {
+		name              string
+		upstream          iter.Seq2[[]byte, error]
+		wantFunctionCalls int
+	}{
+		{name: "text", upstream: openAIUpstreamWithIncludeUsage()},
+		{name: "tool calls", upstream: openAIToolCallUpstream(), wantFunctionCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(tt.upstream, adapter.NewRegistry(), adapter.FormatGemini, adapter.FormatOpenAI, slog.Default(), nil))
+
+			type geminiChunk struct {
+				Candidates []struct {
+					Content struct {
+						Parts []struct {
+							FunctionCall json.RawMessage `json:"functionCall"`
+						} `json:"parts"`
+					} `json:"content"`
+					FinishReason string `json:"finishReason"`
+				} `json:"candidates"`
+				UsageMetadata json.RawMessage `json:"usageMetadata"`
+			}
+			var chunks []geminiChunk
+			for _, line := range lines {
+				payload, ok := strings.CutPrefix(line, "data: ")
+				if !ok {
+					continue
+				}
+				var c geminiChunk
+				require.NoError(t, json.Unmarshal([]byte(payload), &c))
+				require.Len(t, c.Candidates, 1)
+				chunks = append(chunks, c)
+			}
+			require.NotEmpty(t, chunks)
+
+			var functionCalls int
+			for _, c := range chunks[:len(chunks)-1] {
+				assert.Empty(t, c.UsageMetadata, "usageMetadata is sent once")
+				assert.Empty(t, c.Candidates[0].FinishReason, "the finish is sent once")
+				for _, p := range c.Candidates[0].Content.Parts {
+					if len(p.FunctionCall) > 0 {
+						functionCalls++
+					}
+				}
+			}
+			assert.Equal(t, tt.wantFunctionCalls, functionCalls, "function calls precede the finish chunk")
+			last := chunks[len(chunks)-1]
+			assert.Equal(t, "STOP", last.Candidates[0].FinishReason, "usageMetadata rides on the finish chunk")
+			assert.JSONEq(t, `{"promptTokenCount":2000,"candidatesTokenCount":10,"totalTokenCount":2010,"cachedContentTokenCount":1000}`, string(last.UsageMetadata))
+		})
+	}
 }
 
 func TestAdaptStream_AnthropicClientGetsToolUseStopReasonWithUsage(t *testing.T) {
@@ -672,6 +735,16 @@ func TestAdaptStream_DeferredFinishDropsChunksAfterFlush(t *testing.T) {
 				`data: {"metadata":{"usage":{"inputTokens":10,"outputTokens":99,"totalTokens":109}}}`,
 			},
 			terminal: `"type":"message_stop"`,
+		},
+		{
+			name: "gemini client content and usage after message_delta", source: adapter.FormatGemini, target: adapter.FormatAnthropic,
+			lines: []string{
+				`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","usage":{"input_tokens":10,"output_tokens":1}}}`,
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}}`,
+				`data: {"type":"message_delta","delta":{},"usage":{"output_tokens":99}}`,
+			},
+			terminal: `"finishReason"`,
 		},
 	}
 	for _, tt := range tests {

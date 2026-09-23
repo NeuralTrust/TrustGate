@@ -147,7 +147,7 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 //
 // onChunk, when non-nil, is invoked with every decoded upstream chunk in both
 // passthrough and cross-format paths. Cross-format streams to Bedrock,
-// Anthropic and Responses clients hold the finish and usage back and
+// Anthropic, Responses and Gemini clients hold the finish and usage back and
 // emit them once, with the merged usage, on an upstream event its format
 // guarantees final or on [DONE], or else before the upstream ends or fails;
 // nothing is flushed unless the upstream sent a finish, and nothing is emitted
@@ -219,7 +219,7 @@ func adaptStream(
 			observeChunk(registry, payload, target, onChunk)
 
 			if geminiToolCalls {
-				if !emitGeminiToolCalls(emit, registry, payload, source, target, &acc, logger) {
+				if !emitGeminiToolCalls(emit, registry, payload, source, target, &acc, deferred, logger) {
 					return
 				}
 				continue
@@ -300,15 +300,17 @@ func observeChunk(
 	onChunk(canonical)
 }
 
-// emitGeminiToolCalls decodes a backend chunk, accumulates tool-call deltas, and
-// encodes Role/Delta/flushed-tool-calls/FinishReason in the source format. It
-// returns false when the consumer stopped (yield returned false).
+// emitGeminiToolCalls decodes a backend chunk, accumulates tool-call deltas,
+// encodes Role/Delta/flushed-tool-calls in the source format and hands the
+// finish to deferred. It returns false when the consumer stopped (yield
+// returned false).
 func emitGeminiToolCalls(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	payload []byte,
 	source, target adapter.Format,
 	acc *toolCallAccumulator,
+	deferred *finishDeferral,
 	logger *slog.Logger,
 ) bool {
 	canonical, decErr := registry.DecodeStreamChunkFor(payload, target)
@@ -320,7 +322,11 @@ func emitGeminiToolCalls(
 		return true
 	}
 
+	if deferred != nil && deferred.dropAfterFlush(canonical, source, logger) {
+		return true
+	}
 	acc.Merge(canonical.ToolCallDeltas)
+	terminal := deferred != nil && deferred.record(canonical)
 
 	if canonical.Role != "" {
 		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Role: canonical.Role}, source, logger) {
@@ -337,12 +343,10 @@ func emitGeminiToolCalls(
 			return false
 		}
 	}
-	if canonical.FinishReason != "" {
-		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, source, logger) {
-			return false
-		}
+	if deferred == nil && canonical.FinishReason != "" {
+		return encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, source, logger)
 	}
-	return true
+	return !terminal || deferred.flush(emit, registry, source, logger)
 }
 
 // finishDeferral holds a cross-format stream's finish and usage until the
@@ -367,7 +371,7 @@ func newFinishDeferral(source, target adapter.Format) *finishDeferral {
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true}
-	case adapter.FormatOpenAIResponses:
+	case adapter.FormatOpenAIResponses, adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true}
 	default:
 		return nil
