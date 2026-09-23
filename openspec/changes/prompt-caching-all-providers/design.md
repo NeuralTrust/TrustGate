@@ -36,18 +36,17 @@ The work splits into three independent mechanisms. All of them live in `pkg/infr
 
 ### Usage (`canonical.go`, S1)
 
-The contract doc on `CanonicalUsage` is unchanged: I ⊇ R+W, W1h ⊆ W. Add one factory helper so every adapter folds the same way:
+The contract doc on `CanonicalUsage` is unchanged: I ⊇ R+W, W1h ⊆ W. Add one factory helper that every adapter uses to set the cache buckets:
 
 ```go
 func (u *CanonicalUsage) setCache(read, write, write1h int) {
 	u.CachedInputTokens, u.CacheWriteInputTokens = read, write
 	u.CacheWrite1hInputTokens = min(write1h, write)
-	if sum := read + write; u.InputTokens < sum {
-		u.InputTokens = sum
-	}
 	u.TotalTokens = max(u.TotalTokens, u.InputTokens+u.OutputTokens)
 }
 ```
+
+`setCache` does NOT raise I to R+W: an upstream that reports R+W > I stays inconsistent so the `llmcost` `CostUSD` guard can see it. Provider-specific I folds stay in the adapters (Bedrock I = in+R+W; DeepSeek I = max(prompt, hit+miss)). Chat, Responses and Cohere call `setCache` only when R+W > 0, so responses without cache fields keep their upstream Total.
 
 | Adapter | Decode (buffered + stream share one func) | Encode to client (buffered + SSE) |
 |---|---|---|

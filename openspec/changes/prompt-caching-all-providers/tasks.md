@@ -71,11 +71,11 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 
 ## Phase 2 (S1b): OpenAI-family and Cohere usage decode
 
-- [ ] 2.1 `openai_completions_adapter.go`: `openaiUsage.{CachedTokens,PromptCacheHitTokens,PromptCacheMissTokens}`, details `CacheWriteTokens`; R=max(3 sources), W from details.
-- [ ] 2.2 `openai_responses_adapter.go`: `input_tokens_details.cache_write_tokens` → W.
-- [ ] 2.3 `cohere_adapter.go`: `usage.cached_tokens` → R.
-- [ ] 2.4 `openrouter_adapter.go`: `cost`/`cache_discount` → `slog.Debug` only.
-- [ ] 2.5 Tests: DeepSeek 80/80→R=80; Moonshot both shapes; GPT-5.6 write in `include_usage` chunk; Cohere; buffered + stream.
+- [x] 2.1 `openai_completions_adapter.go`: `openaiUsage.{PromptCacheHitTokens,PromptCacheMissTokens}`, details `CacheWriteTokens`; R=max(details, DeepSeek hit), W from details, I=max(prompt, hit+miss); routed through `setCache` only when R+W > 0; `setCache` does NOT raise I (provider folds stay in adapters: Bedrock in+R+W, DeepSeek max(prompt, hit+miss)). Top-level `CachedTokens` (Moonshot) skipped: provider not on main.
+- [x] 2.2 `openai_responses_adapter.go`: `input_tokens_details.cache_write_tokens` → W.
+- [x] 2.3 `cohere_adapter.go`: `usage.cached_tokens` → R.
+- [x] 2.4 `openrouter_adapter.go`: `cost`/`cache_discount` → `slog.Debug` only (buffered and usage-bearing stream chunks; parsed only when debug is enabled).
+- [x] 2.5 Tests: DeepSeek 80/80→R=80; GPT-5.6 write in `include_usage` chunk; Responses write; Cohere; OpenRouter shared parser + cost log; buffered + stream. Moonshot skipped (not on main).
 - [ ] 2.6 V1 (adapter); V2; V3; V4 **OpenAI, openai_responses, Azure, DeepSeek, OpenRouter, Cohere**; matrix-only regression (shared Chat parser) xAI, Cerebras, Groq, Mistral; Moonshot unit-only; V5.
 
 ## Phase 3 (S1c): client encoders emit cache usage, 1h pricing
@@ -91,6 +91,17 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 - [ ] 3.6e Bedrock encoder: only emit `cacheDetails` when the canonical usage carries a TTL breakdown source; otherwise omit (S1a round-2 review, TTL unknown ≠ 5m).
 - [ ] 3.6c `bedrock_adapter.go` `EncodeStreamChunk`: buffer usage and emit a single merged Converse `metadata` event after `messageStop` (S1a review: Anthropic upstream → Bedrock client currently emits one metadata per usage chunk and the last one loses cache fields).
 - [ ] 3.7 V1 (adapter, llmcost, tokenratelimit); V2; V3; V4 **Anthropic, OpenAI, openai_responses, Cohere, Bedrock** (1h pricing); V5.
+
+## Phase 3b (S1d): Cohere v2 stream contract (added 2026-09-23, user request)
+
+Evidence: scratchpad capture `gw_openai.sse` (openai upstream → Cohere client) vs real `direct.sse`. multi-agent-tests PR #16 fixes the separate langchain-cohere client bug.
+
+- [ ] 3b.1 `cohere_adapter.go` `EncodeStreamChunk`: `message-start` on Role; `tool-call-start` with `delta.message.tool_calls{id,type,function{name,arguments:""}}` on ID/Name; `tool-call-delta` with `delta.message.tool_calls.function.arguments`; `Index` without `omitempty`.
+- [ ] 3b.2 `cohereUsage`: add `billed_units`; emit it (billed = tokens) and cached_tokens (S1c).
+- [ ] 3b.3 `pkg/app/proxy/provider_stream.go`: stateful Cohere-client branch (like Gemini): emit `tool-call-end{index}` on index change / finish; merge finish reason with the trailing usage chunk into ONE `message-end` (keep TOOL_CALL); emit after upstream end.
+- [ ] 3b.4 `DecodeStreamChunk`: read `delta.message.tool_calls` and handle `tool-call-start` (Cohere upstream → non-Cohere client keeps id/name/args).
+- [ ] 3b.5 Tests: encoder unit tests per event shape; `provider_stream_test.go` golden (openai tool-call stream → Cohere client sequence, incl. 2 parallel calls); decoder test fed real `direct.sse` events.
+- [ ] 3b.6 V1; V2; V3; V4 **Cohere** (native + `matrix-ag -p cohere` with STREAM on/off, incl. `openai → cohere`, `openai_responses → cohere`, `cohere → openai_completions`) using the multi-agent server with PR #16; V5.
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic
 

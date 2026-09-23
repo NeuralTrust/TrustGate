@@ -27,7 +27,7 @@ Each target adapter MUST map its wire fields as below, buffered and streaming. W
 | DeepSeek | max(`prompt_cache_hit_tokens`, `details.cached_tokens`) | none | `prompt_tokens` (hit + miss) |
 | Moonshot | max(top-level `cached_tokens`, `details.cached_tokens`) | `cache_write_tokens` | `prompt_tokens` |
 | OpenRouter | `details.cached_tokens` | `details.cache_write_tokens` | `prompt_tokens` |
-| Cohere | `usage.cached_tokens` | none | billed input |
+| Cohere | `usage.cached_tokens` | none | I = `tokens.input_tokens` (`cached_tokens` ⊆ it; live-confirm) |
 | Gemini / Vertex | unchanged (`cachedContentTokenCount`) | none | unchanged |
 
 OpenRouter `cost` and `cache_discount` MUST be logged only and MUST NOT feed `CostUSD`.

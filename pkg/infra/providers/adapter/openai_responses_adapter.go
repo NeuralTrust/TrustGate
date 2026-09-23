@@ -96,7 +96,8 @@ type openaiResponsesUsage struct {
 }
 
 type openaiResponsesInputTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type openaiResponsesOutputTokensDetails struct {
@@ -108,8 +109,8 @@ func openaiResponsesUsageToCanonical(u openaiResponsesUsage) *CanonicalUsage {
 	if cu == nil {
 		return nil
 	}
-	if u.InputTokensDetails != nil {
-		cu.CachedInputTokens = u.InputTokensDetails.CachedTokens
+	if d := u.InputTokensDetails; d != nil && d.CachedTokens+d.CacheWriteTokens > 0 {
+		cu.setCache(d.CachedTokens, d.CacheWriteTokens, 0)
 	}
 	if u.OutputTokensDetails != nil {
 		cu.ReasoningOutputTokens = u.OutputTokensDetails.ReasoningTokens

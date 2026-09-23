@@ -16,7 +16,9 @@ package adapter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 )
 
 var openRouterRequestKeys = []string{"provider", "models", "transforms", "route"}
@@ -49,6 +51,9 @@ func (a *OpenRouterAdapter) DecodeResponse(body []byte) (*CanonicalResponse, err
 	cr, err := a.openai.DecodeResponse(body)
 	if err != nil {
 		return nil, err
+	}
+	if cr.Usage != nil {
+		logOpenRouterBilling(body)
 	}
 	ext := extractOpenRouterKeys(body, openRouterResponseKeys)
 	if len(ext) == 0 {
@@ -84,6 +89,9 @@ func (a *OpenRouterAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChu
 	if err != nil || sc == nil {
 		return sc, err
 	}
+	if sc.Usage != nil {
+		logOpenRouterBilling(payload)
+	}
 	ext := extractOpenRouterKeys(payload, openRouterResponseKeys)
 	if len(ext) == 0 {
 		return sc, nil
@@ -116,6 +124,39 @@ func (a *OpenRouterAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]
 		break
 	}
 	return lines, nil
+}
+
+type openRouterBilling struct {
+	Usage struct {
+		Cost          *float64 `json:"cost"`
+		CacheDiscount *float64 `json:"cache_discount"`
+	} `json:"usage"`
+	CacheDiscount *float64 `json:"cache_discount"`
+}
+
+func logOpenRouterBilling(body []byte) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	var b openRouterBilling
+	if err := json.Unmarshal(body, &b); err != nil {
+		return
+	}
+	discount := b.Usage.CacheDiscount
+	if discount == nil {
+		discount = b.CacheDiscount
+	}
+	if b.Usage.Cost == nil && discount == nil {
+		return
+	}
+	attrs := make([]any, 0, 2)
+	if b.Usage.Cost != nil {
+		attrs = append(attrs, slog.Float64("cost", *b.Usage.Cost))
+	}
+	if discount != nil {
+		attrs = append(attrs, slog.Float64("cache_discount", *discount))
+	}
+	slog.Debug("openrouter reported billing", attrs...)
 }
 
 func extractOpenRouterKeys(body []byte, keys []string) map[string]json.RawMessage {

@@ -161,10 +161,13 @@ type openaiUsage struct {
 	TotalTokens             int                            `json:"total_tokens"`
 	PromptTokensDetails     *openaiPromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *openaiCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	PromptCacheHitTokens    int                            `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens   int                            `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
 type openaiPromptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type openaiCompletionTokensDetails struct {
@@ -172,12 +175,18 @@ type openaiCompletionTokensDetails struct {
 }
 
 func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
-	cu := newCanonicalUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens)
+	in := max(u.PromptTokens, u.PromptCacheHitTokens+u.PromptCacheMissTokens)
+	cu := newCanonicalUsage(in, u.CompletionTokens, u.TotalTokens)
 	if cu == nil {
 		return nil
 	}
-	if u.PromptTokensDetails != nil {
-		cu.CachedInputTokens = u.PromptTokensDetails.CachedTokens
+	cu.TotalTokens = max(cu.TotalTokens, cu.InputTokens+cu.OutputTokens)
+	read, write := u.PromptCacheHitTokens, 0
+	if d := u.PromptTokensDetails; d != nil {
+		read, write = max(read, d.CachedTokens), d.CacheWriteTokens
+	}
+	if read+write > 0 {
+		cu.setCache(read, write, 0)
 	}
 	if u.CompletionTokensDetails != nil {
 		cu.ReasoningOutputTokens = u.CompletionTokensDetails.ReasoningTokens
