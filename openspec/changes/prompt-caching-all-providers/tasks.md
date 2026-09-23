@@ -135,10 +135,10 @@ Found in the S1c-3 review; affects Claude Code behind any non-Anthropic upstream
 
 Reduced scope (investigation 2026-09-23, captures in the scratchpad `groq/`): stream usage is NOT lost. It arrives top-level on the finish chunk and in `x_groq.usage`; `include_usage` adds a trailing usage chunk; `cached_tokens` is parsed and `MergeUsage` takes the max.
 
-- [x] 3e.1 Live-check a Groq stream through TrustGate (with the injected stream_options.include_usage): usage arrives as a standard usage chunk and in `x_groq.usage`. Captured.
-- [ ] 3e.2 Regression tests from the real captures (buffered + stream): usage and `cached_tokens` on the finish chunk, the trailing `include_usage` chunk, max-not-sum merge.
-- [ ] 3e.3 Optional: fall back to `x_groq.usage` when the standard usage fields are absent (max-not-sum with any standard usage chunk).
-- [ ] 3e.4 V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss).
+- [x] 3e.1 Live-check a Groq stream through TrustGate (with the injected stream_options.include_usage): usage arrives as a standard usage chunk and in `x_groq.usage`. Captured. (Done in the 2026-09-23 investigation, before apply.)
+- [x] 3e.2 Regression tests from the real captures (buffered + stream): usage and `cached_tokens` on the finish chunk, the trailing `include_usage` chunk, max-not-sum merge.
+- [x] 3e.3 Optional: fall back to `x_groq.usage` when the standard usage fields are absent (max-not-sum with any standard usage chunk).
+- [ ] 3e.4 V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss). V1 done (vet, golangci-lint adapter+proxy, `go test -race` proxy+providers green); V2–V5 pending.
 - Follow-ups noted, not in this phase: `delta.reasoning` (analysis channel) dropped by `openaiStreamDelta`; trailing usage chunk re-encoded as `choices:[{index:0,delta:{}}]` instead of `[]`; Anthropic→Groq trims the system prompt's trailing whitespace (different cache prefix across client formats, handle in S2a).
 
 ## Phase 3f (S1f): Gemini thought signatures (found in the S1e review, confirmed 2026-09-23)
