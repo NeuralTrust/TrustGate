@@ -16,6 +16,8 @@ package resolver
 
 import (
 	"errors"
+	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -185,4 +187,31 @@ func ModelsIDFromRest(rest string) string {
 		return ""
 	}
 	return strings.TrimPrefix(rest, RouteModels+pathSeparator)
+}
+
+var filesMethods = []string{http.MethodGet, http.MethodPost, http.MethodDelete}
+
+// AllowedMethods returns the HTTP methods the route accepts. Models is a read
+// surface, files mirrors the OpenAI Files API per path, and every other route
+// is an inference call that only takes a POST body.
+func (r ProxyRoute) AllowedMethods() []string {
+	switch r.Capability {
+	case CapabilityModels:
+		return []string{http.MethodGet}
+	case CapabilityFiles:
+		allowed := make([]string, 0, len(filesMethods))
+		for _, method := range filesMethods {
+			if providers.ValidateFilesMethod(method, r.Rest) == nil {
+				allowed = append(allowed, method)
+			}
+		}
+		return allowed
+	default:
+		return []string{http.MethodPost}
+	}
+}
+
+// AllowsMethod reports whether method is one of AllowedMethods.
+func (r ProxyRoute) AllowsMethod(method string) bool {
+	return slices.Contains(r.AllowedMethods(), method)
 }

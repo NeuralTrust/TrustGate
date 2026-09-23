@@ -171,25 +171,25 @@ func TestImages_UnknownSubpathIs404(t *testing.T) {
 	assert.Equal(t, 0, up.Hits())
 }
 
-func TestImages_InvalidMethodIs400(t *testing.T) {
+func TestImages_InvalidMethodIs405(t *testing.T) {
 	defer Track(t, "ImagesProvider")()
 
 	up, _ := newImagesUpstream(t)
 	apiKey, path := setupImagesRoute(t, openaiBackendPayload(uniqueName("oai-img"), up.URL()+"/v1"))
 
 	status, _, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
-	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+	assert.Equal(t, http.StatusMethodNotAllowed, status, "body: %s", body)
 	assert.Equal(t, 0, up.Hits())
 }
 
-func TestImages_EmptyCapablePoolIs503(t *testing.T) {
+func TestImages_EmptyCapablePoolIs400(t *testing.T) {
 	defer Track(t, "ImagesProvider")()
 
 	apiKey, path := setupImagesRoute(t, groqBackendPayload(uniqueName("groq-only")))
 
 	status, _, body := proxyPost(t, apiKey, path, map[string]any{"prompt": "a cat"})
-	assert.Equal(t, http.StatusServiceUnavailable, status, "body: %s", body)
-	assert.Contains(t, string(body), "no_backend_available")
+	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+	assert.Contains(t, string(body), "invalid_request")
 }
 
 func TestOpenAIProvider_ImagesEdits(t *testing.T) {

@@ -16,6 +16,8 @@ package resolver
 
 import (
 	"errors"
+	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -149,5 +151,40 @@ func TestResolveProxyPathRejectsMalformedVertexPaths(t *testing.T) {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
 			t.Fatalf("ResolveProxyPath(%q) error = %v, want ErrUnknownProxyPath", path, err)
 		}
+	}
+}
+
+func TestProxyRouteAllowedMethods(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"/acme/v1/chat/completions", []string{http.MethodPost}},
+		{"/acme/v1/embeddings", []string{http.MethodPost}},
+		{"/acme/v1/audio/speech", []string{http.MethodPost}},
+		{"/acme/v1/models", []string{http.MethodGet}},
+		{"/acme/v1/models/gpt-4o", []string{http.MethodGet}},
+		{"/acme/v1/files", []string{http.MethodGet, http.MethodPost}},
+		{"/acme/v1/files/file-abc", []string{http.MethodGet, http.MethodDelete}},
+		{"/acme/v1/files/file-abc/content", []string{http.MethodGet}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			route, err := ResolveProxyPath(tc.path)
+			if err != nil {
+				t.Fatalf("ResolveProxyPath: %v", err)
+			}
+			if got := route.AllowedMethods(); !slices.Equal(got, tc.want) {
+				t.Fatalf("AllowedMethods = %v, want %v", got, tc.want)
+			}
+			for _, method := range tc.want {
+				if !route.AllowsMethod(method) {
+					t.Fatalf("AllowsMethod(%s) = false", method)
+				}
+			}
+			if route.AllowsMethod(http.MethodPut) {
+				t.Fatal("AllowsMethod(PUT) = true")
+			}
+		})
 	}
 }

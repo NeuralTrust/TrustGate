@@ -787,7 +787,51 @@ func TestHandle_ModelsRejectsNonGET(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Test: %v", err)
 	}
-	if resp.StatusCode != fiber.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	if resp.StatusCode != fiber.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	if allow := resp.Header.Get(fiber.HeaderAllow); allow != http.MethodGet {
+		t.Fatalf("Allow = %q, want GET", allow)
+	}
+}
+
+func TestHandle_WrongMethodIs405WithoutForwarding(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		allow  string
+	}{
+		{http.MethodGet, "/v1/chat/completions", "POST"},
+		{http.MethodGet, "/v1/messages", "POST"},
+		{http.MethodGet, "/v1/responses", "POST"},
+		{http.MethodGet, "/v1/embeddings", "POST"},
+		{http.MethodGet, "/v1/rerank", "POST"},
+		{http.MethodGet, "/v1/images/generations", "POST"},
+		{http.MethodGet, "/v1/audio/speech", "POST"},
+		{http.MethodGet, "/v1/audio/transcriptions", "POST"},
+		{http.MethodPut, "/v1/chat/completions", "POST"},
+		{http.MethodDelete, "/v1/files", "GET, POST"},
+		{http.MethodPost, "/v1/files/file-abc", "GET, DELETE"},
+		{http.MethodDelete, "/v1/files/file-abc/content", "GET"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			app := fiber.New()
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+
+			req := httptest.NewRequest(tc.method, "/"+consumerSlug+tc.path, nil)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			if resp.StatusCode != fiber.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405", resp.StatusCode)
+			}
+			if allow := resp.Header.Get(fiber.HeaderAllow); allow != tc.allow {
+				t.Fatalf("Allow = %q, want %q", allow, tc.allow)
+			}
+		})
 	}
 }
