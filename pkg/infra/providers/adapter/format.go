@@ -52,14 +52,24 @@ const (
 // model in the URL instead of the body.
 const GeminiModelsRoutePrefix = "/v1beta/models/"
 
-// GeminiModelFromPath extracts the model segment of a Gemini generateContent
-// path, e.g. "/v1beta/models/gemini-pro:generateContent" -> "gemini-pro".
+// VertexModelsRouteSegment precedes the model in a native Vertex path such as
+// "/v1/projects/p/locations/r/publishers/google/models/gemini-pro:generateContent".
+const VertexModelsRouteSegment = "/publishers/google/models/"
+
+// GeminiModelFromPath extracts the model segment of a Gemini or Vertex
+// generateContent path, e.g. "/v1beta/models/gemini-pro:generateContent" ->
+// "gemini-pro".
 func GeminiModelFromPath(path string) string {
-	idx := strings.Index(path, GeminiModelsRoutePrefix)
+	marker := GeminiModelsRoutePrefix
+	idx := strings.Index(path, marker)
+	if idx < 0 {
+		marker = VertexModelsRouteSegment
+		idx = strings.Index(path, marker)
+	}
 	if idx < 0 {
 		return ""
 	}
-	model := path[idx+len(GeminiModelsRoutePrefix):]
+	model := path[idx+len(marker):]
 	if c := strings.IndexByte(model, ':'); c >= 0 {
 		model = model[:c]
 	}

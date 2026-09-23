@@ -119,7 +119,51 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
 		return adapter.FormatGemini, CapabilityChat, nil
 	}
+	if isVertexGenerateContentPath(rest) {
+		return adapter.FormatGemini, CapabilityChat, nil
+	}
 	return "", "", ErrUnknownProxyPath
+}
+
+var (
+	vertexAPIVersions  = map[string]struct{}{"v1": {}, "v1beta1": {}}
+	vertexChatActions  = map[string]struct{}{"generateContent": {}, "streamGenerateContent": {}}
+	vertexPathSegments = []string{"", "", "projects", "", "locations", "", "publishers", "google", "models", ""}
+)
+
+const (
+	vertexVersionIndex = 1
+	vertexModelIndex   = 9
+)
+
+// isVertexGenerateContentPath matches
+// /{v1|v1beta1}/projects/*/locations/*/publishers/google/models/{model}:{action}.
+// Project and location are ignored: the upstream URL comes from the registry.
+func isVertexGenerateContentPath(rest string) bool {
+	parts := strings.Split(rest, pathSeparator)
+	if len(parts) != len(vertexPathSegments) {
+		return false
+	}
+	if _, ok := vertexAPIVersions[parts[vertexVersionIndex]]; !ok {
+		return false
+	}
+	for i, want := range vertexPathSegments {
+		if i == vertexVersionIndex || i == vertexModelIndex {
+			continue
+		}
+		if want == "" && i > 0 && parts[i] == "" {
+			return false
+		}
+		if want != "" && parts[i] != want {
+			return false
+		}
+	}
+	model, action, found := strings.Cut(parts[vertexModelIndex], ":")
+	if !found || model == "" {
+		return false
+	}
+	_, ok := vertexChatActions[action]
+	return ok
 }
 
 func isModelsPath(rest string) bool {
