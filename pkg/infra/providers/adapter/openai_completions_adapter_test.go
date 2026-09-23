@@ -431,3 +431,206 @@ func TestEncodeCompletionsRequest_DropsNamelessTools(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeCompletionsRequest_Images(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		messages    string
+		wantSystem  string
+		wantContent string
+		wantImages  []CanonicalImage
+	}{
+		{
+			name:        "data uri",
+			messages:    `[{"role":"user","content":[{"type":"text","text":"what is this?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]`,
+			wantContent: "what is this?",
+			wantImages:  []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}},
+		},
+		{
+			name:        "url with detail",
+			messages:    `[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"low"}}]}]`,
+			wantContent: "",
+			wantImages:  []CanonicalImage{{URL: "https://example.com/cat.jpg", Detail: "low"}},
+		},
+		{
+			name:        "image_url as bare string",
+			messages:    `[{"role":"user","content":[{"type":"image_url","image_url":"https://example.com/dog.png"}]}]`,
+			wantContent: "",
+			wantImages:  []CanonicalImage{{URL: "https://example.com/dog.png"}},
+		},
+		{
+			name:        "malformed data uri kept as url",
+			messages:    `[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png,rawbytes"}}]}]`,
+			wantContent: "",
+			wantImages:  []CanonicalImage{{URL: "data:image/png,rawbytes"}},
+		},
+		{
+			name:        "invalid detail keeps url",
+			messages:    `[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/a.png","detail":5}}]}]`,
+			wantContent: "",
+			wantImages:  []CanonicalImage{{URL: "https://x/a.png"}},
+		},
+		{
+			name:        "non-string url ignored",
+			messages:    `[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":5}}]}]`,
+			wantContent: "hi",
+		},
+		{
+			name:        "image_url without url ignored",
+			messages:    `[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"detail":"low"}}]}]`,
+			wantContent: "hi",
+		},
+		{
+			name:        "image in system ignored",
+			messages:    `[{"role":"system","content":[{"type":"text","text":"be brief"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},{"role":"user","content":"hello"}]`,
+			wantSystem:  "be brief",
+			wantContent: "hello",
+		},
+		{
+			name:        "several texts and an image",
+			messages:    `[{"role":"user","content":[{"type":"text","text":"first"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,/9j/4AAQ"}},{"type":"text","text":"second"}]}]`,
+			wantContent: "first\nsecond",
+			wantImages:  []CanonicalImage{{MediaType: "image/jpeg", Data: "/9j/4AAQ"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := `{"model":"gpt-4o","messages":` + tt.messages + `}`
+			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(body))
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantSystem, canonical.System)
+			require.Len(t, canonical.Messages, 1)
+			assert.Equal(t, "user", canonical.Messages[0].Role)
+			assert.Equal(t, tt.wantContent, canonical.Messages[0].Content)
+			assert.Equal(t, tt.wantImages, canonical.Messages[0].Images)
+		})
+	}
+}
+
+func TestEncodeCompletionsRequest_Images(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		message     CanonicalMessage
+		wantContent string
+	}{
+		{
+			name: "images before text",
+			message: CanonicalMessage{
+				Role:    "user",
+				Content: "compare them",
+				Images: []CanonicalImage{
+					{MediaType: "image/png", Data: "AAAA"},
+					{URL: "https://example.com/cat.jpg", Detail: "high"},
+				},
+			},
+			wantContent: `[
+				{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},
+				{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}},
+				{"type":"text","text":"compare them"}
+			]`,
+		},
+		{
+			name: "image only has no text part",
+			message: CanonicalMessage{
+				Role:   "user",
+				Images: []CanonicalImage{{MediaType: "image/webp", Data: "UklGR"}},
+			},
+			wantContent: `[{"type":"image_url","image_url":{"url":"data:image/webp;base64,UklGR"}}]`,
+		},
+		{
+			name: "tool message with images keeps string content",
+			message: CanonicalMessage{
+				Role:       "tool",
+				Content:    "result",
+				ToolCallID: "call_1",
+				Images:     []CanonicalImage{{MediaType: "image/png", Data: "AAAA"}},
+			},
+			wantContent: `"result"`,
+		},
+		{
+			name: "assistant with tool calls and images keeps string content",
+			message: CanonicalMessage{
+				Role:      "assistant",
+				Content:   "calling",
+				ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "lookup", Arguments: "{}"}},
+				Images:    []CanonicalImage{{MediaType: "image/png", Data: "AAAA"}},
+			},
+			wantContent: `"calling"`,
+		},
+		{
+			name: "plain assistant with images keeps string content",
+			message: CanonicalMessage{
+				Role:    "assistant",
+				Content: "sure",
+				Images:  []CanonicalImage{{MediaType: "image/png", Data: "AAAA"}},
+			},
+			wantContent: `"sure"`,
+		},
+		{
+			name:        "no images keeps string content",
+			message:     CanonicalMessage{Role: "user", Content: "hello"},
+			wantContent: `"hello"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			encoded, err := (&OpenAIAdapter{}).EncodeRequest(&CanonicalRequest{
+				Model:    "gpt-4o",
+				Messages: []CanonicalMessage{tt.message},
+			})
+			require.NoError(t, err)
+
+			var out struct {
+				Messages []struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &out))
+			require.Len(t, out.Messages, 1)
+			assert.JSONEq(t, tt.wantContent, string(out.Messages[0].Content))
+		})
+	}
+}
+
+func TestCompletionsRequest_PluginRewriteKeepsImage(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[
+		{"type":"text","text":"my email is a@b.c"},
+		{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA","detail":"low"}}
+	]}]}`
+
+	a := &OpenAIAdapter{}
+	canonical, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	require.Len(t, canonical.Messages, 1)
+
+	canonical.Messages[0].Content = "my email is [REDACTED]"
+
+	encoded, err := a.EncodeRequest(canonical)
+	require.NoError(t, err)
+
+	var out struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &out))
+	require.Len(t, out.Messages, 1)
+	assert.JSONEq(t, `[
+		{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA","detail":"low"}},
+		{"type":"text","text":"my email is [REDACTED]"}
+	]`, string(out.Messages[0].Content))
+	assert.NotContains(t, string(encoded), "a@b.c")
+}
