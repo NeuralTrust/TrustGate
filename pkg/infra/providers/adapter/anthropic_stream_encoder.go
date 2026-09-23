@@ -321,8 +321,7 @@ func (e *AnthropicStreamEncoder) openToolBlock(tool *anthropicStreamTool) [][]by
 	return lines
 }
 
-// toolID keeps the upstream id unless it is empty or already used, as Gemini
-// reuses the function name as the id of every call to it.
+// toolID keeps the upstream id unless it is empty or already used.
 func (e *AnthropicStreamEncoder) toolID(upstream string) string {
 	id := upstream
 	if id == "" || e.ids[id] {

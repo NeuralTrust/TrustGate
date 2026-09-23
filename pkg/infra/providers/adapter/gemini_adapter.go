@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -73,11 +74,66 @@ type geminiFuncResponse struct {
 // Gemini bypass for replayed functionCalls lacking canonical thoughtSignature support (ENG-1627).
 const geminiSkipThoughtSignature = "skip_thought_signature_validator"
 
-func geminiCallID(fc *geminiFunctionCall) string {
+// geminiCallIDs hands out the canonical ids of the functionCalls of one model
+// turn. A call without an id takes its name, or the name suffixed with _2, _3
+// and so on when an earlier call of the turn already holds it, so parallel
+// calls to one function stay distinct; EncodeRequest never sends these
+// synthetic ids to Gemini.
+type geminiCallIDs map[string]bool
+
+func (u geminiCallIDs) assign(fc *geminiFunctionCall) string {
 	if fc.ID != "" {
+		u[fc.ID] = true
 		return fc.ID
 	}
-	return fc.Name
+	return u.synthetic(fc.Name)
+}
+
+func (u geminiCallIDs) synthetic(name string) string {
+	id := name
+	for n := 2; u[id]; n++ {
+		id = name + "_" + strconv.Itoa(n)
+	}
+	u[id] = true
+	return id
+}
+
+// geminiSyntheticCallID reports whether id is one geminiCallIDs gave a call
+// to name that had no id of its own.
+func geminiSyntheticCallID(id, name string) bool {
+	if id == name {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(id, name+"_")
+	if !ok {
+		return false
+	}
+	n, err := strconv.Atoi(suffix)
+	return err == nil && n >= 2 && strconv.Itoa(n) == suffix
+}
+
+// geminiSyntheticCallName returns the function name a synthetic id with a
+// numeric suffix was made from, when that name is one of tools.
+func geminiSyntheticCallName(id string, tools []CanonicalTool) (string, bool) {
+	cut := strings.LastIndexByte(id, '_')
+	if cut <= 0 {
+		return "", false
+	}
+	name := id[:cut]
+	if !geminiSyntheticCallID(id, name) {
+		return "", false
+	}
+	for _, t := range tools {
+		if t.Name == id {
+			return "", false
+		}
+	}
+	for _, t := range tools {
+		if t.Name == name {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // geminiPendingCalls holds the call ids of the latest model turn that have
@@ -206,6 +262,7 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	pending := geminiPendingCalls{}
 	for _, c := range req.Contents {
 		role := c.Role
+		ids := geminiCallIDs{}
 		if role == "model" {
 			role = "assistant"
 			pending = geminiPendingCalls{}
@@ -222,7 +279,7 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
-				id := geminiCallID(p.FunctionCall)
+				id := ids.assign(p.FunctionCall)
 				toolCalls = append(toolCalls, CanonicalToolCall{
 					ID:        id,
 					Name:      p.FunctionCall.Name,
@@ -301,6 +358,9 @@ func geminiFunctionResponseName(callID string, toolNames map[string]string, tool
 	if len(tools) == 1 && generatedToolUseID.MatchString(callID) {
 		return tools[0].Name
 	}
+	if name, ok := geminiSyntheticCallName(callID, tools); ok {
+		return name
+	}
 	return callID
 }
 
@@ -341,7 +401,7 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 					Args: args,
 				},
 			}
-			if !a.vertex && tc.ID != tc.Name {
+			if !a.vertex && !geminiSyntheticCallID(tc.ID, tc.Name) {
 				part.FunctionCall.ID = tc.ID
 			}
 			if !a.vertex && i == 0 && role == "model" {
@@ -362,7 +422,7 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 				Name:     geminiFunctionResponseName(m.ToolCallID, toolNames, req.Tools),
 				Response: resp,
 			}
-			if _, ok := toolNames[m.ToolCallID]; ok && !a.vertex && m.ToolCallID != fr.Name {
+			if _, ok := toolNames[m.ToolCallID]; ok && !a.vertex && !geminiSyntheticCallID(m.ToolCallID, fr.Name) {
 				fr.ID = m.ToolCallID
 			}
 			parts = append(parts, geminiPart{FunctionResponse: fr})
@@ -448,6 +508,7 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 	if len(resp.Candidates) > 0 {
 		cand := resp.Candidates[0]
 		var thinkingParts []string
+		ids := geminiCallIDs{}
 		parts := cand.Content.Parts
 		if parts == nil {
 			parts = []geminiPart{}
@@ -465,7 +526,7 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
 				cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
-					ID:        geminiCallID(p.FunctionCall),
+					ID:        ids.assign(p.FunctionCall),
 					Name:      p.FunctionCall.Name,
 					Arguments: string(args),
 				})
@@ -579,6 +640,7 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		}
 
 		var text, reasoning string
+		ids := geminiCallIDs{}
 		for i, p := range content.Parts {
 			if p.Thought {
 				reasoning += p.Text
@@ -589,7 +651,7 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 				argsBytes, _ := json.Marshal(p.FunctionCall.Args)
 				sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
 					Index:          i,
-					ID:             geminiCallID(p.FunctionCall),
+					ID:             ids.assign(p.FunctionCall),
 					Name:           p.FunctionCall.Name,
 					ArgumentsDelta: string(argsBytes),
 				})
@@ -789,21 +851,32 @@ func jsonSchemaToGeminiSchema(schema map[string]interface{}) map[string]interfac
 // concurrent use.
 type GeminiCallIndexer struct {
 	next int
+	ids  geminiCallIDs
 }
 
 // Renumber gives each delta that starts a call, one carrying an ID or a Name,
-// the next stream-wide index, and any other delta the index of the call it
-// continues.
+// the next stream-wide index and, when the call had no id of its own, a
+// synthetic id distinct across the stream; any other delta gets the index of
+// the call it continues.
 func (g *GeminiCallIndexer) Renumber(deltas []StreamToolCallDelta) {
 	if g == nil {
 		return
 	}
+	if g.ids == nil {
+		g.ids = geminiCallIDs{}
+	}
 	for i := range deltas {
-		if deltas[i].ID == "" && deltas[i].Name == "" && g.next > 0 {
-			deltas[i].Index = g.next - 1
+		d := &deltas[i]
+		if d.ID == "" && d.Name == "" && g.next > 0 {
+			d.Index = g.next - 1
 			continue
 		}
-		deltas[i].Index = g.next
+		d.Index = g.next
 		g.next++
+		if d.Name != "" && geminiSyntheticCallID(d.ID, d.Name) {
+			d.ID = g.ids.synthetic(d.Name)
+		} else if d.ID != "" {
+			g.ids[d.ID] = true
+		}
 	}
 }

@@ -318,7 +318,7 @@ func TestAdaptStream_AnthropicClientEventSequence(t *testing.T) {
 			want: []string{
 				"message_start",
 				"start 0 tool_use get_weather get_weather", `delta 0 input_json_delta {"city":"Paris"}`, "stop 0",
-				"start 1 tool_use toolu_*_1 get_weather", `delta 1 input_json_delta {"city":"Rome"}`, "stop 1",
+				"start 1 tool_use get_weather_2 get_weather", `delta 1 input_json_delta {"city":"Rome"}`, "stop 1",
 				"message_delta tool_use", "message_stop",
 			},
 		},
@@ -699,8 +699,8 @@ func TestAdaptStream_AnthropicClientToolResultsPairWithUpstreamCalls(t *testing.
 		toolResults = append(toolResults, map[string]any{"type": "tool_result", "tool_use_id": ev.ContentBlock.ID, "content": "sunny in " + ev.ContentBlock.ID})
 	}
 	require.Len(t, toolUses, 2)
-	require.NotEqual(t, toolUses[0]["id"], toolUses[1]["id"])
 	ids := []string{toolUses[0]["id"].(string), toolUses[1]["id"].(string)}
+	assert.Equal(t, []string{"get_weather", "get_weather_2"}, ids)
 	body, err := json.Marshal(map[string]any{
 		"model":      "m",
 		"max_tokens": 100,
@@ -730,6 +730,9 @@ func TestAdaptStream_AnthropicClientToolResultsPairWithUpstreamCalls(t *testing.
 			calls, results := tt.pairs(t, adapted)
 			assert.Equal(t, tt.want, calls, "calls")
 			assert.Equal(t, tt.want, results, "results")
+			if adapter.IsSameWireFormat(tt.target, adapter.FormatGemini) {
+				assert.NotContains(t, string(adapted), `"id"`)
+			}
 		})
 	}
 }

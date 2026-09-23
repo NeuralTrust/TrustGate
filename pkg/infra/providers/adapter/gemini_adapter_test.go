@@ -874,6 +874,9 @@ func TestGemini_EncodeRequest_ToolResultNameWithoutItsCall(t *testing.T) {
 		{name: "generated id with two declared functions", callID: generated, tools: []string{"get_weather", "get_time"}, want: generated},
 		{name: "generated id without declared functions", callID: generated, want: generated},
 		{name: "upstream id with one declared function", callID: "call_1", tools: []string{"get_weather"}, want: "call_1"},
+		{name: "synthetic id of a declared function", callID: "get_weather_2", tools: []string{"get_weather", "get_time"}, want: "get_weather"},
+		{name: "declared function whose name ends in a number", callID: "get_weather_2", tools: []string{"get_weather", "get_weather_2"}, want: "get_weather_2"},
+		{name: "numbered id of an undeclared function", callID: "get_weather_2", tools: []string{"get_time"}, want: "get_weather_2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -896,4 +899,152 @@ func TestGemini_EncodeRequest_ToolResultNameWithoutItsCall(t *testing.T) {
 			assert.Equal(t, tt.want, out.Contents[0].Parts[0].FunctionResponse.Name)
 		})
 	}
+}
+
+func TestGemini_ParallelCallsWithoutIDsGetDistinctIDs(t *testing.T) {
+	parts := `{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}},
+		{"functionCall":{"name":"get_time","args":{}}},
+		{"functionCall":{"name":"get_weather","args":{"city":"Rome"}}}`
+	want := []string{"get_weather", "get_time", "get_weather_2"}
+
+	t.Run("response", func(t *testing.T) {
+		cr, err := (&GeminiAdapter{}).DecodeResponse([]byte(`{"candidates":[{"content":{"role":"model","parts":[` + parts + `]},"finishReason":"STOP"}]}`))
+		require.NoError(t, err)
+		var got []string
+		for _, tc := range cr.ToolCalls {
+			got = append(got, tc.ID)
+		}
+		assert.Equal(t, want, got)
+	})
+	t.Run("stream chunk", func(t *testing.T) {
+		sc, err := (&GeminiAdapter{}).DecodeStreamChunk([]byte(`{"candidates":[{"content":{"role":"model","parts":[` + parts + `]}}]}`))
+		require.NoError(t, err)
+		var got []string
+		for _, d := range sc.ToolCallDeltas {
+			got = append(got, d.ID)
+		}
+		assert.Equal(t, want, got)
+	})
+	t.Run("request answered in order", func(t *testing.T) {
+		body := `{"contents":[
+			{"role":"user","parts":[{"text":"hi"}]},
+			{"role":"model","parts":[` + parts + `]},
+			{"role":"user","parts":[
+				{"functionResponse":{"name":"get_weather","response":{"city":"Paris"}}},
+				{"functionResponse":{"name":"get_time","response":{"now":"noon"}}},
+				{"functionResponse":{"name":"get_weather","response":{"city":"Rome"}}}
+			]}
+		]}`
+		cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(body))
+		require.NoError(t, err)
+		var calls, results []string
+		for _, m := range cr.Messages {
+			for _, tc := range m.ToolCalls {
+				calls = append(calls, tc.ID)
+			}
+			if m.Role == "tool" {
+				results = append(results, m.ToolCallID)
+			}
+		}
+		assert.Equal(t, want, calls)
+		assert.Equal(t, want, results)
+	})
+}
+
+func TestGemini_EncodeRequest_KeepsSyntheticIDsOffTheWire(t *testing.T) {
+	req := &CanonicalRequest{
+		Tools: []CanonicalTool{{Name: "get_weather"}},
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "Weather in Paris and Rome?"},
+			{Role: "assistant", ToolCalls: []CanonicalToolCall{
+				{ID: "get_weather", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+				{ID: "get_weather_2", Name: "get_weather", Arguments: `{"city":"Rome"}`},
+			}},
+			{Role: "tool", ToolCallID: "get_weather", Content: `{"sky":"sunny"}`},
+			{Role: "tool", ToolCallID: "get_weather_2", Content: `{"sky":"rain"}`},
+		},
+	}
+	body, err := (&GeminiAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	var out geminiRequest
+	require.NoError(t, json.Unmarshal(body, &out))
+	require.Len(t, out.Contents, 3)
+	calls := out.Contents[1].Parts
+	require.Len(t, calls, 2)
+	assert.Equal(t, geminiFunctionCall{Name: "get_weather", Args: map[string]interface{}{"city": "Paris"}}, *calls[0].FunctionCall)
+	assert.Equal(t, geminiFunctionCall{Name: "get_weather", Args: map[string]interface{}{"city": "Rome"}}, *calls[1].FunctionCall)
+	results := out.Contents[2].Parts
+	require.Len(t, results, 2)
+	assert.Equal(t, geminiFuncResponse{Name: "get_weather", Response: map[string]interface{}{"sky": "sunny"}}, *results[0].FunctionResponse)
+	assert.Equal(t, geminiFuncResponse{Name: "get_weather", Response: map[string]interface{}{"sky": "rain"}}, *results[1].FunctionResponse)
+}
+
+func TestGemini_ParallelCallsWithoutIDsRoundTripThroughAnthropic(t *testing.T) {
+	reg := NewRegistry()
+	upstream := `{"candidates":[{"content":{"role":"model","parts":[
+		{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}},
+		{"functionCall":{"name":"get_weather","args":{"city":"Rome"}}}
+	]},"finishReason":"STOP"}]}`
+	encoded, err := reg.AdaptResponse([]byte(upstream), FormatAnthropic, FormatGemini)
+	require.NoError(t, err)
+
+	var resp struct {
+		Content []map[string]any `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &resp))
+	var toolUses, toolResults []map[string]any
+	for _, block := range resp.Content {
+		if block["type"] != "tool_use" {
+			continue
+		}
+		toolUses = append(toolUses, block)
+		toolResults = append(toolResults, map[string]any{"type": "tool_result", "tool_use_id": block["id"], "content": "sunny"})
+	}
+	require.Len(t, toolUses, 2)
+	assert.Equal(t, "get_weather", toolUses[0]["id"])
+	assert.Equal(t, "get_weather_2", toolUses[1]["id"])
+
+	body, err := json.Marshal(map[string]any{
+		"model":      "m",
+		"max_tokens": 100,
+		"tools":      []map[string]any{{"name": "get_weather", "input_schema": map[string]any{"type": "object"}}},
+		"messages": []map[string]any{
+			{"role": "user", "content": "weather in Paris and Rome?"},
+			{"role": "assistant", "content": toolUses},
+			{"role": "user", "content": toolResults},
+		},
+	})
+	require.NoError(t, err)
+	adapted, err := reg.AdaptRequest(body, FormatAnthropic, FormatGemini)
+	require.NoError(t, err)
+
+	var out geminiRequest
+	require.NoError(t, json.Unmarshal(adapted, &out))
+	require.Len(t, out.Contents, 3)
+	for _, p := range out.Contents[1].Parts {
+		assert.Equal(t, "get_weather", p.FunctionCall.Name)
+		assert.Empty(t, p.FunctionCall.ID)
+	}
+	for _, p := range out.Contents[2].Parts {
+		assert.Equal(t, "get_weather", p.FunctionResponse.Name)
+		assert.Empty(t, p.FunctionResponse.ID)
+	}
+	assert.Len(t, out.Contents[1].Parts, 2)
+	assert.Len(t, out.Contents[2].Parts, 2)
+}
+
+func TestGeminiCallIndexer_RenumberGivesCallsWithoutIDsDistinctIDs(t *testing.T) {
+	var g GeminiCallIndexer
+	first := []StreamToolCallDelta{{Index: 0, ID: "get_weather", Name: "get_weather"}, {Index: 1, ID: "get_weather_2", Name: "get_weather"}}
+	second := []StreamToolCallDelta{{Index: 0, ID: "get_weather", Name: "get_weather"}}
+	third := []StreamToolCallDelta{{Index: 0, ID: "call_9", Name: "get_weather"}}
+	g.Renumber(first)
+	g.Renumber(second)
+	g.Renumber(third)
+	assert.Equal(t, "get_weather", first[0].ID)
+	assert.Equal(t, "get_weather_2", first[1].ID)
+	assert.Equal(t, "get_weather_3", second[0].ID)
+	assert.Equal(t, 2, second[0].Index)
+	assert.Equal(t, "call_9", third[0].ID)
 }

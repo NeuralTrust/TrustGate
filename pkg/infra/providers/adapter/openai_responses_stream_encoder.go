@@ -20,18 +20,24 @@ package adapter
 type ResponsesStreamEncoder struct {
 	message int
 	next    int
-	calls   map[int]int
+	calls   map[int]responsesStreamCall
+}
+
+type responsesStreamCall struct {
+	outputIndex int
+	id          string
 }
 
 // NewResponsesStreamEncoder returns an encoder for one Responses stream.
 func NewResponsesStreamEncoder() *ResponsesStreamEncoder {
-	return &ResponsesStreamEncoder{message: -1, calls: map[int]int{}}
+	return &ResponsesStreamEncoder{message: -1, calls: map[int]responsesStreamCall{}}
 }
 
 // Content encodes the role, text and tool-call deltas of chunk. The message
 // item is added once, on the first role or text, since some upstreams such as
 // Gemini repeat the role on every chunk; each tool call is added once, at the
-// next free output_index, when its canonical index first appears.
+// next free output_index, when its canonical index first appears or when a
+// delta at that index carries a different call id.
 func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 	var lines [][]byte
 	if e.message < 0 && (chunk.Role != "" || chunk.Delta != "") {
@@ -47,13 +53,17 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 		lines = append(lines, responsesTextDelta(e.message, chunk.Delta)...)
 	}
 	for _, tc := range chunk.ToolCallDeltas {
-		index, ok := e.calls[tc.Index]
-		if !ok {
-			index = e.next
+		call, ok := e.calls[tc.Index]
+		if !ok || (tc.ID != "" && call.id != "" && tc.ID != call.id) {
+			call = responsesStreamCall{outputIndex: e.next, id: tc.ID}
 			e.next++
-			e.calls[tc.Index] = index
-			lines = append(lines, responsesFunctionCallAdded(index, tc)...)
+			e.calls[tc.Index] = call
+			lines = append(lines, responsesFunctionCallAdded(call.outputIndex, tc)...)
+		} else if call.id == "" && tc.ID != "" {
+			call.id = tc.ID
+			e.calls[tc.Index] = call
 		}
+		index := call.outputIndex
 		if tc.ArgumentsDelta != "" {
 			lines = append(lines, responsesArgumentsDelta(index, tc.ArgumentsDelta)...)
 		}
