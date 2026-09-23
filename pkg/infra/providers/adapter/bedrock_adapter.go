@@ -170,6 +170,14 @@ type ConverseUsage struct {
 	TotalTokens           int `json:"totalTokens"`
 	CacheReadInputTokens  int `json:"cacheReadInputTokens,omitempty"`
 	CacheWriteInputTokens int `json:"cacheWriteInputTokens,omitempty"`
+
+	CacheDetails []ConverseCacheDetail `json:"cacheDetails,omitempty"`
+}
+
+// ConverseCacheDetail is the share of cacheWriteInputTokens written with one TTL.
+type ConverseCacheDetail struct {
+	InputTokens int    `json:"inputTokens"`
+	TTL         string `json:"ttl"`
 }
 
 // ConverseMetrics is the latency Bedrock measured for the call.
@@ -256,6 +264,9 @@ type ConverseMetadata struct {
 const (
 	converseRoleUser      = "user"
 	converseRoleAssistant = "assistant"
+
+	converseCacheTTL5m = "5m"
+	converseCacheTTL1h = "1h"
 )
 
 func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
@@ -797,12 +808,18 @@ func converseUsageToCanonical(u *ConverseUsage) *CanonicalUsage {
 	if u == nil {
 		return nil
 	}
-	cu := newCanonicalUsage(u.InputTokens, u.OutputTokens, u.TotalTokens)
+	read, write := u.CacheReadInputTokens, u.CacheWriteInputTokens
+	cu := newCanonicalUsage(u.InputTokens+read+write, u.OutputTokens, u.TotalTokens)
 	if cu == nil {
 		return nil
 	}
-	cu.CachedInputTokens = u.CacheReadInputTokens
-	cu.CacheWriteInputTokens = u.CacheWriteInputTokens
+	var write1h int
+	for _, d := range u.CacheDetails {
+		if d.TTL == converseCacheTTL1h {
+			write1h += d.InputTokens
+		}
+	}
+	cu.setCache(read, write, write1h)
 	return cu
 }
 
@@ -811,10 +828,23 @@ func converseUsageFromCanonical(u *CanonicalUsage) *ConverseUsage {
 		return nil
 	}
 	return &ConverseUsage{
-		InputTokens:           u.InputTokens,
+		InputTokens:           max(0, u.InputTokens-u.CachedInputTokens-u.CacheWriteInputTokens),
 		OutputTokens:          u.OutputTokens,
 		TotalTokens:           u.TotalTokens,
 		CacheReadInputTokens:  u.CachedInputTokens,
 		CacheWriteInputTokens: u.CacheWriteInputTokens,
+		CacheDetails:          converseCacheDetails(u.CacheWriteInputTokens, u.CacheWrite1hInputTokens),
 	}
+}
+
+func converseCacheDetails(write, write1h int) []ConverseCacheDetail {
+	var details []ConverseCacheDetail
+	write1h = min(write1h, write)
+	if write1h > 0 {
+		details = append(details, ConverseCacheDetail{InputTokens: write1h, TTL: converseCacheTTL1h})
+	}
+	if rest := write - write1h; rest > 0 {
+		details = append(details, ConverseCacheDetail{InputTokens: rest, TTL: converseCacheTTL5m})
+	}
+	return details
 }

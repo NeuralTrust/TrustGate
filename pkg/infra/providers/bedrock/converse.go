@@ -416,7 +416,22 @@ func wireUsage(u *bedrockTypes.TokenUsage) *adapter.ConverseUsage {
 		TotalTokens:           int(aws.ToInt32(u.TotalTokens)),
 		CacheReadInputTokens:  int(aws.ToInt32(u.CacheReadInputTokens)),
 		CacheWriteInputTokens: int(aws.ToInt32(u.CacheWriteInputTokens)),
+		CacheDetails:          wireCacheDetails(u.CacheDetails),
 	}
+}
+
+func wireCacheDetails(details []bedrockTypes.CacheDetail) []adapter.ConverseCacheDetail {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make([]adapter.ConverseCacheDetail, 0, len(details))
+	for _, d := range details {
+		out = append(out, adapter.ConverseCacheDetail{
+			InputTokens: int(aws.ToInt32(d.InputTokens)),
+			TTL:         string(d.Ttl),
+		})
+	}
+	return out
 }
 
 // converseEventStream is the part of the SDK's ConverseStream event stream the
