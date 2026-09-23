@@ -194,6 +194,26 @@ func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 	return cu
 }
 
+// completionsUsage decodes the standard usage object and Groq's x_groq.usage
+// copy, keeping the larger count of each field so a payload carrying both is
+// counted once.
+func completionsUsage(usage *openaiUsage, xGroq json.RawMessage) *CanonicalUsage {
+	var cu *CanonicalUsage
+	if usage != nil {
+		cu = openaiUsageToCanonical(*usage)
+	}
+	if len(xGroq) == 0 {
+		return cu
+	}
+	var ext struct {
+		Usage *openaiUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(xGroq, &ext); err != nil || ext.Usage == nil {
+		return cu
+	}
+	return MergeUsage(cu, openaiUsageToCanonical(*ext.Usage))
+}
+
 func openaiUsageFromCanonical(u *CanonicalUsage) *openaiUsage {
 	if u == nil {
 		return nil
@@ -500,9 +520,7 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 		cr.FinishReason = choice.FinishReason
 	}
 
-	if resp.Usage != nil {
-		cr.Usage = openaiUsageToCanonical(*resp.Usage)
-	}
+	cr.Usage = completionsUsage(resp.Usage, resp.XGroq)
 
 	if resp.Reasoning != nil {
 		cr.Reasoning = &CanonicalReasoning{
@@ -624,9 +642,7 @@ func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChun
 		}
 	}
 
-	if raw.Usage != nil {
-		sc.Usage = openaiUsageToCanonical(*raw.Usage)
-	}
+	sc.Usage = completionsUsage(raw.Usage, raw.XGroq)
 
 	if raw.XGroq != nil {
 		sc.ProviderExtensions = map[string]json.RawMessage{
