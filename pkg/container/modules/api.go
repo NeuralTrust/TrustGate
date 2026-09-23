@@ -342,15 +342,27 @@ func API(c *container.Container) error {
 // provideWhoAmIHandler serves the MCP plane's /whoami. It needs the proxy
 // plane's base domain because the LLM consumer it reports lives over there,
 // on a host this plane never sees in a request of its own.
+//
+// On a host that names no gateway — the fixed entry point a client can start
+// from with nothing but its key — the key says which gateway it belongs to,
+// and those lookups are counted per source like the connect pages'.
 func provideWhoAmIHandler(
 	finder appgateway.Finder,
 	cfg *config.Config,
 	consumers appconsumer.APIKeyConsumers,
+	apiKeys appauth.APIKeyFinder,
+	limiter appoauth.ConnectAttemptLimiter,
 ) *mcphttp.WhoAmIHandler {
 	gateways := resolver.NewSubdomainGatewayResolver(
 		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
 	)
-	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain)
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
+	}
+	return mcphttp.NewWhoAmIHandler(
+		gateways, consumers, cfg.Server.GatewayBaseDomain,
+		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
+	)
 }
 
 func provideEndUserConnectionsHandler(
