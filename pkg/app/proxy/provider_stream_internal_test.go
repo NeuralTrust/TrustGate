@@ -867,23 +867,82 @@ func gemini3ParallelFunctionCallsUpstream() iter.Seq2[[]byte, error] {
 	)
 }
 
-func TestAdaptStream_ResponsesClientGetsParallelGeminiFunctionCalls(t *testing.T) {
-	lines := collectLines(t, adaptStream(gemini3ParallelFunctionCallsUpstream(), adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatGemini, slog.Default(), nil))
-
-	var calls []string
-	for _, chunk := range dataChunks(t, lines) {
-		if chunk["type"] != "response.output_item.added" {
-			continue
-		}
-		item, _ := chunk["item"].(map[string]any)
-		if item["type"] != "function_call" {
-			continue
-		}
-		index, _ := chunk["output_index"].(float64)
-		callID, _ := item["call_id"].(string)
-		calls = append(calls, fmt.Sprintf("%v %s", index, callID))
+func TestAdaptStream_ResponsesClientGetsDistinctGeminiOutputIndexes(t *testing.T) {
+	tests := []struct {
+		name     string
+		upstream iter.Seq2[[]byte, error]
+		want     []string
+	}{
+		{
+			name:     "parallel calls in separate chunks",
+			upstream: gemini3ParallelFunctionCallsUpstream(),
+			want: []string{
+				"added 0 message",
+				"added 1 function_call call_172274",
+				`arguments 1 {"city":"Paris"}`,
+				"added 2 function_call call_172284",
+				`arguments 2 {"city":"Rome"}`,
+				"added 3 function_call call_172286",
+				`arguments 3 {"city":"Berlin"}`,
+			},
+		},
+		{
+			name: "text and a call in the same chunk",
+			upstream: linesSeq(
+				`data: {"candidates":[{"content":{"parts":[{"text":"Checking."},{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"},"thoughtSignature":"EpYE"}],"role":"model"},"index":0}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP","index":0}]}`,
+			),
+			want: []string{
+				"added 0 message",
+				"text 0 Checking.",
+				"added 1 function_call call_1",
+				`arguments 1 {"city":"Paris"}`,
+			},
+		},
+		{
+			name: "text then calls",
+			upstream: linesSeq(
+				`data: {"candidates":[{"content":{"parts":[{"text":"Let me "}],"role":"model"},"index":0}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"text":"check."}],"role":"model"},"index":0}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"}}],"role":"model"},"index":0}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_time","args":{},"id":"call_2"}}],"role":"model"},"finishReason":"STOP","index":0}]}`,
+			),
+			want: []string{
+				"added 0 message",
+				"text 0 Let me ",
+				"text 0 check.",
+				"added 1 function_call call_1",
+				`arguments 1 {"city":"Paris"}`,
+				"added 2 function_call call_2",
+				"arguments 2 {}",
+			},
+		},
 	}
-	assert.Equal(t, []string{"0 call_172274", "1 call_172284", "2 call_172286"}, calls)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := collectLines(t, adaptStream(tt.upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatGemini, slog.Default(), nil))
+
+			var events []string
+			for _, chunk := range dataChunks(t, lines) {
+				index, _ := chunk["output_index"].(float64)
+				delta, _ := chunk["delta"].(string)
+				switch chunk["type"] {
+				case "response.output_item.added":
+					item, _ := chunk["item"].(map[string]any)
+					event := fmt.Sprintf("added %v %v", index, item["type"])
+					if callID, _ := item["call_id"].(string); callID != "" {
+						event += " " + callID
+					}
+					events = append(events, event)
+				case "response.output_text.delta":
+					events = append(events, fmt.Sprintf("text %v %s", index, delta))
+				case "response.function_call_arguments.delta":
+					events = append(events, fmt.Sprintf("arguments %v %s", index, delta))
+				}
+			}
+			assert.Equal(t, tt.want, events)
+		})
+	}
 }
 
 func TestAdaptStream_OpenAIClientGetsSignedGeminiFunctionCall(t *testing.T) {

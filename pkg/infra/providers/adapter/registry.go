@@ -105,6 +105,7 @@ func NewRegistry() *Registry {
 	r.Register(FormatOpenAIResponses, &OpenAIResponsesAdapter{})
 	r.Register(FormatAnthropic, &AnthropicAdapter{})
 	r.Register(FormatGemini, &GeminiAdapter{})
+	r.Register(FormatVertex, NewVertexAdapter())
 	r.Register(FormatBedrock, &BedrockAdapter{})
 	r.Register(FormatMistral, &MistralAdapter{})
 	r.Register(FormatCohere, &CohereAdapter{})
