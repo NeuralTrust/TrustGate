@@ -658,3 +658,72 @@ func TestSingleConnectPage_NoEmptyConnectedPill(t *testing.T) {
 		t.Fatalf("the connected card must still report success: %s", body)
 	}
 }
+
+func renderPathToString(t *testing.T, target string, handler fiber.Handler) string {
+	t.Helper()
+	app := fiber.New()
+	app.Get("/store/mcp/connect", handler)
+	res, err := app.Test(httptest.NewRequest("GET", target, nil))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	return string(body)
+}
+
+// RUN-1635: a server connected for the first time was shelved a moment ago and
+// may not have reached this plane yet. The page said it needed no connection
+// until the user happened to reload; it now says it is getting ready and reloads
+// itself, one attempt further on each time.
+func TestSingleConnectPage_WaitsForAServerNotHereYet(t *testing.T) {
+	t.Parallel()
+	notHereYet := func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{ConsumerPath: "/store/mcp", Code: "app.linear/mcp"}, "tk", "", mustMCPCatalog(t))
+	}
+
+	body := renderPathToString(t, "/store/mcp/connect?ticket=tk", notHereYet)
+	for _, want := range []string{
+		`<meta http-equiv="refresh" content="2;url=/store/mcp/connect?ticket=tk&amp;wait=1">`,
+		`<h1 class="title">Getting Linear ready</h1>`,
+		`href="/store/mcp/connect?ticket=tk&amp;wait=1"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("waiting page missing %q, body:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "does not need an account connection") {
+		t.Fatal("a server that is still arriving must not be called connection-free")
+	}
+
+	next := renderPathToString(t, "/store/mcp/connect?ticket=tk&wait=3", notHereYet)
+	if !strings.Contains(next, `wait=4`) {
+		t.Fatalf("each reload is one attempt further on, body:\n%s", next)
+	}
+}
+
+func TestSingleConnectPage_StopsWaitingAfterTheLastAttempt(t *testing.T) {
+	t.Parallel()
+	body := renderPathToString(t, "/store/mcp/connect?ticket=tk&wait=8", func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{ConsumerPath: "/store/mcp", Code: "app.linear/mcp"}, "tk", "", mustMCPCatalog(t))
+	})
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatal("the page must stop reloading once the attempts are spent")
+	}
+	if !strings.Contains(body, "does not need an account connection") {
+		t.Fatalf("after waiting, the page says what it can, body:\n%s", body)
+	}
+}
+
+func TestSingleConnectPage_DoesNotWaitWhenTheServerIsHere(t *testing.T) {
+	t.Parallel()
+	body := renderPathToString(t, "/store/mcp/connect?ticket=tk", func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/store/mcp",
+			Code:         "app.linear/mcp",
+			Providers:    []appoauth.ProviderStatus{{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp"}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if strings.Contains(body, `http-equiv="refresh"`) || strings.Contains(body, "Getting Linear ready") {
+		t.Fatal("a server that is here is connected, not waited for")
+	}
+}
