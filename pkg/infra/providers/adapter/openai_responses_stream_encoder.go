@@ -212,7 +212,9 @@ func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 // upstream that ended without a finish, which leaves no other sign that a call
 // was cut short. A call with no argument bytes is a call to a tool that takes
 // none, as OpenAI-compatible upstreams send it, and gets empty-object
-// arguments; only non-empty arguments that do not parse mark a cut call.
+// arguments; only non-empty arguments that do not parse mark a cut call. A call
+// cut before its first argument delta looks the same as one to a tool that
+// takes no arguments, so it cannot be told apart and completes with {} too.
 func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 	for _, call := range e.pending {
 		if call.name != "" && call.text.Len() > 0 && !json.Valid([]byte(call.text.String())) {

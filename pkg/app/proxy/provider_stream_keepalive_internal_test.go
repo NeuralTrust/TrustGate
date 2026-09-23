@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -124,8 +125,77 @@ func TestPumpWithKeepalive_ReaderPanicIsRaisedOnTheConsumer(t *testing.T) {
 		return nil
 	}()
 
-	assert.Equal(t, "upstream reader failed", recovered)
+	readerPanic, ok := recovered.(*ReaderPanic)
+	require.True(t, ok, "recovered %T, want *ReaderPanic", recovered)
+	assert.Equal(t, "upstream reader failed", readerPanic.Value)
+	assert.Contains(t, string(readerPanic.Stack), "provider_stream_keepalive_internal_test.go")
 	requireNoUpstreamReader(t)
+}
+
+func TestPanicDetails(t *testing.T) {
+	value, stack := PanicDetails(&ReaderPanic{Value: "boom", Stack: []byte("reader")}, []byte("writer"))
+	assert.Equal(t, "boom", value)
+	assert.Equal(t, "reader", string(stack))
+
+	value, stack = PanicDetails("boom", []byte("writer"))
+	assert.Equal(t, "boom", value)
+	assert.Equal(t, "writer", string(stack))
+}
+
+func readerGoroutineRunning() bool {
+	buf := make([]byte, 1<<20)
+	return strings.Contains(string(buf[:runtime.Stack(buf, true)]), "created by github.com/NeuralTrust/TrustGate/pkg/app/proxy.pumpWithKeepalive")
+}
+
+func pumpUntilTick(t *testing.T, logger *slog.Logger, raw iter.Seq2[[]byte, error], tick func() bool) bool {
+	t.Helper()
+	clock := newFakeStreamClock()
+	go clock.tick(time.Second)
+	var ended bool
+	require.NotPanics(t, func() {
+		ended = pumpWithKeepalive(newStreamOptions([]streamOption{clock.option()}), logger, raw,
+			func([]byte, error) bool { return true }, tick)
+	})
+	return ended
+}
+
+func TestPumpWithKeepalive_ReaderPanicAfterTickStoppedIsLogged(t *testing.T) {
+	trigger := make(chan struct{})
+	upstream := func(func([]byte, error) bool) {
+		<-trigger
+		panic("reader failed after tick stopped")
+	}
+	var logs syncBuffer
+
+	ended := pumpUntilTick(t, slog.New(slog.NewTextHandler(&logs, nil)), upstream, func() bool { return false })
+	close(trigger)
+
+	assert.False(t, ended)
+	requireNoUpstreamReader(t)
+	require.Eventually(t, func() bool {
+		return strings.Contains(logs.String(), "reader failed after tick stopped")
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, logs.String(), "stack=")
+}
+
+func TestPumpWithKeepalive_ReaderPanicBeforeAbandonIsLogged(t *testing.T) {
+	trigger := make(chan struct{})
+	upstream := func(func([]byte, error) bool) {
+		<-trigger
+		panic("reader failed before abandon")
+	}
+	var logs syncBuffer
+	tick := func() bool {
+		close(trigger)
+		require.Eventually(t, func() bool { return !readerGoroutineRunning() }, 5*time.Second, time.Millisecond)
+		return false
+	}
+
+	ended := pumpUntilTick(t, slog.New(slog.NewTextHandler(&logs, nil)), upstream, tick)
+
+	assert.False(t, ended)
+	assert.Contains(t, logs.String(), "reader failed before abandon")
+	assert.Contains(t, logs.String(), "stack=")
 }
 
 type syncBuffer struct {

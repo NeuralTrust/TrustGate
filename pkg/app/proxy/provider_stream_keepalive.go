@@ -16,6 +16,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"runtime/debug"
@@ -91,10 +92,11 @@ type upstreamLine struct {
 // When it stops early the reader is released and the upstream request
 // cancelled, since the reader may be blocked in a read that only the
 // cancellation interrupts. A reader panic seen before the pump returns is
-// raised again on the calling goroutine; nothing in this package recovers
-// it, the proxy handler's stream writer does. When the pump returns without
-// waiting for the reader, after tick asked to stop or ctx ended, a panic the
-// reader raises afterwards has no one to raise it to and is logged instead.
+// raised again on the calling goroutine as a *ReaderPanic that carries the
+// reader's stack; nothing in this package recovers it, the proxy handler's
+// stream writer does. When the pump returns without waiting for the reader,
+// after tick asked to stop or ctx ended, a panic the reader raises afterwards
+// has no one to raise it to and is logged instead.
 func pumpWithKeepalive(
 	options streamOptions,
 	logger *slog.Logger,
@@ -172,12 +174,12 @@ func pumpWithKeepalive(
 			if !handle(l.line, l.err) {
 				release()
 				<-exited
-				repanic(readerPanic)
+				repanic(readerPanic, readerStack)
 				return false
 			}
 			<-next
 		case <-exited:
-			repanic(readerPanic)
+			repanic(readerPanic, readerStack)
 			return true
 		case <-ticker.Chan():
 			if !tick() {
@@ -193,8 +195,31 @@ func pumpWithKeepalive(
 	}
 }
 
-func repanic(v any) {
+// ReaderPanic is the value a stream panics with on its consumer when the
+// goroutine reading its upstream panicked. The consumer's own stack only shows
+// where the panic was raised again, so Stack keeps the reader's.
+type ReaderPanic struct {
+	Value any
+	Stack []byte
+}
+
+// String returns the reader's panic value as fmt prints it.
+func (p *ReaderPanic) String() string {
+	return fmt.Sprint(p.Value)
+}
+
+// PanicDetails returns the value and the stack to log for r, a value
+// recovered from a stream: the reader's for a *ReaderPanic, otherwise r and
+// stack, the stack of the goroutine that recovered it.
+func PanicDetails(r any, stack []byte) (any, []byte) {
+	if p, ok := r.(*ReaderPanic); ok {
+		return p.Value, p.Stack
+	}
+	return r, stack
+}
+
+func repanic(v any, stack []byte) {
 	if v != nil {
-		panic(v)
+		panic(&ReaderPanic{Value: v, Stack: stack})
 	}
 }
