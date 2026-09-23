@@ -145,9 +145,11 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // adapter registry. The Gemini-source + OpenAI/Responses/Anthropic/Mistral-target
 // case accumulates incremental tool-call deltas and flushes them on finish.
 //
-// onUsage, when non-nil, is invoked with the canonical usage of any chunk that
-// carries it (typically the final chunk) in both passthrough and cross-format
-// paths. Outer/mid-stream errors from raw are propagated as the sequence error.
+// onChunk, when non-nil, is invoked with every decoded upstream chunk in both
+// passthrough and cross-format paths. A cross-format stream to a Bedrock client
+// holds usage back and emits one merged metadata event after the upstream ends,
+// and none when the upstream fails. Outer/mid-stream errors from raw are
+// propagated as the sequence error.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
 	registry providerCodec,
@@ -354,7 +356,6 @@ func emitWithoutUsage(
 	*merged = adapter.MergeUsage(*merged, canonical.Usage)
 	chunk := *canonical
 	chunk.Usage = nil
-	chunk.ProviderExtensions = nil
 	return encodeAndEmit(emit, registry, &chunk, source)
 }
 
