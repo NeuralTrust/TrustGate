@@ -785,6 +785,44 @@ func TestUsageSubCounts_OpenAIResponses_CachedInput(t *testing.T) {
 	assert.Equal(t, 5, cr.Usage.InputTokens, "CachedInputTokens is a sub-count; InputTokens must not be reduced")
 }
 
+func TestUsageCache_OpenAIResponses_CacheWrite(t *testing.T) {
+	const usage = `{"input_tokens":3000,"output_tokens":9,"total_tokens":3009,"input_tokens_details":{"cached_tokens":1200,"cache_write_tokens":700}}`
+	want := &CanonicalUsage{InputTokens: 3000, OutputTokens: 9, TotalTokens: 3009, CachedInputTokens: 1200, CacheWriteInputTokens: 700}
+	runUsageCases(t, &OpenAIResponsesAdapter{}, []usageCase{
+		{
+			name:      "buffered",
+			body:      []byte(`{"id":"resp_1","object":"response","model":"gpt-5.6","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":` + usage + `}`),
+			path:      "response",
+			wantUsage: want,
+		},
+		{
+			name:      "stream completed",
+			body:      []byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6","status":"completed","usage":` + usage + `}}`),
+			path:      "stream",
+			wantUsage: want,
+		},
+	})
+}
+
+func TestUsageCache_OpenAIResponses_ZeroDetails(t *testing.T) {
+	const usage = `{"input_tokens":3000,"output_tokens":9,"total_tokens":3009,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}`
+	want := &CanonicalUsage{InputTokens: 3000, OutputTokens: 9, TotalTokens: 3009}
+	runUsageCases(t, &OpenAIResponsesAdapter{}, []usageCase{
+		{
+			name:      "buffered",
+			body:      []byte(`{"id":"resp_1","object":"response","model":"gpt-5.6","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":` + usage + `}`),
+			path:      "response",
+			wantUsage: want,
+		},
+		{
+			name:      "stream completed",
+			body:      []byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6","status":"completed","usage":` + usage + `}}`),
+			path:      "stream",
+			wantUsage: want,
+		},
+	})
+}
+
 // Responses API custom tools are flat (no nested "custom" object). They used to
 // be dropped on decode, silently removing the tool from the request (ENG-1281).
 func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
