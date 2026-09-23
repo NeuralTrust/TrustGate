@@ -150,33 +150,70 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T
 			},
 		},
 		{
-			name: "a developer message between assistant items ends the turn",
+			name: "a developer message between assistant items stays in the turn",
 			input: `[
 				{"role": "user", "content": "Hi."},
 				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A."}]},
 				{"role": "developer", "content": "Be brief."},
-				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "B."}]}
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+				{"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "c1", "output": "ok"}
 			]`,
 			want: []CanonicalMessage{
 				{Role: "user", Content: "Hi."},
-				{Role: "assistant", Content: "A."},
-				{Role: "assistant", Content: "B."},
+				{Role: "assistant", Content: "A.", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "ok", ToolCallID: "c1"},
 			},
 			wantSystem: "Be brief.",
 		},
 		{
-			name: "a skipped item between assistant items ends the turn",
+			name: "skipped items between assistant items stay in the turn",
 			input: `[
-				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"},
-				{"type": "custom_tool_call", "call_id": "call_2", "name": "apply_patch", "input": "*** Begin Patch"},
-				{"type": "function_call", "call_id": "call_3", "name": "g", "arguments": "{}"},
-				{"type": "local_shell_call", "call_id": "call_4", "action": {"type": "exec", "command": ["ls"]}},
-				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]}
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "item_reference", "id": "msg_1"},
+				{"type": "function_call", "call_id": "B", "name": "g", "arguments": "{}"},
+				{"type": "custom_tool_call", "call_id": "C", "name": "apply_patch", "input": "*** Begin Patch"},
+				{"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "q"}},
+				{"type": "tool_search_call", "call_id": "ts1", "execution": "client", "arguments": {"query": "calendar"}},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "function_call_output", "call_id": "B", "output": "b"}
 			]`,
 			want: []CanonicalMessage{
-				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
-				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_3", Name: "g", Arguments: "{}"}}},
-				{Role: "assistant", Content: "Done."},
+				{Role: "assistant", Content: "Done.", ToolCalls: []CanonicalToolCall{
+					{ID: "A", Name: "f", Arguments: "{}"},
+					{ID: "B", Name: "g", Arguments: "{}"},
+				}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "tool", Content: "b", ToolCallID: "B"},
+			},
+		},
+		{
+			name: "a tool output ends the turn",
+			input: `[
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Next."}]},
+				{"type": "function_call", "call_id": "B", "name": "g", "arguments": "{}"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "A", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "assistant", Content: "Next.", ToolCalls: []CanonicalToolCall{{ID: "B", Name: "g", Arguments: "{}"}}},
+			},
+		},
+		{
+			name: "an empty assistant message does not open a turn",
+			input: `[
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "message", "role": "assistant", "content": ""},
+				{"role": "user", "content": "Go on."}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "A", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "user", Content: "Go on."},
 			},
 		},
 		{
@@ -225,7 +262,10 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallOutput(t *testi
 		{name: "text parts are joined", output: `[{"type": "input_text", "text": "line 1"}, {"type": "output_text", "text": "line 2"}]`, want: "line 1\nline 2"},
 		{name: "non-text parts are left out", output: `[{"type": "input_text", "text": "img"}, {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: "img"},
 		{name: "only non-text parts", output: `[{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: responsesNonTextToolOutput},
-		{name: "empty list", output: `[]`, want: ""},
+		{name: "empty list", output: `[]`, want: responsesNonTextToolOutput},
+		{name: "null", output: `null`, want: responsesNonTextToolOutput},
+		{name: "empty string", output: `""`, want: ""},
+		{name: "object", output: `{"stdout": "a"}`, want: `{"stdout": "a"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,8 +288,8 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallOutput(t *testi
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_MalformedInputFails(t *testing.T) {
 	for _, input := range []string{
 		`{"input": 42}`,
-		`{"input": [{"type": "function_call", "call_id": "c1", "name": "f", "arguments": {"a": 1}}]}`,
-		`{"input": [{"role": "user", "content": "hi"}, "stray"]}`,
+		`{"input": {"role": "user", "content": "hi"}}`,
+		`{"input": true}`,
 	} {
 		_, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
 		assert.Error(t, err, input)
@@ -257,6 +297,37 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_MalformedInputFails(t *test
 
 	_, err := NewRegistry().DecodeRequestFor([]byte(`{"model": "m", "input": 42}`), FormatOpenAIResponses)
 	assert.True(t, IsRequestDecodeError(err), "a malformed input is the caller's error: %v", err)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_LeavesOutItemsItCannotDecode(t *testing.T) {
+	body := `{"model": "m", "tools": [{"type": "function", "name": "book", "parameters": {"type": "object"}}], "input": [
+		{"role": "user", "content": "Find my calendar tool."},
+		{"type": "tool_search_call", "call_id": "ts1", "execution": "client", "arguments": {"query": "calendar"}, "status": "completed"},
+		{"type": "tool_search_output", "call_id": "ts1", "execution": "client", "status": "completed", "tools": []},
+		{"type": "function_call", "call_id": "bad", "name": "f", "arguments": {"a": 1}},
+		{"type": "input_text", "text": 42},
+		"stray",
+		{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Found it."}]},
+		{"type": "function_call", "call_id": "c1", "name": "book", "arguments": "{\"day\":\"mon\"}"},
+		{"type": "function_call_output", "call_id": "c1", "output": "booked"},
+		{"role": "user", "content": "Thanks."}
+	]}`
+
+	canonical, err := NewRegistry().DecodeRequestFor([]byte(body), FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Equal(t, []CanonicalMessage{
+		{Role: "user", Content: "Find my calendar tool."},
+		{Role: "assistant", Content: "Found it.", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "book", Arguments: `{"day":"mon"}`}}},
+		{Role: "tool", Content: "booked", ToolCallID: "c1"},
+		{Role: "user", Content: "Thanks."},
+	}, canonical.Messages)
+	require.Len(t, canonical.Tools, 1)
+	assert.Equal(t, "book", canonical.Tools[0].Name)
+
+	for _, target := range []Format{FormatOpenAI, FormatAnthropic, FormatBedrock, FormatGemini, FormatCohere, FormatDeepSeek} {
+		_, err := NewRegistry().AdaptRequest([]byte(body), FormatOpenAIResponses, target)
+		assert.NoError(t, err, target)
+	}
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {

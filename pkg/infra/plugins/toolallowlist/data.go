@@ -21,6 +21,7 @@ const (
 	actionStripped    = "stripped"
 	actionPassThrough = "pass_through"
 	actionSkipped     = "skipped"
+	actionUndecodable = "undecodable"
 )
 
 type ToolAllowlistData struct {

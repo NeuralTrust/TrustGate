@@ -93,6 +93,9 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		return okResult(), nil
 	}
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if adapter.IsRequestDecodeError(err) {
+		return nil, appplugins.UndecodableRequestError(PluginName)
+	}
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}

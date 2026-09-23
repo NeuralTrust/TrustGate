@@ -1313,7 +1313,6 @@ func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
 		{name: "nil request", req: nil},
 		{name: "empty body", req: openAIReq(nil)},
 		{name: "no tools declared", req: openAIReq(openAIReqBody(t))},
-		{name: "undecodable body", req: openAIReq([]byte("{not-json"))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1325,4 +1324,37 @@ func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
 			assert.Equal(t, http.StatusOK, res.StatusCode)
 		})
 	}
+}
+
+func TestPlugin_PreRequest_UndecodableBodyFailsClosed(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+	body := []byte(`{"model":"gpt-4o","messages":123,"tools":[{"type":"function","function":{"name":"send_email"}}]}`)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+
+	assert.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
+	assert.Equal(t, "invalid_request_body", pe.Type)
+}
+
+func TestPlugin_PreRequest_ResponsesInputItemItCannotDecode(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+	body := []byte(`{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"mail it"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"mail"}},` +
+		`{"type":"input_text","text":42}` +
+		`],"tools":[{"type":"function","name":"send_email","parameters":{"type":"object"}}]}`)
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_responses", Body: body}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode, "the tool over budget is still enforced")
 }

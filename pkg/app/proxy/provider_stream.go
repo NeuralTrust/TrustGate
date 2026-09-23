@@ -28,7 +28,6 @@ import (
 var (
 	sseDataPrefix = []byte("data:")
 	sseDoneMarker = []byte("[DONE]")
-	streamClock   = time.Now
 )
 
 // injectStreamTrue sets "stream": true in a JSON request body so registries using
@@ -181,9 +180,15 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // response.failed, and [DONE] without a finish completes its response. Once an
 // Anthropic, Cohere or Responses client has its terminal event for a failed
 // upstream, the sequence error is wrapped in ClientNotifiedStreamError. A
-// Responses client that has been sent nothing for a while as upstream lines
-// keep arriving gets an SSE comment, so idle timeouts do not cut a stream
-// whose tool calls are held or whose reasoning is not forwarded.
+// Responses client that has been sent nothing for a while gets an SSE
+// comment, whether or not upstream lines keep arriving, so idle timeouts do
+// not cut a stream whose tool calls are held or whose reasoning is not
+// forwarded; its upstream is read on a goroutine of its own for that, while
+// every line still reaches the client from the goroutine ranging over the
+// returned sequence, one upstream line at a time. A Responses client whose
+// upstream sent [DONE] without a finish while a held tool call had arguments
+// that are not valid JSON gets response.failed, as for an upstream that ended
+// without one.
 //
 // An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
 // the usage once: on the include_usage chunk when one follows the finish,
@@ -195,13 +200,15 @@ func adaptStream(
 	source, target adapter.Format,
 	logger *slog.Logger,
 	onChunk func(*adapter.CanonicalStreamChunk),
+	opts ...streamOption,
 ) iter.Seq2[[]byte, error] {
+	options := newStreamOptions(opts)
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
 	var deferred *finishDeferral
 	var geminiCalls *adapter.GeminiCallIndexer
 	if crossFormat {
-		deferred = newFinishDeferral(source, target)
+		deferred = newFinishDeferral(source, target, options.now)
 		if adapter.IsSameWireFormat(target, adapter.FormatGemini) {
 			geminiCalls = &adapter.GeminiCallIndexer{}
 		}
@@ -227,99 +234,99 @@ func adaptStream(
 		}
 
 		var acc toolCallAccumulator
-		for line, err := range raw {
+		handle := func(line []byte, err error) bool {
 			if err != nil {
 				if deferred != nil {
 					ok, streamErr := deferred.fail(emit, registry, source, logger, err, nil)
 					if !ok {
-						return
+						return false
 					}
 					err = streamErr
 				}
 				if usage != nil && !usage.flush(emit) {
-					return
+					return false
 				}
 				yield(nil, err)
-				return
+				return false
 			}
 
 			if !crossFormat {
 				if payload, ok := dataPayload(line); ok {
 					observeChunk(registry, payload, target, onChunk)
 				}
-				if !yield(line, nil) {
-					return
-				}
-				continue
+				return yield(line, nil)
 			}
 
 			if deferred != nil && !deferred.keepalive(emit) {
-				return
+				return false
 			}
 
 			if isSSEDone(line) {
 				if deferred != nil && !deferred.done(emit, registry, source, logger) {
-					return
+					return false
 				}
 				if usage != nil && !usage.flush(emit) {
-					return
+					return false
 				}
 				if forwardDone && !emit(sseDoneLines()) {
-					return
+					return false
 				}
-				continue
+				return true
 			}
 
 			payload, ok := dataPayload(line)
 			if !ok {
-				continue
+				return true
 			}
 			observeChunk(registry, payload, target, onChunk)
 
 			if geminiToolCalls {
-				if !emitGeminiToolCalls(emit, registry, payload, source, target, &acc, deferred, logger) {
-					return
-				}
-				continue
+				return emitGeminiToolCalls(emit, registry, payload, source, target, &acc, deferred, logger)
 			}
 
 			if deferred != nil {
 				ok, upstreamErr := emitDeferred(emit, registry, payload, source, target, deferred, logger)
 				if !ok {
-					return
+					return false
 				}
 				if upstreamErr != nil {
 					if ok, streamErr := deferred.fail(emit, registry, source, logger, upstreamErr, upstreamErr); ok {
 						yield(nil, streamErr)
 					}
-					return
+					return false
 				}
-				continue
+				return true
 			}
 
 			if geminiCalls != nil {
-				if !emitGeminiUpstream(emit, registry, payload, source, target, geminiCalls, logger) {
-					return
-				}
-				continue
+				return emitGeminiUpstream(emit, registry, payload, source, target, geminiCalls, logger)
 			}
 
 			if usage != nil {
-				if !usage.adapt(emit, payload) {
-					return
-				}
-				continue
+				return usage.adapt(emit, payload)
 			}
 
 			lines, adaptErr := registry.AdaptStreamChunk(payload, source, target)
 			if adaptErr != nil {
 				logger.Warn("stream adapt chunk failed", slog.String("error", adaptErr.Error()))
-				continue
+				return true
 			}
 			if !emit(lines) {
-				return
+				return false
 			}
 			// TODO(B.3): plugin chunk forwarding hook here.
+			return true
+		}
+		if deferred != nil && deferred.responses != nil {
+			if !pumpWithKeepalive(options, raw, handle, func() bool { return deferred.keepalive(emit) }) {
+				return
+			}
+		} else {
+			for line, err := range raw {
+				if !handle(line, err) {
+					return
+				}
+			}
 		}
 		if deferred != nil {
 			deferred.end(emit, registry, source, logger)
@@ -495,14 +502,14 @@ func emitGeminiUpstream(
 	return encodeAndEmit(emit, registry, canonical, source, logger)
 }
 
-func newFinishDeferral(source, target adapter.Format) *finishDeferral {
+func newFinishDeferral(source, target adapter.Format, now func() time.Time) *finishDeferral {
 	switch source {
 	case adapter.FormatBedrock:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
 	case adapter.FormatOpenAIResponses:
-		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(streamClock))}
+		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(now))}
 	case adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatCohere:
@@ -635,14 +642,27 @@ func (d *finishDeferral) end(
 
 // done flushes on the upstream's [DONE]. Anthropic, Cohere and Responses
 // clients whose upstream sent [DONE] without a finish get a stop, since it
-// closed the stream cleanly.
+// closed the stream cleanly, unless a Responses client has a held tool call
+// whose arguments are not valid JSON: nothing but a finish tells a whole call
+// from a cut one, and a client executes the calls it gets, so that response
+// fails as one whose upstream ended without a finish does.
 func (d *finishDeferral) done(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if (d.anthropic != nil || d.cohere != nil || d.responses != nil) && !d.finished {
+	if d.finished {
+		return d.flush(emit, registry, source, logger)
+	}
+	if d.responses != nil && !d.responses.HeldCallsComplete() {
+		logger.Warn("upstream stream sent [DONE] without a finish while a tool call was incomplete; aborted the client stream with an error event",
+			slog.String("target", string(d.target)),
+			slog.String("source", string(source)),
+		)
+		return d.abort(emit, "upstream stream ended before its tool call arguments were complete", source, logger)
+	}
+	if d.anthropic != nil || d.cohere != nil || d.responses != nil {
 		d.finished = true
 		d.reason = "stop"
 	}

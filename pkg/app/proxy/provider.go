@@ -254,7 +254,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req), withStreamContext(ctx))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
