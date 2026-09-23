@@ -642,23 +642,13 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 		})
 	}
 
-	stopReason := "end_turn"
-	switch resp.FinishReason {
-	case "stop":
-		stopReason = "end_turn"
-	case "length":
-		stopReason = "max_tokens"
-	case "tool_calls":
-		stopReason = "tool_use"
-	}
-
 	out := anthropicResponse{
 		ID:         resp.ID,
 		Type:       "message",
 		Role:       "assistant",
 		Model:      resp.Model,
 		Content:    content,
-		StopReason: stopReason,
+		StopReason: anthropicStopReason(resp.FinishReason),
 	}
 
 	if resp.Usage != nil {
@@ -887,21 +877,13 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 	// --- finish_reason → content_block_stop + message_delta + message_stop ----
 	if chunk.FinishReason != "" {
-		sr := "end_turn"
-		switch chunk.FinishReason {
-		case "length":
-			sr = "max_tokens"
-		case "tool_calls":
-			sr = "tool_use"
-		}
-
 		var lines [][]byte
 		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: 0}
 		data, _ := json.Marshal(cbStop)
 		lines = append(lines, SSEEvent("content_block_stop", data)...)
 		msgDelta := anthropicSSEMessageDelta{
 			Type:  "message_delta",
-			Delta: anthropicSSEMessageDeltaBody{StopReason: sr},
+			Delta: anthropicSSEMessageDeltaBody{StopReason: anthropicStopReason(chunk.FinishReason)},
 			Usage: anthropicSSEUsageFrom(chunk.Usage),
 		}
 		data, _ = json.Marshal(msgDelta)
