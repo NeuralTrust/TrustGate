@@ -495,3 +495,45 @@ func TestInstallationsService_UpsertValidatesWireRecord(t *testing.T) {
 		t.Fatalf("Upsert of a valid pending record: %v", err)
 	}
 }
+
+// RUN-1652: a Portal install is recorded by the console with the caller's email
+// as installed_by, and the configure page on the data plane then merges the
+// user's values into that same row. Rewriting the config of a row that already
+// named its installer is not a forgery; changing who installed it, or what was
+// decided, still is.
+func TestInstallationsService_UpsertKeepsAStoredForeignInstaller(t *testing.T) {
+	gw := tenantGateway(t, "acme")
+	repo := newMemInstallations()
+	stored, err := installationdomain.New(gw.ID, "user-1", "com.amazon.aws/mcp", "ana@acme.test", nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	if err := repo.Upsert(context.Background(), stored); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	svc := NewInstallationsService(repo, nil, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw},
+	}, discardLogger())
+	ctx := WithScope(context.Background(), gw.ID.String())
+
+	configured := installationToProto(stored)
+	configured.Config = map[string]string{"region": "eu-west-1"}
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: configured}); err != nil {
+		t.Fatalf("config merge onto the stored row: %v", err)
+	}
+	if got := repo.rows[key(gw.ID, "user-1", "com.amazon.aws/mcp")].Config["region"]; got != "eu-west-1" {
+		t.Fatalf("config not stored, got %q", got)
+	}
+
+	reattributed := installationToProto(stored)
+	reattributed.InstalledBy = "admin@acme.test"
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: reattributed}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("changing installed_by: code = %v, want PermissionDenied", status.Code(err))
+	}
+
+	redecided := installationToProto(stored)
+	redecided.Status = string(installationdomain.StatusPendingApproval)
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: redecided}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("changing status under a foreign installer: code = %v, want PermissionDenied", status.Code(err))
+	}
+}
