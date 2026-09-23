@@ -437,6 +437,12 @@ func TestBedrock_UsageFold(t *testing.T) {
 			name: "unknown or empty ttl entries are ignored for 1h",
 			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
 				"cacheDetails":[{"inputTokens":100,"ttl":""},{"inputTokens":150,"ttl":"24h"},{"inputTokens":50}]}`,
+			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300},
+		},
+		{
+			name: "a known ttl among unknown entries marks the breakdown known",
+			wire: `{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,
+				"cacheDetails":[{"inputTokens":100,"ttl":"24h"},{"inputTokens":200,"ttl":"5m"}]}`,
 			want: &CanonicalUsage{InputTokens: 310, OutputTokens: 5, TotalTokens: 315, CacheWriteInputTokens: 300, cacheTTLKnown: true},
 		},
 		{
@@ -472,6 +478,33 @@ func TestBedrock_UsageFold(t *testing.T) {
 			assertUsageInvariants(t, streamed)
 		})
 	}
+}
+
+func TestBedrock_UnknownTTLIsNotReEmitted(t *testing.T) {
+	upstream := []byte(`{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn",` +
+		`"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15,"cacheWriteInputTokens":300,` +
+		`"cacheDetails":[{"inputTokens":100,"ttl":""},{"inputTokens":200,"ttl":"24h"}]}}`)
+	cr, err := (&BedrockAdapter{}).DecodeResponse(upstream)
+	require.NoError(t, err)
+	require.NotNil(t, cr.Usage)
+
+	anthropicBody, err := (&AnthropicAdapter{}).EncodeResponse(cr)
+	require.NoError(t, err)
+	var anthropicWire struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(anthropicBody, &anthropicWire))
+	assert.NotContains(t, anthropicWire.Usage, "cache_creation")
+	assert.JSONEq(t, `300`, string(anthropicWire.Usage["cache_creation_input_tokens"]))
+
+	bedrockBody, err := (&BedrockAdapter{}).EncodeResponse(cr)
+	require.NoError(t, err)
+	var bedrockWire struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(bedrockBody, &bedrockWire))
+	assert.NotContains(t, bedrockWire.Usage, "cacheDetails")
+	assert.JSONEq(t, `300`, string(bedrockWire.Usage["cacheWriteInputTokens"]))
 }
 
 func assertUsageInvariants(t *testing.T, u *CanonicalUsage) {

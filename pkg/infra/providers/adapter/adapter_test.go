@@ -1194,6 +1194,54 @@ func TestAnthropicSSEUsage_CacheCreationBreakdown(t *testing.T) {
 	assert.JSONEq(t, `100`, string(start.Message.Usage["input_tokens"]))
 }
 
+func TestAnthropicUsage_CacheCreationWireCarriesBothKeys(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *CanonicalUsage
+		want  string
+	}{
+		{
+			name:  "five-minute-only write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CacheWriteInputTokens: 300, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":300,"ephemeral_1h_input_tokens":0}`,
+		},
+		{
+			name:  "ttl known without a write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CachedInputTokens: 100, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &AnthropicAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			var buffered struct {
+				Usage map[string]json.RawMessage `json:"usage"`
+			}
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.JSONEq(t, tt.want, string(buffered.Usage["cache_creation"]), "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Role: "assistant", Usage: tt.usage})
+			require.NoError(t, err)
+			var start struct {
+				Message struct {
+					Usage map[string]json.RawMessage `json:"usage"`
+				} `json:"message"`
+			}
+			for _, line := range lines {
+				if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+					require.NoError(t, json.Unmarshal(payload, &start))
+					break
+				}
+			}
+			assert.JSONEq(t, tt.want, string(start.Message.Usage["cache_creation"]), "stream")
+		})
+	}
+}
+
 func TestAnthropicUsage_OneHourShareClampedToWrite(t *testing.T) {
 	body := []byte(`{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
 		"usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`)
