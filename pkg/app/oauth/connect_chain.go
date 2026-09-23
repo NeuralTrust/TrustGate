@@ -20,6 +20,7 @@ import (
 	"net/url"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -50,6 +51,14 @@ func (s *connectService) ChainURL(ctx context.Context, baseURL string, gatewayID
 func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data, gatewayID ids.GatewayID, resource, principalSub string) *appconsumer.RoutableConsumer {
 	if resource != "" {
 		if res, err := url.Parse(resource); err == nil && res.Path != "" {
+			// The MCP Store is synthetic, so it is never in data and MatchPath misses
+			// it. Falling through would detour a Store login to whichever
+			// application happens to have an unlinked account, which is not what the
+			// person signed in to. Store accounts are linked per installed server,
+			// from the Portal or the tool's own connect link, so there is no chain.
+			if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(res.Path)) {
+				return nil
+			}
 			if rc, ok := data.MatchPath(res.Path); ok {
 				if s.hasUnlinked(ctx, gatewayID, data, rc, principalSub) {
 					return rc
