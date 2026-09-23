@@ -855,3 +855,50 @@ func TestPlugin_BothMode(t *testing.T) {
 		assert.Equal(t, `{"answer":"hi"}`, store.exact[partition+"|"+exactKey(partition, "hello world")], "the exact store must still succeed when the semantic store fails")
 	})
 }
+
+func TestPlugin_ImagesBypassCache(t *testing.T) {
+	t.Parallel()
+
+	const partition = "b1|c:c-1"
+	bothSettings := settingsWith(map[string]any{"mode": modeBoth})
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "text with image",
+			body: `{"model":"gpt","messages":[{"role":"user","content":[{"type":"text","text":"hello world"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]}`,
+		},
+		{
+			name: "image-only turn after a cached text turn",
+			body: `{"model":"gpt","messages":[{"role":"user","content":"hello world"},{"role":"assistant","content":"hi"},{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &fakeStore{
+				candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.99}},
+				exact:      map[string]string{partition + "|" + exactKey(partition, "hello world"): `{"cached":true}`},
+			}
+			creator := &fakeCreator{emb: anEmbedding()}
+			p := New(store, locatorWith(creator), adapter.NewRegistry())
+			req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: []byte(tt.body)}
+
+			res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, bothSettings, req, &infracontext.ResponseContext{}, defaultScope()))
+			require.NoError(t, err)
+			assert.False(t, res.StopUpstream, "a turn with images must never be served from cache")
+			assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+			_, err = p.Execute(context.Background(), scopedInput(policy.StagePostResponse, bothSettings, req, resp, defaultScope()))
+			require.NoError(t, err)
+			assert.Empty(t, store.stored, "a turn with images must not be stored semantically")
+			assert.Len(t, store.exact, 1, "only the pre-seeded exact entry remains")
+			assert.Equal(t, 0, creator.calls)
+		})
+	}
+}
