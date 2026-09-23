@@ -130,6 +130,16 @@ func cohereUsageToCanonical(u *cohereUsage) *CanonicalUsage {
 	return cu
 }
 
+func cohereUsageFromCanonical(u *CanonicalUsage) *cohereUsage {
+	if u == nil {
+		return nil
+	}
+	return &cohereUsage{
+		Tokens:       &cohereUsageTokens{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens},
+		CachedTokens: u.CachedInputTokens,
+	}
+}
+
 func cohereFinishToCanonical(reason string) string {
 	switch strings.ToUpper(reason) {
 	case "COMPLETE":
@@ -368,14 +378,7 @@ func (a *CohereAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 			ToolCalls: toolCalls,
 		},
 	}
-	if resp.Usage != nil {
-		out.Usage = &cohereUsage{
-			Tokens: &cohereUsageTokens{
-				InputTokens:  resp.Usage.InputTokens,
-				OutputTokens: resp.Usage.OutputTokens,
-			},
-		}
-	}
+	out.Usage = cohereUsageFromCanonical(resp.Usage)
 	return json.Marshal(out)
 }
 
@@ -474,14 +477,7 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 	}
 	if chunk.FinishReason != "" || chunk.Usage != nil {
 		delta := cohereMessageEndDelta{FinishReason: canonicalFinishToCohere(chunk.FinishReason)}
-		if chunk.Usage != nil {
-			delta.Usage = &cohereUsage{
-				Tokens: &cohereUsageTokens{
-					InputTokens:  chunk.Usage.InputTokens,
-					OutputTokens: chunk.Usage.OutputTokens,
-				},
-			}
-		}
+		delta.Usage = cohereUsageFromCanonical(chunk.Usage)
 		payload, _ := json.Marshal(cohereStreamEvent{
 			Type:  "message-end",
 			Delta: mustMarshal(delta),

@@ -217,13 +217,12 @@ func TestWireUsage_CacheSplit(t *testing.T) {
 
 	cr, err := (&adapter.BedrockAdapter{}).DecodeResponse(body)
 	require.NoError(t, err)
-	assert.Equal(t, &adapter.CanonicalUsage{
-		InputTokens:             310,
-		OutputTokens:            5,
-		TotalTokens:             315,
-		CacheWriteInputTokens:   300,
-		CacheWrite1hInputTokens: 200,
-	}, cr.Usage)
+	require.NotNil(t, cr.Usage)
+	assert.Equal(t, 310, cr.Usage.InputTokens)
+	assert.Equal(t, 5, cr.Usage.OutputTokens)
+	assert.Equal(t, 315, cr.Usage.TotalTokens)
+	assert.Equal(t, 300, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 200, cr.Usage.CacheWrite1hInputTokens)
 }
 
 func TestConverseStreamEventJSON(t *testing.T) {

@@ -820,6 +820,7 @@ func converseUsageToCanonical(u *ConverseUsage) *CanonicalUsage {
 		}
 	}
 	cu.setCache(read, write, write1h)
+	cu.cacheTTLKnown = len(u.CacheDetails) > 0
 	return cu
 }
 
@@ -827,14 +828,17 @@ func converseUsageFromCanonical(u *CanonicalUsage) *ConverseUsage {
 	if u == nil {
 		return nil
 	}
-	return &ConverseUsage{
-		InputTokens:           max(0, u.InputTokens-u.CachedInputTokens-u.CacheWriteInputTokens),
+	out := &ConverseUsage{
+		InputTokens:           u.PlainInputTokens(),
 		OutputTokens:          u.OutputTokens,
 		TotalTokens:           u.TotalTokens,
 		CacheReadInputTokens:  u.CachedInputTokens,
 		CacheWriteInputTokens: u.CacheWriteInputTokens,
-		CacheDetails:          converseCacheDetails(u.CacheWriteInputTokens, u.CacheWrite1hInputTokens),
 	}
+	if u.hasCacheTTLBreakdown() {
+		out.CacheDetails = converseCacheDetails(u.CacheWriteInputTokens, u.CacheWrite1hInputTokens)
+	}
+	return out
 }
 
 func converseCacheDetails(write, write1h int) []ConverseCacheDetail {
