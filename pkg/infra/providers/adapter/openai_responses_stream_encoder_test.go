@@ -94,6 +94,21 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			},
 		},
 		{
+			name: "calls with different ids at one index",
+			chunks: []*CanonicalStreamChunk{
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_2", Name: "a", ArgumentsDelta: `{"x":1}`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: " "}}},
+			},
+			want: []string{
+				"added 0 function_call call_1",
+				"arguments 0 {}",
+				"added 1 function_call call_2",
+				`arguments 1 {"x":1}`,
+				"arguments 1  ",
+			},
+		},
+		{
 			name: "a call before any text",
 			chunks: []*CanonicalStreamChunk{
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
