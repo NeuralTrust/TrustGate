@@ -557,6 +557,61 @@ func TestGemini_DecodeRequest_PairsResponsesWithoutIDs(t *testing.T) {
 	}
 }
 
+func TestGemini_DecodeRequest_SyntheticCallIDsUniquePerRequest(t *testing.T) {
+	tests := []struct {
+		name      string
+		tools     string
+		contents  string
+		wantCalls []string
+		wantTool  []string
+	}{
+		{
+			name: "two turns calling the same function",
+			contents: `{"role":"user","parts":[{"text":"hi"}]},
+				{"role":"model","parts":[{"functionCall":{"name":"search","args":{"q":"a"}}}]},
+				{"role":"user","parts":[{"functionResponse":{"name":"search","response":{"ok":1}}}]},
+				{"role":"model","parts":[{"functionCall":{"name":"search","args":{"q":"b"}}}]},
+				{"role":"user","parts":[{"functionResponse":{"name":"search","response":{"ok":2}}}]}`,
+			wantCalls: []string{"search", "search_2"},
+			wantTool:  []string{"search", "search_2"},
+		},
+		{
+			name:  "a suffixed id skips a declared tool name",
+			tools: `,"tools":[{"functionDeclarations":[{"name":"search"},{"name":"search_2"}]}]`,
+			contents: `{"role":"user","parts":[{"text":"hi"}]},
+				{"role":"model","parts":[{"functionCall":{"name":"search","args":{"q":"a"}}},{"functionCall":{"name":"search","args":{"q":"b"}}},{"functionCall":{"name":"search_2","args":{}}}]},
+				{"role":"user","parts":[{"functionResponse":{"name":"search","response":{"ok":1}}},{"functionResponse":{"name":"search","response":{"ok":2}}},{"functionResponse":{"name":"search_2","response":{"ok":3}}}]}`,
+			wantCalls: []string{"search", "search_3", "search_2"},
+			wantTool:  []string{"search", "search_3", "search_2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(`{"contents":[` + tt.contents + `]` + tt.tools + `}`))
+			require.NoError(t, err)
+			var calls, results []string
+			for _, m := range cr.Messages {
+				for _, tc := range m.ToolCalls {
+					calls = append(calls, tc.ID)
+				}
+				if m.Role == "tool" {
+					results = append(results, m.ToolCallID)
+				}
+			}
+			assert.Equal(t, tt.wantCalls, calls)
+			assert.Equal(t, tt.wantTool, results)
+			if len(cr.Tools) == 0 {
+				return
+			}
+			for _, m := range cr.Messages {
+				for _, tc := range m.ToolCalls {
+					assert.Equal(t, tc.Name, geminiFunctionResponseName(tc.ID, nil, cr.Tools), "id %s reads back as its function", tc.ID)
+				}
+			}
+		})
+	}
+}
+
 func TestGemini_DecodeRequest_PairsOnlyWithThePrecedingModelTurn(t *testing.T) {
 	body := `{"contents":[
 		{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{},"id":"call_1"}},{"functionCall":{"name":"get_weather","args":{},"id":"call_2"}}]},
