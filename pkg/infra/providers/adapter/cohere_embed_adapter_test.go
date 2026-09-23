@@ -68,3 +68,13 @@ func TestOpenAIEmbeddings_MixedInputIsADecodeError(t *testing.T) {
 	_, err := NewRegistry().DecodeRequestFor([]byte(`{"model":"m","input":[1,"a"]}`), FormatOpenAIEmbeddings)
 	assert.True(t, IsRequestDecodeError(err), "err = %v", err)
 }
+
+func TestEmbeddingFromCanonical_NilRequest(t *testing.T) {
+	emb, err := embeddingFromCanonical(nil)
+	require.NoError(t, err)
+	assert.Equal(t, &CanonicalEmbeddingRequest{}, emb)
+
+	emb, err = textEmbeddingFromCanonical(nil)
+	require.NoError(t, err)
+	assert.Equal(t, &CanonicalEmbeddingRequest{}, emb)
+}

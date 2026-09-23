@@ -269,7 +269,10 @@ func textEmbeddingFromCanonical(req *CanonicalRequest) (*CanonicalEmbeddingReque
 }
 
 func embeddingFromCanonical(req *CanonicalRequest) (*CanonicalEmbeddingRequest, error) {
-	if req == nil || req.Metadata == nil {
+	if req == nil {
+		return &CanonicalEmbeddingRequest{}, nil
+	}
+	if req.Metadata == nil {
 		return &CanonicalEmbeddingRequest{Model: req.Model}, nil
 	}
 	raw, ok := req.Metadata["embedding"]

@@ -808,7 +808,7 @@ func responsesStreamCases() []responsesStreamCase {
 			wantCalls: []string{`call_1 get_weather {"city":"Paris"}`},
 		},
 		{
-			name:   "openai done without a finish fails a held call with no arguments",
+			name:   "openai done without a finish completes a held call with no arguments",
 			target: adapter.FormatOpenAI,
 			upstream: func() iter.Seq2[[]byte, error] {
 				return linesSeq(
@@ -816,9 +816,28 @@ func responsesStreamCases() []responsesStreamCase {
 					`data: [DONE]`,
 				)
 			},
-			want:       joinGolden([]string{"created", "in_progress", "error", "failed"}),
-			wantStatus: "failed",
-			wantError:  "upstream stream ended before its tool call arguments were complete",
+			want: joinGolden(
+				[]string{"created", "in_progress"},
+				responsesCallGolden(0, "call_1", "get_time", `{}`),
+				[]string{"completed"},
+			),
+			wantCalls: []string{`call_1 get_time {}`},
+		},
+		{
+			name:   "openai-compatible done without a finish completes a held call with no arguments",
+			target: adapter.FormatGroq,
+			upstream: func() iter.Seq2[[]byte, error] {
+				return linesSeq(
+					`data: {"id":"c","model":"m","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":""}}]}}]}`,
+					`data: [DONE]`,
+				)
+			},
+			want: joinGolden(
+				[]string{"created", "in_progress"},
+				responsesCallGolden(0, "call_1", "get_time", `{}`),
+				[]string{"completed"},
+			),
+			wantCalls: []string{`call_1 get_time {}`},
 		},
 		{
 			name:   "openai finish completes a held call with no arguments",
