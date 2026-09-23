@@ -309,7 +309,7 @@ func fixedHostApp(service appconsumer.APIKeyConsumers, keys keyStore, gateways g
 func callFixedHost(t *testing.T, app *fiber.App, key string) (int, mcphttp.WhoAmIResponse, http.Header) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, mcphttp.WhoAmIPath, nil)
-	request.Host = "gateway.neuraltrust.ai"
+	request.Host = "agentgateway.neuraltrust.ai"
 	request.Header.Set("X-Forwarded-Proto", "https")
 	if key != "" {
 		request.Header.Set("X-AG-API-Key", key)
