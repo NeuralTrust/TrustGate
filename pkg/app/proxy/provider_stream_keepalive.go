@@ -17,6 +17,8 @@ package proxy
 import (
 	"context"
 	"iter"
+	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -50,9 +52,6 @@ func withStreamContext(ctx context.Context) streamOption {
 	return func(o *streamOptions) { o.ctx = ctx }
 }
 
-// withStreamCancel sets the function that aborts the upstream request, which
-// the stream calls once it stops so a read blocked on a silent upstream
-// returns and the connection is released.
 func withStreamCancel(cancel context.CancelFunc) streamOption {
 	return func(o *streamOptions) { o.cancel = cancel }
 }
@@ -91,10 +90,14 @@ type upstreamLine struct {
 //
 // When it stops early the reader is released and the upstream request
 // cancelled, since the reader may be blocked in a read that only the
-// cancellation interrupts. A panic on the reader is raised again on the
-// calling goroutine, whose callers recover it.
+// cancellation interrupts. A reader panic seen before the pump returns is
+// raised again on the calling goroutine; nothing in this package recovers
+// it, the proxy handler's stream writer does. When the pump returns without
+// waiting for the reader, after tick asked to stop or ctx ended, a panic the
+// reader raises afterwards has no one to raise it to and is logged instead.
 func pumpWithKeepalive(
 	options streamOptions,
+	logger *slog.Logger,
 	raw iter.Seq2[[]byte, error],
 	handle func([]byte, error) bool,
 	tick func() bool,
@@ -103,10 +106,33 @@ func pumpWithKeepalive(
 	next := make(chan struct{})
 	stop := make(chan struct{})
 	exited := make(chan struct{})
-	var readerPanic any
+	var (
+		panicMu     sync.Mutex
+		readerPanic any
+		readerStack []byte
+		abandoned   bool
+	)
+	logReaderPanic := func(v any, stack []byte) {
+		logger.Error("panic reading abandoned upstream stream",
+			slog.Any("panic", v),
+			slog.String("stack", string(stack)))
+	}
 	go func() {
 		defer close(exited)
-		defer func() { readerPanic = recover() }()
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			stack := debug.Stack()
+			panicMu.Lock()
+			defer panicMu.Unlock()
+			if abandoned {
+				logReaderPanic(r, stack)
+				return
+			}
+			readerPanic, readerStack = r, stack
+		}()
 		for line, err := range raw {
 			select {
 			case lines <- upstreamLine{line: line, err: err}:
@@ -129,6 +155,14 @@ func pumpWithKeepalive(
 		})
 	}
 	defer release()
+	abandon := func() {
+		panicMu.Lock()
+		defer panicMu.Unlock()
+		abandoned = true
+		if readerPanic != nil {
+			logReaderPanic(readerPanic, readerStack)
+		}
+	}
 
 	ticker := options.newTicker(keepaliveCheckInterval)
 	defer ticker.Stop()
@@ -147,9 +181,11 @@ func pumpWithKeepalive(
 			return true
 		case <-ticker.Chan():
 			if !tick() {
+				abandon()
 				return false
 			}
 		case <-options.ctx.Done():
+			abandon()
 			release()
 			handle(nil, options.ctx.Err())
 			return false

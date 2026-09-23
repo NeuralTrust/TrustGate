@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,6 +126,55 @@ func TestPumpWithKeepalive_ReaderPanicIsRaisedOnTheConsumer(t *testing.T) {
 
 	assert.Equal(t, "upstream reader failed", recovered)
 	requireNoUpstreamReader(t)
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestPumpWithKeepalive_LateReaderPanicIsLogged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pumpReturned := make(chan struct{})
+	upstream := func(yield func([]byte, error) bool) {
+		if !yield([]byte(keepaliveTestChunk), nil) {
+			return
+		}
+		<-pumpReturned
+		panic("late upstream reader failure")
+	}
+	var logs syncBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	stream := adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI,
+		logger, nil, withStreamContext(ctx), newFakeStreamClock().option())
+
+	assert.NotPanics(t, func() {
+		for _, err := range stream {
+			if err == nil {
+				cancel()
+			}
+		}
+	})
+	close(pumpReturned)
+
+	requireNoUpstreamReader(t)
+	require.Eventually(t, func() bool {
+		return strings.Contains(logs.String(), "late upstream reader failure")
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, logs.String(), "stack=")
 }
 
 type silentUpstream struct {

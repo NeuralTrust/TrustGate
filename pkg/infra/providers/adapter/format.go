@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type Format string
@@ -136,7 +137,7 @@ func (f Format) IsOpenAIFamily() bool {
 // leaves it to the format.
 func IsChatRequest(capability string, f Format) bool {
 	if capability != "" {
-		return capability == "chat"
+		return capability == providers.CapabilityChat
 	}
 	switch f {
 	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,

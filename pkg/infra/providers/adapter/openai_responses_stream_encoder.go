@@ -207,14 +207,15 @@ func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
 	return [][]byte{[]byte(": keepalive"), {}}
 }
 
-// HeldCallsComplete reports whether the arguments of every named tool call
-// held back are valid JSON. It is only asked of an upstream that ended without
-// a finish, which leaves no other sign that a call was cut short, so a call
-// with no argument bytes counts as incomplete: it may have been cut before its
-// first delta. After a finish such a call gets empty-object arguments.
+// HeldCallsComplete reports whether every named tool call held back has
+// either no argument bytes or arguments that are valid JSON. It is asked of an
+// upstream that ended without a finish, which leaves no other sign that a call
+// was cut short. A call with no argument bytes is a call to a tool that takes
+// none, as OpenAI-compatible upstreams send it, and gets empty-object
+// arguments; only non-empty arguments that do not parse mark a cut call.
 func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 	for _, call := range e.pending {
-		if call.name != "" && !json.Valid([]byte(call.text.String())) {
+		if call.name != "" && call.text.Len() > 0 && !json.Valid([]byte(call.text.String())) {
 			return false
 		}
 	}

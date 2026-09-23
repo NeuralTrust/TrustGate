@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/textproto"
 	"net/url"
+	"runtime/debug"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -84,10 +85,20 @@ var hopByHopHeaders = map[string]struct{}{
 type ForwardedHandler struct {
 	forwarder appproxy.Forwarder
 	models    appproxy.ModelsLister
+	logger    *slog.Logger
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
-	return &ForwardedHandler{forwarder: forwarder}
+	return &ForwardedHandler{forwarder: forwarder, logger: slog.Default()}
+}
+
+// WithLogger sets the logger the handler reports stream writer panics to.
+// A nil logger keeps the current one.
+func (h *ForwardedHandler) WithLogger(logger *slog.Logger) *ForwardedHandler {
+	if logger != nil {
+		h.logger = logger
+	}
+	return h
 }
 
 func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHandler {
@@ -160,7 +171,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if result.Stream != nil {
 		streaming = true
-		return writeStream(c, result, reqCtx, cancel)
+		return writeStream(c, result, reqCtx, cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -183,7 +194,17 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 // writeStream relays result.Stream from the body stream writer and calls
 // cancel once the writer returns, which a client that went away makes happen
 // at the first write that fails.
-func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext, cancel context.CancelFunc) error {
+//
+// fasthttp runs the writer on a goroutine of its own that does not recover,
+// so a panic from the stream, including one a Responses reader raises again,
+// is recovered here, logged and ended with the stream error event.
+func writeStream(
+	c *fiber.Ctx,
+	result *appproxy.ForwardResult,
+	req *infracontext.RequestContext,
+	cancel context.CancelFunc,
+	logger *slog.Logger,
+) error {
 	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
 	statusCode := result.StatusCode
 	headers := result.Headers
@@ -204,24 +225,21 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("panic writing proxy stream",
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+				writeStreamError(w, &captured, finalizer != nil)
+			}
+		}()
 		for line, err := range result.Stream {
 			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
 				_ = w.Flush()
 				return
 			}
 			if err != nil {
-				// The response is already a 200 SSE stream, so a mid-stream
-				// failure cannot change the status code. Emit an explicit error
-				// event (instead of a silent truncation that looks like a clean
-				// finish) so clients can distinguish an aborted stream.
-				if finalizer != nil {
-					captured.Write(streamErrorEvent)
-					captured.Write(newline)
-				}
-				_, _ = w.Write(streamErrorEvent)
-				_, _ = w.Write(newline)
-				_, _ = w.Write(newline)
-				_ = w.Flush()
+				writeStreamError(w, &captured, finalizer != nil)
 				return
 			}
 			if finalizer != nil {
@@ -240,6 +258,20 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 		}
 	})
 	return nil
+}
+
+// writeStreamError ends a stream that failed after its 200 went out. The
+// status can no longer change, so an explicit error event tells the client
+// the stream was aborted rather than finished.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool) {
+	if capture {
+		captured.Write(streamErrorEvent)
+		captured.Write(newline)
+	}
+	_, _ = w.Write(streamErrorEvent)
+	_, _ = w.Write(newline)
+	_, _ = w.Write(newline)
+	_ = w.Flush()
 }
 
 func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
