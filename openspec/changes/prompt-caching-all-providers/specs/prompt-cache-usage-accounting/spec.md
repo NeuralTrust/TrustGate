@@ -76,7 +76,7 @@ OpenRouter `cost` and `cache_discount` MUST be logged only and MUST NOT feed `Co
 
 ### Requirement: Client encoders emit cache usage
 
-Chat, Responses, Cohere and Anthropic response encoders (buffered and SSE) MUST emit R and W in the client's native fields; Anthropic MUST also emit `cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens`. The Bedrock encoder MUST reverse the fold (`inputTokens` = I − R − W). A decode of the encoded body MUST return the same `CanonicalUsage`.
+Chat, Responses, Cohere and Anthropic response encoders (buffered and SSE) MUST emit R and W in the client's native fields. Anthropic MUST emit `cache_creation` only when the upstream reported a TTL breakdown (an Anthropic `cache_creation` object, or a Bedrock `cacheDetails` entry with TTL `5m` or `1h`), and then with both `ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens` present, zero included; otherwise it MUST omit `cache_creation`. The Bedrock encoder MUST reverse the fold (`inputTokens` = I − R − W) and emit `cacheDetails` under the same TTL-known rule. Cohere has no cache-write field, so W folds into its input count: that loss is by design and a Cohere round trip MUST NOT be expected to preserve W. Otherwise a decode of the encoded body MUST return the same `CanonicalUsage`.
 
 #### Scenario: Cross-format tokenratelimit
 
@@ -89,6 +89,12 @@ Chat, Responses, Cohere and Anthropic response encoders (buffered and SSE) MUST 
 - GIVEN canonical usage W=300, W1h=200
 - WHEN encoded as Anthropic `message_start`
 - THEN `cache_creation.ephemeral_1h_input_tokens=200` and `ephemeral_5m_input_tokens=100`
+
+#### Scenario: Unknown TTL is not re-emitted
+
+- GIVEN a Bedrock upstream whose `cacheDetails` entries carry no `5m` or `1h` TTL
+- WHEN encoded for an Anthropic or a Bedrock client
+- THEN the Anthropic body has no `cache_creation` and the Bedrock body has no `cacheDetails`
 
 ### Requirement: Pricing rules
 

@@ -112,8 +112,8 @@ type anthropicUsage struct {
 }
 
 type anthropicCacheCreation struct {
-	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens,omitempty"`
-	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // anthropicUsageToCanonical converts the Anthropic wire usage struct (used by
