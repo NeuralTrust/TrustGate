@@ -24,6 +24,7 @@ import (
 // CohereStreamEncoder encodes a canonical stream as a Cohere v2 chat event sequence; not safe for concurrent use.
 type CohereStreamEncoder struct {
 	completeToolCalls bool
+	sequentialCalls   bool
 	nonce             string
 	id                string
 	started           bool
@@ -47,6 +48,7 @@ type cohereStreamTool struct {
 	id         string
 	name       string
 	args       strings.Builder
+	index      int
 	arrival    int
 	chunk      int
 	started    bool
@@ -62,8 +64,7 @@ type cohereHeldText struct {
 }
 
 // complete reports whether t's arguments are whole. A call without arguments
-// is whole once another call starts in a later chunk, since a zero-argument
-// call sends none; calls announced together fill their arguments in later.
+// is whole once it is superseded, since a zero-argument call sends none.
 func (t *cohereStreamTool) complete() bool {
 	if t.args.Len() == 0 {
 		return t.superseded
@@ -75,10 +76,23 @@ func (t *cohereStreamTool) complete() bool {
 	return t.valid
 }
 
+// supersedes reports whether later shows that t, still without arguments,
+// sends none: later is a named call announced in a later chunk and, unless the
+// upstream streams its calls one after another, sits at a higher index and has
+// started streaming its own arguments. Calls announced together, or whose
+// headers come before their arguments, fill their arguments in later.
+func (e *CohereStreamEncoder) supersedes(later, t *cohereStreamTool) bool {
+	if t.args.Len() > 0 || later.name == "" || later.chunk <= t.chunk {
+		return false
+	}
+	return e.sequentialCalls || (later.args.Len() > 0 && later.index > t.index)
+}
+
 // NewCohereStreamEncoder returns an encoder for the given target format.
 func NewCohereStreamEncoder(target Format) *CohereStreamEncoder {
 	return &CohereStreamEncoder{
 		completeToolCalls: IsSameWireFormat(target, FormatGemini),
+		sequentialCalls:   IsSameWireFormat(target, FormatAnthropic) || IsSameWireFormat(target, FormatBedrock),
 		nonce:             rand.Text(),
 		content:           -1,
 		tools:             map[int]*cohereStreamTool{},
@@ -119,13 +133,9 @@ func (e *CohereStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	}
 	lines := e.start()
 	lines = append(lines, e.releaseHeld(true)...)
-	lines = append(lines, e.closeTool()...)
+	lines = append(lines, e.closeTool(true)...)
 	lines = append(lines, e.closeContent()...)
-	for _, tool := range e.tools {
-		if !tool.started {
-			e.droppedTools++
-		}
-	}
+	e.countUnstarted()
 	e.done = true
 	reason, errMessage := cohereStreamFinishReason(chunk.FinishReason, e.usedTool)
 	lines = append(lines, cohereMessageEnd(reason, errMessage, chunk.Usage)...)
@@ -133,16 +143,21 @@ func (e *CohereStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Abort ends the message with an ERROR finish carrying message and usage,
-// followed by [DONE], after closing the open content or tool call. Text and
-// tool calls held back are dropped. Nothing is emitted once the stream has
-// finished or aborted.
+// followed by [DONE], after closing the open tool call as it stands and
+// emitting the text held back behind it. Tool calls held back are dropped.
+// Nothing is emitted once the stream has finished or aborted.
 func (e *CohereStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
 	if e.done {
 		return nil
 	}
 	lines := e.start()
-	lines = append(lines, e.closeTool()...)
+	lines = append(lines, e.closeTool(false)...)
+	for _, held := range e.heldText {
+		lines = append(lines, e.emitText(held.text.String())...)
+	}
+	e.heldText = nil
 	lines = append(lines, e.closeContent()...)
+	e.countUnstarted()
 	e.done = true
 	e.aborted = true
 	lines = append(lines, cohereMessageEnd("ERROR", message, usage)...)
@@ -159,9 +174,18 @@ func (e *CohereStreamEncoder) Started() bool {
 	return e.started
 }
 
-// Dropped reports dropped tool call deltas and nameless tool calls.
+// Dropped reports dropped tool call deltas and the tool calls the client never
+// got: nameless ones, and, after Abort, those held back.
 func (e *CohereStreamEncoder) Dropped() (deltas, tools int) {
 	return e.droppedDeltas, e.droppedTools
+}
+
+func (e *CohereStreamEncoder) countUnstarted() {
+	for _, tool := range e.tools {
+		if !tool.started {
+			e.droppedTools++
+		}
+	}
 }
 
 func cohereStreamFinishReason(reason string, usedTool bool) (string, string) {
@@ -207,7 +231,7 @@ func (e *CohereStreamEncoder) holdText(text string) {
 }
 
 func (e *CohereStreamEncoder) emitText(text string) [][]byte {
-	lines := e.closeTool()
+	lines := e.closeTool(true)
 	if e.content < 0 {
 		e.content = e.nextContent
 		e.nextContent++
@@ -222,10 +246,7 @@ func (e *CohereStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 		if tool != nil && !tool.started {
 			e.droppedTools++
 		}
-		if e.open != nil && e.open.args.Len() == 0 && e.open.chunk != e.chunks {
-			e.open.superseded = true
-		}
-		tool = &cohereStreamTool{id: tc.ID, name: tc.Name, arrival: e.arrivals, chunk: e.chunks}
+		tool = &cohereStreamTool{id: tc.ID, name: tc.Name, index: tc.Index, arrival: e.arrivals, chunk: e.chunks}
 		e.arrivals++
 		e.tools[tc.Index] = tool
 	} else {
@@ -250,6 +271,9 @@ func (e *CohereStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 		return append(cohereToolCallDeltaEvent(e.nextTool-1, tc.ArgumentsDelta), e.releaseHeld(false)...)
 	}
 	tool.args.WriteString(tc.ArgumentsDelta)
+	if e.open != nil && e.supersedes(tool, e.open) {
+		e.open.superseded = true
+	}
 	return e.releaseHeld(false)
 }
 
@@ -278,13 +302,12 @@ func (e *CohereStreamEncoder) releaseHeld(all bool) [][]byte {
 
 func (e *CohereStreamEncoder) nextHeld() *cohereStreamTool {
 	var next *cohereStreamTool
-	nextIndex := 0
-	for index, tool := range e.tools {
+	for _, tool := range e.tools {
 		if tool.name == "" || tool.started || tool.ended {
 			continue
 		}
-		if next == nil || index < nextIndex {
-			next, nextIndex = tool, index
+		if next == nil || tool.arrival < next.arrival || (tool.arrival == next.arrival && tool.index < next.index) {
+			next = tool
 		}
 	}
 	return next
@@ -304,11 +327,17 @@ func (e *CohereStreamEncoder) startsNewCall(tc StreamToolCallDelta, tool *cohere
 }
 
 func (e *CohereStreamEncoder) startTool(tool *cohereStreamTool) [][]byte {
-	lines := e.closeTool()
+	lines := e.closeTool(true)
 	lines = append(lines, e.closeContent()...)
 	index := e.nextTool
 	e.nextTool++
 	tool.started = true
+	for _, held := range e.tools {
+		if !held.started && !held.ended && e.supersedes(held, tool) {
+			tool.superseded = true
+			break
+		}
+	}
 	e.open = tool
 	e.usedTool = true
 	lines = append(lines, cohereToolCallStart(index, e.toolID(tool.id, index), tool.name)...)
@@ -327,13 +356,15 @@ func (e *CohereStreamEncoder) toolID(upstream string, index int) string {
 	return id
 }
 
-func (e *CohereStreamEncoder) closeTool() [][]byte {
+// closeTool ends the open call, first sending "{}" as the arguments of one
+// that has none when fillEmpty is set.
+func (e *CohereStreamEncoder) closeTool(fillEmpty bool) [][]byte {
 	if e.open == nil {
 		return nil
 	}
 	index := e.nextTool - 1
 	var lines [][]byte
-	if e.open.args.Len() == 0 {
+	if fillEmpty && e.open.args.Len() == 0 {
 		lines = cohereToolCallDeltaEvent(index, "{}")
 	}
 	e.open.ended = true

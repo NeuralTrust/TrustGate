@@ -320,7 +320,7 @@ func TestCohereStreamEncoder_EventSequence(t *testing.T) {
 			},
 		},
 		{
-			name:   "held tools whose arguments never complete start in index order at the finish",
+			name:   "held tools whose arguments never complete start in arrival order at the finish",
 			target: FormatOpenAI,
 			chunks: []*CanonicalStreamChunk{
 				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{
@@ -333,8 +333,41 @@ func TestCohereStreamEncoder_EventSequence(t *testing.T) {
 			want: []string{
 				"message-start",
 				"tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
-				"tool-call-start 1 call_2 b", "tool-call-delta 1 {}", "tool-call-end 1",
-				"tool-call-start 2 call_3 c", "tool-call-delta 2 {}", "tool-call-end 2",
+				"tool-call-start 1 call_3 c", "tool-call-delta 1 {}", "tool-call-end 1",
+				"tool-call-start 2 call_2 b", "tool-call-delta 2 {}", "tool-call-end 2",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "arguments of an open call that follow a later header are kept",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `{"x":1}`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ArgumentsDelta: `{"y":2}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":1}`, "tool-call-end 0",
+				"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`, "tool-call-end 1",
+				"message-end TOOL_CALL",
+			},
+		},
+		{
+			name:   "an argument-less call ends when a later call streams its arguments",
+			target: FormatOpenAI,
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ArgumentsDelta: `{"y":2}`}}},
+				{FinishReason: "tool_calls"},
+			},
+			want: []string{
+				"message-start",
+				"tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
+				"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`, "tool-call-end 1",
 				"message-end TOOL_CALL",
 			},
 		},
@@ -560,6 +593,7 @@ func TestCohereStreamEncoder_Abort(t *testing.T) {
 		"message-start",
 		"content-start 0", "content-delta 0 hi", "content-end 0",
 		"tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, "tool-call-end 0",
+		"content-start 1", "content-delta 1 held", "content-end 1",
 		"message-end ERROR",
 	}, cohereGolden(t, events))
 	assert.JSONEq(t,
@@ -569,4 +603,43 @@ func TestCohereStreamEncoder_Abort(t *testing.T) {
 	assert.True(t, e.Aborted())
 	assert.Empty(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
 	assert.Empty(t, e.Abort("again", nil))
+}
+
+func TestCohereStreamEncoder_AbortLeavesArgumentsAsTheyStand(t *testing.T) {
+	e := NewCohereStreamEncoder(FormatOpenAI)
+	lines := e.Content(&CanonicalStreamChunk{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{
+		{Index: 0, ID: "call_1", Name: "a"},
+		{Index: 1, ID: "call_2", Name: "b"},
+	}})
+	lines = append(lines, e.Content(&CanonicalStreamChunk{Delta: "T"})...)
+	lines = append(lines, e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 2, ArgumentsDelta: `{}`}}})...)
+	lines = append(lines, e.Abort("upstream stream failed", nil)...)
+
+	events := cohereEvents(t, lines)
+	requireCohereContract(t, events)
+	assert.Equal(t, []string{
+		"message-start",
+		"tool-call-start 0 call_1 a", "tool-call-end 0",
+		"content-start 0", "content-delta 0 T", "content-end 0",
+		"message-end ERROR",
+	}, cohereGolden(t, events), "no arguments are invented and held text keeps its place")
+	deltas, tools := e.Dropped()
+	assert.Equal(t, 0, deltas)
+	assert.Equal(t, 2, tools, "the held call and the nameless one never reached the client")
+}
+
+func TestCohereStreamEncoder_HeldCallSupersededByALaterOne(t *testing.T) {
+	e := NewCohereStreamEncoder(FormatOpenAI)
+	lines := e.Content(&CanonicalStreamChunk{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{
+		{Index: 0, ID: "call_1", Name: "a"},
+		{Index: 1, ID: "call_2", Name: "b"},
+	}})
+	lines = append(lines, e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 2, ID: "call_3", Name: "c", ArgumentsDelta: `{"z":3}`}}})...)
+
+	assert.Equal(t, []string{
+		"message-start",
+		"tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
+		"tool-call-start 1 call_2 b", "tool-call-delta 1 {}", "tool-call-end 1",
+		"tool-call-start 2 call_3 c", `tool-call-delta 2 {"z":3}`,
+	}, cohereGolden(t, cohereEvents(t, lines)), "the later call streams before the finish")
 }

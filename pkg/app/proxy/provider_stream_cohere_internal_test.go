@@ -586,3 +586,134 @@ func TestAdaptStream_CohereToolPlanRoundTripsThroughAnOpenAIClient(t *testing.T)
 	assert.NotContains(t, assistant, "content", "the plan is not sent as assistant content")
 	assert.JSONEq(t, `[{"id":"database_agent_3v76fs3zjrgq","type":"function","function":{"name":"database_agent","arguments":"{\"query\": \"Juan\"}"}}]`, string(assistant["tool_calls"]))
 }
+
+func logEntries(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var entries []map[string]any
+	for line := range bytes.Lines(buf.Bytes()) {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal(line, &entry), string(line))
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func logMessages(entries []map[string]any) []any {
+	messages := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		messages = append(messages, entry["msg"])
+	}
+	return messages
+}
+
+func TestAdaptStream_CohereClientTransportErrorAfterTheFinishDeliversIt(t *testing.T) {
+	const incomplete = "stream usage may be incomplete: upstream failed before sending output tokens"
+	text := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`
+	finish := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	transportErr := errors.New("connection reset")
+	tests := []struct {
+		name           string
+		upstream       []string
+		want           []string
+		wantIncomplete bool
+	}{
+		{
+			name:     "finish then transport error before include_usage",
+			upstream: []string{text, finish},
+			want: []string{
+				"message-start", "content-start 0", "content-delta 0 hi", "content-end 0",
+				"message-end COMPLETE billed=5/1 tokens=5/1 cached=0",
+			},
+		},
+		{
+			name:           "content-less finish then transport error",
+			upstream:       []string{finish},
+			want:           []string{"message-start", "message-end COMPLETE billed=0/0 tokens=0/0 cached=0"},
+			wantIncomplete: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			upstream := func(yield func([]byte, error) bool) {
+				for _, l := range tt.upstream {
+					if !yield([]byte(l), nil) {
+						return
+					}
+				}
+				yield(nil, transportErr)
+			}
+
+			lines, gotErr := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, logger, nil))
+
+			assert.ErrorIs(t, gotErr, transportErr)
+			_, notified := errors.AsType[*ClientNotifiedStreamError](gotErr)
+			assert.True(t, notified, "the client already has its message-end and [DONE]")
+			events := cohereClientEvents(t, lines)
+			requireCohereClientContract(t, events)
+			assert.Equal(t, tt.want, cohereClientGolden(events))
+			assert.Empty(t, events[len(events)-2].Delta.Error)
+			entries := logEntries(t, &buf)
+			messages := logMessages(entries)
+			if tt.wantIncomplete {
+				assert.Contains(t, messages, incomplete)
+			} else {
+				assert.NotContains(t, messages, incomplete)
+			}
+			last := entries[len(entries)-1]
+			assert.Equal(t, "upstream stream failed; the client stream ended with its terminal event", last["msg"])
+			assert.Equal(t, false, last["client_aborted"])
+		})
+	}
+}
+
+func TestAdaptStream_CohereClientUpstreamEndWithoutFinishEndsWithError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	upstream := linesSeq(
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`,
+	)
+
+	lines, gotErr := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, logger, nil))
+
+	require.NoError(t, gotErr)
+	events := cohereClientEvents(t, lines)
+	requireCohereClientContract(t, events)
+	assert.Equal(t, []string{
+		"message-start", "content-start 0", "content-delta 0 hi", "content-end 0",
+		"message-end ERROR billed=5/1 tokens=5/1 cached=0",
+	}, cohereClientGolden(events))
+	assert.Equal(t, "upstream stream ended before the message finished", events[len(events)-2].Delta.Error)
+	assert.Contains(t, logMessages(logEntries(t, &buf)), "upstream stream ended without a finish; aborted the client stream with an error event")
+}
+
+func TestAdaptStream_CohereClientAbortLogsDroppedToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	upstream := linesSeq(
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"a","arguments":"{\"x\":"}}]}}]}`,
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"b","arguments":"{\"y\":"}}]}}]}`,
+		`data: {"error":{"message":"The server had an error","type":"server_error","code":"internal"}}`,
+	)
+
+	lines, gotErr := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, logger, nil))
+
+	_, notified := errors.AsType[*ClientNotifiedStreamError](gotErr)
+	require.True(t, notified)
+	events := cohereClientEvents(t, lines)
+	requireCohereClientContract(t, events)
+	assert.Equal(t, []string{
+		"message-start", "tool-call-start 0 call_1 a", `tool-call-delta 0 {"x":`, "tool-call-end 0",
+		"message-end ERROR billed=0/0 tokens=0/0 cached=0",
+	}, cohereClientGolden(events))
+	var dropped map[string]any
+	for _, entry := range logEntries(t, &buf) {
+		if entry["msg"] == "cohere stream dropped tool call content" {
+			dropped = entry
+		}
+	}
+	require.NotNil(t, dropped, buf.String())
+	assert.Equal(t, float64(1), dropped["dropped_tool_calls"])
+	assert.Equal(t, float64(0), dropped["argument_deltas"])
+}
