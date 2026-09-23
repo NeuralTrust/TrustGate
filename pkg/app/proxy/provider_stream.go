@@ -322,11 +322,11 @@ func emitGeminiToolCalls(
 		return true
 	}
 
-	if deferred != nil && deferred.dropAfterFlush(canonical, source, logger) {
+	if deferred.dropAfterFlush(canonical, source, logger) {
 		return true
 	}
 	acc.Merge(canonical.ToolCallDeltas)
-	terminal := deferred != nil && deferred.record(canonical)
+	terminal := deferred.record(canonical)
 
 	if canonical.Role != "" {
 		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{Role: canonical.Role}, source, logger) {
@@ -342,9 +342,6 @@ func emitGeminiToolCalls(
 		if !encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{ToolCallDeltas: acc.Flush()}, source, logger) {
 			return false
 		}
-	}
-	if deferred == nil && canonical.FinishReason != "" {
-		return encodeAndEmit(emit, registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, source, logger)
 	}
 	return !terminal || deferred.flush(emit, registry, source, logger)
 }
