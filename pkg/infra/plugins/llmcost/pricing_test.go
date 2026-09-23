@@ -368,14 +368,14 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 	}
 
 	t.Run("without an override the long TTL bills at the 5m rate", func(t *testing.T) {
-		r := ratesFor(base, 0, nil, &write5m, nil)
+		r := ratesFor(base, 0, nil, &write5m, nil, false)
 		assert.InDelta(t, write5m, r.CacheWrite1h, 1e-18)
 		prompt, _ := r.CostUSD(u)
 		assert.InDelta(t, 13*base+6903*write5m, prompt, 1e-15)
 	})
 
 	t.Run("an explicit 1h rate prices only that share", func(t *testing.T) {
-		r := ratesFor(base, 0, nil, &write5m, &write1h)
+		r := ratesFor(base, 0, nil, &write5m, &write1h, false)
 		prompt, _ := r.CostUSD(u)
 		want := 13*base + (6903-2000)*write5m + 2000*write1h
 		assert.InDelta(t, want, prompt, 1e-15)
@@ -383,7 +383,7 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 	})
 
 	t.Run("a 1h share larger than the write bucket is clamped", func(t *testing.T) {
-		r := ratesFor(base, 0, nil, &write5m, &write1h)
+		r := ratesFor(base, 0, nil, &write5m, &write1h, false)
 		bad := &adapter.CanonicalUsage{
 			InputTokens: 100, CacheWriteInputTokens: 10, CacheWrite1hInputTokens: 999,
 		}
@@ -398,7 +398,7 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 	// for every adapter that has not been live-verified yet, so it is pinned.
 	t.Run("sub-counts larger than the prompt bill the prompt once, not twice", func(t *testing.T) {
 		read := 0.30 / 1e6
-		r := ratesFor(base, 0, &read, &write5m, nil)
+		r := ratesFor(base, 0, &read, &write5m, nil, false)
 		impossible := &adapter.CanonicalUsage{
 			InputTokens: 100, CachedInputTokens: 90, CacheWriteInputTokens: 80,
 		}
@@ -413,7 +413,7 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 
 	t.Run("sub-counts that fit are still priced at their own rates", func(t *testing.T) {
 		read := 0.30 / 1e6
-		r := ratesFor(base, 0, &read, &write5m, nil)
+		r := ratesFor(base, 0, &read, &write5m, nil, false)
 		ok := &adapter.CanonicalUsage{
 			InputTokens: 100, CachedInputTokens: 60, CacheWriteInputTokens: 20,
 		}
@@ -422,5 +422,57 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 
 		assert.InDelta(t, 20*base+60*read+20*write5m, prompt, 1e-15,
 			"the clamp must not fire on a legitimate breakdown")
+	})
+}
+
+func TestResolve_OneHourCacheWriteRate(t *testing.T) {
+	t.Parallel()
+	catalog := appcatalog.Pricing{
+		Found:           true,
+		InputPrice:      3.00 / 1e6,
+		OutputPrice:     15.00 / 1e6,
+		CacheReadPrice:  0.30 / 1e6,
+		CacheWritePrice: 3.75 / 1e6,
+	}
+	resolver := catalogmocks.NewPricingResolver(t)
+	resolver.EXPECT().Resolve(mock.Anything, mock.Anything, mock.Anything).Return(catalog).Maybe()
+	override1h := 5.00 / 1e6
+
+	tests := []struct {
+		name     string
+		provider string
+		model    string
+		registry *RegistryRates
+		want     float64
+	}{
+		{name: "anthropic claude doubles the input rate", provider: "anthropic", model: "claude-sonnet-4-5", want: 6.00 / 1e6},
+		{name: "bedrock claude doubles the input rate", provider: "bedrock", model: "us.anthropic.claude-haiku-4-5-20251001-v1:0", want: 6.00 / 1e6},
+		{name: "non-claude model keeps the cache write rate", provider: "openai", model: "gpt-5", want: 3.75 / 1e6},
+		{name: "non-claude bedrock model keeps the cache write rate", provider: "bedrock", model: "amazon.nova-pro-v1:0", want: 3.75 / 1e6},
+		{
+			name: "discount applies to the derived rate", provider: "anthropic", model: "claude-sonnet-4-5",
+			registry: &RegistryRates{Discount: 0.2}, want: 4.80 / 1e6,
+		},
+		{
+			name: "registry override wins over the derived rate", provider: "anthropic", model: "claude-sonnet-4-5",
+			registry: &RegistryRates{Discount: 0.2, Overrides: map[string]CustomPrice{
+				"claude-sonnet-4-5": {Input: 3.00 / 1e6, Output: 15.00 / 1e6, CacheWrite1h: &override1h},
+			}},
+			want: 5.00 / 1e6,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rates, found := Resolve(context.Background(), resolver, nil, tt.registry, tt.provider, tt.model)
+			require.True(t, found)
+			assert.InDelta(t, tt.want, rates.CacheWrite1h, 1e-15)
+		})
+	}
+
+	t.Run("claude 1h write of 1000 tokens costs 0.006", func(t *testing.T) {
+		rates, found := Resolve(context.Background(), resolver, nil, nil, "anthropic", "claude-sonnet-4-5")
+		require.True(t, found)
+		prompt, _ := rates.CostUSD(&adapter.CanonicalUsage{InputTokens: 1000, CacheWriteInputTokens: 1000, CacheWrite1hInputTokens: 1000})
+		assert.InDelta(t, 0.006, prompt, 1e-12)
 	})
 }
