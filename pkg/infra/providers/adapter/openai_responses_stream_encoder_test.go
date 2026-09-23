@@ -24,40 +24,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func responsesEncoderPayloads(lines [][]byte) []string {
+	var payloads []string
+	for _, line := range lines {
+		if payload, ok := strings.CutPrefix(string(line), "data: "); ok {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads
+}
+
+type responsesEncoderEvent struct {
+	Type           string `json:"type"`
+	SequenceNumber int    `json:"sequence_number"`
+	Delta          string `json:"delta"`
+	Arguments      string `json:"arguments"`
+	Text           string `json:"text"`
+	OutputIndex    *int   `json:"output_index"`
+	Item           struct {
+		Type   string `json:"type"`
+		ID     string `json:"id"`
+		CallID string `json:"call_id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	} `json:"item"`
+	Response struct {
+		Output []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"output"`
+	} `json:"response"`
+}
+
 func responsesEncoderEvents(t *testing.T, lines [][]byte) []string {
 	t.Helper()
 	var events []string
-	for _, line := range lines {
-		payload, ok := strings.CutPrefix(string(line), "data: ")
-		if !ok {
-			continue
-		}
-		var event struct {
-			Type        string `json:"type"`
-			Delta       string `json:"delta"`
-			OutputIndex int    `json:"output_index"`
-			Item        struct {
-				Type   string `json:"type"`
-				CallID string `json:"call_id"`
-			} `json:"item"`
-		}
+	for _, payload := range responsesEncoderPayloads(lines) {
+		var event responsesEncoderEvent
 		require.NoError(t, json.Unmarshal([]byte(payload), &event))
 		switch event.Type {
 		case "response.output_item.added":
-			events = append(events, strings.TrimSpace(fmt.Sprintf("added %d %s %s", event.OutputIndex, event.Item.Type, event.Item.CallID)))
+			events = append(events, strings.TrimSpace(fmt.Sprintf("added %d %s %s", *event.OutputIndex, event.Item.Type, event.Item.CallID)))
 		case "response.output_text.delta":
-			events = append(events, fmt.Sprintf("text %d %s", event.OutputIndex, event.Delta))
+			events = append(events, fmt.Sprintf("text %d %s", *event.OutputIndex, event.Delta))
 		case "response.function_call_arguments.delta":
-			events = append(events, fmt.Sprintf("arguments %d %s", event.OutputIndex, event.Delta))
+			events = append(events, fmt.Sprintf("arguments %d %s", *event.OutputIndex, event.Delta))
+		case "response.output_item.done":
+			events = append(events, fmt.Sprintf("done %d %s %s", *event.OutputIndex, event.Item.Name, event.Item.Status))
 		}
 	}
 	return events
+}
+
+func requireSequentialItems(t *testing.T, lines [][]byte) {
+	t.Helper()
+	open := -1
+	closed := []string{}
+	for i, payload := range responsesEncoderPayloads(lines) {
+		var event responsesEncoderEvent
+		require.NoError(t, json.Unmarshal([]byte(payload), &event))
+		require.Equal(t, i, event.SequenceNumber)
+		switch event.Type {
+		case "response.output_item.added":
+			require.Equal(t, -1, open, "event %d: item added while item %d is open", i, open)
+			require.Equal(t, len(closed), *event.OutputIndex, "event %d", i)
+			open = *event.OutputIndex
+		case "response.output_item.done":
+			require.Equal(t, open, *event.OutputIndex, "event %d", i)
+			require.NotEqual(t, "in_progress", event.Item.Status, "event %d", i)
+			closed = append(closed, event.Item.ID+" "+event.Item.Status)
+			open = -1
+		case "response.completed", "response.incomplete", "response.failed":
+			require.Equal(t, -1, open, "event %d: stream ends with item %d open", i, open)
+			output := make([]string, 0, len(event.Response.Output))
+			for _, item := range event.Response.Output {
+				output = append(output, item.ID+" "+item.Status)
+			}
+			require.Equal(t, closed, output, "event %d", i)
+		default:
+			if event.OutputIndex != nil {
+				require.Equal(t, open, *event.OutputIndex, "event %d: %s outside its open item", i, event.Type)
+			}
+		}
+	}
 }
 
 func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 	tests := []struct {
 		name   string
 		chunks []*CanonicalStreamChunk
+		finish string
 		want   []string
 	}{
 		{
@@ -66,14 +122,17 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{Role: "assistant", Delta: "Hel"},
 				{Role: "assistant", Delta: "lo"},
 			},
-			want: []string{"added 0 message", "text 0 Hel", "text 0 lo"},
+			want: []string{"added 0 message", "text 0 Hel", "text 0 lo", "done 0  completed"},
 		},
 		{
 			name: "text and a call in the same chunk",
 			chunks: []*CanonicalStreamChunk{
 				{Role: "assistant", Delta: "Checking.", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "get_weather", ArgumentsDelta: "{}"}}},
 			},
-			want: []string{"added 0 message", "text 0 Checking.", "added 1 function_call call_1", "arguments 1 {}"},
+			want: []string{
+				"added 0 message", "text 0 Checking.", "done 0  completed",
+				"added 1 function_call call_1", "arguments 1 {}", "done 1 get_weather completed",
+			},
 		},
 		{
 			name: "calls streamed as continuation deltas",
@@ -84,10 +143,8 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b"}}},
 			},
 			want: []string{
-				"added 0 function_call call_1",
-				`arguments 0 {"x"`,
-				"arguments 0 :1}",
-				"added 1 function_call call_2",
+				"added 0 function_call call_1", `arguments 0 {"x":1}`, "done 0 a completed",
+				"added 1 function_call call_2", "done 1 b completed",
 			},
 		},
 		{
@@ -98,11 +155,8 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: " "}}},
 			},
 			want: []string{
-				"added 0 function_call call_1",
-				"arguments 0 {}",
-				"added 1 function_call call_2",
-				`arguments 1 {"x":1}`,
-				"arguments 1  ",
+				"added 0 function_call call_1", "arguments 0 {}", "done 0 a completed",
+				"added 1 function_call call_2", `arguments 1 {"x":1} `, "done 1 a completed",
 			},
 		},
 		{
@@ -112,7 +166,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, Name: "a", ArgumentsDelta: ":1"}}},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: "}"}}},
 			},
-			want: []string{"added 0 function_call call_*_0", `arguments 0 {"x":1`, "arguments 0 }"},
+			want: []string{"added 0 function_call call_*_0", `arguments 0 {"x":1}`, "done 0 a completed"},
 		},
 		{
 			name: "a repeated call id is replaced",
@@ -120,7 +174,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_1", Name: "b"}}},
 			},
-			want: []string{"added 0 function_call call_1", "added 1 function_call call_*_1"},
+			want: []string{"added 0 function_call call_1", "done 0 a completed", "added 1 function_call call_*_1", "done 1 b completed"},
 		},
 		{
 			name: "role and empty text open no message",
@@ -136,16 +190,19 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{Delta: "hi"},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, Name: "a", ArgumentsDelta: "}"}}},
 			},
-			want: []string{"added 0 message", "text 0 hi", "added 1 function_call call_1", "arguments 1 {}"},
+			want: []string{"added 0 message", "text 0 hi", "done 0  completed", "added 1 function_call call_1", "arguments 1 {}", "done 1 a completed"},
 		},
 		{
-			name: "text after a call opens a new message",
+			name: "text after a call continues the message",
 			chunks: []*CanonicalStreamChunk{
 				{Delta: "Checking."},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
-				{Delta: "Done."},
+				{Delta: " Done."},
 			},
-			want: []string{"added 0 message", "text 0 Checking.", "added 1 function_call call_1", "arguments 1 {}", "added 2 message", "text 2 Done."},
+			want: []string{
+				"added 0 message", "text 0 Checking.", "text 0  Done.", "done 0  completed",
+				"added 1 function_call call_1", "arguments 1 {}", "done 1 a completed",
+			},
 		},
 		{
 			name: "a call before any text",
@@ -153,7 +210,60 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
 				{Delta: "done"},
 			},
-			want: []string{"added 0 function_call call_1", "added 1 message", "text 1 done"},
+			want: []string{"added 0 message", "text 0 done", "done 0  completed", "added 1 function_call call_1", "done 1 a completed"},
+		},
+		{
+			name: "text, call, text, call",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "One."},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"n":1}`}}},
+				{Delta: " Two."},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{"n":2}`}}},
+			},
+			want: []string{
+				"added 0 message", "text 0 One.", "text 0  Two.", "done 0  completed",
+				"added 1 function_call call_1", `arguments 1 {"n":1}`, "done 1 a completed",
+				"added 2 function_call call_2", `arguments 2 {"n":2}`, "done 2 b completed",
+			},
+		},
+		{
+			name: "interleaved parallel call deltas",
+			chunks: []*CanonicalStreamChunk{
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"city":`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: `{"tz":`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `"Paris"}`}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ArgumentsDelta: `"CET"}`}}},
+			},
+			want: []string{
+				"added 0 function_call call_1", `arguments 0 {"city":"Paris"}`, "done 0 a completed",
+				"added 1 function_call call_2", `arguments 1 {"tz":"CET"}`, "done 1 b completed",
+			},
+		},
+		{
+			name: "call, text, then more arguments for the call",
+			chunks: []*CanonicalStreamChunk{
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x"`}}},
+				{Delta: "hi"},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: `:1}`}}},
+			},
+			want: []string{"added 0 message", "text 0 hi", "done 0  completed", "added 1 function_call call_1", `arguments 1 {"x":1}`, "done 1 a completed"},
+		},
+		{
+			name: "a length stop leaves text and calls incomplete",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Checking."},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x"`}}},
+			},
+			finish: "length",
+			want:   []string{"added 0 message", "text 0 Checking.", "done 0  incomplete", "added 1 function_call call_1", `arguments 1 {"x"`, "done 1 a incomplete"},
+		},
+		{
+			name: "a content filter stop leaves the call incomplete",
+			chunks: []*CanonicalStreamChunk{
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
+			},
+			finish: "content_filter",
+			want:   []string{"added 0 function_call call_1", "arguments 0 {}", "done 0 a incomplete"},
 		},
 	}
 	for _, tt := range tests {
@@ -163,6 +273,15 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			for _, chunk := range tt.chunks {
 				lines = append(lines, enc.Content(chunk)...)
 			}
+			for _, event := range responsesEncoderEvents(t, lines) {
+				assert.NotContains(t, event, "function_call", "calls are held until Finish")
+			}
+			finish := tt.finish
+			if finish == "" {
+				finish = "tool_calls"
+			}
+			lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: finish})...)
+			requireSequentialItems(t, lines)
 			got := responsesEncoderEvents(t, lines)
 			for i := range got {
 				got[i] = strings.ReplaceAll(got[i], "call_"+enc.nonce+"_", "call_*_")
@@ -190,7 +309,7 @@ func responsesEncoderTypes(t *testing.T, lines [][]byte) []string {
 }
 
 func TestResponsesStreamEncoder_Finish(t *testing.T) {
-	t.Run("items finish in output_index order", func(t *testing.T) {
+	t.Run("the message closes before the calls follow it", func(t *testing.T) {
 		enc := NewResponsesStreamEncoder()
 		lines := enc.Content(&CanonicalStreamChunk{ID: "resp_1", Model: "m", ToolCallDeltas: []StreamToolCallDelta{
 			{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"},
@@ -200,12 +319,14 @@ func TestResponsesStreamEncoder_Finish(t *testing.T) {
 		lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls", Usage: &CanonicalUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}})...)
 		assert.Equal(t, []string{
 			"response.created", "response.in_progress",
-			"response.output_item.added", "response.function_call_arguments.delta",
 			"response.output_item.added", "response.content_part.added", "response.output_text.delta",
-			"response.function_call_arguments.done", "response.output_item.done",
 			"response.output_text.done", "response.content_part.done", "response.output_item.done",
+			"response.output_item.added", "response.function_call_arguments.delta",
+			"response.function_call_arguments.done", "response.output_item.done",
 			"response.completed",
 		}, responsesEncoderTypes(t, lines))
+		requireSequentialItems(t, lines)
+		assert.Equal(t, 1, enc.Dropped())
 
 		payload, ok := strings.CutPrefix(string(lines[len(lines)-2]), "data: ")
 		require.True(t, ok)
@@ -227,8 +348,8 @@ func TestResponsesStreamEncoder_Finish(t *testing.T) {
 		assert.Equal(t, "m", completed.Response.Model)
 		assert.Equal(t, "completed", completed.Response.Status)
 		require.Len(t, completed.Response.Output, 2)
-		assert.Equal(t, "function_call", completed.Response.Output[0].Type)
-		assert.Equal(t, "message", completed.Response.Output[1].Type)
+		assert.Equal(t, "message", completed.Response.Output[0].Type)
+		assert.Equal(t, "function_call", completed.Response.Output[1].Type)
 		assert.Equal(t, &openaiResponsesUsage{
 			InputTokens:         1,
 			OutputTokens:        2,
@@ -310,15 +431,16 @@ func jsonField(t *testing.T, payload string, path ...string) string {
 	return string(out)
 }
 
-func TestResponsesStreamEncoder_MessageIDsAreDistinct(t *testing.T) {
+func TestResponsesStreamEncoder_ItemIDsAreDistinct(t *testing.T) {
 	enc := NewResponsesStreamEncoder()
 	lines := enc.Content(&CanonicalStreamChunk{Delta: "a"})
 	lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f"}}})...)
 	lines = append(lines, enc.Content(&CanonicalStreamChunk{Delta: "b"})...)
+	lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, Name: "g"}}})...)
+	lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"})...)
 	ids := map[string]bool{}
-	for _, line := range lines {
-		payload, ok := strings.CutPrefix(string(line), "data: ")
-		if !ok || !strings.Contains(payload, `"response.output_item.added"`) {
+	for _, payload := range responsesEncoderPayloads(lines) {
+		if !strings.Contains(payload, `"response.output_item.added"`) {
 			continue
 		}
 		id := jsonField(t, payload, "item", "id")
@@ -382,32 +504,27 @@ func TestResponsesStreamEncoder_Abort(t *testing.T) {
 		assert.False(t, enc.Started())
 		assert.False(t, enc.Aborted())
 	})
-	t.Run("error then response.failed with every open item incomplete", func(t *testing.T) {
+	t.Run("error then response.failed with the message incomplete and held calls dropped", func(t *testing.T) {
 		enc := NewResponsesStreamEncoder()
 		lines := enc.Content(&CanonicalStreamChunk{ID: "resp_1", Delta: "hi"})
-		lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f", ArgumentsDelta: `{"a"`}}})...)
+		lines = append(lines, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{
+			{Index: 0, ID: "call_1", Name: "f", ArgumentsDelta: `{"a"`},
+			{Index: 1, ID: "call_2", ArgumentsDelta: "{}"},
+		}})...)
 		lines = append(lines, enc.Abort("upstream stream failed", &CanonicalUsage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4})...)
 		assert.True(t, enc.Aborted())
+		assert.Equal(t, 1, enc.Dropped())
 
 		types := responsesEncoderTypes(t, lines)
 		assert.Equal(t, []string{
 			"response.created", "response.in_progress",
 			"response.output_item.added", "response.content_part.added", "response.output_text.delta",
 			"response.output_text.done", "response.content_part.done", "response.output_item.done",
-			"response.output_item.added", "response.function_call_arguments.delta",
-			"response.function_call_arguments.done", "response.output_item.done",
 			"error", "response.failed",
 		}, types)
+		requireSequentialItems(t, lines)
 
-		var payloads []string
-		for _, line := range lines {
-			if payload, ok := strings.CutPrefix(string(line), "data: "); ok {
-				payloads = append(payloads, payload)
-			}
-		}
-		for i, payload := range payloads {
-			assert.JSONEq(t, fmt.Sprint(i), jsonField(t, payload, "sequence_number"))
-		}
+		payloads := responsesEncoderPayloads(lines)
 		errEvent := payloads[len(payloads)-2]
 		assert.JSONEq(t, `"server_error"`, jsonField(t, errEvent, "code"))
 		assert.JSONEq(t, `"upstream stream failed"`, jsonField(t, errEvent, "message"))
@@ -417,15 +534,24 @@ func TestResponsesStreamEncoder_Abort(t *testing.T) {
 		assert.JSONEq(t, `{"code":"server_error","message":"upstream stream failed"}`, jsonField(t, failed, "response", "error"))
 		assert.JSONEq(t, `4`, jsonField(t, failed, "response", "usage", "total_tokens"))
 		var output []struct {
+			Type   string `json:"type"`
 			Status string `json:"status"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(jsonField(t, failed, "response", "output")), &output))
-		require.Len(t, output, 2)
-		assert.Equal(t, "completed", output[0].Status)
-		assert.Equal(t, "incomplete", output[1].Status)
+		require.Len(t, output, 1)
+		assert.Equal(t, "message", output[0].Type)
+		assert.Equal(t, "incomplete", output[0].Status)
 
 		assert.Empty(t, enc.Abort("again", nil))
 		assert.Empty(t, enc.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
+	})
+	t.Run("only held calls end with an empty output", func(t *testing.T) {
+		enc := NewResponsesStreamEncoder()
+		lines := enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f", ArgumentsDelta: "{}"}}})
+		lines = append(lines, enc.Finish(&CanonicalStreamChunk{FinishReason: "MALFORMED_FUNCTION_CALL"})...)
+		assert.Equal(t, []string{"response.created", "response.in_progress", "error", "response.failed"}, responsesEncoderTypes(t, lines))
+		requireSequentialItems(t, lines)
+		assert.Zero(t, enc.Dropped())
 	})
 }
 

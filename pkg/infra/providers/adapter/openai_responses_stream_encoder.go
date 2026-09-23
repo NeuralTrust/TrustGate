@@ -33,7 +33,10 @@ const (
 	responsesOutputText       = "output_text"
 )
 
-// ResponsesStreamEncoder encodes a canonical stream as Responses API events, giving each item its own output_index; not safe for concurrent use.
+// ResponsesStreamEncoder encodes a canonical stream as Responses API events.
+// Items go out one at a time, each with its own output_index: the text
+// streams live as a single message and the tool calls follow it at Finish. It
+// is not safe for concurrent use.
 type ResponsesStreamEncoder struct {
 	nonce     string
 	id        string
@@ -47,6 +50,7 @@ type ResponsesStreamEncoder struct {
 	items     []*responsesStreamItem
 	message   *responsesStreamItem
 	calls     map[int]*responsesStreamItem
+	pending   []*responsesStreamItem
 	callIDs   map[string]bool
 }
 
@@ -58,8 +62,6 @@ type responsesStreamItem struct {
 	name        string
 	upstreamID  string
 	text        strings.Builder
-	announced   bool
-	closed      bool
 }
 
 // NewResponsesStreamEncoder returns an encoder for one Responses stream.
@@ -85,7 +87,7 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 		lines = append(lines, e.textDelta(chunk.Delta)...)
 	}
 	for _, tc := range chunk.ToolCallDeltas {
-		lines = append(lines, e.toolDelta(tc)...)
+		e.toolDelta(tc)
 	}
 	return lines
 }
@@ -104,7 +106,10 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	}
 	e.done = true
 	status, reason := responsesFinishStatus(chunk.FinishReason)
-	lines = append(lines, e.finishItems(status)...)
+	lines = append(lines, e.finishMessage(status)...)
+	for _, call := range e.namedCalls() {
+		lines = append(lines, e.emitCall(call, status)...)
+	}
 	response := e.terminalResponse(status, chunk.Usage)
 	event := "response.completed"
 	if status == responsesStatusIncomplete {
@@ -115,8 +120,10 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Abort ends a started stream with an error event carrying message, then
-// response.failed with usage, marking every item still open incomplete. Nothing is
-// emitted before response.created or once the stream has ended.
+// response.failed with usage. The message is marked incomplete and the tool
+// calls held back are dropped, so response.failed lists only the items the
+// client saw. Nothing is emitted before response.created or once the stream
+// has ended.
 func (e *ResponsesStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
 	if e.done || !e.started {
 		return nil
@@ -154,7 +161,8 @@ func responsesFinishStatus(reason string) (status, incompleteReason string) {
 func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][]byte {
 	e.done = true
 	e.aborted = true
-	lines := e.finishItems(responsesStatusIncomplete)
+	e.namedCalls()
+	lines := e.finishMessage(responsesStatusIncomplete)
 	lines = append(lines, e.event("error", map[string]any{
 		"code":    responsesErrorCode,
 		"message": message,
@@ -166,29 +174,32 @@ func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][
 	return append(lines, e.event("response.failed", map[string]any{"response": response})...)
 }
 
-func (e *ResponsesStreamEncoder) finishItems(status string) [][]byte {
-	for _, call := range e.calls {
-		if !call.announced {
-			e.dropped++
-		}
+func (e *ResponsesStreamEncoder) finishMessage(status string) [][]byte {
+	if e.message == nil {
+		return nil
 	}
-	var lines [][]byte
-	for _, item := range e.items {
-		if !item.closed {
-			lines = append(lines, e.finishItem(item, status)...)
-		}
-	}
+	lines := e.finishItem(e.message, status)
+	e.message = nil
 	return lines
+}
+
+func (e *ResponsesStreamEncoder) namedCalls() []*responsesStreamItem {
+	named := make([]*responsesStreamItem, 0, len(e.pending))
+	for _, call := range e.pending {
+		if call.name == "" {
+			e.dropped++
+			continue
+		}
+		named = append(named, call)
+	}
+	e.pending = nil
+	return named
 }
 
 func (e *ResponsesStreamEncoder) terminalResponse(itemStatus string, usage *CanonicalUsage) map[string]any {
 	output := make([]map[string]any, 0, len(e.items))
 	for _, item := range e.items {
-		status := itemStatus
-		if item.closed {
-			status = responsesStatusCompleted
-		}
-		output = append(output, item.snapshot(status))
+		output = append(output, item.snapshot(itemStatus))
 	}
 	response := e.response(itemStatus)
 	response["output"] = output
@@ -234,11 +245,7 @@ func (e *ResponsesStreamEncoder) response(status string) map[string]any {
 func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 	var lines [][]byte
 	if e.message == nil {
-		id := "msg_" + e.nonce
-		if len(e.items) > 0 {
-			id = fmt.Sprintf("msg_%s_%d", e.nonce, len(e.items))
-		}
-		e.message = e.addItem(&responsesStreamItem{kind: responsesItemMessage, id: id})
+		e.message = e.addItem(&responsesStreamItem{kind: responsesItemMessage, id: "msg_" + e.nonce})
 		lines = e.event("response.output_item.added", map[string]any{
 			"output_index": e.message.outputIndex,
 			"item":         e.message.snapshot(responsesStatusInProgress),
@@ -260,14 +267,17 @@ func (e *ResponsesStreamEncoder) textDelta(delta string) [][]byte {
 	})...)
 }
 
-func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
+// toolDelta holds the call back until Finish. LangChain numbers content
+// blocks by output_index changes, so a call left open while text or another
+// call streams comes back as tool calls with no name or id, and an
+// output_text.done that arrives after output_index moved on becomes an empty
+// message block that DeepSeek and Cohere reject (ENG-1618).
+func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) {
 	call := e.calls[tc.Index]
 	if call == nil || (tc.ID != "" && call.upstreamID != "" && tc.ID != call.upstreamID) {
-		if call != nil && !call.announced {
-			e.dropped++
-		}
 		call = &responsesStreamItem{kind: responsesItemFunctionCall, upstreamID: tc.ID, name: tc.Name}
 		e.calls[tc.Index] = call
+		e.pending = append(e.pending, call)
 	} else {
 		if call.upstreamID == "" {
 			call.upstreamID = tc.ID
@@ -276,45 +286,24 @@ func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) [][]byte {
 			call.name = tc.Name
 		}
 	}
-	if call.announced {
-		if tc.ArgumentsDelta == "" {
-			return nil
-		}
-		call.text.WriteString(tc.ArgumentsDelta)
-		return e.argumentsDelta(call, tc.ArgumentsDelta)
-	}
 	call.text.WriteString(tc.ArgumentsDelta)
-	if call.name == "" {
-		return nil
-	}
-	return e.announce(call)
 }
 
-func (e *ResponsesStreamEncoder) announce(call *responsesStreamItem) [][]byte {
-	call.announced = true
+func (e *ResponsesStreamEncoder) emitCall(call *responsesStreamItem, status string) [][]byte {
 	call.callID = e.callID(call.upstreamID)
 	call.id = call.callID
 	if !strings.HasPrefix(call.id, "fc_") {
 		call.id = "fc_" + call.id
 	}
-	var lines [][]byte
-	if e.message != nil {
-		// LangChain keeps an open message as an empty content block once a
-		// function_call item is added, and replays it as an empty assistant
-		// message that DeepSeek and Cohere reject (ENG-1618).
-		lines = e.finishItem(e.message, responsesStatusCompleted)
-		e.message.closed = true
-		e.message = nil
-	}
 	e.addItem(call)
-	lines = append(lines, e.event("response.output_item.added", map[string]any{
+	lines := e.event("response.output_item.added", map[string]any{
 		"output_index": call.outputIndex,
 		"item":         call.functionCall("", responsesStatusInProgress),
-	})...)
+	})
 	if call.text.Len() > 0 {
 		lines = append(lines, e.argumentsDelta(call, call.text.String())...)
 	}
-	return lines
+	return append(lines, e.finishItem(call, status)...)
 }
 
 func (e *ResponsesStreamEncoder) callID(upstream string) string {

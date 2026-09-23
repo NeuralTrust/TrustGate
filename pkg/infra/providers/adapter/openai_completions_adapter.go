@@ -50,6 +50,7 @@ type openaiMessage struct {
 type openaiContentPart struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text,omitempty"`
+	Refusal  string          `json:"refusal,omitempty"`
 	ImageURL json.RawMessage `json:"image_url,omitempty"`
 }
 

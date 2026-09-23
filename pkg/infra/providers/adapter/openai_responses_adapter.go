@@ -191,13 +191,10 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 						if callID == "" {
 							callID = item.ID
 						}
-						cr.Messages = append(cr.Messages, CanonicalMessage{
-							Role: "assistant",
-							ToolCalls: []CanonicalToolCall{{
-								ID:        callID,
-								Name:      item.Name,
-								Arguments: item.Arguments,
-							}},
+						cr.Messages = appendResponsesAssistant(cr.Messages, "", CanonicalToolCall{
+							ID:        callID,
+							Name:      item.Name,
+							Arguments: item.Arguments,
 						})
 
 					case item.Type == "function_call_output":
@@ -209,12 +206,15 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 
 					case item.Role != "":
 						content := contentToString(item.Content)
-						if item.Role == "system" || item.Role == "developer" {
+						switch item.Role {
+						case "system", "developer":
 							if cr.System != "" {
 								cr.System += "\n"
 							}
 							cr.System += content
-						} else if item.Role != "assistant" || content != "" {
+						case "assistant":
+							cr.Messages = appendResponsesAssistant(cr.Messages, content)
+						default:
 							cr.Messages = append(cr.Messages, CanonicalMessage{
 								Role:    item.Role,
 								Content: content,
@@ -256,6 +256,27 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	return cr, nil
+}
+
+// appendResponsesAssistant folds consecutive assistant items into one message,
+// as a Chat Completions assistant turn carries its text and every tool call:
+// OpenAI-compatible upstreams such as DeepSeek reject an assistant tool_calls
+// message not followed by its tool results, and an empty assistant message
+// (ENG-1618).
+func appendResponsesAssistant(msgs []CanonicalMessage, content string, calls ...CanonicalToolCall) []CanonicalMessage {
+	if content == "" && len(calls) == 0 {
+		return msgs
+	}
+	if n := len(msgs); n > 0 && msgs[n-1].Role == "assistant" {
+		last := &msgs[n-1]
+		if content != "" && last.Content != "" {
+			last.Content += "\n"
+		}
+		last.Content += content
+		last.ToolCalls = append(last.ToolCalls, calls...)
+		return msgs
+	}
+	return append(msgs, CanonicalMessage{Role: "assistant", Content: content, ToolCalls: calls})
 }
 
 // ---------------------------------------------------------------------------
