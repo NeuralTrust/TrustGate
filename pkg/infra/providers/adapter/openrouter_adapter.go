@@ -86,7 +86,7 @@ func (a *OpenRouterAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChu
 	}
 
 	sc, err := a.openai.DecodeStreamChunk(payload)
-	if err != nil || sc == nil {
+	if err != nil || sc == nil || sc.UpstreamErrorOnly() {
 		return sc, err
 	}
 	if sc.Usage != nil {

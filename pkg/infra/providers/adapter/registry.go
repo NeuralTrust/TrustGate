@@ -70,6 +70,10 @@ type ResponseAdapter interface {
 // "data: {…}" and "" (empty-line event separator). This allows providers that
 // require multi-line SSE events (e.g. Anthropic's event: + data:) to produce
 // a byte-accurate stream.
+//
+// DecodeStreamChunk reports an error object the upstream sent as a payload on
+// the chunk's UpstreamError, not as its error; a payload carrying only the
+// error decodes to a chunk for which UpstreamErrorOnly reports true.
 type StreamAdapter interface {
 	DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error)
 	EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
@@ -280,7 +284,7 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 	if err != nil {
 		return nil, fmt.Errorf("adapter stream decode (%s): %w", target, err)
 	}
-	if canonical == nil {
+	if canonical == nil || canonical.UpstreamErrorOnly() {
 		return nil, nil
 	}
 	dropStreamProviderExtensionsForCrossFormat(source, target, canonical)

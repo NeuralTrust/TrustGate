@@ -264,4 +264,7 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	// UpstreamError is the error object the upstream sent in this chunk's
+	// payload, if any.
+	UpstreamError *UpstreamStreamError `json:"-"`
 }

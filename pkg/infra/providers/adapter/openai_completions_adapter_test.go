@@ -272,6 +272,83 @@ func TestDecodeCompletionsStreamChunk_ReasoningOnly(t *testing.T) {
 	assert.Empty(t, sc.Delta)
 }
 
+func TestDecodeCompletionsStreamChunk_UpstreamError(t *testing.T) {
+	tests := []struct {
+		name       string
+		chunk      string
+		want       *UpstreamStreamError
+		wantOnly   bool
+		wantFinish string
+		wantUsage  bool
+	}{
+		{
+			name:     "error object",
+			chunk:    `{"error":{"message":"The server had an error","type":"server_error","code":"internal"}}`,
+			want:     &UpstreamStreamError{Type: "server_error", Code: "internal", Message: "The server had an error"},
+			wantOnly: true,
+		},
+		{
+			name:     "numeric code as OpenRouter sends it",
+			chunk:    `{"id":"gen-1","object":"chat.completion.chunk","choices":[],"error":{"code":502,"message":"Provider returned error"}}`,
+			want:     &UpstreamStreamError{Code: "502", Message: "Provider returned error"},
+			wantOnly: true,
+		},
+		{
+			name:     "string error",
+			chunk:    `{"error":"overloaded"}`,
+			want:     &UpstreamStreamError{Message: "overloaded"},
+			wantOnly: true,
+		},
+		{
+			name: "error with the failure finish and usage",
+			chunk: `{"id":"gen-1","object":"chat.completion.chunk","error":{"code":502,"message":"Provider returned error"},` +
+				`"choices":[{"index":0,"delta":{},"finish_reason":"error"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`,
+			want:       &UpstreamStreamError{Code: "502", Message: "Provider returned error"},
+			wantFinish: "error",
+			wantUsage:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc, err := (&OpenAIAdapter{}).DecodeStreamChunk([]byte(tt.chunk))
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			assert.Equal(t, tt.want, sc.UpstreamError)
+			assert.Equal(t, tt.wantOnly, sc.UpstreamErrorOnly())
+			assert.Equal(t, tt.wantFinish, sc.FinishReason)
+			if tt.wantUsage {
+				require.NotNil(t, sc.Usage)
+				assert.Equal(t, 5, sc.Usage.InputTokens)
+			}
+		})
+	}
+}
+
+func TestDecodeCompletionsStreamChunk_EmptyErrorIsAChunk(t *testing.T) {
+	for _, raw := range []string{`null`, `""`, `{}`, `{"message":""}`, `{"message":"","code":null}`, `{"message":"","code":0}`, `{"type":"x","message":"","code":""}`, `false`, `0`} {
+		t.Run(raw, func(t *testing.T) {
+			chunk := `{"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"}}],"error":` + raw + `}`
+			sc, err := (&OpenAIAdapter{}).DecodeStreamChunk([]byte(chunk))
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			assert.Equal(t, "hi", sc.Delta)
+			assert.Nil(t, sc.UpstreamError)
+		})
+	}
+}
+
+func TestFinishFailure(t *testing.T) {
+	for _, reason := range []string{"error", "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS"} {
+		message, failed := FinishFailure(reason)
+		assert.True(t, failed, reason)
+		assert.NotEmpty(t, message, reason)
+	}
+	for _, reason := range []string{"", "stop", "length", "tool_calls", "OTHER", "LANGUAGE", "SAFETY"} {
+		_, failed := FinishFailure(reason)
+		assert.False(t, failed, reason)
+	}
+}
+
 // GPT-5 models accept freeform "custom" tools alongside classic "function"
 // tools. A canonical round-trip must not turn one into the other (ENG-1281).
 func TestCanonical_OpenAI_Completions_CustomToolRoundtrip(t *testing.T) {

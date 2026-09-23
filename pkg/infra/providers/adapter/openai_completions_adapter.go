@@ -222,6 +222,7 @@ type openaiStreamChunk struct {
 	Choices []openaiStreamChoice `json:"choices"`
 	Usage   *openaiUsage         `json:"usage,omitempty"`
 	XGroq   json.RawMessage      `json:"x_groq,omitempty"`
+	Error   json.RawMessage      `json:"error,omitempty"`
 }
 
 type openaiStreamChoice struct {
@@ -572,12 +573,29 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 // Stream: Decode (Chat Completions chunk → Canonical)
 // ---------------------------------------------------------------------------
 
+// decodeCompletionsStreamChunk decodes a Chat Completions chunk. A payload
+// carrying an "error" is reported on the chunk's UpstreamError, alongside the
+// content, finish and usage decoded from the rest of the payload, since
+// OpenRouter sends the failure's finish_reason and usage with the error.
 func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var raw openaiStreamChunk
 	if err := json.Unmarshal(chunk, &raw); err != nil {
 		return nil, nil // skip non-JSON
 	}
+	upstreamErr := decodeStreamError(raw.Error)
+	sc := decodeCompletionsStreamContent(&raw)
+	switch {
+	case upstreamErr == nil:
+		return sc, nil
+	case sc == nil:
+		return &CanonicalStreamChunk{UpstreamError: upstreamErr}, nil
+	default:
+		sc.UpstreamError = upstreamErr
+		return sc, nil
+	}
+}
 
+func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChunk {
 	sc := &CanonicalStreamChunk{
 		ID:    raw.ID,
 		Model: raw.Model,
@@ -623,10 +641,10 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		len(sc.ToolCallDeltas) == 0 &&
 		sc.Usage == nil &&
 		len(sc.ProviderExtensions) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	return sc, nil
+	return sc
 }
 
 // ---------------------------------------------------------------------------
