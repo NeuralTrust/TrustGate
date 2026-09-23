@@ -171,7 +171,7 @@ func (p *providerInvoker) Invoke(
 				Body:       be.Body,
 			}, nil
 		}
-		return nil, err
+		return nil, clientRequestError(err)
 	}
 
 	usage, model, finishReason, responseID := p.decodeResponseMeta(respBody, prep.targetFormat)
@@ -251,7 +251,7 @@ func (p *providerInvoker) InvokeStream(
 				Body:       be.Body,
 			}, nil
 		}
-		return nil, fmt.Errorf("provider completions stream: %w", err)
+		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
 	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
@@ -262,6 +262,17 @@ func (p *providerInvoker) InvokeStream(
 		Stream:     stream,
 		SentModel:  prep.sentModel,
 	}, nil
+}
+
+// clientRequestError turns a body the provider client could not decode into a
+// terminal ErrInvalidRequestPayload; on a same-format passthrough the client is
+// the first to parse what the caller sent.
+func clientRequestError(err error) error {
+	var decodeErr *adapter.RequestDecodeError
+	if errors.As(err, &decodeErr) {
+		return fmt.Errorf("%w: %w", ErrInvalidRequestPayload, decodeErr)
+	}
+	return err
 }
 
 // prepare resolves the provider client and transforms the request payload across
@@ -307,8 +318,14 @@ func (p *providerInvoker) prepare(
 	if crossFormat {
 		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
 		if err != nil {
+			var contentErr *adapter.UnsupportedContentError
+			if errors.As(err, &contentErr) {
+				p.logger.Debug("request content not representable in target format",
+					slog.String("error", err.Error()))
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, contentErr)
+			}
 			if adapter.IsRequestDecodeError(err) {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, err)
 			}
 			return nil, fmt.Errorf("adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
 		}

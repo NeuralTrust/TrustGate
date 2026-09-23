@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -158,27 +159,59 @@ func encodeOpenAIToolChoice(tc *CanonicalToolChoice) json.RawMessage {
 // contentToString extracts text from a JSON content field that may be a plain
 // string or an array of content-part objects.
 func contentToString(raw json.RawMessage) string {
+	text, _ := decodeOpenAIContent(raw)
+	return text
+}
+
+func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
 	if raw == nil {
-		return ""
+		return "", nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s
+		return s, nil
 	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+	var parts []openaiContentPart
+	if json.Unmarshal(raw, &parts) != nil {
+		return string(raw), nil
 	}
-	if json.Unmarshal(raw, &parts) == nil {
-		var texts []string
-		for _, p := range parts {
-			if p.Text != "" {
-				texts = append(texts, p.Text)
-			}
+	var texts []string
+	var images []CanonicalImage
+	for _, p := range parts {
+		if p.Text != "" {
+			texts = append(texts, p.Text)
 		}
-		return strings.Join(texts, "\n")
+		if p.Type != "image_url" {
+			continue
+		}
+		if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
+			images = append(images, img)
+		}
 	}
-	return string(raw)
+	return strings.Join(texts, "\n"), images
+}
+
+func decodeOpenAIImageURL(raw json.RawMessage) (CanonicalImage, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var u string
+		if json.Unmarshal(trimmed, &u) != nil || u == "" {
+			return CanonicalImage{}, false
+		}
+		return parseImageURL(u, ""), true
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		return CanonicalImage{}, false
+	}
+	var u, detail string
+	if json.Unmarshal(fields["url"], &u) != nil || u == "" {
+		return CanonicalImage{}, false
+	}
+	if json.Unmarshal(fields["detail"], &detail) != nil {
+		detail = ""
+	}
+	return parseImageURL(u, detail), true
 }
 
 func stringToContent(s string) json.RawMessage {

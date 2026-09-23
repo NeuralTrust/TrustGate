@@ -490,3 +490,41 @@ func TestFoldSystemIntoFirstTurn(t *testing.T) {
 		assert.Equal(t, "Be terse.", firstUserText(t, params.input("m")))
 	})
 }
+
+func TestDecodeConverseBody_Image(t *testing.T) {
+	t.Parallel()
+
+	body := `{"messages":[{"role":"user","content":[
+		{"image":{"format":"jpeg","source":{"bytes":"/9j/4AAQ"}}},
+		{"image":{"format":"png","source":{}}},
+		{"text":"what is it?"}
+	]}]}`
+
+	params, err := decodeConverseBody([]byte(body))
+	require.NoError(t, err)
+
+	in := params.input("eu.anthropic.claude-sonnet-4-5-20250929-v1:0")
+	require.Len(t, in.Messages, 1)
+	content := in.Messages[0].Content
+	require.Len(t, content, 2, "an image without bytes is dropped")
+	image, ok := content[0].(*bedrockTypes.ContentBlockMemberImage)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.ImageFormatJpeg, image.Value.Format)
+	source, ok := image.Value.Source.(*bedrockTypes.ImageSourceMemberBytes)
+	require.True(t, ok)
+	assert.Equal(t, []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10}, source.Value)
+	text, ok := content[1].(*bedrockTypes.ContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "what is it?", text.Value)
+}
+
+func TestDecodeConverseBody_InvalidImageBytesIsARequestDecodeError(t *testing.T) {
+	t.Parallel()
+
+	body := `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"@@@"}}},{"text":"hi"}]}]}`
+
+	_, err := decodeConverseBody([]byte(body))
+
+	require.Error(t, err)
+	assert.True(t, adapter.IsRequestDecodeError(err))
+}

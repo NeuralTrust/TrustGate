@@ -91,6 +91,14 @@ type anthropicContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"` // user message: tool_result block
 	Content   json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
 	IsError   bool            `json:"is_error,omitempty"`
+	Source    json.RawMessage `json:"source,omitempty"`
+}
+
+type anthropicImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -261,9 +269,14 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 	switch role {
 	case "user":
 		var textParts []string
+		var images []CanonicalImage
 		var toolMessages []CanonicalMessage
 		for _, b := range blocks {
 			switch b.Type {
+			case "image":
+				if img, ok := anthropicImageToCanonical(b.Source); ok {
+					images = append(images, img)
+				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
 				if b.IsError && content != "" {
@@ -278,11 +291,14 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 				textParts = append(textParts, b.Text)
 			}
 		}
-		// OpenAI order: user (if any text) then tool messages
-		if len(textParts) > 0 {
-			out = append(out, CanonicalMessage{Role: "user", Content: strings.Join(textParts, "\n")})
-		}
 		out = append(out, toolMessages...)
+		if len(textParts) > 0 || len(images) > 0 {
+			out = append(out, CanonicalMessage{
+				Role:    "user",
+				Content: strings.Join(textParts, "\n"),
+				Images:  images,
+			})
+		}
 	case "assistant":
 		var textParts []string
 		var toolCalls []CanonicalToolCall
@@ -310,6 +326,60 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		})
 	}
 	return out
+}
+
+func anthropicImageToCanonical(raw json.RawMessage) (CanonicalImage, bool) {
+	var src anthropicImageSource
+	if len(raw) == 0 || json.Unmarshal(raw, &src) != nil {
+		return CanonicalImage{}, false
+	}
+	switch src.Type {
+	case "base64":
+		if src.Data == "" {
+			return CanonicalImage{}, false
+		}
+		return CanonicalImage{MediaType: normalizeImageMediaType(src.MediaType), Data: src.Data}, true
+	case "url":
+		if src.URL == "" {
+			return CanonicalImage{}, false
+		}
+		return CanonicalImage{URL: src.URL}, true
+	default:
+		return CanonicalImage{}, false
+	}
+}
+
+func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
+	src := anthropicImageSource{Type: "base64", MediaType: img.MediaType, Data: img.Data}
+	if img.Data == "" {
+		if !isHTTPImageURL(img.URL) {
+			return anthropicContentBlock{}, &UnsupportedContentError{Reason: "image must be inline base64 data or an http(s) URL"}
+		}
+		src = anthropicImageSource{Type: "url", URL: img.URL}
+	}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return anthropicContentBlock{}, err
+	}
+	return anthropicContentBlock{Type: "image", Source: raw}, nil
+}
+
+func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
+	if m.Role != "user" || len(m.Images) == 0 {
+		return stringToContent(m.Content), nil
+	}
+	blocks := make([]anthropicContentBlock, 0, len(m.Images)+1)
+	for _, img := range m.Images {
+		b, err := anthropicImageBlock(img)
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, b)
+	}
+	if m.Content != "" {
+		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
+	}
+	return json.Marshal(blocks)
 }
 
 // Request: Decode (Anthropic → Canonical)
@@ -432,9 +502,13 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 			})
 			continue
 		}
+		content, err := anthropicMessageContent(m)
+		if err != nil {
+			return nil, err
+		}
 		out.Messages = append(out.Messages, anthropicMessage{
 			Role:    m.Role,
-			Content: stringToContent(m.Content),
+			Content: content,
 		})
 	}
 
