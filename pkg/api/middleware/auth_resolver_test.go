@@ -155,6 +155,19 @@ func TestAuthMiddleware_APIKeyCompatHeaderInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
+func TestAuthMiddleware_APIKeyGoogleHeaderInlineSuccess(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1beta/models/gemini-2.5-pro:generateContent", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderAPIKeyGoogle, rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyBearerUnknownUnauthorized(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
