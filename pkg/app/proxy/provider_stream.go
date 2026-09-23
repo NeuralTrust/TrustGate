@@ -162,7 +162,7 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 //
 // onChunk, when non-nil, is invoked with every decoded upstream chunk in both
 // passthrough and cross-format paths. Cross-format streams to Bedrock,
-// Anthropic, Responses and Gemini clients hold the finish and usage back and
+// Anthropic, Responses, Gemini and Cohere clients hold the finish and usage back and
 // emit them once, with the merged usage, on an upstream event its format
 // guarantees final or on [DONE], or else before the upstream ends or fails;
 // nothing is flushed unless the upstream sent a finish, and nothing is emitted
@@ -420,6 +420,7 @@ type finishDeferral struct {
 	model         string
 	usage         *adapter.CanonicalUsage
 	anthropic     *adapter.AnthropicStreamEncoder
+	cohere        *adapter.CohereStreamEncoder
 }
 
 func newFinishDeferral(source, target adapter.Format) *finishDeferral {
@@ -430,6 +431,8 @@ func newFinishDeferral(source, target adapter.Format) *finishDeferral {
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
 	case adapter.FormatOpenAIResponses, adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true}
+	case adapter.FormatCohere:
+		return &finishDeferral{target: target, holdFinish: true, cohere: adapter.NewCohereStreamEncoder(target)}
 	default:
 		return nil
 	}
@@ -547,16 +550,13 @@ func (d *finishDeferral) end(
 	return d.flush(emit, registry, source, logger)
 }
 
-// done flushes on the upstream's [DONE]. An Anthropic client whose upstream
-// sent [DONE] without a finish gets its message ended with end_turn, since
-// the upstream closed the stream cleanly.
 func (d *finishDeferral) done(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if d.anthropic != nil && !d.finished {
+	if (d.anthropic != nil || d.cohere != nil) && !d.finished {
 		d.finished = true
 		d.reason = "stop"
 	}
@@ -631,6 +631,18 @@ func (d *finishDeferral) flush(
 		d.logFinish(chunk.FinishReason, source, logger)
 		return emit(lines)
 	}
+	if d.cohere != nil {
+		lines := d.cohere.Finish(chunk)
+		if deltas, tools := d.cohere.Dropped(); deltas > 0 || tools > 0 {
+			logger.Warn("cohere stream dropped tool call content",
+				slog.String("target", string(d.target)),
+				slog.String("source", string(source)),
+				slog.Int("argument_deltas", deltas),
+				slog.Int("nameless_tool_calls", tools),
+			)
+		}
+		return emit(lines)
+	}
 	return encodeAndEmit(emit, registry, chunk, source, logger)
 }
 
@@ -671,10 +683,15 @@ func (d *finishDeferral) encode(
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if d.anthropic == nil {
+	var lines [][]byte
+	switch {
+	case d.anthropic != nil:
+		lines = d.anthropic.Content(chunk)
+	case d.cohere != nil:
+		lines = d.cohere.Content(chunk)
+	default:
 		return encodeAndEmit(emit, registry, chunk, source, logger)
 	}
-	lines := d.anthropic.Content(chunk)
 	return len(lines) == 0 || emit(lines)
 }
 

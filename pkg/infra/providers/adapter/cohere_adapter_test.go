@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,4 +128,150 @@ func TestCohere_DecodeStreamChunk_SkipsThinking(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, chunk)
 	assert.Equal(t, "hello", chunk.Delta)
+}
+
+const cohereToolCallStream = `event: message-start
+data: {"id":"93b3f521-090e-4ebc-bac4-f7c557e63c00","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"Voy"}}}
+
+event: tool-call-start
+data: {"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"database_agent_3v76fs3zjrgq","type":"function","function":{"name":"database_agent","arguments":""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{\n    \""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"query"}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\": \"Juan\""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\n}"}}}}}
+
+event: tool-call-end
+data: {"type":"tool-call-end","index":0}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"TOOL_CALL","usage":{"billed_units":{"input_tokens":50,"output_tokens":26},"tokens":{"input_tokens":793,"output_tokens":61},"cached_tokens":176}}}
+
+data: [DONE]
+`
+
+const cohereTextStream = `event: message-start
+data: {"id":"5c1f","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: content-start
+data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"Hola"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" Juan"}}}}
+
+event: content-end
+data: {"type":"content-end","index":0}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":5,"output_tokens":2},"tokens":{"input_tokens":70,"output_tokens":2}}}}
+`
+
+func decodeCohereSSE(t *testing.T, stream string) []*CanonicalStreamChunk {
+	t.Helper()
+	a := &CohereAdapter{}
+	var chunks []*CanonicalStreamChunk
+	for line := range strings.SplitSeq(stream, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok || payload == "[DONE]" {
+			continue
+		}
+		chunk, err := a.DecodeStreamChunk([]byte(payload))
+		require.NoError(t, err)
+		if chunk != nil {
+			chunks = append(chunks, chunk)
+		}
+	}
+	return chunks
+}
+
+func TestCohereAdapter_DecodeStreamToolCall(t *testing.T) {
+	chunks := decodeCohereSSE(t, cohereToolCallStream)
+
+	require.NotEmpty(t, chunks)
+	assert.Equal(t, "assistant", chunks[0].Role)
+	assert.Equal(t, "93b3f521-090e-4ebc-bac4-f7c557e63c00", chunks[0].ID)
+
+	var id, name, args string
+	var finish string
+	var usage *CanonicalUsage
+	for _, c := range chunks {
+		assert.Empty(t, c.Delta, "tool plan is not content")
+		for _, tc := range c.ToolCallDeltas {
+			assert.Equal(t, 0, tc.Index)
+			if tc.ID != "" {
+				id = tc.ID
+			}
+			if tc.Name != "" {
+				name = tc.Name
+			}
+			args += tc.ArgumentsDelta
+		}
+		if c.FinishReason != "" {
+			finish = c.FinishReason
+		}
+		usage = MergeUsage(usage, c.Usage)
+	}
+	assert.Equal(t, "database_agent_3v76fs3zjrgq", id)
+	assert.Equal(t, "database_agent", name)
+	assert.JSONEq(t, `{"query":"Juan"}`, args)
+	assert.Equal(t, "tool_calls", finish)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 793, OutputTokens: 61, TotalTokens: 854, CachedInputTokens: 176}, usage)
+}
+
+func TestCohereAdapter_DecodeStreamText(t *testing.T) {
+	chunks := decodeCohereSSE(t, cohereTextStream)
+
+	var text string
+	for _, c := range chunks {
+		text += c.Delta
+	}
+	assert.Equal(t, "Hola Juan", text)
+	last := chunks[len(chunks)-1]
+	assert.Equal(t, "stop", last.FinishReason)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 70, OutputTokens: 2, TotalTokens: 72}, last.Usage)
+}
+
+func TestCohereUsage_BilledUnitsOnly(t *testing.T) {
+	chunk, err := (&CohereAdapter{}).DecodeStreamChunk([]byte(`{"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":9,"output_tokens":3}}}}`))
+	require.NoError(t, err)
+	require.NotNil(t, chunk)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 9, OutputTokens: 3, TotalTokens: 12}, chunk.Usage)
+}
+
+func TestCohereAdapter_EncodeStreamChunkShapes(t *testing.T) {
+	a := &CohereAdapter{}
+	lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{
+		ID:   "gen-1",
+		Role: "assistant",
+		ToolCallDeltas: []StreamToolCallDelta{
+			{Index: 0, ID: "call_1", Name: "f"},
+			{Index: 0, ArgumentsDelta: `{}`},
+		},
+	})
+	require.NoError(t, err)
+
+	var got []string
+	for _, l := range lines {
+		if p, ok := strings.CutPrefix(string(l), "data: "); ok {
+			got = append(got, p)
+		}
+	}
+	assert.Equal(t, []string{
+		`{"id":"gen-1","type":"message-start","delta":{"message":{"role":"assistant"}}}`,
+		`{"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"call_1","type":"function","function":{"name":"f","arguments":""}}}}}`,
+		`{"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{}"}}}}}`,
+	}, got)
 }

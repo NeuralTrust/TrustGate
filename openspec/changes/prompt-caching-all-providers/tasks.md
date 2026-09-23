@@ -101,12 +101,12 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 
 Evidence: scratchpad capture `gw_openai.sse` (openai upstream → Cohere client) vs real `direct.sse`. multi-agent-tests PR #16 fixes the separate langchain-cohere client bug.
 
-- [ ] 3b.1 `cohere_adapter.go` `EncodeStreamChunk`: `message-start` on Role; `tool-call-start` with `delta.message.tool_calls{id,type,function{name,arguments:""}}` on ID/Name; `tool-call-delta` with `delta.message.tool_calls.function.arguments`; `Index` without `omitempty`.
-- [ ] 3b.2 `cohereUsage`: add `billed_units`; emit it (billed = tokens) and cached_tokens (S1c).
-- [ ] 3b.3 `pkg/app/proxy/provider_stream.go`: stateful Cohere-client branch (like Gemini): emit `tool-call-end{index}` on index change / finish; merge finish reason with the trailing usage chunk into ONE `message-end` (keep TOOL_CALL); emit after upstream end.
+- [x] 3b.1 `cohere_adapter.go` `EncodeStreamChunk`: `message-start` on Role; `tool-call-start` with `delta.message.tool_calls{id,type,function{name,arguments:""}}` on ID/Name; `tool-call-delta` with `delta.message.tool_calls.function.arguments`; `Index` without `omitempty`.
+- [x] 3b.2 `cohereUsage`: add `billed_units`; emit it (billed = tokens) and cached_tokens (S1c).
+- [x] 3b.3 `pkg/app/proxy/provider_stream.go`: stateful Cohere-client branch (like Gemini): emit `tool-call-end{index}` on index change / finish; merge finish reason with the trailing usage chunk into ONE `message-end` (keep TOOL_CALL); emit after upstream end.
 - [ ] 3b.3b (moved to 3c.1) Same stateful path for **Responses** clients: a usage-only upstream chunk after the finish chunk (Bedrock `messageStop` then `metadata`; OpenAI `include_usage`) must still reach the client in `response.completed` (S1c finding: today `response.completed` is only emitted on the finish chunk, so the client gets no usage).
-- [ ] 3b.4 `DecodeStreamChunk`: read `delta.message.tool_calls` and handle `tool-call-start` (Cohere upstream → non-Cohere client keeps id/name/args).
-- [ ] 3b.5 Tests: encoder unit tests per event shape; `provider_stream_test.go` golden (openai tool-call stream → Cohere client sequence, incl. 2 parallel calls); decoder test fed real `direct.sse` events.
+- [x] 3b.4 `DecodeStreamChunk`: read `delta.message.tool_calls` and handle `tool-call-start` (Cohere upstream → non-Cohere client keeps id/name/args).
+- [x] 3b.5 Tests: encoder unit tests per event shape; `provider_stream_test.go` golden (openai tool-call stream → Cohere client sequence, incl. 2 parallel calls); decoder test fed real `direct.sse` events.
 - [ ] 3b.6 V1; V2; V3; V4 **Cohere** (native + `matrix-ag -p cohere` with STREAM on/off, incl. `openai → cohere`, `openai_responses → cohere`, `cohere → openai_completions`) using the multi-agent server with PR #16; V5.
 
 ## Phase 3c (S1c-3): stream usage for Anthropic and Responses clients (S1c review, both judges)
