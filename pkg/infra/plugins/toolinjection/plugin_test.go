@@ -839,3 +839,29 @@ func TestPluginExecuteResponsesInputItemItCannotDecode(t *testing.T) {
 		t.Fatalf("decoded tools missing injected safety_check: %#v", decoded.Tools)
 	}
 }
+
+func TestPluginExecuteNonChatRequestsPassThrough(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			in := appplugins.ExecInput{
+				Stage:   policy.StagePreRequest,
+				Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+				Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+				Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_embeddings", ProxyCapability: "embeddings", Body: []byte(body)},
+			}
+
+			res, err := New(adapter.NewRegistry()).Execute(context.Background(), in)
+
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if res == nil || res.StatusCode != http.StatusOK || res.RequestBody != nil {
+				t.Fatalf("Execute() result = %#v, want an unchanged pass-through", res)
+			}
+		})
+	}
+}

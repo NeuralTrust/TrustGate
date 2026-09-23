@@ -17,6 +17,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/textproto"
@@ -135,7 +136,16 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
-	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
+	// The user context is never cancelled when the client goes away, so the
+	// upstream request gets a context of its own that ends with the response.
+	ctx, cancel := context.WithCancel(c.UserContext())
+	streaming := false
+	defer func() {
+		if !streaming {
+			cancel()
+		}
+	}()
+	result, err := h.forwarder.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
@@ -149,7 +159,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	relayHeaders(c, result.Headers)
 
 	if result.Stream != nil {
-		return writeStream(c, result, reqCtx)
+		streaming = true
+		return writeStream(c, result, reqCtx, cancel)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -169,7 +180,10 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 	}
 }
 
-func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext) error {
+// writeStream relays result.Stream from the body stream writer and calls
+// cancel once the writer returns, which a client that went away makes happen
+// at the first write that fails.
+func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext, cancel context.CancelFunc) error {
 	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
 	statusCode := result.StatusCode
 	headers := result.Headers
@@ -182,6 +196,7 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 
 	c.Status(statusCode)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer cancel()
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {

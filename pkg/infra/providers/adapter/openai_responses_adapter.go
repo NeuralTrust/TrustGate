@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 )
 
@@ -213,10 +212,9 @@ func decodeResponsesTools(raws []json.RawMessage) []CanonicalTool {
 }
 
 // decodeResponsesInput appends the messages of input, a string or a list of
-// items, to cr. Items are decoded one by one: an item whose shape the gateway
-// does not know, such as a hosted tool call with object arguments, is left
-// out instead of failing the request or dropping the rest of the history.
-// Only an input that is neither a string, a list nor null is an error.
+// items, to cr. Items are decoded one by one so that one item of a shape the
+// gateway does not know is counted in cr.DroppedInputItems instead of failing
+// the request or dropping the rest of the history.
 func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 	if len(input) == 0 || string(input) == "null" {
 		return nil
@@ -230,102 +228,90 @@ func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 	if err := json.Unmarshal(input, &raws); err != nil {
 		return fmt.Errorf("decode responses input: %w", err)
 	}
-	turn, malformed := false, 0
+	turn := false
 	for _, raw := range raws {
 		var item openaiResponsesInputItem
-		ok := json.Unmarshal(raw, &item) == nil
-		if ok {
-			turn, ok = appendResponsesInputItem(cr, item, turn)
+		if json.Unmarshal(raw, &item) != nil {
+			cr.DroppedInputItems++
+			continue
 		}
-		if !ok {
-			malformed++
-		}
-	}
-	if malformed > 0 {
-		slog.Debug("responses input items left out", slog.Int("malformed_items", malformed))
+		turn = appendResponsesInputItem(cr, item, turn)
 	}
 	return nil
 }
 
-// appendResponsesInputItem appends item to the messages of cr and returns
-// whether the last message is an assistant message that later assistant
-// message and function_call items join, so a Chat Completions upstream gets
-// one assistant message per turn. Only an item that adds a message other than
-// an assistant one ends the turn: a user message, an input_text or a
-// function_call_output. Items that add no message leave the turn as it is:
-// reasoning, item references, hosted and custom tool calls, unknown items, an
-// empty assistant message and developer or system messages, whose text goes
-// to the system prompt wherever they appear. It reports false, adding
-// nothing, for a function_call whose arguments are not a string.
-func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputItem, turn bool) (bool, bool) {
+// appendResponsesInputItem returns whether cr ends with an assistant message
+// that later assistant items join, so a Chat Completions upstream gets one
+// assistant message per turn. Only a user message, an input_text or a
+// function_call_output ends a turn; developer and system text goes to the
+// system prompt wherever it appears.
+func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputItem, turn bool) bool {
 	switch {
 	case item.Type == "function_call":
-		arguments, ok := responsesCallArguments(item.Arguments)
-		if !ok {
-			return turn, false
-		}
 		callID := item.CallID
 		if callID == "" {
 			callID = item.ID
 		}
-		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: arguments}), true
+		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: responsesCallArguments(item.Arguments)})
 	case item.Type == "function_call_output":
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "tool", Content: responsesToolOutput(item.Output), ToolCallID: item.CallID})
-		return false, true
+		return false
 	case item.Type == "reasoning":
-		return turn, true
+		return turn
 	case item.Role == "assistant":
-		return appendResponsesAssistant(cr, turn, contentToString(item.Content)), true
+		return appendResponsesAssistant(cr, turn, contentToString(item.Content))
 	case item.Role == "system", item.Role == "developer":
 		if cr.System != "" {
 			cr.System += "\n"
 		}
 		cr.System += contentToString(item.Content)
-		return turn, true
+		return turn
 	case item.Role != "":
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: item.Role, Content: contentToString(item.Content)})
-		return false, true
+		return false
 	case item.Type == "input_text":
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "user", Content: item.Text})
-		return false, true
+		return false
 	default:
-		return turn, true
+		return turn
 	}
 }
 
-// responsesCallArguments returns the arguments of a function_call item, which
-// the Responses API sends as a JSON-encoded string. Missing, null or blank
-// arguments become an empty object. It reports false for any other value.
-func responsesCallArguments(raw json.RawMessage) (string, bool) {
+// responsesCallArguments keeps a call whose arguments are not the JSON string
+// the API specifies as the compact JSON text of the value, so its
+// function_call_output is not left without a call.
+func responsesCallArguments(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
-		return responsesEmptyArguments, true
+		return responsesEmptyArguments
 	}
 	var arguments string
 	if json.Unmarshal(raw, &arguments) != nil {
-		return "", false
+		var compact bytes.Buffer
+		if json.Compact(&compact, raw) != nil {
+			return responsesEmptyArguments
+		}
+		return compact.String()
 	}
 	if strings.TrimSpace(arguments) == "" {
-		return responsesEmptyArguments, true
+		return responsesEmptyArguments
 	}
-	return arguments, true
+	return arguments
 }
 
-// responsesToolOutput returns the text of a function_call_output. A string
-// output is used as it is and a list of content parts becomes the text of its
-// parts, leaving out images and files. Any other value, such as an object, is
-// passed on as its JSON text. An output without text, whether missing, null,
-// an empty list or a list of parts none of which has text, becomes a
-// placeholder so the tool result is not empty.
+// responsesToolOutput returns the text of a function_call_output, leaving out
+// images and files, and passes any other value on as its JSON text. An output
+// without text gets a placeholder, since upstreams reject an empty tool
+// result.
 func responsesToolOutput(output json.RawMessage) string {
 	trimmed := bytes.TrimSpace(output)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return responsesNonTextToolOutput
 	}
 	text := contentToString(trimmed)
-	if text != "" || trimmed[0] != '[' {
-		return text
+	if strings.TrimSpace(text) == "" {
+		return responsesNonTextToolOutput
 	}
-	return responsesNonTextToolOutput
+	return text
 }
 
 // appendResponsesAssistant folds an assistant item into the last message of

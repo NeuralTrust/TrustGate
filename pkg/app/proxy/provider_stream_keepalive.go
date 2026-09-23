@@ -17,6 +17,7 @@ package proxy
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,7 @@ func (t timeTicker) Chan() <-chan time.Time { return t.C }
 
 type streamOptions struct {
 	ctx       context.Context
+	cancel    context.CancelFunc
 	now       func() time.Time
 	newTicker func(time.Duration) streamTicker
 }
@@ -48,8 +50,13 @@ func withStreamContext(ctx context.Context) streamOption {
 	return func(o *streamOptions) { o.ctx = ctx }
 }
 
-// withStreamClock makes a stream read the time from now and check for
-// keepalives on the tickers newTicker returns.
+// withStreamCancel sets the function that aborts the upstream request, which
+// the stream calls once it stops so a read blocked on a silent upstream
+// returns and the connection is released.
+func withStreamCancel(cancel context.CancelFunc) streamOption {
+	return func(o *streamOptions) { o.cancel = cancel }
+}
+
 func withStreamClock(now func() time.Time, newTicker func(time.Duration) streamTicker) streamOption {
 	return func(o *streamOptions) {
 		o.now = now
@@ -59,8 +66,9 @@ func withStreamClock(now func() time.Time, newTicker func(time.Duration) streamT
 
 func newStreamOptions(opts []streamOption) streamOptions {
 	o := streamOptions{
-		ctx: context.Background(),
-		now: time.Now,
+		ctx:    context.Background(),
+		cancel: func() {},
+		now:    time.Now,
 		newTicker: func(d time.Duration) streamTicker {
 			return timeTicker{time.NewTicker(d)}
 		},
@@ -76,19 +84,15 @@ type upstreamLine struct {
 	err  error
 }
 
-// pumpWithKeepalive ranges over raw on a goroutine of its own and hands each
-// line to handle on the calling goroutine, calling tick whenever the ticker
-// fires while no line is there, so a silent upstream does not keep tick from
-// running. The reader waits for handle to return before reading the next
-// line, so the upstream is read no faster than the client takes the lines.
-// It returns true when raw ended, and false when handle or tick returned
-// false or the context ended, after handle got the context's error.
+// pumpWithKeepalive reads raw on a goroutine of its own so tick still runs
+// while the upstream is silent; handle and tick run on the calling goroutine,
+// and the reader waits for handle before reading on, so backpressure is
+// unchanged. It returns true when raw ended.
 //
-// When handle stops the stream the reader is parked between lines, so it is
-// released and waited for, and raw's cleanup has run on return. When tick
-// stops it or the context ends the reader may be blocked reading the
-// upstream; it is released without waiting and exits once that read returns,
-// which the context bounds for the upstream request made with it.
+// When it stops early the reader is released and the upstream request
+// cancelled, since the reader may be blocked in a read that only the
+// cancellation interrupts. A panic on the reader is raised again on the
+// calling goroutine, whose callers recover it.
 func pumpWithKeepalive(
 	options streamOptions,
 	raw iter.Seq2[[]byte, error],
@@ -99,9 +103,10 @@ func pumpWithKeepalive(
 	next := make(chan struct{})
 	stop := make(chan struct{})
 	exited := make(chan struct{})
+	var readerPanic any
 	go func() {
 		defer close(exited)
-		defer close(lines)
+		defer func() { readerPanic = recover() }()
 		for line, err := range raw {
 			select {
 			case lines <- upstreamLine{line: line, err: err}:
@@ -116,30 +121,44 @@ func pumpWithKeepalive(
 		}
 	}()
 
+	var stopOnce sync.Once
+	release := func() {
+		stopOnce.Do(func() {
+			close(stop)
+			options.cancel()
+		})
+	}
+	defer release()
+
 	ticker := options.newTicker(keepaliveCheckInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case l, ok := <-lines:
-			if !ok {
-				<-exited
-				return true
-			}
+		case l := <-lines:
 			if !handle(l.line, l.err) {
-				close(stop)
+				release()
 				<-exited
+				repanic(readerPanic)
 				return false
 			}
 			<-next
+		case <-exited:
+			repanic(readerPanic)
+			return true
 		case <-ticker.Chan():
 			if !tick() {
-				close(stop)
 				return false
 			}
 		case <-options.ctx.Done():
-			close(stop)
+			release()
 			handle(nil, options.ctx.Err())
 			return false
 		}
+	}
+}
+
+func repanic(v any) {
+	if v != nil {
+		panic(v)
 	}
 }

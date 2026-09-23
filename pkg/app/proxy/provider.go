@@ -237,6 +237,7 @@ func (p *providerInvoker) InvokeStream(
 		body = injectStreamIncludeUsage(body)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if retryBody, ok := reasoningEffortRetryBody(prep, body, err); ok {
 		p.logger.Info("retrying OpenAI stream with reasoning effort disabled",
@@ -244,6 +245,7 @@ func (p *providerInvoker) InvokeStream(
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
 	}
 	if err != nil {
+		cancel()
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
@@ -254,7 +256,8 @@ func (p *providerInvoker) InvokeStream(
 		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req), withStreamContext(ctx))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req),
+		withStreamContext(ctx), withStreamCancel(cancel))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,

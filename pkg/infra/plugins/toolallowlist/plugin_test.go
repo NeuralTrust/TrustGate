@@ -434,3 +434,42 @@ func TestPlugin_Execute_ResponsesInputItemItCannotDecode(t *testing.T) {
 	assert.Equal(t, "search_web", out.Tools[0].Name)
 	assert.Len(t, out.Input, 3, "the input items are kept as the client sent them")
 }
+
+func TestPlugin_Execute_NonChatRequestsPassThrough(t *testing.T) {
+	tests := []struct {
+		name       string
+		capability string
+		format     string
+		body       string
+	}{
+		{name: "embeddings token ids", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[1,2,3]}`},
+		{name: "embeddings token id batches", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[[1,2],[3]]}`},
+		{name: "embeddings input it cannot decode", capability: "embeddings", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
+		{name: "rerank body it cannot decode", capability: "rerank", format: "cohere_rerank", body: `{"model":"m","query":1}`},
+		{name: "embeddings format without a capability", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := reqFor(tt.format, tt.body)
+			req.ProxyCapability = tt.capability
+
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+			require.NoError(t, err)
+			assert.Equal(t, 200, res.StatusCode)
+			assert.Nil(t, res.RequestBody)
+		})
+	}
+}
+
+func TestPlugin_Execute_ChatRequestItCannotDecodeFailsClosed(t *testing.T) {
+	req := reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`)
+	req.ProxyCapability = "chat"
+
+	res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+	assert.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, 400, pe.StatusCode)
+}

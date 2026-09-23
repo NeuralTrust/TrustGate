@@ -1358,3 +1358,23 @@ func TestPlugin_PreRequest_ResponsesInputItemItCannotDecode(t *testing.T) {
 	require.True(t, ok, "err = %v", err)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode, "the tool over budget is still enforced")
 }
+
+func TestPlugin_PreRequest_NonChatRequestsPassThrough(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "reject_response", "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+			req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_embeddings", ProxyCapability: "embeddings", Body: []byte(body)}
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+		})
+	}
+}

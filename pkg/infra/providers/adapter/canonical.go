@@ -37,6 +37,9 @@ type CanonicalRequest struct {
 	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
+	// DroppedInputItems counts the input items a decoder left out because it
+	// could not read them; callers that inspect the request log it.
+	DroppedInputItems int `json:"-"`
 }
 
 // CanonicalImage is one image attached to a message. Exactly one of Data or
