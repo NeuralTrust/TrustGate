@@ -345,8 +345,9 @@ func emitGeminiToolCalls(
 	return true
 }
 
-// finishDeferral holds a cross-format stream's usage, and the finish too when
-// the client's finish event carries usage, until the upstream's usage is final.
+// finishDeferral holds a cross-format stream's finish and usage until the
+// upstream's usage is final, so the client gets one finish even when the
+// upstream sends several.
 type finishDeferral struct {
 	target        adapter.Format
 	holdFinish    bool
@@ -363,7 +364,7 @@ type finishDeferral struct {
 func newFinishDeferral(source, target adapter.Format) *finishDeferral {
 	switch source {
 	case adapter.FormatBedrock:
-		return &finishDeferral{target: target}
+		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true}
 	case adapter.FormatOpenAIResponses:

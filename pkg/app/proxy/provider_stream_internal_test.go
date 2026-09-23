@@ -87,7 +87,7 @@ func converseEvents(t *testing.T, lines []string) []adapter.ConverseStreamEvent 
 	return events
 }
 
-func TestAdaptStream_BedrockClientUpstreamErrorEmitsNoMetadata(t *testing.T) {
+func TestAdaptStream_BedrockClientUnfinishedUpstreamErrorEmitsNoMetadata(t *testing.T) {
 	upstreamErr := errors.New("upstream reset")
 	upstream := func(yield func([]byte, error) bool) {
 		for _, l := range []string{
@@ -424,6 +424,15 @@ func TestAdaptStream_DeferredFinishFlushedOnTerminalSignal(t *testing.T) {
 			terminal: `"type":"message_stop"`,
 		},
 		{
+			name: "groq finish chunk with x_groq usage waits for [DONE]", source: adapter.FormatAnthropic, target: adapter.FormatGroq,
+			lines: []string{
+				`data: {"id":"c","model":"llama","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+				`data: {"id":"c","model":"llama","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"x_groq":{"id":"req_1","usage":{"prompt_tokens":20,"completion_tokens":1,"total_tokens":21}}}`,
+				`data: [DONE]`,
+			},
+			terminal: `"type":"message_stop"`,
+		},
+		{
 			name: "responses response.completed", source: adapter.FormatAnthropic, target: adapter.FormatOpenAIResponses,
 			lines: []string{
 				`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","role":"assistant"}}`,
@@ -612,6 +621,18 @@ func TestAdaptStream_DeferredFinishWaitsForFinalUsage(t *testing.T) {
 			wantPulled: 3,
 			wantUsage:  `"usage":{"input_tokens":20,"output_tokens":9}`,
 		},
+		{
+			name: "openrouter usage chunk with provider after the finish", source: adapter.FormatAnthropic, target: adapter.FormatOpenRouter,
+			lines: []string{
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":9,"total_tokens":29},"provider":"x"}`,
+				`data: [DONE]`,
+			},
+			terminal:   `"type":"message_delta"`,
+			wantPulled: 3,
+			wantUsage:  `"usage":{"input_tokens":20,"output_tokens":9}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -668,6 +689,69 @@ func TestAdaptStream_DeferredFinishDropsChunksAfterFlush(t *testing.T) {
 			joined := strings.Join(data, "\n")
 			assert.NotContains(t, joined, "late")
 			assert.NotContains(t, joined, "99")
+		})
+	}
+}
+
+func responsesTwoToolCallsUpstream() iter.Seq2[[]byte, error] {
+	return linesSeq(
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"get_weather"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"city\":\"Paris\"}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":0}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_2","name":"get_time"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"tz\":\"CET\"}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":1}`,
+		`data: {"type":"response.completed","response":{"id":"r","model":"gpt","status":"completed","usage":{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000}}}}`,
+	)
+}
+
+func TestAdaptStream_ResponsesUpstreamSeveralFinishesGetOneTerminal(t *testing.T) {
+	tests := []struct {
+		source    adapter.Format
+		terminal  string
+		wantStop  string
+		wantUsage string
+	}{
+		{
+			source:    adapter.FormatAnthropic,
+			terminal:  `"type":"message_delta"`,
+			wantStop:  `"stop_reason":"tool_use"`,
+			wantUsage: `"usage":{"input_tokens":1000,"output_tokens":10,"cache_read_input_tokens":1000}`,
+		},
+		{
+			source:    adapter.FormatOpenAIResponses,
+			terminal:  `"type":"response.completed"`,
+			wantStop:  `"status":"completed"`,
+			wantUsage: `"usage":{"input_tokens":2000,"output_tokens":10,"total_tokens":2010,"input_tokens_details":{"cached_tokens":1000}}`,
+		},
+		{
+			source:    adapter.FormatBedrock,
+			terminal:  `"messageStop"`,
+			wantStop:  `"stopReason":"tool_use"`,
+			wantUsage: `"usage":{"inputTokens":1000,"outputTokens":10,"totalTokens":2010,"cacheReadInputTokens":1000}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.source), func(t *testing.T) {
+			var data []string
+			for _, line := range collectLines(t, adaptStream(responsesTwoToolCallsUpstream(), adapter.NewRegistry(), tt.source, adapter.FormatOpenAIResponses, slog.Default(), nil)) {
+				if strings.HasPrefix(line, "data: ") {
+					data = append(data, line)
+				}
+			}
+			require.NotEmpty(t, data)
+
+			var terminals []string
+			for _, line := range data {
+				if strings.Contains(line, tt.terminal) {
+					terminals = append(terminals, line)
+				}
+			}
+			require.Len(t, terminals, 1, "exactly one %s", tt.terminal)
+			assert.Contains(t, terminals[0], tt.wantStop)
+			joined := strings.Join(data, "\n")
+			assert.Equal(t, 1, strings.Count(joined, `"usage"`), "usage is sent once")
+			assert.Contains(t, joined, tt.wantUsage)
 		})
 	}
 }
