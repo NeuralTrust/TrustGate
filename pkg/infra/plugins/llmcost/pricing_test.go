@@ -437,18 +437,35 @@ func TestResolve_OneHourCacheWriteRate(t *testing.T) {
 	resolver := catalogmocks.NewPricingResolver(t)
 	resolver.EXPECT().Resolve(mock.Anything, mock.Anything, mock.Anything).Return(catalog).Maybe()
 	override1h := 5.00 / 1e6
+	const profileARN = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6"
 
 	tests := []struct {
 		name     string
 		provider string
 		model    string
+		custom   map[string]CustomPrice
 		registry *RegistryRates
 		want     float64
 	}{
 		{name: "anthropic claude doubles the input rate", provider: "anthropic", model: "claude-sonnet-4-5", want: 6.00 / 1e6},
 		{name: "bedrock claude doubles the input rate", provider: "bedrock", model: "us.anthropic.claude-haiku-4-5-20251001-v1:0", want: 6.00 / 1e6},
 		{name: "non-claude model keeps the cache write rate", provider: "openai", model: "gpt-5", want: 3.75 / 1e6},
-		{name: "non-claude bedrock model keeps the cache write rate", provider: "bedrock", model: "amazon.nova-pro-v1:0", want: 3.75 / 1e6},
+		{name: "bedrock doubles the input rate whatever the model id", provider: "bedrock", model: "amazon.nova-pro-v1:0", want: 6.00 / 1e6},
+		{
+			name: "bedrock application inference profile override without a 1h rate doubles its input", provider: "bedrock", model: profileARN,
+			registry: &RegistryRates{Overrides: map[string]CustomPrice{profileARN: {Input: 5.00 / 1e6, Output: 15.00 / 1e6}}},
+			want:     10.00 / 1e6,
+		},
+		{
+			name: "registry override without a 1h rate doubles its input", provider: "anthropic", model: "claude-sonnet-4-5",
+			registry: &RegistryRates{Overrides: map[string]CustomPrice{"claude-sonnet-4-5": {Input: 2.00 / 1e6}}},
+			want:     4.00 / 1e6,
+		},
+		{
+			name: "plugin override without a 1h rate doubles its input", provider: "anthropic", model: "claude-sonnet-4-5",
+			custom: map[string]CustomPrice{"claude-sonnet-4-5": {Input: 1.00 / 1e6, Output: 5.00 / 1e6}},
+			want:   2.00 / 1e6,
+		},
 		{
 			name: "discount applies to the derived rate", provider: "anthropic", model: "claude-sonnet-4-5",
 			registry: &RegistryRates{Discount: 0.2}, want: 4.80 / 1e6,
@@ -463,7 +480,7 @@ func TestResolve_OneHourCacheWriteRate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rates, found := Resolve(context.Background(), resolver, nil, tt.registry, tt.provider, tt.model)
+			rates, found := Resolve(context.Background(), resolver, tt.custom, tt.registry, tt.provider, tt.model)
 			require.True(t, found)
 			assert.InDelta(t, tt.want, rates.CacheWrite1h, 1e-15)
 		})
