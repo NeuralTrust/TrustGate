@@ -23,6 +23,22 @@ import (
 // ErrUnsupportedContent reports request content the target format cannot carry.
 var ErrUnsupportedContent = errors.New("unsupported content")
 
+// UnsupportedContentError is the ErrUnsupportedContent a request encoder
+// returns. Reason is client-facing, so it names neither the target provider nor
+// the offending URL or data.
+type UnsupportedContentError struct {
+	Reason string
+}
+
+func (e *UnsupportedContentError) Error() string {
+	return ErrUnsupportedContent.Error() + ": " + e.Reason
+}
+
+// Is reports whether target is ErrUnsupportedContent.
+func (e *UnsupportedContentError) Is(target error) bool {
+	return target == ErrUnsupportedContent
+}
+
 func normalizeImageMediaType(mt string) string {
 	mt = strings.ToLower(strings.TrimSpace(mt))
 	if mt == "image/jpg" {

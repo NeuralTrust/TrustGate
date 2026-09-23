@@ -624,3 +624,215 @@ func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
 	assert.Same(t, prev, MergeUsage(prev, nil))
 	assert.Same(t, next, MergeUsage(nil, next))
 }
+
+func TestAnthropicEncodeRequest_Images(t *testing.T) {
+	t.Parallel()
+
+	const pngData = "iVBORw0KGgo="
+
+	tests := []struct {
+		name        string
+		message     CanonicalMessage
+		wantContent string
+		wantErr     bool
+		secrets     []string
+	}{
+		{
+			name: "base64 image before text",
+			message: CanonicalMessage{
+				Role:    "user",
+				Content: "describe",
+				Images:  []CanonicalImage{{MediaType: "image/png", Data: pngData, Detail: "high"}},
+			},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"describe"}]`,
+		},
+		{
+			name: "https url",
+			message: CanonicalMessage{
+				Role:    "user",
+				Content: "describe",
+				Images:  []CanonicalImage{{URL: "https://example.com/cat.jpg"}},
+			},
+			wantContent: `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"describe"}]`,
+		},
+		{
+			name: "image only has no text block",
+			message: CanonicalMessage{
+				Role:   "user",
+				Images: []CanonicalImage{{MediaType: "image/webp", Data: pngData}},
+			},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/webp","data":"iVBORw0KGgo="}}]`,
+		},
+		{
+			name: "media type left for anthropic to validate",
+			message: CanonicalMessage{
+				Role:   "user",
+				Images: []CanonicalImage{{MediaType: "image/tiff", Data: "U0VDUkVUREFUQQ=="}},
+			},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/tiff","data":"U0VDUkVUREFUQQ=="}}]`,
+		},
+		{
+			name: "ftp url",
+			message: CanonicalMessage{
+				Role:   "user",
+				Images: []CanonicalImage{{URL: "ftp://example.com/secret-path.png"}},
+			},
+			wantErr: true,
+			secrets: []string{"secret-path"},
+		},
+		{
+			name: "malformed data uri",
+			message: CanonicalMessage{
+				Role:   "user",
+				Images: []CanonicalImage{{URL: "data:image/png,U0VDUkVUREFUQQ=="}},
+			},
+			wantErr: true,
+			secrets: []string{"U0VDUkVUREFUQQ=="},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			a := &AnthropicAdapter{}
+			out, err := a.EncodeRequest(&CanonicalRequest{
+				Model:    "claude",
+				Messages: []CanonicalMessage{tt.message},
+			})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrUnsupportedContent)
+				var contentErr *UnsupportedContentError
+				require.ErrorAs(t, err, &contentErr)
+				assert.NotContains(t, err.Error(), "anthropic")
+				for _, secret := range tt.secrets {
+					assert.NotContains(t, err.Error(), secret)
+				}
+				return
+			}
+			require.NoError(t, err)
+			var got anthropicRequest
+			require.NoError(t, json.Unmarshal(out, &got))
+			require.Len(t, got.Messages, 1)
+			assert.JSONEq(t, tt.wantContent, string(got.Messages[0].Content))
+		})
+	}
+}
+
+func TestAnthropicEncodeRequest_ImagesOnlyOnUserMessages(t *testing.T) {
+	t.Parallel()
+
+	a := &AnthropicAdapter{}
+	out, err := a.EncodeRequest(&CanonicalRequest{
+		Model: "claude",
+		Messages: []CanonicalMessage{{
+			Role:    "assistant",
+			Content: "ok",
+			Images:  []CanonicalImage{{URL: "ftp://example.com/a.png"}},
+		}},
+	})
+
+	require.NoError(t, err)
+	var got anthropicRequest
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, `"ok"`, string(got.Messages[0].Content))
+}
+
+func TestDecodeAnthropicMessageContent_Images(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		role    string
+		content string
+		want    []CanonicalMessage
+	}{
+		{
+			name:    "base64 normalizes media type",
+			role:    "user",
+			content: `[{"type":"text","text":"what is this"},{"type":"image","source":{"type":"base64","media_type":"IMAGE/JPG","data":"/9j/4AAQ"}}]`,
+			want: []CanonicalMessage{{
+				Role:    "user",
+				Content: "what is this",
+				Images:  []CanonicalImage{{MediaType: "image/jpeg", Data: "/9j/4AAQ"}},
+			}},
+		},
+		{
+			name:    "url",
+			role:    "user",
+			content: `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"cat?"}]`,
+			want: []CanonicalMessage{{
+				Role:    "user",
+				Content: "cat?",
+				Images:  []CanonicalImage{{URL: "https://example.com/cat.jpg"}},
+			}},
+		},
+		{
+			name:    "file source ignored",
+			role:    "user",
+			content: `[{"type":"image","source":{"type":"file","file_id":"file_1"}},{"type":"text","text":"hi"}]`,
+			want:    []CanonicalMessage{{Role: "user", Content: "hi"}},
+		},
+		{
+			name:    "image only produces a message",
+			role:    "user",
+			content: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]`,
+			want: []CanonicalMessage{{
+				Role:   "user",
+				Images: []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}},
+			}},
+		},
+		{
+			name:    "tool result before image turn",
+			role:    "user",
+			content: `[{"type":"tool_result","tool_use_id":"toolu_1","content":"42"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]`,
+			want: []CanonicalMessage{
+				{Role: "tool", ToolCallID: "toolu_1", Content: "42"},
+				{Role: "user", Images: []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}}},
+			},
+		},
+		{
+			name:    "tool result before text turn",
+			role:    "user",
+			content: `[{"type":"text","text":"thanks"},{"type":"tool_result","tool_use_id":"toolu_1","content":"42"}]`,
+			want: []CanonicalMessage{
+				{Role: "tool", ToolCallID: "toolu_1", Content: "42"},
+				{Role: "user", Content: "thanks"},
+			},
+		},
+		{
+			name:    "non-object source on another block keeps the tool result",
+			role:    "user",
+			content: `[{"type":"tool_result","tool_use_id":"t1","content":"42"},{"type":"search_result","source":"https://example.com/doc","title":"doc","content":[{"type":"text","text":"x"}]},{"type":"text","text":"thanks"}]`,
+			want: []CanonicalMessage{
+				{Role: "tool", ToolCallID: "t1", Content: "42"},
+				{Role: "user", Content: "thanks"},
+			},
+		},
+		{
+			name:    "non-http url source kept for the encoder to reject",
+			role:    "user",
+			content: `[{"type":"image","source":{"type":"url","url":"ftp://example.com/a.png"}}]`,
+			want:    []CanonicalMessage{{Role: "user", Images: []CanonicalImage{{URL: "ftp://example.com/a.png"}}}},
+		},
+		{
+			name:    "assistant images ignored",
+			role:    "assistant",
+			content: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"ok"}]`,
+			want:    []CanonicalMessage{{Role: "assistant", Content: "ok"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := decodeAnthropicMessageContent(tt.role, json.RawMessage(tt.content))
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
