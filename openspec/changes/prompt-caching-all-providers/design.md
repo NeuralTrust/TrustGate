@@ -1,7 +1,7 @@
 # Design: Prompt caching and cache usage accounting across all providers (ENG-1618)
 
 Inputs: `proposal.md`, `exploration.md`, `specs/*/spec.md`, Linear ENG-1618, ENG-1608 branch (`TrustGate-eng1608`, 5 commits, unpushed).
-Base audited: `origin/develop` @ `0b99b40d`. Conventions: `.agents/AGENTS.md`, `golang.mdc`, `go-comments.mdc` (doc comments on exported identifiers only, no narrative comments).
+Base audited: `origin/develop` @ `0b99b40d`. **Rebased to `origin/main` @ `925edeb7` (2026-09-23, user decision): files touched by S1a/S1c/S4/S5 are identical on main; re-verify registry.go, format.go, canonical.go and openai_responses_adapter.go against main before S2a/S2b/S3. Moonshot does not exist on main (out of scope).** Conventions: `.agents/AGENTS.md`, `golang.mdc`, `go-comments.mdc` (doc comments on exported identifiers only, no narrative comments).
 
 > The page is longer than the usual 800-word design budget because the orchestrator asked for the full contract (types, per-adapter mapping, slice map). Tables stand in for prose wherever possible.
 
@@ -311,7 +311,7 @@ S1a–S1c apply cleanly to either base. S2a, S2b and S4a are written base-agnost
 | `converse.go` | `case b.Image` in `sdkContentBlock` | `case b.CachePoint` as the **first** case | Separate hunk, applies cleanly |
 | `app/proxy/provider.go` | :332-333 error wrap | :326 predicate | Adjacent, keep both |
 
-Rebase recipe: `git fetch && git rebase --onto origin/develop <old-base> S2a` once ENG-1608 merges. Resolve the hunks above, run `go test ./pkg/infra/providers/... ./pkg/app/proxy/...`, then re-stack S2b…S5 with `git rebase --update-refs`.
+ENG-1608 follows its own path (separate branch, user decision). If it reaches main first, rebase the integration branch onto `origin/main`. Resolve the hunks above, run `go test ./pkg/infra/providers/... ./pkg/app/proxy/...`, then re-stack S2b…S5 with `git rebase --update-refs`.
 
 ## Open Questions
 
