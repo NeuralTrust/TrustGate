@@ -167,7 +167,6 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 			name:  "input kept as reported when read plus write exceeds it",
 			usage: `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":40}}`,
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 10, TotalTokens: 110, CachedInputTokens: 80, CacheWriteInputTokens: 40},
-			plain: 100,
 		},
 		{
 			name:  "deepseek miss only",

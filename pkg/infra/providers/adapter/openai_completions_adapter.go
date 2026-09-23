@@ -194,6 +194,27 @@ func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 	return cu
 }
 
+func openaiUsageFromCanonical(u *CanonicalUsage) *openaiUsage {
+	if u == nil {
+		return nil
+	}
+	out := &openaiUsage{
+		PromptTokens:     u.InputTokens,
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+	if u.CachedInputTokens+u.CacheWriteInputTokens > 0 {
+		out.PromptTokensDetails = &openaiPromptTokensDetails{
+			CachedTokens:     u.CachedInputTokens,
+			CacheWriteTokens: u.CacheWriteInputTokens,
+		}
+	}
+	if u.ReasoningOutputTokens > 0 {
+		out.CompletionTokensDetails = &openaiCompletionTokensDetails{ReasoningTokens: u.ReasoningOutputTokens}
+	}
+	return out
+}
+
 type openaiStreamChunk struct {
 	ID      string               `json:"id,omitempty"`
 	Object  string               `json:"object"`
@@ -526,13 +547,7 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 		}},
 	}
 
-	if resp.Usage != nil {
-		out.Usage = &openaiUsage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		}
-	}
+	out.Usage = openaiUsageFromCanonical(resp.Usage)
 
 	if resp.Reasoning != nil {
 		summary := resp.Reasoning.Summary
@@ -661,13 +676,7 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		Choices: []openaiStreamChoice{choice},
 	}
 
-	if chunk.Usage != nil {
-		out.Usage = &openaiUsage{
-			PromptTokens:     chunk.Usage.InputTokens,
-			CompletionTokens: chunk.Usage.OutputTokens,
-			TotalTokens:      chunk.Usage.TotalTokens,
-		}
-	}
+	out.Usage = openaiUsageFromCanonical(chunk.Usage)
 
 	if raw, ok := chunk.ProviderExtensions["x_groq"]; ok && len(raw) > 0 {
 		out.XGroq = raw
