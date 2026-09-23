@@ -122,21 +122,16 @@ func openaiResponsesUsageFromCanonical(u *CanonicalUsage) *openaiResponsesUsage 
 	if u == nil {
 		return nil
 	}
-	out := &openaiResponsesUsage{
+	return &openaiResponsesUsage{
 		InputTokens:  u.InputTokens,
 		OutputTokens: u.OutputTokens,
 		TotalTokens:  u.TotalTokens,
-	}
-	if u.CachedInputTokens+u.CacheWriteInputTokens > 0 {
-		out.InputTokensDetails = &openaiResponsesInputTokensDetails{
+		InputTokensDetails: &openaiResponsesInputTokensDetails{
 			CachedTokens:     u.CachedInputTokens,
 			CacheWriteTokens: u.CacheWriteInputTokens,
-		}
+		},
+		OutputTokensDetails: &openaiResponsesOutputTokensDetails{ReasoningTokens: u.ReasoningOutputTokens},
 	}
-	if u.ReasoningOutputTokens > 0 {
-		out.OutputTokensDetails = &openaiResponsesOutputTokensDetails{ReasoningTokens: u.ReasoningOutputTokens}
-	}
-	return out
 }
 
 type openaiResponsesStreamEvent struct {
