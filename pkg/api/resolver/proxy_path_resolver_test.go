@@ -51,6 +51,9 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/models/amazon.titan-embed-text-v2:0", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1/projects/p/locations/europe-west1/publishers/google/models/gemini-2.5-flash:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1/projects/p/locations/global/publishers/google/models/gemini-2.5-flash:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1beta1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
 	for _, tc := range cases {
 		route, err := ResolveProxyPath(tc.path)
@@ -113,16 +116,38 @@ func TestModelsIDFromRest(t *testing.T) {
 func TestGeminiModelFromPath(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/v1beta/models/gemini-pro:generateContent":             "gemini-pro",
-		"/v1beta/models/gemini-1.5-flash:streamGenerateContent": "gemini-1.5-flash",
-		"/v1beta/models/gemini-pro":                             "gemini-pro",
-		"/slug/v1beta/models/gemini-pro:generateContent":        "gemini-pro",
-		"/v1beta/models/:generateContent":                       "",
-		"/v1/chat/completions":                                  "",
+		"/v1beta/models/gemini-pro:generateContent":                                                          "gemini-pro",
+		"/v1beta/models/gemini-1.5-flash:streamGenerateContent":                                              "gemini-1.5-flash",
+		"/v1beta/models/gemini-pro":                                                                          "gemini-pro",
+		"/slug/v1beta/models/gemini-pro:generateContent":                                                     "gemini-pro",
+		"/v1beta/models/:generateContent":                                                                    "",
+		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":               "gemini-2.5-flash",
+		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent": "gemini-2.5-pro",
+		"/v1/chat/completions":                                                                               "",
 	}
 	for rest, want := range cases {
 		if got := adapter.GeminiModelFromPath(rest); got != want {
 			t.Fatalf("GeminiModelFromPath(%q) = %q, want %q", rest, got, want)
+		}
+	}
+}
+
+func TestResolveProxyPathRejectsMalformedVertexPaths(t *testing.T) {
+	t.Parallel()
+	paths := []string{
+		"/slug/v1/projects//locations/r/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/projects/p/locations//publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/projects/p/locations/r/publishers/google/models/:generateContent",
+		"/slug/v1/projects/p/locations/r/publishers/google/models/gemini-pro",
+		"/slug/v1/projects/p/locations/r/publishers/google/models/gemini-pro:countTokens",
+		"/slug/v1/projects/p/locations/r/publishers/anthropic/models/claude:rawPredict",
+		"/slug/v2/projects/p/locations/r/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/projects/p/regions/r/publishers/google/models/gemini-pro:generateContent",
+		"/slug/v1/projects/p/locations/r/extra/publishers/google/models/gemini-pro:generateContent",
+	}
+	for _, path := range paths {
+		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
+			t.Fatalf("ResolveProxyPath(%q) error = %v, want ErrUnknownProxyPath", path, err)
 		}
 	}
 }
