@@ -192,11 +192,11 @@ func adaptStream(
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
 	var deferred *finishDeferral
-	var geminiCalls *geminiCallIndexer
+	var geminiCalls *adapter.GeminiCallIndexer
 	if crossFormat {
 		deferred = newFinishDeferral(source, target)
 		if adapter.IsSameWireFormat(target, adapter.FormatGemini) {
-			geminiCalls = &geminiCallIndexer{}
+			geminiCalls = &adapter.GeminiCallIndexer{}
 		}
 	}
 	if deferred != nil {
@@ -459,21 +459,8 @@ type finishDeferral struct {
 	usage         *adapter.CanonicalUsage
 	anthropic     *adapter.AnthropicStreamEncoder
 	cohere        *adapter.CohereStreamEncoder
-	geminiCalls   *geminiCallIndexer
-}
-
-type geminiCallIndexer struct {
-	next int
-}
-
-func (g *geminiCallIndexer) renumber(deltas []adapter.StreamToolCallDelta) {
-	if g == nil {
-		return
-	}
-	for i := range deltas {
-		deltas[i].Index = g.next
-		g.next++
-	}
+	responses     *adapter.ResponsesStreamEncoder
+	geminiCalls   *adapter.GeminiCallIndexer
 }
 
 func emitGeminiUpstream(
@@ -481,7 +468,7 @@ func emitGeminiUpstream(
 	registry providerCodec,
 	payload []byte,
 	source, target adapter.Format,
-	calls *geminiCallIndexer,
+	calls *adapter.GeminiCallIndexer,
 	logger *slog.Logger,
 ) bool {
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
@@ -493,7 +480,7 @@ func emitGeminiUpstream(
 		return true
 	}
 	canonical.ProviderExtensions = nil
-	calls.renumber(canonical.ToolCallDeltas)
+	calls.Renumber(canonical.ToolCallDeltas)
 	return encodeAndEmit(emit, registry, canonical, source, logger)
 }
 
@@ -503,7 +490,9 @@ func newFinishDeferral(source, target adapter.Format) *finishDeferral {
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
-	case adapter.FormatOpenAIResponses, adapter.FormatGemini:
+	case adapter.FormatOpenAIResponses:
+		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder()}
+	case adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatCohere:
 		return &finishDeferral{target: target, holdFinish: true, cohere: adapter.NewCohereStreamEncoder(target)}
@@ -763,6 +752,10 @@ func (d *finishDeferral) flush(
 		d.logCohereDropped(source, logger)
 		return emit(lines)
 	}
+	if d.responses != nil {
+		lines := d.responses.Finish(chunk)
+		return len(lines) == 0 || emit(lines)
+	}
 	return encodeAndEmit(emit, registry, chunk, source, logger)
 }
 
@@ -809,6 +802,8 @@ func (d *finishDeferral) encode(
 		lines = d.anthropic.Content(chunk)
 	case d.cohere != nil:
 		lines = d.cohere.Content(chunk)
+	case d.responses != nil:
+		lines = d.responses.Content(chunk)
 	default:
 		return encodeAndEmit(emit, registry, chunk, source, logger)
 	}
@@ -838,7 +833,7 @@ func emitDeferred(
 	if canonical == nil {
 		return true, nil
 	}
-	deferred.geminiCalls.renumber(canonical.ToolCallDeltas)
+	deferred.geminiCalls.Renumber(canonical.ToolCallDeltas)
 	if canonical.UpstreamError != nil {
 		if deferred.anthropic != nil || deferred.cohere != nil {
 			deferred.recordUsage(canonical)

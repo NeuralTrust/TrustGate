@@ -22,7 +22,16 @@ import (
 
 // GeminiAdapter converts between Google Gemini generateContent format and the
 // canonical internal model.
-type GeminiAdapter struct{}
+type GeminiAdapter struct {
+	vertex bool
+}
+
+// NewVertexAdapter returns a GeminiAdapter for Vertex AI, which encodes
+// requests without the functionCall and functionResponse ids and the
+// thoughtSignature bypass sent to the Gemini API.
+func NewVertexAdapter() *GeminiAdapter {
+	return &GeminiAdapter{vertex: true}
+}
 
 // ---------------------------------------------------------------------------
 // Provider-specific typed structs
@@ -71,11 +80,29 @@ func geminiCallID(fc *geminiFunctionCall) string {
 	return fc.Name
 }
 
-func geminiResponseID(fr *geminiFuncResponse) string {
+// geminiPendingCalls holds the call ids of the latest model turn that have
+// no functionResponse yet, oldest first per function name.
+type geminiPendingCalls map[string][]string
+
+// resolve returns the call id fr answers and marks that call answered. A
+// response without an id answers the oldest open call of its name, or keeps
+// the name as its id when there is none.
+func (p geminiPendingCalls) resolve(fr *geminiFuncResponse) string {
+	queue := p[fr.Name]
 	if fr.ID != "" {
+		for i, id := range queue {
+			if id == fr.ID {
+				p[fr.Name] = append(queue[:i:i], queue[i+1:]...)
+				break
+			}
+		}
 		return fr.ID
 	}
-	return fr.Name
+	if len(queue) == 0 {
+		return fr.Name
+	}
+	p[fr.Name] = queue[1:]
+	return queue[0]
 }
 
 type geminiGenConfig struct {
@@ -176,10 +203,12 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	// contents → messages (Gemini "user" with functionResponse must become canonical "tool" for OpenAI)
+	pending := geminiPendingCalls{}
 	for _, c := range req.Contents {
 		role := c.Role
 		if role == "model" {
 			role = "assistant"
+			pending = geminiPendingCalls{}
 		}
 		var textParts []string
 		var toolCalls []CanonicalToolCall
@@ -193,17 +222,21 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
+				id := geminiCallID(p.FunctionCall)
 				toolCalls = append(toolCalls, CanonicalToolCall{
-					ID:        geminiCallID(p.FunctionCall),
+					ID:        id,
 					Name:      p.FunctionCall.Name,
 					Arguments: string(args),
 				})
+				if c.Role == "model" {
+					pending[p.FunctionCall.Name] = append(pending[p.FunctionCall.Name], id)
+				}
 			}
 			if p.FunctionResponse != nil {
 				resp, _ := json.Marshal(p.FunctionResponse.Response)
 				toolResults = append(toolResults, CanonicalMessage{
 					Role:       "tool",
-					ToolCallID: geminiResponseID(p.FunctionResponse),
+					ToolCallID: pending.resolve(p.FunctionResponse),
 					Content:    string(resp),
 				})
 			}
@@ -308,10 +341,10 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 					Args: args,
 				},
 			}
-			if tc.ID != tc.Name {
+			if !a.vertex && tc.ID != tc.Name {
 				part.FunctionCall.ID = tc.ID
 			}
-			if i == 0 && role == "model" {
+			if !a.vertex && i == 0 && role == "model" {
 				part.ThoughtSignature = geminiSkipThoughtSignature
 			}
 			parts = append(parts, part)
@@ -329,7 +362,7 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 				Name:     geminiFunctionResponseName(m.ToolCallID, toolNames, req.Tools),
 				Response: resp,
 			}
-			if _, ok := toolNames[m.ToolCallID]; ok && m.ToolCallID != fr.Name {
+			if _, ok := toolNames[m.ToolCallID]; ok && !a.vertex && m.ToolCallID != fr.Name {
 				fr.ID = m.ToolCallID
 			}
 			parts = append(parts, geminiPart{FunctionResponse: fr})
@@ -444,7 +477,7 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 			}
 			// If the model returned only thought blocks (e.g. Gemini 2.5 thinking mode),
 			// use that as content so the client gets a non-empty response.
-			if cr.Content == "" {
+			if cr.Content == "" && len(cr.ToolCalls) == 0 {
 				cr.Content = strings.Join(thinkingParts, "\n\n")
 			}
 		}
@@ -748,4 +781,29 @@ func jsonSchemaToGeminiSchema(schema map[string]interface{}) map[string]interfac
 		}
 	}
 	return out
+}
+
+// GeminiCallIndexer renumbers the tool-call deltas of one Gemini stream.
+// Gemini indexes a functionCall by its part position within its chunk, so
+// parallel calls sent in separate chunks all arrive at index 0; not safe for
+// concurrent use.
+type GeminiCallIndexer struct {
+	next int
+}
+
+// Renumber gives each delta that starts a call, one carrying an ID or a Name,
+// the next stream-wide index, and any other delta the index of the call it
+// continues.
+func (g *GeminiCallIndexer) Renumber(deltas []StreamToolCallDelta) {
+	if g == nil {
+		return
+	}
+	for i := range deltas {
+		if deltas[i].ID == "" && deltas[i].Name == "" && g.next > 0 {
+			deltas[i].Index = g.next - 1
+			continue
+		}
+		deltas[i].Index = g.next
+		g.next++
+	}
 }

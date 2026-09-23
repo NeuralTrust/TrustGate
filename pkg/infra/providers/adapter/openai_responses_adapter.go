@@ -591,54 +591,19 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	var allLines [][]byte
 
 	if chunk.Role != "" {
-		event := openaiResponsesStreamEvent{
-			Type:        "response.output_item.added",
-			OutputIndex: 0,
-		}
-		itemJSON, _ := json.Marshal(map[string]string{
-			"type": "message",
-			"role": chunk.Role,
-		})
-		event.Item = itemJSON
-		data, _ := json.Marshal(event)
-		allLines = append(allLines, SSEEvent("response.output_item.added", data)...)
+		allLines = append(allLines, responsesMessageAdded(0, chunk.Role)...)
 	}
 
 	if chunk.Delta != "" {
-		event := openaiResponsesStreamEvent{
-			Type:         "response.output_text.delta",
-			Delta:        chunk.Delta,
-			OutputIndex:  0,
-			ContentIndex: 0,
-		}
-		data, _ := json.Marshal(event)
-		allLines = append(allLines, SSEEvent("response.output_text.delta", data)...)
+		allLines = append(allLines, responsesTextDelta(0, chunk.Delta)...)
 	}
 
 	for _, tc := range chunk.ToolCallDeltas {
 		if tc.Name != "" {
-			event := openaiResponsesStreamEvent{
-				Type:        "response.output_item.added",
-				OutputIndex: tc.Index,
-			}
-			itemJSON, _ := json.Marshal(map[string]interface{}{
-				"type":    "function_call",
-				"id":      tc.ID,
-				"name":    tc.Name,
-				"call_id": tc.ID,
-			})
-			event.Item = itemJSON
-			data, _ := json.Marshal(event)
-			allLines = append(allLines, SSEEvent("response.output_item.added", data)...)
+			allLines = append(allLines, responsesFunctionCallAdded(tc.Index, tc)...)
 		}
 		if tc.ArgumentsDelta != "" {
-			event := openaiResponsesStreamEvent{
-				Type:        "response.function_call_arguments.delta",
-				Delta:       tc.ArgumentsDelta,
-				OutputIndex: tc.Index,
-			}
-			data, _ := json.Marshal(event)
-			allLines = append(allLines, SSEEvent("response.function_call_arguments.delta", data)...)
+			allLines = append(allLines, responsesArgumentsDelta(tc.Index, tc.ArgumentsDelta)...)
 		}
 	}
 
@@ -684,4 +649,51 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	}
 
 	return allLines, nil
+}
+
+func responsesMessageAdded(index int, role string) [][]byte {
+	itemJSON, _ := json.Marshal(map[string]string{
+		"type": "message",
+		"role": role,
+	})
+	data, _ := json.Marshal(openaiResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: index,
+		Item:        itemJSON,
+	})
+	return SSEEvent("response.output_item.added", data)
+}
+
+func responsesTextDelta(index int, delta string) [][]byte {
+	data, _ := json.Marshal(openaiResponsesStreamEvent{
+		Type:         "response.output_text.delta",
+		Delta:        delta,
+		OutputIndex:  index,
+		ContentIndex: 0,
+	})
+	return SSEEvent("response.output_text.delta", data)
+}
+
+func responsesFunctionCallAdded(index int, tc StreamToolCallDelta) [][]byte {
+	itemJSON, _ := json.Marshal(map[string]interface{}{
+		"type":    "function_call",
+		"id":      tc.ID,
+		"name":    tc.Name,
+		"call_id": tc.ID,
+	})
+	data, _ := json.Marshal(openaiResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: index,
+		Item:        itemJSON,
+	})
+	return SSEEvent("response.output_item.added", data)
+}
+
+func responsesArgumentsDelta(index int, delta string) [][]byte {
+	data, _ := json.Marshal(openaiResponsesStreamEvent{
+		Type:        "response.function_call_arguments.delta",
+		Delta:       delta,
+		OutputIndex: index,
+	})
+	return SSEEvent("response.function_call_arguments.delta", data)
 }

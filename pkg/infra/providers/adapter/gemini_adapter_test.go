@@ -493,6 +493,200 @@ func TestGemini_EncodeRequest_ThoughtSignatureSentinel(t *testing.T) {
 	assert.Empty(t, req.Contents[4].Parts[0].FunctionResponse.ID)
 }
 
+func TestGemini_DecodeRequest_PairsResponsesWithoutIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		responses string
+		want      []string
+	}{
+		{
+			name:      "call with id, response without",
+			model:     `{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"}}`,
+			responses: `{"functionResponse":{"name":"get_weather","response":{"ok":true}}}`,
+			want:      []string{"call_1"},
+		},
+		{
+			name: "same-name calls answered in order",
+			model: `{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"}},
+				{"functionCall":{"name":"get_weather","args":{"city":"Rome"},"id":"call_2"}}`,
+			responses: `{"functionResponse":{"name":"get_weather","response":{"ok":1}}},
+				{"functionResponse":{"name":"get_weather","response":{"ok":2}}}`,
+			want: []string{"call_1", "call_2"},
+		},
+		{
+			name: "different names",
+			model: `{"functionCall":{"name":"get_weather","args":{},"id":"call_1"}},
+				{"functionCall":{"name":"get_time","args":{},"id":"call_2"}}`,
+			responses: `{"functionResponse":{"name":"get_time","response":{"ok":1}}},
+				{"functionResponse":{"name":"get_weather","response":{"ok":2}}}`,
+			want: []string{"call_2", "call_1"},
+		},
+		{
+			name: "response with id takes its own call",
+			model: `{"functionCall":{"name":"get_weather","args":{},"id":"call_1"}},
+				{"functionCall":{"name":"get_weather","args":{},"id":"call_2"}}`,
+			responses: `{"functionResponse":{"name":"get_weather","id":"call_1","response":{"ok":1}}},
+				{"functionResponse":{"name":"get_weather","response":{"ok":2}}}`,
+			want: []string{"call_1", "call_2"},
+		},
+		{
+			name:      "no matching call keeps the name",
+			model:     `{"functionCall":{"name":"get_weather","args":{},"id":"call_1"}}`,
+			responses: `{"functionResponse":{"name":"get_time","response":{"ok":1}}}`,
+			want:      []string{"get_time"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"contents":[
+				{"role":"user","parts":[{"text":"hi"}]},
+				{"role":"model","parts":[` + tt.model + `]},
+				{"role":"user","parts":[` + tt.responses + `]}
+			]}`
+			cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(body))
+			require.NoError(t, err)
+			var got []string
+			for _, m := range cr.Messages {
+				if m.Role == "tool" {
+					got = append(got, m.ToolCallID)
+				}
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGemini_DecodeRequest_PairsOnlyWithThePrecedingModelTurn(t *testing.T) {
+	body := `{"contents":[
+		{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{},"id":"call_1"}},{"functionCall":{"name":"get_weather","args":{},"id":"call_2"}}]},
+		{"role":"user","parts":[{"functionResponse":{"name":"get_weather","response":{"ok":1}}}]},
+		{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{},"id":"call_3"}}]},
+		{"role":"user","parts":[{"functionResponse":{"name":"get_weather","response":{"ok":2}}}]}
+	]}`
+	cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	var got []string
+	for _, m := range cr.Messages {
+		if m.Role == "tool" {
+			got = append(got, m.ToolCallID)
+		}
+	}
+	assert.Equal(t, []string{"call_1", "call_3"}, got)
+}
+
+func TestGemini_EncodeRequest_SentinelPerModelTurn(t *testing.T) {
+	messages := []CanonicalMessage{
+		{Role: "user", Content: "Weather and time?"},
+		{Role: "assistant", Content: "Checking the weather.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{}`}}},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{
+			{ID: "call_2", Name: "get_time", Arguments: `{}`},
+			{ID: "call_3", Name: "get_date", Arguments: `{}`},
+		}},
+	}
+	body, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{Messages: messages})
+	require.NoError(t, err)
+
+	var req geminiRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.Len(t, req.Contents, 3)
+	textTurn := req.Contents[1].Parts
+	require.Len(t, textTurn, 2)
+	assert.Equal(t, "Checking the weather.", textTurn[0].Text)
+	assert.Empty(t, textTurn[0].ThoughtSignature)
+	assert.Equal(t, geminiSkipThoughtSignature, textTurn[1].ThoughtSignature)
+	callTurn := req.Contents[2].Parts
+	require.Len(t, callTurn, 2)
+	assert.Equal(t, geminiSkipThoughtSignature, callTurn[0].ThoughtSignature)
+	assert.Empty(t, callTurn[1].ThoughtSignature)
+}
+
+func TestGemini_EncodeRequest_VertexKeepsPlainToolTurns(t *testing.T) {
+	req := &CanonicalRequest{Messages: []CanonicalMessage{
+		{Role: "user", Content: "Weather?"},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`}}},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
+	}}
+	reg := NewRegistry()
+	tests := []struct {
+		name          string
+		target        Format
+		wantCallID    string
+		wantResultID  string
+		wantSignature string
+	}{
+		{name: "gemini api", target: FormatGemini, wantCallID: "call_1", wantResultID: "call_1", wantSignature: geminiSkipThoughtSignature},
+		{name: "vertex", target: FormatVertex},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ad, err := reg.GetAdapter(tt.target)
+			require.NoError(t, err)
+			body, err := ad.EncodeRequest(req)
+			require.NoError(t, err)
+
+			var out geminiRequest
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Len(t, out.Contents, 3)
+			call := out.Contents[1].Parts[0]
+			assert.Equal(t, tt.wantSignature, call.ThoughtSignature)
+			assert.Equal(t, geminiFunctionCall{ID: tt.wantCallID, Name: "get_weather", Args: map[string]interface{}{"city": "Paris"}}, *call.FunctionCall)
+			assert.Equal(t, geminiFuncResponse{ID: tt.wantResultID, Name: "get_weather", Response: map[string]interface{}{"ok": true}}, *out.Contents[2].Parts[0].FunctionResponse)
+		})
+	}
+}
+
+func TestGemini_DecodeResponse_ThoughtOnlyFallsBackToContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		parts       string
+		wantContent string
+		wantCalls   int
+	}{
+		{
+			name:        "only thoughts",
+			parts:       `{"text":"thinking","thought":true}`,
+			wantContent: "thinking",
+		},
+		{
+			name:      "thoughts and a call",
+			parts:     `{"text":"thinking","thought":true},{"functionCall":{"name":"get_weather","args":{}}}`,
+			wantCalls: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"candidates":[{"content":{"parts":[` + tt.parts + `],"role":"model"},"finishReason":"STOP"}]}`
+			for _, ad := range []*GeminiAdapter{{}, NewVertexAdapter()} {
+				cr, err := ad.DecodeResponse([]byte(body))
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantContent, cr.Content)
+				assert.Len(t, cr.ToolCalls, tt.wantCalls)
+				assert.Equal(t, &CanonicalReasoning{ThinkingText: "thinking"}, cr.Reasoning)
+			}
+		})
+	}
+}
+
+func TestGeminiCallIndexer_Renumber(t *testing.T) {
+	var g GeminiCallIndexer
+	first := []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}, {Index: 1, ID: "call_2", Name: "b"}}
+	second := []StreamToolCallDelta{{Index: 0, ID: "call_3", Name: "a"}}
+	continuation := []StreamToolCallDelta{{Index: 0, ArgumentsDelta: "{}"}}
+	g.Renumber(first)
+	g.Renumber(second)
+	g.Renumber(continuation)
+	assert.Equal(t, 0, first[0].Index)
+	assert.Equal(t, 1, first[1].Index)
+	assert.Equal(t, 2, second[0].Index)
+	assert.Equal(t, 2, continuation[0].Index)
+
+	var nilIndexer *GeminiCallIndexer
+	untouched := []StreamToolCallDelta{{Index: 4, ID: "x"}}
+	nilIndexer.Renumber(untouched)
+	assert.Equal(t, 4, untouched[0].Index)
+}
+
 // Gemini reports thoughtsTokenCount and toolUsePromptTokenCount DISJOINT from
 // candidatesTokenCount and promptTokenCount, and bills them at the output and
 // input rate respectively. Cost prices only InputTokens and OutputTokens, so the
