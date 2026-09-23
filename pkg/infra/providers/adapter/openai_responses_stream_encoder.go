@@ -31,13 +31,22 @@ const (
 	responsesItemMessage      = "message"
 	responsesItemFunctionCall = "function_call"
 	responsesOutputText       = "output_text"
+	responsesEmptyArguments   = "{}"
 )
+
+// responsesKeepaliveInterval bounds how long a Responses client goes without
+// bytes while calls are held or reasoning is not forwarded: load balancer and
+// CDN idle timeouts (60s on an ALB, 100s on Cloudflare) cut quieter streams.
+const responsesKeepaliveInterval = 10 * time.Second
 
 // ResponsesStreamEncoder encodes a canonical stream as Responses API events.
 // Items go out one at a time, each with its own output_index: the text
-// streams live as a single message and the tool calls follow it at Finish. It
-// is not safe for concurrent use.
+// streams live as a single message and the tool calls are held until Finish,
+// where they always follow the message in arrival order, whatever order the
+// upstream interleaved text and calls in. It is not safe for concurrent use.
 type ResponsesStreamEncoder struct {
+	now       func() time.Time
+	lastSent  time.Time
 	nonce     string
 	id        string
 	model     string
@@ -46,6 +55,7 @@ type ResponsesStreamEncoder struct {
 	done      bool
 	aborted   bool
 	dropped   int
+	withheld  int
 	sequence  int
 	items     []*responsesStreamItem
 	message   *responsesStreamItem
@@ -64,13 +74,30 @@ type responsesStreamItem struct {
 	text        strings.Builder
 }
 
+// ResponsesStreamOption configures a ResponsesStreamEncoder.
+type ResponsesStreamOption func(*ResponsesStreamEncoder)
+
+// WithResponsesClock makes the encoder read the time from now instead of
+// time.Now.
+func WithResponsesClock(now func() time.Time) ResponsesStreamOption {
+	return func(e *ResponsesStreamEncoder) {
+		e.now = now
+	}
+}
+
 // NewResponsesStreamEncoder returns an encoder for one Responses stream.
-func NewResponsesStreamEncoder() *ResponsesStreamEncoder {
-	return &ResponsesStreamEncoder{
+func NewResponsesStreamEncoder(opts ...ResponsesStreamOption) *ResponsesStreamEncoder {
+	e := &ResponsesStreamEncoder{
+		now:     time.Now,
 		nonce:   rand.Text(),
 		calls:   map[int]*responsesStreamItem{},
 		callIDs: map[string]bool{},
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	e.lastSent = e.now()
+	return e
 }
 
 // Content encodes the text and tool-call deltas of chunk.
@@ -93,8 +120,11 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Finish encodes the finish and usage of chunk: response.completed, or
-// response.incomplete for a length or content filter stop. A finish reason
-// reporting a failure (see FinishFailure) ends the stream as Abort does.
+// response.incomplete for a length or content filter stop. The held tool
+// calls follow the message on response.completed only: the arguments of an
+// incomplete response may be cut short, and clients execute the calls they
+// get, so those calls are withheld. A finish reason reporting a failure (see
+// FinishFailure) ends the stream as Abort does.
 func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	if e.done {
 		return nil
@@ -107,8 +137,13 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	e.done = true
 	status, reason := responsesFinishStatus(chunk.FinishReason)
 	lines = append(lines, e.finishMessage(status)...)
-	for _, call := range e.namedCalls() {
-		lines = append(lines, e.emitCall(call, status)...)
+	calls := e.namedCalls()
+	if status == responsesStatusIncomplete {
+		e.withheld += len(calls)
+		calls = nil
+	}
+	for _, call := range calls {
+		lines = append(lines, e.emitCall(call)...)
 	}
 	response := e.terminalResponse(status, chunk.Usage)
 	event := "response.completed"
@@ -121,7 +156,7 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 
 // Abort ends a started stream with an error event carrying message, then
 // response.failed with usage. The message is marked incomplete and the tool
-// calls held back are dropped, so response.failed lists only the items the
+// calls held back are withheld, so response.failed lists only the items the
 // client saw. Nothing is emitted before response.created or once the stream
 // has ended.
 func (e *ResponsesStreamEncoder) Abort(message string, usage *CanonicalUsage) [][]byte {
@@ -147,6 +182,28 @@ func (e *ResponsesStreamEncoder) Dropped() int {
 	return e.dropped
 }
 
+// Withheld reports the named tool calls the client never got because the
+// stream ended incomplete or failed.
+func (e *ResponsesStreamEncoder) Withheld() int {
+	return e.withheld
+}
+
+// Keepalive returns an SSE comment line once the open stream has sent the
+// client nothing for responsesKeepaliveInterval, and nothing otherwise. SSE
+// clients skip comments, so it only keeps idle timeouts from cutting a
+// stream whose calls are held or whose reasoning is not forwarded.
+func (e *ResponsesStreamEncoder) Keepalive() [][]byte {
+	if e.done {
+		return nil
+	}
+	now := e.now()
+	if now.Sub(e.lastSent) < responsesKeepaliveInterval {
+		return nil
+	}
+	e.lastSent = now
+	return [][]byte{[]byte(": keepalive"), {}}
+}
+
 func responsesFinishStatus(reason string) (status, incompleteReason string) {
 	switch {
 	case reason == "length":
@@ -161,7 +218,7 @@ func responsesFinishStatus(reason string) (status, incompleteReason string) {
 func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][]byte {
 	e.done = true
 	e.aborted = true
-	e.namedCalls()
+	e.withheld += len(e.namedCalls())
 	lines := e.finishMessage(responsesStatusIncomplete)
 	lines = append(lines, e.event("error", map[string]any{
 		"code":    responsesErrorCode,
@@ -226,7 +283,7 @@ func (e *ResponsesStreamEncoder) start() [][]byte {
 	if e.id == "" {
 		e.id = "resp_" + e.nonce
 	}
-	e.createdAt = time.Now().Unix()
+	e.createdAt = e.now().Unix()
 	lines := e.event("response.created", map[string]any{"response": e.response(responsesStatusInProgress)})
 	return append(lines, e.event("response.in_progress", map[string]any{"response": e.response(responsesStatusInProgress)})...)
 }
@@ -289,7 +346,7 @@ func (e *ResponsesStreamEncoder) toolDelta(tc StreamToolCallDelta) {
 	call.text.WriteString(tc.ArgumentsDelta)
 }
 
-func (e *ResponsesStreamEncoder) emitCall(call *responsesStreamItem, status string) [][]byte {
+func (e *ResponsesStreamEncoder) emitCall(call *responsesStreamItem) [][]byte {
 	call.callID = e.callID(call.upstreamID)
 	call.id = call.callID
 	if !strings.HasPrefix(call.id, "fc_") {
@@ -300,10 +357,11 @@ func (e *ResponsesStreamEncoder) emitCall(call *responsesStreamItem, status stri
 		"output_index": call.outputIndex,
 		"item":         call.functionCall("", responsesStatusInProgress),
 	})
-	if call.text.Len() > 0 {
-		lines = append(lines, e.argumentsDelta(call, call.text.String())...)
+	if call.text.Len() == 0 {
+		call.text.WriteString(responsesEmptyArguments)
 	}
-	return append(lines, e.finishItem(call, status)...)
+	lines = append(lines, e.argumentsDelta(call, call.text.String())...)
+	return append(lines, e.finishItem(call, responsesStatusCompleted)...)
 }
 
 func (e *ResponsesStreamEncoder) callID(upstream string) string {
@@ -363,6 +421,7 @@ func (e *ResponsesStreamEncoder) event(eventType string, fields map[string]any) 
 	fields["type"] = eventType
 	fields["sequence_number"] = e.sequence
 	e.sequence++
+	e.lastSent = e.now()
 	data, _ := json.Marshal(fields)
 	return SSEEvent(eventType, data)
 }

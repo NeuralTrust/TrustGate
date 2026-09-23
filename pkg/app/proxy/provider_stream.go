@@ -20,6 +20,7 @@ import (
 	"iter"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -27,6 +28,7 @@ import (
 var (
 	sseDataPrefix = []byte("data:")
 	sseDoneMarker = []byte("[DONE]")
+	streamClock   = time.Now
 )
 
 // injectStreamTrue sets "stream": true in a JSON request body so registries using
@@ -178,7 +180,10 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // or ended without a finish after response.created gets an error event and
 // response.failed, and [DONE] without a finish completes its response. Once an
 // Anthropic, Cohere or Responses client has its terminal event for a failed
-// upstream, the sequence error is wrapped in ClientNotifiedStreamError.
+// upstream, the sequence error is wrapped in ClientNotifiedStreamError. A
+// Responses client that has been sent nothing for a while as upstream lines
+// keep arriving gets an SSE comment, so idle timeouts do not cut a stream
+// whose tool calls are held or whose reasoning is not forwarded.
 //
 // An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
 // the usage once: on the include_usage chunk when one follows the finish,
@@ -246,6 +251,10 @@ func adaptStream(
 					return
 				}
 				continue
+			}
+
+			if deferred != nil && !deferred.keepalive(emit) {
+				return
 			}
 
 			if isSSEDone(line) {
@@ -493,7 +502,7 @@ func newFinishDeferral(source, target adapter.Format) *finishDeferral {
 	case adapter.FormatAnthropic:
 		return &finishDeferral{target: target, holdFinish: true, keepRoleUsage: true, anthropic: adapter.NewAnthropicStreamEncoder(target)}
 	case adapter.FormatOpenAIResponses:
-		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder()}
+		return &finishDeferral{target: target, holdFinish: true, responses: adapter.NewResponsesStreamEncoder(adapter.WithResponsesClock(streamClock))}
 	case adapter.FormatGemini:
 		return &finishDeferral{target: target, holdFinish: true}
 	case adapter.FormatCohere:
@@ -748,15 +757,26 @@ func (d *finishDeferral) abort(
 	}
 }
 
+// keepalive emits the Responses encoder's keepalive comment when one is due.
+// It returns false when the consumer stopped.
+func (d *finishDeferral) keepalive(emit func([][]byte) bool) bool {
+	if d.responses == nil {
+		return true
+	}
+	lines := d.responses.Keepalive()
+	return len(lines) == 0 || emit(lines)
+}
+
 func (d *finishDeferral) logResponsesDropped(source adapter.Format, logger *slog.Logger) {
-	tools := d.responses.Dropped()
-	if tools == 0 {
+	nameless, withheld := d.responses.Dropped(), d.responses.Withheld()
+	if nameless == 0 && withheld == 0 {
 		return
 	}
-	logger.Warn("responses stream dropped tool calls that never got a name",
+	logger.Warn("responses stream dropped tool calls",
 		slog.String("target", string(d.target)),
 		slog.String("source", string(source)),
-		slog.Int("nameless_tool_calls", tools),
+		slog.Int("nameless_tool_calls", nameless),
+		slog.Int("withheld_tool_calls", withheld),
 	)
 }
 

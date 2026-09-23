@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
@@ -322,14 +324,12 @@ func responsesMessageDoneGolden(index int, text string) []string {
 }
 
 func responsesCallGolden(index int, callID, name, arguments string) []string {
-	out := []string{fmt.Sprintf("output_item.added %d function_call %s %s", index, callID, name)}
-	if arguments != "" {
-		out = append(out, fmt.Sprintf("function_call_arguments.delta %d %s", index, arguments))
-	}
-	return append(out,
+	return []string{
+		fmt.Sprintf("output_item.added %d function_call %s %s", index, callID, name),
+		fmt.Sprintf("function_call_arguments.delta %d %s", index, arguments),
 		fmt.Sprintf("function_call_arguments.done %d %s", index, arguments),
 		fmt.Sprintf("output_item.done %d function_call %s %s", index, callID, name),
-	)
+	}
 }
 
 func joinGolden(parts ...[]string) []string {
@@ -441,6 +441,44 @@ func responsesStreamCases() []responsesStreamCase {
 			),
 			wantText:   "Once upon",
 			wantStatus: "incomplete",
+		},
+		{
+			name:   "openai length stop withholds the truncated tool call",
+			target: adapter.FormatOpenAI,
+			upstream: func() iter.Seq2[[]byte, error] {
+				return linesSeq(
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Writing."}}]}`,
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"a.txt\",\"body\":\"tru"}}]}}]}`,
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`,
+					`data: [DONE]`,
+				)
+			},
+			want: joinGolden(
+				[]string{"created", "in_progress"},
+				responsesMessageGolden(0, "Writing."),
+				responsesMessageDoneGolden(0, "Writing."),
+				[]string{"incomplete"},
+			),
+			wantText:       "Writing.",
+			wantStatus:     "incomplete",
+			wantIncomplete: "max_output_tokens",
+		},
+		{
+			name:   "openai tool call without arguments",
+			target: adapter.FormatOpenAI,
+			upstream: func() iter.Seq2[[]byte, error] {
+				return linesSeq(
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"now","arguments":""}}]}}]}`,
+					`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+					`data: [DONE]`,
+				)
+			},
+			want: joinGolden(
+				[]string{"created", "in_progress"},
+				responsesCallGolden(0, "call_1", "now", "{}"),
+				[]string{"completed"},
+			),
+			wantCalls: []string{"call_1 now {}"},
 		},
 		{
 			name:   "anthropic text and a tool",
@@ -860,4 +898,89 @@ func TestAdaptStream_ResponsesClientUpstreamErrorAfterFinishCompletesOnce(t *tes
 			assert.NotContains(t, strings.Join(lines, "\n"), "The server had an error")
 		})
 	}
+}
+
+func TestAdaptStream_ResponsesClientGetsKeepalivesWhileNothingIsSent(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	previous := streamClock
+	streamClock = func() time.Time { return now }
+	t.Cleanup(func() { streamClock = previous })
+
+	chunk := func(delta string) string {
+		return `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":` + delta + `}]}`
+	}
+	upstream := []string{
+		chunk(`{"role":"assistant","content":""}`),
+		chunk(`{"reasoning_content":"Thinking"}`),
+		chunk(`{"reasoning_content":" hard."}`),
+		chunk(`{"content":"Writing."}`),
+		chunk(`{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":""}}]}`),
+		chunk(`{"tool_calls":[{"index":0,"function":{"arguments":"{\"body\":"}}]}`),
+		`: upstream ping`,
+		chunk(`{"tool_calls":[{"index":0,"function":{"arguments":"\"long\""}}]}`),
+		chunk(`{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}`),
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":9,"total_tokens":14}}`,
+		`data: [DONE]`,
+	}
+	slow := func(yield func([]byte, error) bool) {
+		for _, line := range upstream {
+			now = now.Add(6 * time.Second)
+			if !yield([]byte(line), nil) {
+				return
+			}
+		}
+	}
+
+	lines := collectLines(t, adaptStream(slow, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, slog.Default(), nil))
+
+	var keepalives []int
+	for i, line := range lines {
+		if strings.HasPrefix(line, ":") {
+			assert.Equal(t, ": keepalive", line)
+			require.Less(t, i+1, len(lines))
+			assert.Empty(t, lines[i+1], "the comment ends its own SSE block")
+			if i > 0 {
+				assert.Empty(t, lines[i-1], "the comment starts after a complete SSE block")
+			}
+			keepalives = append(keepalives, i)
+		}
+	}
+	assert.Len(t, keepalives, 4, "one per 10s without events: reasoning, two stretches of held call deltas and the held finish")
+
+	events := responsesWireEvents(t, lines)
+	final := requireResponsesContract(t, events)
+	assert.Equal(t, joinGolden(
+		[]string{"created", "in_progress"},
+		responsesMessageGolden(0, "Writing."),
+		responsesMessageDoneGolden(0, "Writing."),
+		responsesCallGolden(1, "call_1", "write_file", `{"body":"long"}`),
+		[]string{"completed"},
+	), responsesGolden(events))
+	assert.JSONEq(t, `{"input_tokens":5,"output_tokens":9,"total_tokens":14,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}`, string(final.Usage))
+}
+
+func TestAdaptStream_ResponsesClientLogsWithheldToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	upstream := linesSeq(
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"body\":\"tru"}},{"index":1,"type":"function","function":{"arguments":"{}"}}]}}]}`,
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`,
+		`data: [DONE]`,
+	)
+
+	lines := collectLines(t, adaptStream(upstream, adapter.NewRegistry(), adapter.FormatOpenAIResponses, adapter.FormatOpenAI, logger, nil))
+
+	final := requireResponsesContract(t, responsesWireEvents(t, lines))
+	assert.Equal(t, "incomplete", final.Status)
+	assert.Empty(t, final.Output)
+	var entry struct {
+		Msg      string `json:"msg"`
+		Nameless int    `json:"nameless_tool_calls"`
+		Withheld int    `json:"withheld_tool_calls"`
+	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry), buf.String())
+	assert.Equal(t, "responses stream dropped tool calls", entry.Msg)
+	assert.Equal(t, 1, entry.Nameless)
+	assert.Equal(t, 1, entry.Withheld)
 }

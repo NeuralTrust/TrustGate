@@ -71,9 +71,10 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_ArrayInput(t *testing.T) {
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  []CanonicalMessage
+		name       string
+		input      string
+		want       []CanonicalMessage
+		wantSystem string
 	}{
 		{
 			name: "text and parallel calls fold into one assistant message",
@@ -148,14 +149,114 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T
 				{Role: "user", Content: "Hello?"},
 			},
 		},
+		{
+			name: "a developer message between assistant items ends the turn",
+			input: `[
+				{"role": "user", "content": "Hi."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A."}]},
+				{"role": "developer", "content": "Be brief."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "B."}]}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Hi."},
+				{Role: "assistant", Content: "A."},
+				{Role: "assistant", Content: "B."},
+			},
+			wantSystem: "Be brief.",
+		},
+		{
+			name: "a skipped item between assistant items ends the turn",
+			input: `[
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"},
+				{"type": "custom_tool_call", "call_id": "call_2", "name": "apply_patch", "input": "*** Begin Patch"},
+				{"type": "function_call", "call_id": "call_3", "name": "g", "arguments": "{}"},
+				{"type": "local_shell_call", "call_id": "call_4", "action": {"type": "exec", "command": ["ls"]}},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_3", Name: "g", Arguments: "{}"}}},
+				{Role: "assistant", Content: "Done."},
+			},
+		},
+		{
+			name: "reasoning items stay within the turn",
+			input: `[
+				{"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "think"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "reasoning", "id": "rs_2", "summary": []},
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+			},
+		},
+		{
+			name: "a call with no arguments gets an empty object",
+			input: `[
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": ""},
+				{"type": "function_call", "call_id": "call_2", "name": "g"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{
+					{ID: "call_1", Name: "f", Arguments: "{}"},
+					{ID: "call_2", Name: "g", Arguments: "{}"},
+				}},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(`{"model": "deepseek-chat", "input": ` + tt.input + `}`))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, canonical.Messages)
+			assert.Equal(t, tt.wantSystem, canonical.System)
 		})
 	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "string", output: `"sunny"`, want: "sunny"},
+		{name: "text parts are joined", output: `[{"type": "input_text", "text": "line 1"}, {"type": "output_text", "text": "line 2"}]`, want: "line 1\nline 2"},
+		{name: "non-text parts are left out", output: `[{"type": "input_text", "text": "img"}, {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: "img"},
+		{name: "only non-text parts", output: `[{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: responsesNonTextToolOutput},
+		{name: "empty list", output: `[]`, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{"model": "m", "input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "look"}]},
+				{"type": "function_call", "call_id": "c1", "name": "view_image", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "c1", "output": ` + tt.output + `}
+			]}`
+			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
+			require.NoError(t, err)
+			assert.Equal(t, []CanonicalMessage{
+				{Role: "user", Content: "look"},
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "view_image", Arguments: "{}"}}},
+				{Role: "tool", Content: tt.want, ToolCallID: "c1"},
+			}, canonical.Messages)
+		})
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_MalformedInputFails(t *testing.T) {
+	for _, input := range []string{
+		`{"input": 42}`,
+		`{"input": [{"type": "function_call", "call_id": "c1", "name": "f", "arguments": {"a": 1}}]}`,
+		`{"input": [{"role": "user", "content": "hi"}, "stray"]}`,
+	} {
+		_, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
+		assert.Error(t, err, input)
+	}
+
+	_, err := NewRegistry().DecodeRequestFor([]byte(`{"model": "m", "input": 42}`), FormatOpenAIResponses)
+	assert.True(t, IsRequestDecodeError(err), "a malformed input is the caller's error: %v", err)
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {

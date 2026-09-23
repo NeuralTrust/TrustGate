@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,10 +112,11 @@ func requireSequentialItems(t *testing.T, lines [][]byte) {
 
 func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 	tests := []struct {
-		name   string
-		chunks []*CanonicalStreamChunk
-		finish string
-		want   []string
+		name     string
+		chunks   []*CanonicalStreamChunk
+		finish   string
+		want     []string
+		withheld int
 	}{
 		{
 			name: "role on every chunk opens one message",
@@ -144,7 +146,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			},
 			want: []string{
 				"added 0 function_call call_1", `arguments 0 {"x":1}`, "done 0 a completed",
-				"added 1 function_call call_2", "done 1 b completed",
+				"added 1 function_call call_2", "arguments 1 {}", "done 1 b completed",
 			},
 		},
 		{
@@ -174,7 +176,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_1", Name: "b"}}},
 			},
-			want: []string{"added 0 function_call call_1", "done 0 a completed", "added 1 function_call call_*_1", "done 1 b completed"},
+			want: []string{"added 0 function_call call_1", "arguments 0 {}", "done 0 a completed", "added 1 function_call call_*_1", "arguments 1 {}", "done 1 b completed"},
 		},
 		{
 			name: "role and empty text open no message",
@@ -210,7 +212,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
 				{Delta: "done"},
 			},
-			want: []string{"added 0 message", "text 0 done", "done 0  completed", "added 1 function_call call_1", "done 1 a completed"},
+			want: []string{"added 0 message", "text 0 done", "done 0  completed", "added 1 function_call call_1", "arguments 1 {}", "done 1 a completed"},
 		},
 		{
 			name: "text, call, text, call",
@@ -249,21 +251,24 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			want: []string{"added 0 message", "text 0 hi", "done 0  completed", "added 1 function_call call_1", `arguments 1 {"x":1}`, "done 1 a completed"},
 		},
 		{
-			name: "a length stop leaves text and calls incomplete",
+			name: "a length stop leaves the text incomplete and withholds the truncated call",
 			chunks: []*CanonicalStreamChunk{
 				{Delta: "Checking."},
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x"`}}},
 			},
-			finish: "length",
-			want:   []string{"added 0 message", "text 0 Checking.", "done 0  incomplete", "added 1 function_call call_1", `arguments 1 {"x"`, "done 1 a incomplete"},
+			finish:   "length",
+			want:     []string{"added 0 message", "text 0 Checking.", "done 0  incomplete"},
+			withheld: 1,
 		},
 		{
-			name: "a content filter stop leaves the call incomplete",
+			name: "a content filter stop withholds every call",
 			chunks: []*CanonicalStreamChunk{
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b", ArgumentsDelta: "{}"}}},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 2, ID: "call_3", ArgumentsDelta: "{}"}}},
 			},
-			finish: "content_filter",
-			want:   []string{"added 0 function_call call_1", "arguments 0 {}", "done 0 a incomplete"},
+			finish:   "content_filter",
+			withheld: 2,
 		},
 	}
 	for _, tt := range tests {
@@ -287,6 +292,7 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 				got[i] = strings.ReplaceAll(got[i], "call_"+enc.nonce+"_", "call_*_")
 			}
 			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.withheld, enc.Withheld())
 		})
 	}
 }
@@ -514,6 +520,7 @@ func TestResponsesStreamEncoder_Abort(t *testing.T) {
 		lines = append(lines, enc.Abort("upstream stream failed", &CanonicalUsage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4})...)
 		assert.True(t, enc.Aborted())
 		assert.Equal(t, 1, enc.Dropped())
+		assert.Equal(t, 1, enc.Withheld())
 
 		types := responsesEncoderTypes(t, lines)
 		assert.Equal(t, []string{
@@ -552,7 +559,41 @@ func TestResponsesStreamEncoder_Abort(t *testing.T) {
 		assert.Equal(t, []string{"response.created", "response.in_progress", "error", "response.failed"}, responsesEncoderTypes(t, lines))
 		requireSequentialItems(t, lines)
 		assert.Zero(t, enc.Dropped())
+		assert.Equal(t, 1, enc.Withheld())
 	})
+}
+
+func TestResponsesStreamEncoder_Keepalive(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	enc := NewResponsesStreamEncoder(WithResponsesClock(func() time.Time { return now }))
+	advance := func(d time.Duration) { now = now.Add(d) }
+	keepalive := [][]byte{[]byte(": keepalive"), {}}
+
+	advance(responsesKeepaliveInterval - time.Second)
+	assert.Empty(t, enc.Keepalive(), "not due yet")
+	advance(time.Second)
+	assert.Equal(t, keepalive, enc.Keepalive(), "due before response.created")
+	assert.False(t, enc.Started())
+
+	lines := enc.Content(&CanonicalStreamChunk{Role: "assistant", Delta: "Checking."})
+	require.NotEmpty(t, lines)
+	advance(responsesKeepaliveInterval - time.Second)
+	assert.Empty(t, enc.Keepalive(), "events reset the idle time")
+
+	for range 3 {
+		advance(time.Second)
+		assert.Empty(t, enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "f", ArgumentsDelta: "{"}}}))
+	}
+	assert.Equal(t, keepalive, enc.Keepalive(), "held call deltas send nothing")
+	assert.Empty(t, enc.Keepalive(), "a keepalive resets the idle time")
+	advance(responsesKeepaliveInterval)
+	assert.Equal(t, keepalive, enc.Keepalive())
+
+	enc.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ArgumentsDelta: "}"}}})
+	lines = enc.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"})
+	assert.Contains(t, responsesEncoderTypes(t, lines), "response.completed")
+	advance(time.Hour)
+	assert.Empty(t, enc.Keepalive(), "nothing after the terminal event")
 }
 
 func TestResponsesStreamEncoder_DroppedNamelessCalls(t *testing.T) {
