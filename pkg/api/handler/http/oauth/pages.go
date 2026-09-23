@@ -194,9 +194,9 @@ func connectWaitAttempt(c *fiber.Ctx) int {
 // relative to the request's own path, so it can only ever reload this page.
 func connectRetryURL(c *fiber.Ctx, attempt int) string {
 	q := url.Values{}
-	c.Context().QueryArgs().VisitAll(func(k, v []byte) {
+	for k, v := range c.Context().QueryArgs().All() {
 		q.Add(string(k), string(v))
-	})
+	}
 	q.Set(connectWaitParam, strconv.Itoa(attempt))
 	return c.Path() + "?" + q.Encode()
 }
