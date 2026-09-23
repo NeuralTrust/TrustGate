@@ -19,132 +19,61 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
-
-// IdentitySource says where the end users of an acts-for-users consumer come
-// from.
-type IdentitySource string
-
-const (
-	// IdentitySourcePlatform: the people using the application sign in
-	// themselves (the NeuralTrust IdP or the customer's IdP). Their subject and
-	// groups come from the token, so each of them connects their own upstream
-	// accounts and is audited by name.
-	//
-	// It does not narrow the consumer's surface. Access governs users on the
-	// Store — which catalog servers a person may install for themselves — while
-	// a consumer's servers are the registries an admin bound to it under
-	// Routing, the same set for every caller it admits. The binding is the
-	// decision; see store.Scoper.
-	IdentitySourcePlatform IdentitySource = "platform"
-	// IdentitySourceApp: the application authenticates itself (API key) and
-	// names its end user on every request through the end-user header. The
-	// gateway keeps per-user upstream connections under a namespaced subject.
-	// Its servers, like every consumer's, are the ones bound under Routing.
-	IdentitySourceApp IdentitySource = "app"
-)
-
-// IsValid reports whether s is a known identity source.
-func (s IdentitySource) IsValid() bool {
-	return s == IdentitySourcePlatform || s == IdentitySourceApp
-}
 
 // EndUserHeader is the request header an application uses to name its end user:
 // on MCP consumers whose identity source is app it selects the per-user upstream
 // connections; on LLM consumers that opt in it is recorded for attribution.
 const EndUserHeader = "X-NeuralTrust-End-User"
 
-// Identity describes who a consumer acts for. Every consumer is an application;
-// what changes is whether a person stands behind each request and how the
-// gateway learns who that person is. It never selects a registry or a model:
-// routing is the consumer's own configuration.
-type Identity struct {
-	// ActsForUsers turns on per-user behaviour on an MCP consumer: the upstream
-	// accounts are held per person rather than once for the application. Off,
-	// the consumer acts as the application itself. Either way its servers are
-	// the ones bound to it under Routing — this never narrows them.
-	ActsForUsers bool `json:"acts_for_users"`
-	// Source is how the end user is known (platform or app). Only meaningful
-	// when ActsForUsers is on; defaults to platform.
-	Source IdentitySource `json:"source,omitempty"`
-	// EndUserHeader lets an LLM consumer forward an opaque end-user id for
-	// attribution in traces, audit and rate limiting.
-	EndUserHeader bool `json:"end_user_header,omitempty"`
-}
+// Identity is what a consumer declares about who calls it.
+//
+// It used to declare whether people stood behind the calls (`acts_for_users`)
+// and where they came from (`source`). Both are gone: who a request runs as is
+// a property of the request, not of the configuration. A verified person is
+// whoever their token says; a machine credential that names an end user acts
+// for that person; one that names nobody acts as the application. The gateway
+// reads that per request (`EndUserFromRequest`) instead of being told in
+// advance — which is what stopped an application from doing both, and made an
+// admin answer a question about callers it had not met yet.
+//
+// The struct stays because a consumer may still declare things about its
+// callers later, and because rows persist it.
+type Identity struct{}
 
-// Normalize fills the defaults for a consumer of the given type: the platform
-// source when acting for users without one, and no source otherwise.
-func (i *Identity) Normalize(t Type) {
-	if i == nil {
-		return
-	}
-	i.Source = IdentitySource(strings.ToLower(strings.TrimSpace(string(i.Source))))
-	if !i.ActsForUsers {
-		i.Source = ""
-		return
-	}
-	if i.Source == "" {
-		i.Source = IdentitySourcePlatform
-	}
-	_ = t
-}
+// Normalize is a no-op: nothing is declared here any more.
+func (i *Identity) Normalize(t Type) { _ = t }
 
-// Validate checks the identity against the consumer type.
-func (i Identity) Validate(t Type) error {
-	if i.ActsForUsers {
-		if t != TypeMCP {
-			return fmt.Errorf("%w: acts_for_users is only valid for MCP consumers", ErrInvalidIdentity)
-		}
-		if !i.Source.IsValid() {
-			return fmt.Errorf("%w: unknown source %q", ErrInvalidIdentity, i.Source)
-		}
-	} else if i.Source != "" {
-		return fmt.Errorf("%w: source requires acts_for_users", ErrInvalidIdentity)
-	}
-	if i.EndUserHeader && t != TypeLLM {
-		return fmt.Errorf("%w: end_user_header is only valid for LLM consumers", ErrInvalidIdentity)
-	}
-	return nil
-}
+// Validate is a no-op for the same reason.
+func (i Identity) Validate(t Type) error { _ = t; return nil }
 
-// PlatformUsers reports whether the consumer acts for people who sign in
-// themselves, which is when each caller holds their own upstream accounts.
-func (i Identity) PlatformUsers() bool {
-	return i.ActsForUsers && i.Source == IdentitySourcePlatform
-}
-
-// AppUsers reports whether the consumer acts for end users the application
-// names through the end-user header.
-func (i Identity) AppUsers() bool {
-	return i.ActsForUsers && i.Source == IdentitySourceApp
-}
-
-// ActsForUsers reports whether the consumer acts on behalf of end users.
-func (c *Consumer) ActsForUsers() bool {
-	return c != nil && c.Identity.ActsForUsers
-}
-
-// WantsSignIn reports whether the consumer is entered by people signing in:
-// the platform identity, or the MCP Store, which is that identity by
-// construction. An app-source consumer is not, even though it acts for users:
-// its application authenticates as a machine and names its end users itself.
+// WantsSignIn reports whether the consumer is entered by people signing in and
+// holds no credential of its own, which is the only case the built-in identity
+// provider may rescue. That is the MCP Store, which is that identity by
+// construction and carries no auth to attach one to.
+//
+// Every other consumer says how it is entered by what is attached to it: an api
+// key, a certificate, an identity provider. A consumer with nothing attached is
+// entered by nobody — failing closed is the point, because the alternative is
+// that revoking the last credential opens a consumer up instead of locking it
+// down.
+//
 // A nil consumer reports false so callers that read this as "may broker a
 // login" fail closed.
-//
-// This is the one predicate both the request-time auth chain and the
-// authorize-time provider selection must ask, or the two security decisions
-// diverge for the app source (RUN-1501).
 func (c *Consumer) WantsSignIn() bool {
-	return c != nil && (c.Identity.PlatformUsers() || IsStoreConsumer(c))
+	return IsStoreConsumer(c)
 }
 
 // MaxEndUserLength bounds the opaque end-user id an application may send.
 const MaxEndUserLength = 256
 
 // appSubjectPrefix namespaces an application and the end users it names, so
-// neither can collide with a platform user's token subject.
-const appSubjectPrefix = "app:"
+// neither can collide with a platform user's token subject. The reservation is
+// enforced where a token becomes a principal (identity.ReservedSubject); this
+// is the other half, the minting.
+const appSubjectPrefix = identity.AppSubjectPrefix
 
 // ValidateEndUser checks an end-user id from the end-user header: present,
 // bounded and printable. The gateway never interprets it.

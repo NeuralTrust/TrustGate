@@ -263,15 +263,12 @@ func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
 	return m
 }
 
+// signInConsumer is the one consumer the built-in identity provider may still
+// rescue: the MCP Store, which is entered by people signing in and carries no
+// credential to attach one to. Every other consumer is entered by what is
+// attached to it, so a consumer with nothing attached is entered by nobody.
 func signInConsumer() *consumerdomain.Consumer {
-	return &consumerdomain.Consumer{
-		ID:       ids.New[ids.ConsumerKind](),
-		Name:     "sign-in",
-		Slug:     "sign-in",
-		Type:     consumerdomain.TypeMCP,
-		Active:   true,
-		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
-	}
+	return consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())
 }
 
 // machineConsumer authenticates as the application itself: the built-in
@@ -727,4 +724,83 @@ func TestChain_APIKeyPresentedAsBearerAuthenticates(t *testing.T) {
 			require.Equal(t, "prod", id.Principal.Subject)
 		})
 	}
+}
+
+// A subject is what an upstream account hangs off, so two callers with the same
+// subject are the same account. Three of those namespaces are the gateway's own
+// — an application, an end user it names, the account an instance holds for
+// everyone — and everything else here is whatever an identity provider put in a
+// token. Which claim that is read from is configurable per credential, so it can
+// be one a person edits about themselves.
+//
+// A token wearing one of those prefixes would be that application, and would
+// read the upstream accounts it had linked. Nothing legitimate arrives here
+// wearing them: the gateway builds them after this point, from the consumer it
+// just resolved.
+func TestChain_RefusesATokenClaimingAGatewayMintedSubject(t *testing.T) {
+	stolen := map[string]string{
+		"an application":                "app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"an end user of one":            "app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e:alice",
+		"the account an instance holds": "instance:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"the same, shouted":             "APP:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"the same, with room in front":  "  app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+	}
+	for name, subject := range stolen {
+		t.Run(name, func(t *testing.T) {
+			a := oauth2Auth(t, "https://idp.example.com", true)
+			jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: subject, Method: identity.MethodJWT}}
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal,
+				&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+			)
+
+			_, err := resolveChain(t, resolver, map[string]string{
+				"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+			})
+
+			require.ErrorIs(t, err, apiresolver.ErrUnauthenticated,
+				"a verified token may not claim a subject the gateway mints")
+		})
+	}
+}
+
+// The verification itself still stands: an ordinary subject passes, so the
+// guard refuses a namespace rather than tokens in general.
+func TestChain_AdmitsAnOrdinarySubject(t *testing.T) {
+	a := oauth2Auth(t, "https://idp.example.com", true)
+	jwtVal := &fakeTokenValidator{principal: &identity.Principal{
+		Subject: "application-of-mine@corp.com", Method: identity.MethodJWT,
+	}}
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal,
+		&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+
+	id, err := resolveChain(t, resolver, map[string]string{
+		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "application-of-mine@corp.com", id.Principal.Subject)
+}
+
+// The guard is about subjects that arrive from outside. An api key's subject is
+// the name an admin gave it — a row in this gateway's own database, and one the
+// MCP plane replaces with the application's subject anyway — so a key somebody
+// happened to call "app:something" keeps working rather than failing closed on
+// a name that risks nothing.
+func TestChain_APIKeyNamedLikeAReservedSubjectStillAuthenticates(t *testing.T) {
+	key := &authdomain.Auth{
+		ID: ids.New[ids.AuthKind](), GatewayID: ids.New[ids.GatewayKind](),
+		Name: "app:billing", Type: authdomain.TypeAPIKey, Enabled: true,
+	}
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{auth: key}, fakeCredentialFinder{}, nil, &fakeTokenValidator{},
+		&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+
+	id, err := resolveChain(t, resolver, map[string]string{"X-AG-API-Key": "ag_secret"})
+
+	require.NoError(t, err)
+	require.Equal(t, "app:billing", id.Principal.Subject)
 }

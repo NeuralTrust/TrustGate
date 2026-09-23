@@ -611,21 +611,6 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerConnectLink:
-    properties:
-      connect_path:
-        type: string
-      consumer_path:
-        type: string
-      expires_at:
-        type: string
-      providers:
-        items:
-          type: string
-        type: array
-      ticket:
-        type: string
-    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse:
     properties:
       active:
@@ -660,14 +645,6 @@ definitions:
         type: array
       name:
         type: string
-      pending_upstream_auth:
-        description: |-
-          PendingUpstreamAuth counts the upstream accounts this application still
-          owes before it can call every server it is bound to: never signed in, or
-          signed in and since expired or revoked.
-          Absent when nothing is owed, and on a plane that cannot read the accounts
-          at all — a list must not claim everything is fine when it did not look.
-        type: integer
       registry_ids:
         items:
           type: string
@@ -685,57 +662,6 @@ definitions:
       type:
         type: string
       updated_at:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccount:
-    properties:
-      account_ref:
-        type: string
-      code:
-        type: string
-      expires_at:
-        type: string
-      linked:
-        type: boolean
-      mode:
-        description: |-
-          Mode is the server's upstream auth mode: none, static, client_credentials,
-          forwarded, passthrough or exchange.
-        type: string
-      needs_linked_account:
-        description: |-
-          NeedsLinkedAccount is true only for a server that forwards a stored
-          credential; the rest carry their own or need none.
-        type: boolean
-      needs_reconnect:
-        type: boolean
-      provider:
-        type: string
-      registry:
-        type: string
-      registry_id:
-        type: string
-      scopes:
-        items:
-          type: string
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccounts:
-    properties:
-      accounts:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccount'
-        type: array
-      consumer_id:
-        type: string
-      needs_linking:
-        type: boolean
-      principal_sub:
-        description: |-
-          PrincipalSub is the identity the upstream accounts hang off:
-          app:<consumer_id>, the application itself.
-        type: string
-      slug:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse:
@@ -2926,14 +2852,6 @@ definitions:
     properties:
       active:
         type: boolean
-      acts_for_users:
-        description: |-
-          ActsForUsers is false for a consumer that acts as the application
-          itself, which is the actor a batch runs as.
-        type: boolean
-      identity_source:
-        description: IdentitySource names who its users are when it acts for them.
-        type: string
       name:
         type: string
       slug:
@@ -2941,11 +2859,28 @@ definitions:
       type:
         description: 'Type is the plane this consumer belongs to: MCP, LLM or A2A.'
         type: string
+      upstreams:
+        description: |-
+          Upstreams are the MCP servers behind this consumer that read a stored
+          account, and what each is still waiting for. Absent when none of them
+          does — and also absent on a plane that cannot read the accounts at all,
+          which is why a client reads "blocked" rather than counting a length.
+        items:
+          $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIUpstream'
+        type: array
       url:
         description: |-
           URL is where this consumer is served — the MCP endpoint for an MCP
           consumer, the provider-compatible base URL for an LLM one. Empty when
           the gateway has no public host configured for that plane.
+        type: string
+    type: object
+  pkg_api_handler_http_mcp.WhoAmIKey:
+    properties:
+      expires_at:
+        description: ExpiresAt is RFC3339, absent when the key never expires.
+        type: string
+      name:
         type: string
     type: object
   pkg_api_handler_http_mcp.WhoAmIResponse:
@@ -2955,6 +2890,33 @@ definitions:
           $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIConsumer'
         type: array
       gateway:
+        type: string
+      key:
+        $ref: '#/definitions/pkg_api_handler_http_mcp.WhoAmIKey'
+    type: object
+  pkg_api_handler_http_mcp.WhoAmIUpstream:
+    properties:
+      account:
+        description: |-
+          Account is whose account the server reads: "shared", the one the
+          instance holds for every caller, or "user", one per caller.
+        type: string
+      blocked:
+        description: |-
+          Blocked names who has to act before this server answers a call that runs
+          as the application: "administrator" or "end_user". Absent when ready.
+        type: string
+      connected:
+        description: |-
+          Connected answers for this caller. A "user" instance never has an
+          account for an application, so it reads false and blocked says end_user.
+        type: boolean
+      needs_reconnect:
+        description: 'NeedsReconnect: there is an account and it has gone stale.'
+        type: boolean
+      provider:
+        type: string
+      server:
         type: string
     type: object
   pkg_api_handler_http_oauth.EndUserConnectionResponse:
@@ -3269,10 +3231,11 @@ paths:
     get:
       description: Reports, per connectable server, whether the actor is connected,
         needs to reconnect, or has not connected. Naming end_user asks about that
-        end user, for an MCP consumer whose application identifies its own users (identity.source
-        = app). Omitting it asks about the application acting as itself (app:<consumer_id>)
-        — the preflight a batch runs before it starts, since nobody is there to follow
-        a connect link once it is running. Authenticated with the consumer's API key.
+        person, under this application. Omitting it asks about the application acting
+        as itself (app:<consumer_id>) — the preflight a batch runs before it starts,
+        since nobody is there to follow a connect link once it is running. Both actors
+        belong to every MCP consumer, so neither form is ever refused for being the
+        wrong one. Authenticated with the consumer's API key.
       parameters:
       - description: Consumer slug
         in: path
@@ -3299,10 +3262,6 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       summary: Read connection states for an end user or for the application itself
       tags:
       - connections
@@ -3310,10 +3269,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: For an MCP consumer whose application identifies its end users
-        (identity.source = app). Returns the URL the application shows that user to
-        connect their own account on one of the consumer's servers (or on any of them
-        when provider is omitted). Authenticated with the consumer's API key.
+      description: Returns the URL an application shows one of its end users to connect
+        that person's own account on one of the consumer's servers (or on any of them
+        when provider is omitted). Any MCP consumer may name an end user — who a
+        request runs as is read from the request, not declared on the consumer. Authenticated
+        with the consumer's API key.
       parameters:
       - description: Consumer slug
         in: path
@@ -3339,10 +3299,6 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "429":
@@ -4295,113 +4251,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Attach a registry to a consumer
-      tags:
-      - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts:
-    get:
-      description: 'For an MCP consumer that acts as the application itself: per bound
-        MCP server, its upstream auth mode, whether that server needs an account linked
-        for the application, and — when it does — whether one is linked, for which
-        account, and whether it needs reconnecting. The accounts belong to the consumer,
-        so the answer does not depend on which credential the application authenticates
-        with. Credential material is never returned.'
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerUpstreamAccounts'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: The consumer acts for users, so it holds no account of its
-            own
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Read an MCP application's upstream accounts
-      tags:
-      - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/upstream-accounts/link:
-    post:
-      description: Returns a connect ticket an admin can open to link the application's
-        own accounts on the servers that forward a stored credential — the same page
-        the api-key self-service flow uses, without needing one of the application's
-        credentials. Naming a registry narrows the ticket to that one server; omitting
-        it covers every server of the application that forwards a credential. The
-        ticket is pinned to this consumer and to those providers, revalidated on redemption,
-        audited, and short-lived.
-      parameters:
-      - description: Gateway id
-        format: uuid
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Consumer id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Authorize only this bound MCP server
-        format: uuid
-        in: query
-        name: registry_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerConnectLink'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "404":
-          description: The consumer does not exist, or the registry is not bound to
-            it
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-        "409":
-          description: The consumer acts for users, or the named server carries its
-            own credential
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Mint a connect link for an MCP application's upstream accounts
       tags:
       - consumers
   /v1/gateways/{gateway_id}/policies:
@@ -5625,7 +5474,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: Server is not on the shelf; connect it first
+          description: Server is not on the shelf, or needs admin setup; connect it first
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -6012,12 +5861,13 @@ paths:
   /whoami:
     get:
       description: Returns the consumers this API key is attached to, one per plane,
-        each with the URL it is served on. A key is attached to consumers and a consumer
-        has one type, so an agent that calls both tools and models holds an MCP consumer
-        and an LLM one behind the same key; this is how a client learns their slugs
-        and addresses instead of being configured with them. Carries no identifiers
-        and no credentials. An unknown, disabled or foreign key is refused without
-        saying which.
+        each with the URL it is served on — plus when the key itself expires and,
+        for an MCP consumer, which of its bound servers still need an account connected
+        and by whom. A key is attached to consumers and a consumer has one type, so
+        an agent that calls both tools and models holds an MCP consumer and an LLM
+        one behind the same key; this is how a client learns their slugs and addresses
+        instead of being configured with them. Carries no identifiers and no credentials.
+        An unknown, disabled, expired or foreign key is refused without saying which.
       produces:
       - application/json
       responses:

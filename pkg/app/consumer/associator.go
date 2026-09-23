@@ -18,12 +18,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -279,28 +277,20 @@ func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	}
 }
 
-// ErrPerUserURLOnMachineConsumer is returned when a server whose URL is
-// completed per person is bound to a consumer that acts as itself.
-var ErrPerUserURLOnMachineConsumer = fmt.Errorf(
-	"%w: this server's address is completed per user (it declares url variables), so it can only be attached to a consumer that acts for users",
-	commonerrors.ErrConflict,
-)
-
-// validatePerUserURLBinding refuses a server whose address is assembled from
-// per-user values on a consumer that has no user.
+// validatePerUserURLBinding no longer refuses anything.
 //
-// Those values live on the caller's own installation row and in their vault
-// entries; an application that acts as itself never installs from the Store, so
-// it has neither, and there is no admin-level place to supply them. The binding
-// used to be accepted and every call to the server then failed at dial time
-// with a missing-placeholder error nobody could act on. Refused here, where the
-// admin is making the decision and can read why.
+// It used to refuse binding a server whose URL carries required per-user
+// variables to a consumer that acts as itself: those values live on a caller's
+// own Store installation, an application that acts as itself has none, and
+// every call would die at dial time with a missing-placeholder error nobody
+// could act on. The refusal could be made at admin time because the consumer
+// declared, in advance, whether it had users.
+//
+// It does not any more: the same application serves a person on one request and
+// nobody on the next, so whether the values exist is a property of the caller.
+// The dial-time error is the one that can still tell the truth, and it names
+// the variables that are missing.
 func validatePerUserURLBinding(cons *domain.Consumer, reg *registrydomain.Registry) error {
-	if cons == nil || reg == nil || cons.ActsForUsers() {
-		return nil
-	}
-	if reg.MCPTarget == nil || len(reg.MCPTarget.RequiredURLVariables()) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w: %s", ErrPerUserURLOnMachineConsumer, strings.Join(reg.MCPTarget.RequiredURLVariables(), ", "))
+	_, _ = cons, reg
+	return nil
 }

@@ -56,3 +56,7 @@ mcp-oauth.key
 .cursor/sdd
 docs/internal/*
 downloads/start.sh
+
+# Redis snapshot, written into the working directory by a redis-server
+# started from the repo root to run the functional suite.
+dump.rdb

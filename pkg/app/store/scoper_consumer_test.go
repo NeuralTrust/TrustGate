@@ -66,11 +66,9 @@ func withModePrincipal(sub, mode string, groups ...string) context.Context {
 // mean an admin could bind a server the consumer's own users cannot see.
 func TestScoperNeverScopesACustomConsumer(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	identities := map[string]consumerdomain.Identity{
-		"acts as the application": {},
-		"users sign in":           {ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
-		"the app names its users": {ActsForUsers: true, Source: consumerdomain.IdentitySourceApp},
-	}
+	// One identity, because a consumer no longer declares anything about its
+	// callers; the scoper never read it anyway, which is the point.
+	identities := map[string]consumerdomain.Identity{"any consumer": {}}
 	modes := []string{
 		gatewaydomain.StoreModeOpen,
 		gatewaydomain.StoreModeCurated,
@@ -111,7 +109,7 @@ func TestScoperNeverScopesACustomConsumer(t *testing.T) {
 // that path, so an Access outage cannot affect an application's surface.
 func TestScoperReadsNoGrantsForACustomConsumer(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	rc, _ := customConsumer(gw, consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform})
+	rc, _ := customConsumer(gw, consumerdomain.Identity{})
 	grants := &fakeGrants{err: context.DeadlineExceeded}
 	sc := newScoperT(t, &fakeInstalls{}, &fakeRegistries{}, grants)
 

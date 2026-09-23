@@ -35,7 +35,6 @@ type mcpRouter struct {
 	authorizeHandler           *oauthhttp.AuthorizeHandler
 	callbackHandler            *oauthhttp.CallbackHandler
 	tokenHandler               *oauthhttp.TokenHandler
-	apiKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
 	endUserConnectionsHandler  *oauthhttp.EndUserConnectionsHandler
 	connectHandler             *oauthhttp.ConnectHandler
 	configureHandler           *oauthhttp.ConfigureHandler
@@ -54,7 +53,6 @@ func NewMCPRouter(
 	authorizeHandler *oauthhttp.AuthorizeHandler,
 	callbackHandler *oauthhttp.CallbackHandler,
 	tokenHandler *oauthhttp.TokenHandler,
-	apiKeyConnectHandler *oauthhttp.APIKeyConnectHandler,
 	endUserConnectionsHandler *oauthhttp.EndUserConnectionsHandler,
 	connectHandler *oauthhttp.ConnectHandler,
 	configureHandler *oauthhttp.ConfigureHandler,
@@ -74,7 +72,6 @@ func NewMCPRouter(
 		authorizeHandler:           authorizeHandler,
 		callbackHandler:            callbackHandler,
 		tokenHandler:               tokenHandler,
-		apiKeyConnectHandler:       apiKeyConnectHandler,
 		endUserConnectionsHandler:  endUserConnectionsHandler,
 		connectHandler:             connectHandler,
 		configureHandler:           configureHandler,
@@ -122,8 +119,6 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
-	app.Get("/:slug/connect", r.apiKeyConnectHandler.Get)
-	app.Post("/:slug/connect", r.apiKeyConnectHandler.Post)
 	if r.endUserConnectionsHandler != nil {
 		app.Post("/:slug/connections/links", r.endUserConnectionsHandler.Link)
 		app.Get("/:slug/connections", r.endUserConnectionsHandler.List)

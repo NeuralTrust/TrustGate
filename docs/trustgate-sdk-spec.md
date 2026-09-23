@@ -3,11 +3,16 @@
 Status: proposed, not implemented · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-08
 Revised: 2026-09-17 — the application actor (§3, §4.3, §5) after a survey of
 Composio and Arcade; see §12.
+Revised: 2026-09-22 — a consumer no longer declares who its callers are, and an
+upstream account belongs to a server's instance rather than to a consumer. §3,
+§4.3, §5 and §6 follow; `/whoami` grew the two things the SDK used to learn from
+a failure (§4.0, §5).
 
-Companion to `consumers-identity-model.md`. That memo defines the
-**app-identified end user** consumer (`identity.source = app`) and the gateway
-API it needs. This one specifies the **client library** an application actually
-integrates against, so that integration is never a set of hand-built URLs.
+Companion to `consumers-identity-model.md`. That memo settles **who a request
+runs as** — read from the request, never declared on the consumer — and the
+gateway API an application needs to connect the people it acts for. This one
+specifies the **client library** an application actually integrates against, so
+that integration is never a set of hand-built URLs.
 
 ## 1. Why
 
@@ -28,10 +33,12 @@ The first two are plain HTTP today (`POST /{slug}/connections/links`,
 `GET /{slug}/connections?end_user=…`). Handing customers those URLs makes every
 integration a copy of our routing: the endpoint shape, the header names, the
 status vocabulary and the ticket lifetime all leak into their code, and we can
-never change any of it. The SDK is the seam. Until it exists, the app hides the
-*My app identifies its users* option in the consumer identity picker
-(`APP_IDENTITY_SOURCE_ENABLED` in `features/consumers/lib/appIdentitySourceEnabled.ts`
-in NeuralTrust/app) — shipping the SDK is what unhides it.
+never change any of it. The SDK is the seam.
+
+Nothing in the console gates this any more. Naming an end user is a header an
+application sends per call, not a mode somebody switches a consumer into, so the
+pattern is available to every application that holds a key — which is exactly
+why it wants a library rather than a page of URLs.
 
 ## 2. Scope
 
@@ -56,10 +63,11 @@ in NeuralTrust/app) — shipping the SDK is what unhides it.
   the OpenAI/Anthropic SDKs against it, see `examples/`.
 - An MCP protocol implementation. The SDK does **not** re-implement MCP: it
   produces the URL + headers, and the app keeps its own MCP client.
-- Consumers whose users sign in with the platform (`identity.source = platform`).
-  Those people authenticate in their MCP client; no application code is involved.
-- Minting the application actor's own upstream connection. That is a one-time
-  setup a person does in a browser at `/{slug}/connect` (§5); the SDK
+- Requests carrying a person's own verified token (a platform login, or a
+  company IdP the consumer admits). Those people authenticate in their MCP
+  client; no application code is involved.
+- Connecting the account an MCP server's instance holds for every caller. An
+  administrator does that once, on the instance, in the console (§5); the SDK
   deliberately offers no call for it, which is what makes `asApp()` unable to
   interrupt.
 
@@ -71,31 +79,39 @@ key (or a client certificate) as its credential. Everything is scoped by that.
 ### 3.1 Three actors, not one
 
 Who a call is *attributed to* decides which credential the gateway reaches for,
-and whether a person may have to be asked for consent. The gateway already
-separates the three (`pkg/domain/consumer/identity.go`); the SDK names them.
+and whether a person may have to be asked for consent. **The consumer declares
+none of this.** It is read from the request, per request
+(`pkg/api/handler/http/mcp/mcp_handler.go`), and the SDK's job is to make the
+choice explicit in the caller's code rather than implicit in a header nobody
+remembers to send.
 
-| Actor | Consumer shape | Gateway principal | Upstream credential | Can a call need a link? |
+| Actor | What the request carries | Gateway principal | Upstream credential | Can a call need a link? |
 |---|---|---|---|---|
-| **Application** | `acts_for_users = false` | `app:<consumer_id>` | linked once at `/{slug}/connect` | **Never** |
-| **Application for an end user** | `acts_for_users = true`, `source = app` | `app:<consumer_id>:<end_user>` | per end user, via `connections/links` | Yes, first time |
-| **Person** | `acts_for_users = true`, `source = platform` | the platform user | the Portal's connect page | Yes — and not through this SDK |
+| **Application** | the machine credential, nothing else | `app:<consumer_id>` | the account the server's instance holds for everyone | **Never** |
+| **Application for an end user** | the machine credential **+** `X-NeuralTrust-End-User` | `app:<consumer_id>:<end_user>` | per end user, via `connections/links` | Yes, first time |
+| **Person** | a verified token (platform login, or a company IdP) | the person's own `sub` | their own connect page | Yes — and not through this SDK |
 
-The middle row is what v0.1 was written for. The first is the batch case and is
-new in this revision. The third stays out of scope: those people authenticate in
-their own MCP client.
+The middle row is what v0.1 was written for; the first is the batch case. The
+third stays out of scope: those people authenticate in their own MCP client.
 
-A consumer is one row, not a mixture. The gateway enforces it: `/{slug}/connect`
-refuses an app-identified consumer outright (`ErrAPIKeyConnectEndUsers`, 409),
-because linking an upstream to the shared API-key principal would let one end
-user act through another's account.
+**One consumer is all three rows, one request at a time.** This is the change
+from the previous revision, and it simplifies the SDK rather than complicating
+it: `forEndUser()` and `asApp()` are two handles on the same client, both always
+valid, and nothing has to be configured in the console to make either work. What
+used to be a consumer-shaped refusal is now a per-request fact.
 
-### 3.2 What an app-identified consumer assumes
+### 3.2 What naming an end user assumes
 
-- The consumer authenticates as a machine, once, with its API key.
-- Every request names the person it acts for with an opaque id (`end_user`,
+- The application authenticates as a machine, once, with its API key (or a
+  client certificate).
+- A request names the person it acts for with an opaque id (`end_user`,
   `X-NeuralTrust-End-User`), chosen by the application. The gateway namespaces
-  it by consumer (`app:<consumer_id>:<end_user>`), so two applications naming
+  it by consumer (`app:<consumer_id>:<end_user>`), because the name is
+  *asserted* by the application and not verified — so two applications naming
   `user_123` never share a connection.
+- Only a machine credential may assert one. A request carrying a person's own
+  token is already that person; naming someone else from it would be
+  impersonation, and the gateway refuses it.
 - Access rules do not apply to those people — the application is the boundary.
   The consumer's registries are its whole surface.
 - `end_user` constraints (gateway-enforced, `consumerdomain.ValidateEndUser`):
@@ -121,6 +137,56 @@ const trustgate = new TrustGate({
 
 `baseUrl` is exactly what the app's Connect tab shows for that consumer. The
 SDK derives every path from it; the app never writes one.
+
+### 4.0 One secret, resolved
+
+`host` may be given in place of `baseUrl`, and the client resolves the rest from
+the key itself:
+
+```ts
+const trustgate = new TrustGate({
+  host: 'https://<mcp-host>',            // no slug
+  apiKey: process.env.TRUSTGATE_API_KEY!,
+})
+
+const me = await trustgate.whoami()
+// {
+//   gateway: 'acme',
+//   key: { name: 'prod', expiresAt: Date | undefined },
+//   consumers: [
+//     { slug: 'support-agent', type: 'MCP', active: true, url: '…/support-agent/mcp',
+//       upstreams: [{ server: 'Notion', account: 'shared', connected: false,
+//                     blocked: 'administrator' }] },
+//     { slug: 'support-llm', type: 'LLM', active: true, url: 'https://…/support-llm/v1' },
+//   ],
+// }
+```
+
+Why it is in the SDK rather than left to the caller: the two planes do not share
+a host, so a client configured with one base URL can never compose the other,
+and the slugs were chosen by whoever created the consumers in the console. One
+key resolves both.
+
+Three things worth reading from it before anything else runs:
+
+- `key.expiresAt` — `undefined` means never. A job that runs for six hours can
+  refuse to start on a key with twenty minutes left, instead of discovering it
+  as a `401` at hour one.
+- `consumers[].url` — the MCP base for `forEndUser`/`asApp`, and the
+  OpenAI-compatible base for the LLM plane.
+- `consumers[].upstreams[].blocked` — who has to act before a server answers a
+  call that runs as the application: `'administrator'` for an instance whose
+  shared account nobody has connected, `'end_user'` for one that keeps an
+  account per caller. Absent when the server is ready. Servers that carry their
+  own credential are not listed, and `upstreams` is `undefined` — never `[]` —
+  when the gateway could not read the accounts at all, so "no list" is
+  distinguishable from "nothing to connect".
+
+With `host`, the client picks the MCP consumer for `forEndUser`/`asApp` and
+exposes the LLM one as `trustgate.llm.baseUrl`. When the key reaches more than
+one consumer of a type, it raises `AmbiguousConsumerError` and the caller passes
+`slug` — a library that guessed here would silently send a customer's traffic
+through the wrong application.
 
 ### 4.1 Connections
 
@@ -180,9 +246,9 @@ app.mcpUrl        // 'https://<mcp-host>/<consumer-slug>/mcp'
 app.mcpHeaders()  // { 'X-AG-API-Key': '…' }   — no end-user header
 ```
 
-`asApp()` is the batch handle. The consumer's own upstream accounts were linked
-once, out of band (§5), so every call resolves to `app:<consumer_id>` and a
-credential that is already there.
+`asApp()` is the batch handle: it sends the key and no end-user header, so every
+call resolves to `app:<consumer_id>` and reads the account its servers' instances
+hold for everyone — connected once, out of band, by an administrator (§5).
 
 **It has no `connections.createLink`.** That is the point, and it is a type-level
 guarantee, not a convention: a job that declares `asApp()` either fails at setup
@@ -190,9 +256,10 @@ or runs — it can never stop halfway holding a URL nobody will open. This is th
 one thing an SDK can give a batch that a per-user API cannot, and it is why the
 two handles are different types rather than one handle with a flag.
 
-Calling `asApp()` on an app-identified consumer raises
-`AppActorUnavailableError` (§6) rather than silently acting as the shared
-principal — the mirror of the gateway's own refusal in §3.1.
+`asApp()` never refuses. Both handles are always available on the same client,
+because which actor a request is comes from the request (§3.1) — so the guarantee
+here is about what the *code* can do, not about what the consumer was configured
+to be.
 
 What it does have is the preflight:
 
@@ -214,6 +281,11 @@ gets to the first call on that server and fails there, halfway through.
 `status` is `connected`, `needs_reconnect` or `not_connected`, and `expiresAt`
 is the credential's own expiry, so a job can refuse to start a six-hour run on
 an account with twenty minutes left rather than discovering it at hour one.
+
+`whoami().consumers[].upstreams` (§4.0) answers the same question in one call
+across both planes and adds `blocked`, which names *who* fixes it. Prefer it for
+a startup check; `app.connections.list()` remains the per-consumer form and the
+one to poll between batches.
 
 ## 5. Wire contracts the SDK wraps
 
@@ -286,33 +358,65 @@ what `app.connections.list()` calls.
 `end_user` would otherwise read as an unnamed user rather than as the other
 actor entirely.
 
-A consumer that acts for its users has no accounts of its own, so this form
-answers `409 consumer_acts_for_users` rather than an empty list — the mirror of
-the `409 end_users_not_identified` the `end_user` form gives for a consumer that
-acts as itself. The SDK raises `AppActorUnavailableError` for the first and
-`EndUserActorUnavailableError` for the second.
+Neither form is ever refused for being the wrong one. Both actors belong to
+every MCP consumer, so asking about one says nothing about the other, and the
+two `409`s this section used to document (`consumer_acts_for_users`,
+`end_users_not_identified`) no longer exist.
 
 ### `POST {baseUrl}/mcp`
 
 Standard MCP, with `X-AG-API-Key` and, for the end-user actor,
 `X-NeuralTrust-End-User`. The SDK only supplies the URL and headers.
 
-### `GET/POST {baseUrl}/connect` — the application's own accounts
+### `GET {host}/whoami` → `200`
 
-Not a JSON API and not something the SDK calls. A person opens
-`https://<mcp-host>/<slug>/connect` in a browser, pastes the consumer's API key,
-and walks the upstream OAuth once
-(`pkg/app/oauth/api_key_connect.go`). The gateway issues a ticket for
-`app:<consumer_id>` and stores the resulting credential under that subject, so
-it belongs to the application rather than to whoever happened to click.
+Served at the MCP host with no slug, authenticated with the same key. It is what
+`trustgate.whoami()` (§4.0) wraps.
+
+```jsonc
+{
+  "gateway": "acme",
+  "key": { "name": "prod", "expires_at": "2027-03-01T09:30:00Z" },
+  "consumers": [
+    {
+      "slug": "support-agent", "name": "Support Agent", "type": "MCP",
+      "active": true, "url": "https://<mcp-host>/support-agent/mcp",
+      "upstreams": [
+        { "server": "Notion", "provider": "notion", "account": "shared",
+          "connected": false, "blocked": "administrator" },
+        { "server": "GitHub", "provider": "github", "account": "user",
+          "connected": false, "blocked": "end_user" }
+      ]
+    },
+    { "slug": "support-llm", "type": "LLM", "active": true,
+      "url": "https://<proxy-host>/support-llm/v1" }
+  ]
+}
+```
+
+`expires_at` is absent when the key never expires; `blocked` is absent when a
+server is ready; `upstreams` is absent when the consumer binds no server that
+reads a stored account — and also on a plane that cannot read them, which is why
+a client reads `blocked` rather than counting a length. An unknown, disabled,
+expired or foreign key gets one `401` that says nothing about which.
+
+### The account an MCP server's instance holds — not an SDK call
+
+Not a JSON API and not something the SDK calls. Whose account a server uses is a
+property of **that server's instance**, not of a consumer: an administrator sets
+the instance to a shared account and connects it once, from the server's page in
+the console, and the gateway stores the credential under `instance:<registry_id>`.
+Every application bound to that instance then rides on it.
 
 That is what makes the batch case work and what makes it survive: the person who
-clicked can leave the company without the job breaking. It also means the SDK
-has nothing to offer here beyond documenting the URL, which the app's Connect
-tab already shows.
+clicked can leave the company without the job breaking, and no caller is ever
+handed a link that would let them bind the account every other caller uses. It
+also means the SDK has nothing to offer here — which is the point of §4.3.
 
-The page refuses an app-identified consumer with `409`
-(`ErrAPIKeyConnectEndUsers`).
+An instance left on per-caller accounts has nothing for an application at all.
+The gateway says so on the first call, naming both remedies (name the end user,
+or switch the instance to a shared account), and `whoami` says it before the call
+as `blocked: "end_user"`.
 
 ## 6. Errors and retries
 
@@ -324,15 +428,14 @@ maps to one typed error, all extending `TrustGateError` (carrying `status`,
 |---|---|---|---|
 | 400 | `invalid_request` | `InvalidRequestError` | Bad body, bad `end_user`, unknown provider for this consumer |
 | 401 | `unauthenticated` | `AuthenticationError` | Wrong API key, or a slug that is not an MCP consumer of this gateway |
-| 409 | `end_users_not_identified` | `EndUsersNotIdentifiedError` | A per-end-user call against a consumer that is not app-identified — the integration is pointed at the wrong consumer |
-| 409 | `consumer_acts_for_users` | `AppActorUnavailableError` | An application-actor call against a consumer that acts for its users — it holds no accounts of its own, and an empty list would read as "connected to nothing" |
-| — | — | `AppActorUnavailableError` | `asApp()` on an app-identified consumer. Raised locally from the consumer's own shape, before any request: acting as the shared principal would pool every end user's access into one account |
+| — | — | `AmbiguousConsumerError` | `host` was given and the key reaches more than one consumer of the requested type. Raised locally from `whoami`; the caller passes `slug` rather than letting a library guess whose traffic this is |
 | 429 | — | `RateLimitedError` (with `retryAfterMs`) | Connect-attempt limiter, per consumer and per source |
 | 503 | `unavailable` | `ServiceUnavailableError` | Rate limiter unavailable |
 | 5xx | `internal_error` | `TrustGateServerError` | Gateway-side failure |
 
-Retry policy: `GET /connections` — both actors — retries on 429/503/5xx and on network errors
-with exponential backoff plus jitter, honouring `Retry-After`.
+Retry policy: `GET /connections` — both actors — and `GET /whoami` retry on
+429/503/5xx and on network errors with exponential backoff plus jitter,
+honouring `Retry-After`.
 `POST /connections/links` is **not** retried automatically — every call mints a
 new ticket, and a silent retry would hand the app two live links.
 `waitForConnection` polls the GET and inherits its retry behaviour.
@@ -376,23 +479,28 @@ state = tg.connections.list(end_user="user_123")
    reporting `connected`; a second `createLink` after a revoke reporting
    `needs_reconnect`; `list` for an unknown end user reporting
    `not_connected` for every connectable server; a wrong key raising
-   `AuthenticationError`; a platform-identity consumer raising
-   `EndUsersNotIdentifiedError`; an expired ticket raising `TicketExpiredError`.
+   `AuthenticationError`; an expired ticket raising `TicketExpiredError`.
 3. Unit tests cover the `end_user` validation rules, the error mapping table in
    §6, `Retry-After` handling, and that `createLink` is never auto-retried.
-4. The application actor: `asApp()` on a consumer with
-   `acts_for_users = false` produces the MCP URL and an `X-AG-API-Key` header
-   with no end-user header, and a tool call whose upstream was connected at
-   `/{slug}/connect` succeeds with no link anywhere in the flow. `asApp()` on an
-   app-identified consumer raises `AppActorUnavailableError` without a request.
-   A compile-time test asserts the app handle exposes no link-minting call —
-   the guarantee is the type, so a type that loses it is the regression.
-5. The application actor's preflight: `app.connections.list()` on a consumer
+4. The application actor: `asApp()` produces the MCP URL and an `X-AG-API-Key`
+   header with no end-user header, and a tool call against a server whose
+   instance holds a connected shared account succeeds with no link anywhere in
+   the flow. A compile-time test asserts the app handle exposes no link-minting
+   call — the guarantee is the type, so a type that loses it is the regression.
+5. Both handles on one client: `forEndUser('user_123')` and `asApp()` built from
+   the same `TrustGate` both work, against the same consumer, in the same
+   process. The previous revision's two `409`s must not come back as errors the
+   SDK can raise.
+6. The application actor's preflight: `app.connections.list()` on a consumer
    with one connected and one unconnected upstream reports `connected` and
    `not_connected` for the right servers and carries the connected one's
-   `expiresAt`; the same call against an app-identified consumer raises
-   `AppActorUnavailableError` from the gateway's `409`.
-6. No API key appears in any error, log line or stack the SDK produces.
+   `expiresAt`.
+7. Resolution from one secret: with `host` and a key reaching an MCP and an LLM
+   consumer, `whoami()` returns both URLs, the key's `expiresAt` (and
+   `undefined` for a key with no expiry), and `blocked: 'administrator'` for a
+   shared instance nobody has connected; a key reaching two MCP consumers raises
+   `AmbiguousConsumerError` before any other call.
+8. No API key appears in any error, log line or stack the SDK produces.
 
 ## 10. Delivery
 
@@ -402,21 +510,23 @@ state = tg.connections.list(end_user="user_123")
 | 2 | `connections.createLink` / `list` / `get` + unit tests |
 | 3 | `forEndUser`, `mcpUrl`, `mcpHeaders` |
 | 4 | `waitForConnection` + retry/backoff |
-| 4b | `asApp()`, `AppActorUnavailableError`, the compile-time guarantee |
+| 4b | `asApp()` and the compile-time guarantee |
 | 4c | `app.connections.list()` — the batch preflight, over `GET /connections` with no `end_user` |
+| 4d | `whoami()` and `host`-only construction, over `GET /whoami` |
 | 5 | README with the app's own snippet, integration suite, publish `0.1.0` |
-| 6 | App: flip `APP_IDENTITY_SOURCE_ENABLED` to `true` |
-| 7 | Python `0.1.0` |
+| 6 | Python `0.1.0` |
 
 ## 11. Open questions
 
 - **Webhooks instead of polling.** `waitForConnection` polls because the
   gateway has no callback when a connection lands. A per-consumer webhook would
   remove the poll; it is a gateway feature, not an SDK one.
-- **Certificate-authenticated consumers.** An app-identified consumer may use
-  mTLS instead of an API key. The connections endpoints read the API key today,
-  so mTLS consumers cannot use them; either the endpoints learn to accept the
-  client certificate, or the SDK documents API key as the credential for this
+- **Certificate-authenticated consumers.** An application may authenticate with
+  a client certificate instead of an API key — the MCP plane accepts both, and
+  both are machine credentials that may name an end user. The connections
+  endpoints and `/whoami` read the API key today, so a certificate-only
+  application cannot use them; either they learn to accept the client
+  certificate, or the SDK documents the API key as the credential for this
   pattern.
 - **Disconnect.** There is `POST /oauth/disconnect/*` for the interactive flow;
   an app-identified equivalent (`connections.disconnect({ endUser, provider })`)
@@ -454,3 +564,10 @@ The one piece of design this survey does add is the non-interruptible
 guarantee: because the two actors are different handles, a job that declares
 itself an application cannot be handed a link at runtime. On a platform where
 the actor is a parameter rather than a type, that is a runtime surprise.
+
+That guarantee survived the model changing under it. When this was written the
+two handles were also two *kinds of consumer*, and half the argument for them was
+that the gateway enforced the split. It no longer does — both actors belong to
+every consumer, decided per request — and the handles are worth having anyway,
+for the same reason they were: the code that cannot be interrupted is the code
+that never had the method.

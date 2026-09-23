@@ -82,7 +82,7 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true, nil)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw, consumerdomain.Identity{}), Auths: []*authdomain.Auth{apiKey}}},
+		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw), Auths: []*authdomain.Auth{apiKey}}},
 		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
 		"/bare/mcp":     {{GatewayID: gw}},
 	}}
@@ -132,49 +132,34 @@ func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
 		}},
 	}
 
+	// Only the Store is entered by people signing in with nothing attached, so
+	// only the Store may be rescued by the built-in identity provider. Every
+	// other consumer is entered by what it holds: bringing a credential, or
+	// holding none, both keep the default out.
 	tests := []struct {
 		name        string
-		identity    consumerdomain.Identity
 		store       bool
 		auths       []*authdomain.Auth
 		wantDefault bool
 	}{
-		{
-			name:        "platform source with residual api key",
-			identity:    platformUsersIdentity(),
-			auths:       []*authdomain.Auth{apiKey},
-			wantDefault: true,
-		},
-		{
-			name:        "platform source with residual client certificate",
-			identity:    platformUsersIdentity(),
-			auths:       []*authdomain.Auth{mtls},
-			wantDefault: true,
-		},
-		{name: "platform source with no links", identity: platformUsersIdentity(), wantDefault: true},
-		// A platform-source consumer whose only link is a validation-only
-		// oauth2 keeps the refusal rather than routing to the default IdP: the
-		// operator pinned that provider, and overriding an explicit pin with
-		// the built-in default would widen who gets in on the gateway's own
-		// initiative. ValidateAuthConfig already refuses the pairing at write
-		// time, so this state is only reachable through a residual row and
-		// failing closed is the deliberate dead end (RUN-1501).
-		{
-			name:     "platform source with validation only idp stays a dead end",
-			identity: platformUsersIdentity(),
-			auths:    []*authdomain.Auth{validationOnlyIdP},
-		},
-		{name: "app source with api key", identity: appUsersIdentity(), auths: []*authdomain.Auth{apiKey}},
-		{name: "app source with client certificate", identity: appUsersIdentity(), auths: []*authdomain.Auth{mtls}},
 		{name: "store consumer with residual api key", store: true, auths: []*authdomain.Auth{apiKey}, wantDefault: true},
-		{name: "machine consumer brings own credential", auths: []*authdomain.Auth{apiKey}},
-		{name: "machine consumer brings own client certificate", auths: []*authdomain.Auth{mtls}},
-		{name: "machine consumer with no links", wantDefault: true},
+		{name: "store consumer with a residual client certificate", store: true, auths: []*authdomain.Auth{mtls}, wantDefault: true},
+		{name: "store consumer with no links", store: true, wantDefault: true},
+		// The operator pinned this provider; overriding an explicit pin with the
+		// built-in default would widen who gets in on the gateway's own
+		// initiative, so it stays a dead end (RUN-1501).
+		{name: "store consumer with a validation only idp stays a dead end", store: true, auths: []*authdomain.Auth{validationOnlyIdP}},
+		{name: "an ordinary consumer brings its own credential", auths: []*authdomain.Auth{apiKey}},
+		{name: "an ordinary consumer brings its own client certificate", auths: []*authdomain.Auth{mtls}},
+		// Authorize time, not request time: with nothing attached there is no
+		// provider pinned to contradict, so the default is still offered here —
+		// what the chain does with the token it issues is the chain's rule.
+		{name: "an ordinary consumer with nothing attached", wantDefault: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cons := mcpConsumer(gw, tt.identity)
+			cons := mcpConsumer(gw)
 			if tt.store {
 				cons = consumerdomain.BuildStoreConsumer(gw)
 			}

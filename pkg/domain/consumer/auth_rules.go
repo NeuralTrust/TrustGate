@@ -15,56 +15,28 @@
 package consumer
 
 import (
-	"fmt"
-
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
-// ValidateAuth rejects an auth type the consumer cannot use given its type and
-// identity. A consumer acting for platform users is entered by people who sign
-// in, so only an oauth2 auth (or none, which leaves the built-in identity
-// provider) fits; a consumer whose application names its own end users
-// authenticates as a machine, so only an API key or a client certificate fits.
+// ValidateAuth rejects an auth type the consumer cannot use.
+//
+// It used to reject by what the consumer declared about its callers, which is
+// no longer declared: an application may be entered by a machine credential and
+// by a person's token at once, and who a request runs as is read from the
+// request. The credentials a consumer holds are now the declaration, so there
+// is nothing left to contradict — every auth type fits every consumer, and the
+// rest of the check lives in ValidateAuthConfig.
 func ValidateAuth(c *Consumer, authType authdomain.Type) error {
-	if c == nil {
-		return nil
-	}
-	switch {
-	case c.Identity.PlatformUsers():
-		if authType != authdomain.TypeOAuth2 {
-			return fmt.Errorf(
-				"%w: a consumer that acts for platform users needs its users to sign in, so it can only use an oauth2 auth (or none, for the built-in identity provider), not %s",
-				commonerrors.ErrConflict, authType,
-			)
-		}
-	case c.Identity.AppUsers():
-		if authType != authdomain.TypeAPIKey && authType != authdomain.TypeMTLS {
-			return fmt.Errorf(
-				"%w: a consumer whose application identifies its end users authenticates as a machine, so it can only use an api_key or mtls auth, not %s",
-				commonerrors.ErrConflict, authType,
-			)
-		}
-	}
+	_, _ = c, authType
 	return nil
 }
 
 // ValidateAuthConfig is ValidateAuth plus the checks that need the auth's
-// configuration: a consumer whose users sign in can only use an identity
-// provider that can broker that login (an oauth2 config with a registered
-// client), not a validation-only one.
+// configuration. Both are open now; the function stays as the one place a rule
+// about a consumer's credentials would go.
 func ValidateAuthConfig(c *Consumer, au *authdomain.Auth) error {
 	if c == nil || au == nil {
 		return nil
 	}
-	if err := ValidateAuth(c, au.Type); err != nil {
-		return err
-	}
-	if c.Identity.PlatformUsers() && au.Type == authdomain.TypeOAuth2 && !au.Config.OAuth2.Interactive() {
-		return fmt.Errorf(
-			"%w: users sign in through this consumer's identity provider, so it needs a client registered at the provider (client_id); a token-validation-only provider cannot broker the login",
-			commonerrors.ErrConflict,
-		)
-	}
-	return nil
+	return ValidateAuth(c, au.Type)
 }

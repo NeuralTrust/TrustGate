@@ -107,7 +107,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.Type = *in.Type
 		existing.MCP = nil
 	}
-	previousIdentity := existing.Identity
 	if in.Identity != nil {
 		existing.Identity = *in.Identity
 	}
@@ -135,7 +134,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.RegistryIDs = in.Registries.IDs
 		existing.RegistryWeights = in.Registries.Weights
 	}
-	previousAuthIDs := existing.AuthIDs
 	if in.Auths != nil {
 		existing.AuthIDs = *in.Auths
 	}
@@ -151,10 +149,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 			return nil, err
 		}
 	}
-	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousIdentity, in.Auths != nil); err != nil {
+	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, in.Auths != nil); err != nil {
 		return nil, err
 	}
-	u.warnDefaultIdPWidening(ctx, existing, previousAuthIDs, in.Auths)
 	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries), requestedAuthLinks(existing, in.Auths)); err != nil {
 		return nil, err
 	}
@@ -184,49 +181,19 @@ func requestedAuthLinks(c *domain.Consumer, requested *[]ids.AuthID) *[]ids.Auth
 	return &authIDs
 }
 
-// warnDefaultIdPWidening records the one auth replacement that widens who can
-// get in: detaching every auth from a consumer whose users sign in moves it
-// from "only the identity provider it pinned" to "any built-in default-IdP
-// login", because an empty auth binding is what makes the default usable. It
-// is a legitimate admin action and stays inside the tenant, so it is logged
-// rather than refused (RUN-1501).
-func (u *updater) warnDefaultIdPWidening(
-	ctx context.Context,
-	c *domain.Consumer,
-	previousAuthIDs []ids.AuthID,
-	requested *[]ids.AuthID,
-) {
-	if requested == nil || len(*requested) != 0 || !c.Identity.PlatformUsers() || len(previousAuthIDs) == 0 {
-		return
-	}
-	previous, err := u.authRepo.FindByIDs(ctx, c.GatewayID, previousAuthIDs)
-	if err != nil {
-		return
-	}
-	for _, au := range previous {
-		if au.Type != authdomain.TypeOAuth2 {
-			continue
-		}
-		u.logger.WarnContext(ctx,
-			"consumer detached its identity provider: its users now sign in through the built-in default identity provider",
-			"consumer_id", c.ID.String(),
-			"gateway_id", c.GatewayID.String(),
-			"detached_auth_id", au.ID.String(),
-		)
-		return
-	}
-}
-
+// revalidateAuthsForTransition checks that every auth the consumer references
+// still exists in its gateway. It used to also re-apply a rule about which auth
+// types the consumer's declared identity allowed; nothing declares that now, so
+// what is left is the reference check — which is why an identity change no
+// longer triggers it.
 func (u *updater) revalidateAuthsForTransition(
 	ctx context.Context,
 	c *domain.Consumer,
 	previousType domain.Type,
-	previousIdentity domain.Identity,
 	authsReplaced bool,
 ) error {
 	toMCP := c.Type == domain.TypeMCP && previousType != domain.TypeMCP
-	identityChanged := c.Identity != previousIdentity
-	if (!toMCP && !identityChanged && !authsReplaced) || len(c.AuthIDs) == 0 {
+	if (!toMCP && !authsReplaced) || len(c.AuthIDs) == 0 {
 		return nil
 	}
 	auths, err := u.authRepo.FindByIDs(ctx, c.GatewayID, c.AuthIDs)

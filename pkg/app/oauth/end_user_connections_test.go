@@ -26,19 +26,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	oauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
 
-// appUsersConsumerData is an active MCP consumer whose application identifies
-// its end users, bound to one forwarded-auth (github) server.
-func appUsersConsumerData(gatewayID ids.GatewayID, slug string, authID ids.AuthID, source consumerdomain.IdentitySource) *appconsumer.Data {
+// appUsersConsumerData is an active MCP consumer bound to one forwarded-auth
+// (github) server. Every MCP consumer serves both actors now, so there is
+// nothing to vary.
+func appUsersConsumerData(gatewayID ids.GatewayID, slug string, authID ids.AuthID) *appconsumer.Data {
 	identity := consumerdomain.Identity{}
-	if source != "" {
-		identity = consumerdomain.Identity{ActsForUsers: true, Source: source}
-	}
 	return appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID:        ids.New[ids.ConsumerKind](),
@@ -66,7 +65,7 @@ func TestEndUserConnections_LinkMintsNamespacedTicket(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
 	target, _ := data.MatchSlug("assistant")
 
 	consumers := appconsumermocks.NewDataFinder(t)
@@ -93,7 +92,7 @@ func TestEndUserConnections_LinkRejectsUnknownProvider(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
 
 	consumers := appconsumermocks.NewDataFinder(t)
 	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
@@ -106,32 +105,15 @@ func TestEndUserConnections_LinkRejectsUnknownProvider(t *testing.T) {
 	require.ErrorIs(t, err, commonerrors.ErrValidation)
 }
 
-func TestEndUserConnections_RequiresAppIdentifiedUsers(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	gatewayID := ids.New[ids.GatewayKind]()
-	authID := ids.New[ids.AuthKind]()
-	for name, source := range map[string]consumerdomain.IdentitySource{"acts as the application": "", "users sign in": consumerdomain.IdentitySourcePlatform} {
-		t.Run(name, func(t *testing.T) {
-			data := appUsersConsumerData(gatewayID, "assistant", authID, source)
-			consumers := appconsumermocks.NewDataFinder(t)
-			consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
-			apiKeys := appauthmocks.NewAPIKeyFinder(t)
-			apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
-
-			svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
-			_, err := svc.Connections(ctx, gatewayID, "assistant", "ag_secret", "user_123")
-			require.ErrorIs(t, err, oauth.ErrEndUserConnectionsUnsupported)
-		})
-	}
-}
-
+// Both actors exist on every MCP consumer now — the application itself, and
+// whoever it names on a request — so asking about one no longer means the
+// other is unavailable, and neither form is refused for what the consumer is.
 func TestEndUserConnections_RejectsForeignKeyAndUnknownSlug(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
 
 	consumers := appconsumermocks.NewDataFinder(t)
 	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Twice()
@@ -151,7 +133,7 @@ func TestEndUserConnections_ConnectionsReportStates(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
 	target, _ := data.MatchSlug("assistant")
 
 	consumers := appconsumermocks.NewDataFinder(t)
@@ -184,7 +166,7 @@ func TestEndUserConnections_InvalidEndUser(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
+	data := appUsersConsumerData(gatewayID, "assistant", authID)
 	consumers := appconsumermocks.NewDataFinder(t)
 	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
 	apiKeys := appauthmocks.NewAPIKeyFinder(t)
@@ -195,21 +177,6 @@ func TestEndUserConnections_InvalidEndUser(t *testing.T) {
 	require.True(t, errors.Is(err, consumerdomain.ErrInvalidEndUser))
 }
 
-func TestAPIKeyConnect_RefusesAppIdentifiedConsumers(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	gatewayID := ids.New[ids.GatewayKind]()
-	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
-	consumers := appconsumermocks.NewDataFinder(t)
-	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
-
-	svc := oauth.NewAPIKeyConnectService(appauthmocks.NewAPIKeyFinder(t), consumers, oauthmocks.NewConnectService(t), oauth.NewNoopConnectAttemptLimiter())
-	err := svc.ValidateTarget(ctx, gatewayID, "assistant")
-	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectEndUsers)
-	require.ErrorIs(t, err, commonerrors.ErrConflict)
-}
-
 // The preflight a batch runs before it starts. Nobody is present to follow a
 // connect link once it is running, so the run either knows its own accounts
 // are good beforehand or finds out on the call that fails.
@@ -218,7 +185,7 @@ func TestAppConnections_ReportTheApplicationsOwnAccounts(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "nightly-jobs", authID, "")
+	data := appUsersConsumerData(gatewayID, "nightly-jobs", authID)
 	target, _ := data.MatchSlug("nightly-jobs")
 
 	consumers := appconsumermocks.NewDataFinder(t)
@@ -247,25 +214,8 @@ func TestAppConnections_ReportTheApplicationsOwnAccounts(t *testing.T) {
 	require.Equal(t, oauth.ConnectionNotConnected, got[1].Status)
 }
 
-// An application whose users sign in for themselves holds nothing here, and an
-// empty list would read as "connected to nothing" rather than "wrong actor".
-func TestAppConnections_RefuseAConsumerThatActsForUsers(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	gatewayID := ids.New[ids.GatewayKind]()
-	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "assistant", authID, consumerdomain.IdentitySourceApp)
-
-	consumers := appconsumermocks.NewDataFinder(t)
-	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
-	apiKeys := appauthmocks.NewAPIKeyFinder(t)
-	apiKeys.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(validAPIKeyAuth(gatewayID, authID), nil).Once()
-
-	svc := oauth.NewEndUserConnectionsService(apiKeys, consumers, oauthmocks.NewConnectService(t), nil)
-	_, err := svc.AppConnections(ctx, gatewayID, "assistant", "ag_secret")
-	require.ErrorIs(t, err, oauth.ErrAppConnectionsUnsupported)
-	require.True(t, errors.Is(err, commonerrors.ErrConflict))
-}
+// A consumer no longer declares who it acts for, so the application actor is
+// available on every MCP consumer and nothing is refused for its shape.
 
 // A key that belongs to another consumer must not read another application's
 // accounts, and an unknown slug must not confirm which consumers exist.
@@ -274,7 +224,7 @@ func TestAppConnections_RejectAForeignKeyAndAnUnknownSlug(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := ids.New[ids.GatewayKind]()
 	authID := ids.New[ids.AuthKind]()
-	data := appUsersConsumerData(gatewayID, "nightly-jobs", authID, "")
+	data := appUsersConsumerData(gatewayID, "nightly-jobs", authID)
 
 	consumers := appconsumermocks.NewDataFinder(t)
 	consumers.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Twice()
@@ -288,4 +238,16 @@ func TestAppConnections_RejectAForeignKeyAndAnUnknownSlug(t *testing.T) {
 
 	_, err = svc.AppConnections(ctx, gatewayID, "does-not-exist", "ag_secret")
 	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+}
+
+// validAPIKeyAuth is an enabled api key of this gateway, as the finder returns
+// it. It lived beside the api-key connect page until that page was deleted.
+func validAPIKeyAuth(gatewayID ids.GatewayID, authID ids.AuthID) *authdomain.Auth {
+	return &authdomain.Auth{
+		ID:        authID,
+		GatewayID: gatewayID,
+		Name:      "Exact Principal",
+		Type:      authdomain.TypeAPIKey,
+		Enabled:   true,
+	}
 }

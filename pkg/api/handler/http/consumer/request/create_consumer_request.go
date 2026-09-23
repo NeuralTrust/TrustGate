@@ -62,17 +62,18 @@ func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
 	}
 }
 
-// IdentityRequest says who the consumer acts for. Omitted, the consumer acts as
-// the application itself.
+// IdentityRequest is accepted and ignored.
+//
+// It used to declare who a consumer acts for. Nothing declares that any more:
+// who a request runs as is read from the request — a verified person is their
+// token's subject, a machine credential naming an end user acts for that
+// person, one naming nobody acts as the application. The fields stay on the
+// wire so a client written against the old shape is not refused; what it asks
+// for is what it now gets by sending (or not sending) the end-user header.
 type IdentityRequest struct {
-	// ActsForUsers turns on per-user behaviour on an MCP consumer.
-	ActsForUsers bool `json:"acts_for_users"`
-	// Source is how end users are known: platform (they sign in) or app (the
-	// application names them through the X-NeuralTrust-End-User header).
-	// Defaults to platform.
-	Source string `json:"source,omitempty"`
-	// EndUserHeader lets an LLM consumer forward an end-user id for attribution.
-	EndUserHeader bool `json:"end_user_header,omitempty"`
+	ActsForUsers  bool   `json:"acts_for_users"`
+	Source        string `json:"source,omitempty"`
+	EndUserHeader bool   `json:"end_user_header,omitempty"`
 }
 
 // ToDomain maps the request onto the domain identity; nil when omitted.
@@ -80,11 +81,7 @@ func (r *IdentityRequest) ToDomain() *domain.Identity {
 	if r == nil {
 		return nil
 	}
-	return &domain.Identity{
-		ActsForUsers:  r.ActsForUsers,
-		Source:        domain.IdentitySource(strings.ToLower(strings.TrimSpace(r.Source))),
-		EndUserHeader: r.EndUserHeader,
-	}
+	return &domain.Identity{}
 }
 
 type RegistryBindingRequest struct {

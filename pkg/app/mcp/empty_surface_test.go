@@ -15,42 +15,55 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestEmptySurfaceInsteadOfError(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	application := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Type: consumerdomain.TypeMCP}}
-	forUsers := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
-		ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Type: consumerdomain.TypeMCP,
-		Identity: consumerdomain.Identity{ActsForUsers: true, Source: consumerdomain.IdentitySourcePlatform},
-	}}
+	cons := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gw, Type: consumerdomain.TypeMCP}
+	rc := &appconsumer.RoutableConsumer{Consumer: cons}
 	store := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+
+	// Who is asking, not how the consumer was configured: the same consumer
+	// answers one way to the application itself and another to a person.
+	asApp := identity.WithPrincipal(context.Background(), &identity.Principal{
+		Subject: consumerdomain.AppSubject(cons.ID),
+		Method:  identity.MethodAPIKey,
+	})
+	asPerson := identity.WithPrincipal(context.Background(), &identity.Principal{
+		Subject: consumerdomain.EndUserSubject(cons.ID, "user_123"),
+		Method:  identity.MethodAPIKey,
+	})
 
 	// A pending consent degrades to an empty list for everyone.
 	consent := &ConsentRequiredError{Provider: "github"}
-	for _, rc := range []*appconsumer.RoutableConsumer{application, forUsers, store} {
-		if !emptySurfaceInsteadOfError(rc, consent) {
+	for _, ctx := range []context.Context{asApp, asPerson} {
+		if !emptySurfaceInsteadOfError(ctx, rc, consent) {
 			t.Fatal("a pending consent must yield an empty surface, not an error")
 		}
 	}
 	// No exposed registry is an empty surface only where the surface is per
-	// person; an application consumer without registries is a misconfiguration.
-	if emptySurfaceInsteadOfError(application, ErrNoMCPRegistries) {
-		t.Fatal("an application consumer without registries must surface the error")
+	// person; nothing bound for the application itself is a misconfiguration.
+	if emptySurfaceInsteadOfError(asApp, rc, ErrNoMCPRegistries) {
+		t.Fatal("a request running as the application must surface the error")
 	}
-	if !emptySurfaceInsteadOfError(forUsers, ErrNoMCPRegistries) || !emptySurfaceInsteadOfError(store, ErrNoMCPRegistries) {
-		t.Fatal("an acts-for-users consumer with nothing exposed lists an empty surface")
+	if !emptySurfaceInsteadOfError(asPerson, rc, ErrNoMCPRegistries) {
+		t.Fatal("a person with nothing connected lists an empty surface")
 	}
-	if !emptySurfaceInsteadOfError(forUsers, ErrUpstreamUnavailable) {
-		t.Fatal("an unreachable upstream degrades to an empty surface for acts-for-users consumers")
+	if !emptySurfaceInsteadOfError(asApp, store, ErrNoMCPRegistries) {
+		t.Fatal("the Store is per person whoever is asking")
 	}
-	if emptySurfaceInsteadOfError(forUsers, errors.New("boom")) {
+	if !emptySurfaceInsteadOfError(asPerson, rc, ErrUpstreamUnavailable) {
+		t.Fatal("an unreachable upstream degrades to an empty surface for a person")
+	}
+	if emptySurfaceInsteadOfError(asPerson, rc, errors.New("boom")) {
 		t.Fatal("other errors still fail")
 	}
 }

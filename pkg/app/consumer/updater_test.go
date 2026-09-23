@@ -15,17 +15,12 @@
 package consumer_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
-	"slices"
-	"strings"
 	"testing"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -498,177 +493,54 @@ func mcpConsumerWithAuths(gwID ids.GatewayID, beID ids.RegistryID, identity doma
 	})
 }
 
-// An identity switch and the auth replacement it needs must land in one
-// request: the new pair is what gets validated, so the consumer is never
-// persisted in the broken intermediate state the two-request dance produced
-// (RUN-1501).
-func TestUpdater_Update_IdentityTransitionReplacesAuths(t *testing.T) {
+// Replacing a consumer's auths still checks that every id it references exists
+// in its gateway. What is gone is the rule about which auth *types* an identity
+// allowed: a consumer no longer declares who calls it, so there is no pairing
+// left to break — an application may hold an api key and an identity provider
+// at once, and which of them a caller used is decided per request.
+func TestUpdater_Update_ReplacingAuthsChecksTheyExist(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
 	apiKeyID := ids.New[ids.AuthKind]()
-	idpID := ids.New[ids.AuthKind]()
+	missingID := ids.New[ids.AuthKind]()
 	apiKey := &authdomain.Auth{ID: apiKeyID, GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true}
-	idp := &authdomain.Auth{
-		ID: idpID, GatewayID: gwID, Type: authdomain.TypeOAuth2, Enabled: true,
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer:   "https://idp.example.com",
-			JWKSURL:  "https://idp.example.com/jwks",
-			ClientID: "gateway-client",
-		}},
-	}
-	platformUsers := domain.Identity{ActsForUsers: true, Source: domain.IdentitySourcePlatform}
-	appUsers := domain.Identity{ActsForUsers: true, Source: domain.IdentitySourceApp}
 
-	foreignAuthID := ids.New[ids.AuthKind]()
+	t.Run("an auth of this gateway is accepted", func(t *testing.T) {
+		t.Parallel()
+		existing := mcpConsumerWithAuths(gwID, beID, domain.Identity{}, []ids.AuthID{apiKeyID})
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		authRepo := authmocks.NewRepository(t)
+		authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{apiKeyID}).
+			Return([]*authdomain.Auth{apiKey}, nil).Once()
+		publisher := cachemocks.NewEventPublisher(t)
+		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	tests := []struct {
-		name           string
-		startIdentity  domain.Identity
-		startAuths     []ids.AuthID
-		identity       *domain.Identity
-		auths          *[]ids.AuthID
-		lookup         []*authdomain.Auth
-		previousLookup []*authdomain.Auth
-		wantWarn       bool
-		wantErr        error
-		wantAuthIDs    []ids.AuthID
-	}{
-		{
-			name:        "acts for users while swapping the api key for an idp",
-			startAuths:  []ids.AuthID{apiKeyID},
-			identity:    &platformUsers,
-			auths:       &[]ids.AuthID{idpID},
-			lookup:      []*authdomain.Auth{idp},
-			wantAuthIDs: []ids.AuthID{idpID},
-		},
-		{
-			name:        "app users while swapping the idp for an api key",
-			startAuths:  []ids.AuthID{idpID},
-			identity:    &appUsers,
-			auths:       &[]ids.AuthID{apiKeyID},
-			lookup:      []*authdomain.Auth{apiKey},
-			wantAuthIDs: []ids.AuthID{apiKeyID},
-		},
-		{
-			name:           "acts for users while detaching every auth",
-			startAuths:     []ids.AuthID{apiKeyID},
-			identity:       &platformUsers,
-			auths:          &[]ids.AuthID{},
-			previousLookup: []*authdomain.Auth{apiKey},
-			wantAuthIDs:    []ids.AuthID{},
-		},
-		// Detaching the identity provider from a platform-users consumer moves
-		// it from "only this provider gets in" to "any built-in default-IdP
-		// login gets in". It is a legitimate admin action within one tenant, so
-		// it is logged rather than refused (RUN-1501).
-		{
-			name:           "detaching the idp from a platform users consumer is logged",
-			startIdentity:  platformUsers,
-			startAuths:     []ids.AuthID{idpID},
-			auths:          &[]ids.AuthID{},
-			previousLookup: []*authdomain.Auth{idp},
-			wantWarn:       true,
-			wantAuthIDs:    []ids.AuthID{},
-		},
-		{
-			name:          "replacing auths with an id from another gateway",
-			startIdentity: platformUsers,
-			startAuths:    []ids.AuthID{idpID},
-			auths:         &[]ids.AuthID{foreignAuthID},
-			lookup:        []*authdomain.Auth{},
-			wantErr:       commonerrors.ErrConflict,
-		},
-		{
-			name:       "acts for users keeping an incompatible api key",
-			startAuths: []ids.AuthID{apiKeyID},
-			identity:   &platformUsers,
-			lookup:     []*authdomain.Auth{apiKey},
-			wantErr:    commonerrors.ErrConflict,
-		},
-		{
-			name:          "replacing auths with an incompatible one on an unchanged identity",
-			startIdentity: platformUsers,
-			startAuths:    []ids.AuthID{idpID},
-			auths:         &[]ids.AuthID{apiKeyID},
-			lookup:        []*authdomain.Auth{apiKey},
-			wantErr:       commonerrors.ErrConflict,
-		},
-		{
-			name:          "omitting auths leaves the links untouched",
-			startIdentity: platformUsers,
-			startAuths:    []ids.AuthID{idpID},
-			auths:         nil,
-			wantAuthIDs:   []ids.AuthID{idpID},
-		},
-	}
+		u := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
+		auths := []ids.AuthID{apiKeyID}
+		if _, err := u.Update(context.Background(), appconsumer.UpdateInput{
+			ID: existing.ID, GatewayID: gwID, Auths: &auths,
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			existing := mcpConsumerWithAuths(gwID, beID, tt.startIdentity, tt.startAuths)
+	t.Run("an auth that is not in this gateway is refused", func(t *testing.T) {
+		t.Parallel()
+		existing := mcpConsumerWithAuths(gwID, beID, domain.Identity{}, []ids.AuthID{apiKeyID})
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		authRepo := authmocks.NewRepository(t)
+		authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{missingID}).Return(nil, nil).Once()
 
-			repo := repomocks.NewRepository(t)
-			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-			authRepo := authmocks.NewRepository(t)
-			if tt.lookup != nil {
-				wantLookup := tt.startAuths
-				if tt.auths != nil {
-					wantLookup = *tt.auths
-				}
-				authRepo.EXPECT().FindByIDs(mock.Anything, gwID, wantLookup).Return(tt.lookup, nil).Once()
-			}
-			if tt.previousLookup != nil {
-				authRepo.EXPECT().FindByIDs(mock.Anything, gwID, tt.startAuths).Return(tt.previousLookup, nil).Once()
-			}
-
-			publisher := cachemocks.NewEventPublisher(t)
-			if tt.wantErr == nil {
-				repo.EXPECT().
-					Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-						return slices.Equal(c.AuthIDs, tt.wantAuthIDs)
-					}), (*domain.RegistryBindings)(nil), mock.MatchedBy(func(a *[]ids.AuthID) bool {
-						if tt.auths == nil {
-							return a == nil
-						}
-						return a != nil && slices.Equal(*a, tt.wantAuthIDs)
-					})).
-					Return(nil).
-					Once()
-				publisher.EXPECT().
-					Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
-					Return(nil).
-					Once()
-			}
-
-			var logged bytes.Buffer
-			logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
-			updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, logger, nil)
-			got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-				ID:        existing.ID,
-				GatewayID: gwID,
-				Identity:  tt.identity,
-				Auths:     tt.auths,
-			})
-			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("err = %v, want %v", err, tt.wantErr)
-				}
-				publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-				repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-				return
-			}
-			if err != nil {
-				t.Fatalf("Update error: %v", err)
-			}
-			if !slices.Equal(got.AuthIDs, tt.wantAuthIDs) {
-				t.Fatalf("AuthIDs = %v, want %v", got.AuthIDs, tt.wantAuthIDs)
-			}
-			warned := strings.Contains(logged.String(), "detached its identity provider")
-			if warned != tt.wantWarn {
-				t.Fatalf("widening warning logged = %v, want %v (log: %q)", warned, tt.wantWarn, logged.String())
-			}
-		})
-	}
+		u := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+		auths := []ids.AuthID{missingID}
+		if _, err := u.Update(context.Background(), appconsumer.UpdateInput{
+			ID: existing.ID, GatewayID: gwID, Auths: &auths,
+		}); err == nil {
+			t.Fatal("Update() = nil, want a refusal naming the missing auth")
+		}
+	})
 }

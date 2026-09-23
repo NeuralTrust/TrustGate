@@ -148,5 +148,10 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, appoauth.ErrProviderNotFound) {
 		return fiber.NewError(fiber.StatusNotFound, err.Error())
 	}
+	// Not a fault of the request: the server holds one account for everyone and
+	// this caller is not who connects it. Saying so beats a 500.
+	if errors.Is(err, appoauth.ErrSharedAccountNotYours) {
+		return fiber.NewError(fiber.StatusConflict, err.Error())
+	}
 	return err
 }
