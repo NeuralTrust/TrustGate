@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"net/http"
 	"strings"
@@ -486,7 +487,10 @@ func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 func TestProviderInvoke_UnsupportedImageIsInvalidPayload(t *testing.T) {
 	t.Parallel()
 
-	const ftpImageBody = `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"ftp://example.com/private.png"}}]}]}`
+	const (
+		ftpImageBody   = `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"ftp://example.com/private.png"}}]}]}`
+		httpsImageBody = `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"https://example.com/private.png"}}]}]}`
+	)
 
 	tests := []struct {
 		name      string
@@ -497,6 +501,7 @@ func TestProviderInvoke_UnsupportedImageIsInvalidPayload(t *testing.T) {
 	}{
 		{name: "anthropic ftp url", provider: "anthropic", body: ftpImageBody, leakCheck: "private.png"},
 		{name: "anthropic ftp url stream", provider: "anthropic", body: ftpImageBody, stream: true, leakCheck: "private.png"},
+		{name: "bedrock https url", provider: "bedrock", body: httpsImageBody, leakCheck: "private.png"},
 	}
 
 	for _, tc := range tests {
@@ -521,6 +526,59 @@ func TestProviderInvoke_UnsupportedImageIsInvalidPayload(t *testing.T) {
 			for _, leak := range []string{tc.leakCheck, tc.provider, "adapter"} {
 				assert.NotContains(t, err.Error(), leak)
 			}
+		})
+	}
+}
+
+func TestProviderInvoke_ClientDecodeErrorIsInvalidPayload(t *testing.T) {
+	t.Parallel()
+
+	const converseBody = `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"@@@"}}}]}]}`
+	decodeErr := &adapter.RequestDecodeError{Format: adapter.FormatBedrock, Cause: errors.New("illegal base64 data at input byte 0")}
+	networkErr := errors.New("dial tcp: timeout")
+
+	tests := []struct {
+		name        string
+		clientErr   error
+		stream      bool
+		wantInvalid bool
+	}{
+		{name: "decode error buffered", clientErr: decodeErr, wantInvalid: true},
+		{name: "decode error stream", clientErr: decodeErr, stream: true, wantInvalid: true},
+		{name: "network error buffered stays retryable", clientErr: networkErr},
+		{name: "network error stream stays retryable", clientErr: networkErr, stream: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := providermocks.NewClient(t)
+			if tc.stream {
+				client.EXPECT().CompletionsStream(mock.Anything, mock.Anything, mock.Anything).Return(nil, tc.clientErr).Once()
+			} else {
+				client.EXPECT().Completions(mock.Anything, mock.Anything, mock.Anything).Return(nil, tc.clientErr).Once()
+			}
+			locator := factorymocks.NewProviderLocator(t)
+			locator.EXPECT().Get("bedrock").Return(client, nil).Once()
+			inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+			req := &infracontext.RequestContext{Body: []byte(converseBody), SourceFormat: string(adapter.FormatBedrock)}
+
+			var err error
+			if tc.stream {
+				_, err = inv.InvokeStream(context.Background(), apiKeyTarget("bedrock"), req)
+			} else {
+				_, err = inv.Invoke(context.Background(), apiKeyTarget("bedrock"), req)
+			}
+
+			require.Error(t, err)
+			if tc.wantInvalid {
+				assert.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+				assert.True(t, adapter.IsRequestDecodeError(err))
+				return
+			}
+			assert.NotErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+			assert.ErrorIs(t, err, networkErr)
 		})
 	}
 }

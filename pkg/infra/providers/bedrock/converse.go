@@ -47,7 +47,7 @@ type converseParams struct {
 func decodeConverseBody(body []byte) (*converseParams, error) {
 	var req adapter.ConverseRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("decoding converse request: %w", err)
+		return nil, &adapter.RequestDecodeError{Format: adapter.FormatBedrock, Cause: err}
 	}
 	p := &converseParams{
 		messages:  make([]bedrockTypes.Message, 0, len(req.Messages)),
@@ -208,11 +208,23 @@ func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock,
 		return sdkToolResult(b.ToolResult)
 	case b.ReasoningContent != nil:
 		return &bedrockTypes.ContentBlockMemberReasoningContent{Value: sdkReasoning(b.ReasoningContent)}, nil
+	case b.Image != nil:
+		return sdkImage(b.Image), nil
 	case b.Text != "":
 		return &bedrockTypes.ContentBlockMemberText{Value: b.Text}, nil
 	default:
 		return nil, nil
 	}
+}
+
+func sdkImage(img *adapter.ConverseImageBlock) bedrockTypes.ContentBlock {
+	if len(img.Source.Bytes) == 0 {
+		return nil
+	}
+	return &bedrockTypes.ContentBlockMemberImage{Value: bedrockTypes.ImageBlock{
+		Format: bedrockTypes.ImageFormat(img.Format),
+		Source: &bedrockTypes.ImageSourceMemberBytes{Value: img.Source.Bytes},
+	}}
 }
 
 func sdkToolResult(tr *adapter.ConverseToolResult) (bedrockTypes.ContentBlock, error) {
