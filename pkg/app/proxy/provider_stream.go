@@ -413,6 +413,7 @@ type finishDeferral struct {
 	holdFinish    bool
 	keepRoleUsage bool
 	finished      bool
+	failed        bool
 	flushed       bool
 	dropLogged    bool
 	reason        string
@@ -550,13 +551,16 @@ func (d *finishDeferral) end(
 	return d.flush(emit, registry, source, logger)
 }
 
+// done flushes on the upstream's [DONE]. Anthropic and Cohere clients whose
+// upstream sent [DONE] without a finish get a stop, since it closed the
+// stream cleanly, unless the upstream sent an error.
 func (d *finishDeferral) done(
 	emit func([][]byte) bool,
 	registry providerCodec,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
-	if (d.anthropic != nil || d.cohere != nil) && !d.finished {
+	if (d.anthropic != nil || d.cohere != nil) && !d.finished && !d.failed {
 		d.finished = true
 		d.reason = "stop"
 	}
@@ -701,7 +705,7 @@ func (d *finishDeferral) encode(
 // counts. It returns false when the consumer stopped, and, for an Anthropic
 // client, the error the upstream sent in payload, if any, after emitting the
 // content that came with it; other clients get the rest of that payload as
-// usual.
+// usual, and a Cohere client no stop on the [DONE] that follows.
 func emitDeferred(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -732,6 +736,9 @@ func emitDeferred(
 				return false, nil
 			}
 			return true, canonical.UpstreamError
+		}
+		if deferred.cohere != nil {
+			deferred.failed = true
 		}
 		if canonical.UpstreamErrorOnly() {
 			return true, nil

@@ -129,10 +129,30 @@ func cohereToolCallEnd(index int) [][]byte {
 	return cohereIndexed("tool-call-end", index, nil)
 }
 
-func cohereMessageEnd(finishReason string, usage *CanonicalUsage) [][]byte {
+// cohereMessageEnd always sends usage, zeroed when the upstream reported none,
+// since Cohere clients read delta.usage.billed_units from every message-end.
+func cohereMessageEnd(finishReason, errMessage string, usage *CanonicalUsage) [][]byte {
+	cu := cohereUsageFromCanonical(usage)
+	if cu == nil {
+		cu = &cohereUsage{BilledUnits: &cohereUsageTokens{}, Tokens: &cohereUsageTokens{}}
+	}
 	data, _ := json.Marshal(cohereMessageEndEvent{
 		Type:  "message-end",
-		Delta: cohereMessageEndDelta{FinishReason: finishReason, Usage: cohereUsageFromCanonical(usage)},
+		Delta: cohereMessageEndDelta{FinishReason: finishReason, Error: errMessage, Usage: cu},
 	})
 	return SSEEvent("message-end", data)
+}
+
+// cohereFinish maps a canonical finish to a Cohere finish_reason and the
+// delta.error message that goes with ERROR. Cohere has no content-filter
+// reason, and COMPLETE would hide that the answer was withheld, so a refusal
+// or content filter ends with ERROR "content filtered".
+func cohereFinish(reason string) (string, string) {
+	if message, failed := FinishFailure(reason); failed {
+		return "ERROR", message
+	}
+	if refusalFinish(reason) {
+		return "ERROR", "content filtered"
+	}
+	return canonicalFinishToCohere(reason), ""
 }

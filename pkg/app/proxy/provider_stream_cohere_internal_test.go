@@ -71,6 +71,11 @@ func cohereClientEvents(t *testing.T, lines []string) []cohereClientEvent {
 		if !ok {
 			continue
 		}
+		if payload == "[DONE]" {
+			require.Empty(t, name, "[DONE] has no event: line")
+			events = append(events, cohereClientEvent{Type: payload})
+			continue
+		}
 		var ev cohereClientEvent
 		require.NoError(t, json.Unmarshal([]byte(payload), &ev))
 		require.Equal(t, name, ev.Type, "event: line names the data type")
@@ -82,14 +87,18 @@ func cohereClientEvents(t *testing.T, lines []string) []cohereClientEvent {
 
 func requireCohereClientContract(t *testing.T, events []cohereClientEvent) {
 	t.Helper()
-	require.GreaterOrEqual(t, len(events), 2)
+	require.GreaterOrEqual(t, len(events), 3)
 	require.Equal(t, "message-start", events[0].Type)
-	last := events[len(events)-1]
-	require.Equal(t, "message-end", last.Type)
-	require.NotNil(t, last.Delta)
-	assert.NotEmpty(t, last.Delta.FinishReason)
+	require.Equal(t, "[DONE]", events[len(events)-1].Type, "[DONE] follows message-end")
+	end := events[len(events)-2]
+	require.Equal(t, "message-end", end.Type)
+	require.NotNil(t, end.Delta)
+	assert.NotEmpty(t, end.Delta.FinishReason)
+	require.NotNil(t, end.Delta.Usage, "message-end carries usage")
+	require.NotNil(t, end.Delta.Usage.BilledUnits, "message-end carries usage.billed_units")
+	require.NotNil(t, end.Delta.Usage.Tokens, "message-end carries usage.tokens")
 	openContent, openTool, nextTool := -1, -1, 0
-	for i, ev := range events[1 : len(events)-1] {
+	for i, ev := range events[1 : len(events)-2] {
 		require.NotNil(t, ev.Index, "event %d %s carries an index", i, ev.Type)
 		switch ev.Type {
 		case "content-start":
@@ -129,6 +138,8 @@ func cohereClientGolden(events []cohereClientEvent) []string {
 	out := make([]string, 0, len(events))
 	for _, ev := range events {
 		switch ev.Type {
+		case "[DONE]":
+			continue
 		case "content-start", "content-end", "tool-call-end":
 			out = append(out, fmt.Sprintf("%s %d", ev.Type, *ev.Index))
 		case "content-delta":
@@ -189,7 +200,7 @@ func TestAdaptStream_CohereClientEventSequence(t *testing.T) {
 				"message-start",
 				"tool-call-start 0 call_1 get_weather", `tool-call-delta 0 {"city":"Paris"}`, "tool-call-end 0",
 				"tool-call-start 1 call_2 get_time", `tool-call-delta 1 {"tz":"CET"}`, "tool-call-end 1",
-				"message-end TOOL_CALL",
+				"message-end TOOL_CALL billed=0/0 tokens=0/0 cached=0",
 			},
 		},
 		{
@@ -268,7 +279,25 @@ func TestAdaptStream_CohereClientDoneWithoutFinishEndsTheMessage(t *testing.T) {
 
 	events := cohereClientEvents(t, lines)
 	requireCohereClientContract(t, events)
-	assert.Equal(t, "message-end COMPLETE", cohereClientGolden(events)[len(events)-1])
+	golden := cohereClientGolden(events)
+	assert.Equal(t, "message-end COMPLETE billed=0/0 tokens=0/0 cached=0", golden[len(golden)-1])
+}
+
+func TestAdaptStream_CohereClientUpstreamErrorGetsNoFinish(t *testing.T) {
+	upstream := linesSeq(
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+		`data: {"error":{"message":"The server had an error","type":"server_error"}}`,
+		`data: [DONE]`,
+	)
+
+	lines := collectLines(t, adaptStream(upstream, adapter.NewRegistry(), adapter.FormatCohere, adapter.FormatOpenAI, slog.Default(), nil))
+
+	events := cohereClientEvents(t, lines)
+	assert.Equal(t, []string{"message-start", "content-start 0", "content-delta 0 hi"}, cohereClientGolden(events))
+	for _, ev := range events {
+		assert.NotEqual(t, "message-end", ev.Type, "a failed upstream is not reported as a finished message")
+		assert.NotEqual(t, "[DONE]", ev.Type)
+	}
 }
 
 func TestAdaptStream_CohereToCoherePassthroughUnchanged(t *testing.T) {
@@ -310,7 +339,7 @@ func TestAdaptStream_CohereUpstreamToolCallReachesOtherClients(t *testing.T) {
 	t.Run("openai", func(t *testing.T) {
 		lines := collectLines(t, adaptStream(upstream(), adapter.NewRegistry(), adapter.FormatOpenAI, adapter.FormatCohere, slog.Default(), nil))
 
-		var id, name, args, finish string
+		var id, name, args, finish, content string
 		for _, chunk := range dataChunks(t, lines) {
 			for _, c := range chunk["choices"].([]any) {
 				choice := c.(map[string]any)
@@ -318,6 +347,9 @@ func TestAdaptStream_CohereUpstreamToolCallReachesOtherClients(t *testing.T) {
 					finish = f
 				}
 				delta, _ := choice["delta"].(map[string]any)
+				if v, ok := delta["content"].(string); ok {
+					content += v
+				}
 				calls, _ := delta["tool_calls"].([]any)
 				for _, raw := range calls {
 					call := raw.(map[string]any)
@@ -337,6 +369,7 @@ func TestAdaptStream_CohereUpstreamToolCallReachesOtherClients(t *testing.T) {
 		assert.Equal(t, "database_agent_3v76fs3zjrgq", id)
 		assert.Equal(t, "database_agent", name)
 		assert.JSONEq(t, `{"query":"Juan"}`, args)
+		assert.Equal(t, "Voy", content, "the tool plan reaches the client as text")
 		assert.Equal(t, "tool_calls", finish)
 		assert.Equal(t, "data: [DONE]", lines[len(lines)-2])
 	})
@@ -348,8 +381,9 @@ func TestAdaptStream_CohereUpstreamToolCallReachesOtherClients(t *testing.T) {
 		requireAnthropicContract(t, events)
 		assert.Equal(t, []string{
 			"message_start",
-			"start 0 tool_use database_agent_3v76fs3zjrgq database_agent",
-			`delta 0 input_json_delta {"query":`, `delta 0 input_json_delta  "Juan"}`, "stop 0",
+			"start 0 text", "delta 0 text_delta Voy", "stop 0",
+			"start 1 tool_use database_agent_3v76fs3zjrgq database_agent",
+			`delta 1 input_json_delta {"query":`, `delta 1 input_json_delta  "Juan"}`, "stop 1",
 			"message_delta tool_use", "message_stop",
 		}, anthropicGolden(events))
 	})
