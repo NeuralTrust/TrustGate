@@ -687,3 +687,160 @@ func TestBedrock_AdaptStreamToOpenAI_ToolCall(t *testing.T) {
 	assert.Equal(t, "tool_calls", finish)
 	assert.Equal(t, 14, totalTokens)
 }
+
+func TestBedrock_EncodeRequest_Images(t *testing.T) {
+	t.Parallel()
+
+	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
+	formats := []struct {
+		mediaType string
+		format    string
+	}{
+		{mediaType: "image/png", format: "png"},
+		{mediaType: "image/jpeg", format: "jpeg"},
+		{mediaType: "image/gif", format: "gif"},
+		{mediaType: "image/webp", format: "webp"},
+		{mediaType: "image/tiff", format: "tiff"},
+	}
+	for _, tt := range formats {
+		t.Run(tt.format, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+				Role:    "user",
+				Content: "describe",
+				Images:  []CanonicalImage{{MediaType: tt.mediaType, Data: "iVBORw0KGgo=", Detail: "high"}},
+			}}})
+			require.NoError(t, err)
+
+			req := decodeConverse(t, out)
+			require.Len(t, req.Messages, 1)
+			blocks := req.Messages[0].Content
+			require.Len(t, blocks, 2)
+			require.NotNil(t, blocks[0].Image)
+			assert.Equal(t, tt.format, blocks[0].Image.Format)
+			assert.Equal(t, pngBytes, blocks[0].Image.Source.Bytes)
+			assert.Equal(t, "describe", blocks[1].Text)
+		})
+	}
+
+	failures := []struct {
+		name     string
+		image    CanonicalImage
+		secret   string
+		wantText string
+	}{
+		{name: "https url", image: CanonicalImage{URL: "https://example.com/private-cat.jpg"}, secret: "private-cat", wantText: "inline base64 image data"},
+		{name: "missing media type", image: CanonicalImage{Data: "U0VDUkVU"}, secret: "U0VDUkVU", wantText: "image media type is missing or not an image/* type"},
+		{name: "non-image media type", image: CanonicalImage{MediaType: "application/pdf", Data: "U0VDUkVU"}, secret: "pdf", wantText: "image media type is missing or not an image/* type"},
+		{name: "invalid base64", image: CanonicalImage{MediaType: "image/png", Data: "@@@SECRET"}, secret: "SECRET", wantText: "not valid base64"},
+	}
+	for _, tt := range failures {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+				Role:   "user",
+				Images: []CanonicalImage{tt.image},
+			}}})
+
+			require.ErrorIs(t, err, ErrUnsupportedContent)
+			var contentErr *UnsupportedContentError
+			require.ErrorAs(t, err, &contentErr)
+			assert.Contains(t, err.Error(), tt.wantText)
+			assert.NotContains(t, err.Error(), tt.secret)
+			assert.NotContains(t, err.Error(), "bedrock")
+		})
+	}
+}
+
+func TestBedrock_EncodeRequest_ToolResultThenImageTurnMergeIntoOneUserTurn(t *testing.T) {
+	t.Parallel()
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{
+		{Role: "user", Content: "look it up"},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "fetch_image", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "done"},
+		{Role: "user", Content: "what is it?", Images: []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}}},
+	}})
+	require.NoError(t, err)
+
+	req := decodeConverse(t, out)
+	require.Len(t, req.Messages, 3)
+	turn := req.Messages[2]
+	assert.Equal(t, "user", turn.Role)
+	require.Len(t, turn.Content, 3)
+	require.NotNil(t, turn.Content[0].ToolResult)
+	assert.Equal(t, "call_1", turn.Content[0].ToolResult.ToolUseID)
+	require.NotNil(t, turn.Content[1].Image)
+	assert.Equal(t, "png", turn.Content[1].Image.Format)
+	assert.Equal(t, "what is it?", turn.Content[2].Text)
+}
+
+func TestBedrock_EncodeRequest_ImagesOnlyOnUserMessages(t *testing.T) {
+	t.Parallel()
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+		Role:    "assistant",
+		Content: "ok",
+		Images:  []CanonicalImage{{URL: "https://example.com/a.png"}},
+	}}})
+	require.NoError(t, err)
+
+	req := decodeConverse(t, out)
+	require.Len(t, req.Messages, 1)
+	assert.Equal(t, []ConverseContentBlock{{Text: "ok"}}, req.Messages[0].Content)
+}
+
+func TestBedrock_DecodeRequest_Image(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want []CanonicalMessage
+	}{
+		{
+			name: "image with text",
+			body: `{"messages":[{"role":"user","content":[{"image":{"format":"jpeg","source":{"bytes":"/9j/4AAQ"}}},{"text":"what is it?"}]}]}`,
+			want: []CanonicalMessage{{
+				Role:    "user",
+				Content: "what is it?",
+				Images:  []CanonicalImage{{MediaType: "image/jpeg", Data: "/9j/4AAQ"}},
+			}},
+		},
+		{
+			name: "image only",
+			body: `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}}]}]}`,
+			want: []CanonicalMessage{{
+				Role:   "user",
+				Images: []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}},
+			}},
+		},
+		{
+			name: "s3 location ignored",
+			body: `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"s3Location":{"uri":"s3://b/k"}}}},{"text":"hi"}]}]}`,
+			want: []CanonicalMessage{{Role: "user", Content: "hi"}},
+		},
+		{
+			name: "tool result precedes image turn",
+			body: `{"messages":[{"role":"user","content":[{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},{"toolResult":{"toolUseId":"call_1","content":[{"text":"42"}]}}]}]}`,
+			want: []CanonicalMessage{
+				{Role: "tool", ToolCallID: "call_1", Content: "42"},
+				{Role: "user", Images: []CanonicalImage{{MediaType: "image/png", Data: "iVBORw0KGgo="}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cr, err := (&BedrockAdapter{}).DecodeRequest([]byte(tt.body))
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.want, cr.Messages)
+		})
+	}
+}
