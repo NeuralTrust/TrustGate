@@ -78,14 +78,15 @@ func (t *cohereStreamTool) complete() bool {
 
 // supersedes reports whether later shows that t, still without arguments,
 // sends none: later is a named call announced in a later chunk and, unless the
-// upstream streams its calls one after another, sits at a higher index and has
-// started streaming its own arguments. Calls announced together, or whose
-// headers come before their arguments, fill their arguments in later.
+// upstream streams its calls one after another, has started streaming its own
+// arguments and either sits at a higher index or replaced t at its index.
+// Calls announced together, or whose headers come before their arguments,
+// fill their arguments in later.
 func (e *CohereStreamEncoder) supersedes(later, t *cohereStreamTool) bool {
 	if t.args.Len() > 0 || later.name == "" || later.chunk <= t.chunk {
 		return false
 	}
-	return e.sequentialCalls || (later.args.Len() > 0 && later.index > t.index)
+	return e.sequentialCalls || (later.args.Len() > 0 && (later.index > t.index || e.tools[t.index] != t))
 }
 
 // NewCohereStreamEncoder returns an encoder for the given target format.

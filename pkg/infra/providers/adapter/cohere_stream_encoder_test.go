@@ -643,3 +643,71 @@ func TestCohereStreamEncoder_HeldCallSupersededByALaterOne(t *testing.T) {
 		"tool-call-start 2 call_3 c", `tool-call-delta 2 {"z":3}`,
 	}, cohereGolden(t, cohereEvents(t, lines)), "the later call streams before the finish")
 }
+
+func TestCohereStreamEncoder_CallReplacedAtItsIndexSupersedesIt(t *testing.T) {
+	e := NewCohereStreamEncoder(FormatOpenAI)
+	lines := e.Content(&CanonicalStreamChunk{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}})
+	lines = append(lines, e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_2", Name: "b", ArgumentsDelta: `{"y":2}`}}})...)
+	streamed := cohereGolden(t, cohereEvents(t, lines))
+	lines = append(lines, e.Abort("upstream stream failed", nil)...)
+
+	want := []string{
+		"message-start",
+		"tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0",
+		"tool-call-start 1 call_2 b", `tool-call-delta 1 {"y":2}`,
+	}
+	assert.Equal(t, want, streamed, "the replacing call streams before the finish")
+	events := cohereEvents(t, lines)
+	requireCohereContract(t, events)
+	assert.Equal(t, append(want, "tool-call-end 1", "message-end ERROR"), cohereGolden(t, events))
+	deltas, tools := e.Dropped()
+	assert.Equal(t, 0, deltas)
+	assert.Equal(t, 0, tools)
+}
+
+func TestCohereStreamEncoder_SequentialCallsSupersedeOnTheirHeader(t *testing.T) {
+	chunks := []*CanonicalStreamChunk{
+		{Role: "assistant", ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a"}}},
+		{ToolCallDeltas: []StreamToolCallDelta{{Index: 1, ID: "call_2", Name: "b"}}},
+		{Delta: "T"},
+	}
+	tests := []struct {
+		name     string
+		target   Format
+		streamed []string
+		aborted  []string
+	}{
+		{
+			name:     "anthropic",
+			target:   FormatAnthropic,
+			streamed: []string{"message-start", "tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0", "tool-call-start 1 call_2 b"},
+			aborted:  []string{"tool-call-end 1", "content-start 0", "content-delta 0 T", "content-end 0", "message-end ERROR"},
+		},
+		{
+			name:     "bedrock",
+			target:   FormatBedrock,
+			streamed: []string{"message-start", "tool-call-start 0 call_1 a", "tool-call-delta 0 {}", "tool-call-end 0", "tool-call-start 1 call_2 b"},
+			aborted:  []string{"tool-call-end 1", "content-start 0", "content-delta 0 T", "content-end 0", "message-end ERROR"},
+		},
+		{
+			name:     "openai holds the second header",
+			target:   FormatOpenAI,
+			streamed: []string{"message-start", "tool-call-start 0 call_1 a"},
+			aborted:  []string{"tool-call-end 0", "content-start 0", "content-delta 0 T", "content-end 0", "message-end ERROR"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewCohereStreamEncoder(tt.target)
+			var lines [][]byte
+			for _, c := range chunks {
+				lines = append(lines, e.Content(c)...)
+			}
+			assert.Equal(t, tt.streamed, cohereGolden(t, cohereEvents(t, lines)))
+			lines = append(lines, e.Abort("upstream stream failed", nil)...)
+			events := cohereEvents(t, lines)
+			requireCohereContract(t, events)
+			assert.Equal(t, append(append([]string{}, tt.streamed...), tt.aborted...), cohereGolden(t, events))
+		})
+	}
+}
