@@ -128,17 +128,29 @@ func anthropicUsageToCanonical(u anthropicUsage) *CanonicalUsage {
 	if cu == nil {
 		return nil
 	}
-	cu.CachedInputTokens = u.CacheReadInputTokens
-	cu.CacheWriteInputTokens = u.CacheCreationInputTokens
+	var write1h int
 	if u.CacheCreation != nil {
-		cu.CacheWrite1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
+		write1h = u.CacheCreation.Ephemeral1hInputTokens
+		cu.cacheTTLKnown = true
 	}
+	cu.setCache(u.CacheReadInputTokens, u.CacheCreationInputTokens, write1h)
 	cu.ServiceTier = u.ServiceTier
 	return cu
 }
 
 func anthropicWireInputTokens(u *CanonicalUsage) int {
 	return u.PlainInputTokens()
+}
+
+func anthropicCacheCreationFrom(u *CanonicalUsage) *anthropicCacheCreation {
+	if !u.hasCacheTTLBreakdown() {
+		return nil
+	}
+	write1h := min(u.CacheWrite1hInputTokens, u.CacheWriteInputTokens)
+	return &anthropicCacheCreation{
+		Ephemeral5mInputTokens: u.CacheWriteInputTokens - write1h,
+		Ephemeral1hInputTokens: write1h,
+	}
 }
 
 // anthropicSSEUsageFrom builds the on-wire usage block for a stream chunk.
@@ -152,6 +164,7 @@ func anthropicSSEUsageFrom(u *CanonicalUsage) anthropicSSEUsage {
 		OutputTokens:             u.OutputTokens,
 		CacheCreationInputTokens: u.CacheWriteInputTokens,
 		CacheReadInputTokens:     u.CachedInputTokens,
+		CacheCreation:            anthropicCacheCreationFrom(u),
 	}
 }
 
@@ -200,10 +213,11 @@ type anthropicSSEMessageInfo struct {
 }
 
 type anthropicSSEUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int                     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreation            *anthropicCacheCreation `json:"cache_creation,omitempty"`
 }
 
 type anthropicSSEContentBlockStart struct {
@@ -653,6 +667,7 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 			OutputTokens:             resp.Usage.OutputTokens,
 			CacheCreationInputTokens: resp.Usage.CacheWriteInputTokens,
 			CacheReadInputTokens:     resp.Usage.CachedInputTokens,
+			CacheCreation:            anthropicCacheCreationFrom(resp.Usage),
 			ServiceTier:              resp.Usage.ServiceTier,
 		}
 	}

@@ -80,16 +80,16 @@ Measure each slice with `git diff --shortstat <parent> -- pkg tests docs` (paren
 
 ## Phase 3 (S1c): client encoders emit cache usage, 1h pricing
 
-- [ ] 3.1 `openai_completions_adapter.go`: `openaiUsageFromCanonical`, used at both encode sites (buffered, SSE).
-- [ ] 3.2 `openai_responses_adapter.go`, `cohere_adapter.go`: emit R/W in response and `response.completed`.
-- [ ] 3.3 `anthropic_adapter.go`: `cache_creation{ephemeral_5m, ephemeral_1h}` in `anthropicUsage`, `anthropicSSEUsage` (rebase vs #826).
-- [ ] 3.4 `adapter_test.go`: `decode(encode(u))==u` table for Chat, Responses, Cohere, Anthropic, Bedrock.
-- [ ] 3.5 `plugins/llmcost/pricing.go`: `ratesFor(..., cw1h, claude)`, `isClaudeModel`; tests $0.006, non-Claude, discount $4.80/M, override wins.
-- [ ] 3.6 `plugins/tokenratelimit/budget_test.go`: Anthropic upstream R=1000 → OpenAI client, `CountCacheReads=false`, real registry.
-- [ ] 3.6b Same test with a **Bedrock** upstream (buffered + stream) → OpenAI/Responses/Cohere clients, `CountCacheReads=false` (S1a review: until S1c the client body lacks R, so budgets would charge cache reads; S1a must not reach main without S1c).
-- [ ] 3.6d `anthropic_adapter.go` decode: clamp `CacheWrite1hInputTokens` to `CacheWriteInputTokens` (route through `setCache`); unify the R+W>I unfold rule (`PlainInputTokens` → `max(0, I-R-W)`, Bedrock reuses it) (S1a round-2 review).
-- [ ] 3.6e Bedrock encoder: only emit `cacheDetails` when the canonical usage carries a TTL breakdown source; otherwise omit (S1a round-2 review, TTL unknown ≠ 5m).
-- [ ] 3.6c `bedrock_adapter.go` `EncodeStreamChunk`: buffer usage and emit a single merged Converse `metadata` event after `messageStop` (S1a review: Anthropic upstream → Bedrock client currently emits one metadata per usage chunk and the last one loses cache fields).
+- [x] 3.1 `openai_completions_adapter.go`: `openaiUsageFromCanonical`, used at both encode sites (buffered, SSE).
+- [x] 3.2 `openai_responses_adapter.go`, `cohere_adapter.go`: emit R/W in response and `response.completed`.
+- [x] 3.3 `anthropic_adapter.go`: `cache_creation{ephemeral_5m, ephemeral_1h}` in `anthropicUsage`, `anthropicSSEUsage` (rebase vs #826).
+- [x] 3.4 `adapter_test.go`: `decode(encode(u))==u` table for Chat, Responses, Cohere, Anthropic, Bedrock.
+- [x] 3.5 `plugins/llmcost/pricing.go`: `ratesFor(..., cw1h, claude)`, `isClaudeModel`; tests $0.006, non-Claude, discount $4.80/M, override wins.
+- [x] 3.6 `plugins/tokenratelimit/budget_test.go`: Anthropic upstream R=1000 → OpenAI client, `CountCacheReads=false`, real registry.
+- [x] 3.6b Same test with a **Bedrock** upstream (buffered + stream) → OpenAI/Responses/Cohere clients, `CountCacheReads=false` (S1a review: until S1c the client body lacks R, so budgets would charge cache reads; S1a must not reach main without S1c).
+- [x] 3.6d `anthropic_adapter.go` decode: clamp `CacheWrite1hInputTokens` to `CacheWriteInputTokens` (route through `setCache`); unify the R+W>I unfold rule (`PlainInputTokens` → `max(0, I-R-W)`, Bedrock reuses it) (S1a round-2 review).
+- [x] 3.6e Bedrock encoder: only emit `cacheDetails` when the canonical usage carries a TTL breakdown source; otherwise omit (S1a round-2 review, TTL unknown ≠ 5m).
+- [x] 3.6c `bedrock_adapter.go` `EncodeStreamChunk`: buffer usage and emit a single merged Converse `metadata` event after `messageStop` (S1a review: Anthropic upstream → Bedrock client currently emits one metadata per usage chunk and the last one loses cache fields).
 - [ ] 3.7 V1 (adapter, llmcost, tokenratelimit); V2; V3; V4 **Anthropic, OpenAI, openai_responses, Cohere, Bedrock** (1h pricing); V5.
 
 ## Phase 3b (S1d): Cohere v2 stream contract (added 2026-09-23, user request)
