@@ -69,33 +69,93 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_ArrayInput(t *testing.T) {
 	assert.Equal(t, "Tell me more.", canonical.Messages[2].Content)
 }
 
-func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_DropsEmptyAssistantMessages(t *testing.T) {
-	input := `{
-		"model": "deepseek-chat",
-		"input": [
-			{"role": "user", "content": "Find the client."},
-			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
-			{"type": "function_call", "call_id": "call_1", "name": "query_clients", "arguments": "{}"},
-			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
-			{"type": "function_call_output", "call_id": "call_1", "output": "Ana"}
-		]
-	}`
-
-	canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
-	require.NoError(t, err)
-
-	var roles []string
-	for _, m := range canonical.Messages {
-		roles = append(roles, m.Role)
-		if m.Role == "assistant" {
-			assert.True(t, m.Content != "" || len(m.ToolCalls) > 0, "empty assistant message")
-		}
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []CanonicalMessage
+	}{
+		{
+			name: "text and parallel calls fold into one assistant message",
+			input: `[
+				{"role": "user", "content": "Weather and time?"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{}"},
+				{"type": "function_call", "call_id": "call_2", "name": "get_time", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
+				{"type": "function_call_output", "call_id": "call_2", "output": "noon"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Weather and time?"},
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{
+					{ID: "call_1", Name: "get_weather", Arguments: "{}"},
+					{ID: "call_2", Name: "get_time", Arguments: "{}"},
+				}},
+				{Role: "tool", Content: "sunny", ToolCallID: "call_1"},
+				{Role: "tool", Content: "noon", ToolCallID: "call_2"},
+			},
+		},
+		{
+			name: "an empty assistant message between items is dropped",
+			input: `[
+				{"role": "user", "content": "Find the client."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "query_clients", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+				{"type": "function_call_output", "call_id": "call_1", "output": "Ana"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Find the client."},
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "query_clients", Arguments: "{}"}}},
+				{Role: "tool", Content: "Ana", ToolCallID: "call_1"},
+			},
+		},
+		{
+			name: "text after a call joins the same turn",
+			input: `[
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "One."}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Two."}]},
+				{"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", Content: "One.\nTwo.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "ok", ToolCallID: "call_1"},
+			},
+		},
+		{
+			name: "a refusal-only assistant message is kept",
+			input: `[
+				{"role": "user", "content": "Do the thing."},
+				{"type": "message", "role": "assistant", "content": [{"type": "refusal", "refusal": "I can't help with that."}]},
+				{"role": "user", "content": "Why?"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Do the thing."},
+				{Role: "assistant", Content: "I can't help with that."},
+				{Role: "user", Content: "Why?"},
+			},
+		},
+		{
+			name: "an empty assistant message between users is dropped",
+			input: `[
+				{"role": "user", "content": "Hi."},
+				{"type": "message", "role": "assistant", "content": []},
+				{"role": "user", "content": "Hello?"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Hi."},
+				{Role: "user", Content: "Hello?"},
+			},
+		},
 	}
-	assert.Equal(t, []string{"user", "assistant", "assistant", "tool"}, roles)
-	assert.Equal(t, "Checking.", canonical.Messages[1].Content)
-	require.Len(t, canonical.Messages[2].ToolCalls, 1)
-	assert.Equal(t, "call_1", canonical.Messages[2].ToolCalls[0].ID)
-	assert.Equal(t, "call_1", canonical.Messages[3].ToolCallID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(`{"model": "deepseek-chat", "input": ` + tt.input + `}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, canonical.Messages)
+		})
+	}
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {

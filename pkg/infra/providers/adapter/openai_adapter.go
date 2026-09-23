@@ -181,6 +181,9 @@ func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
 		if p.Text != "" {
 			texts = append(texts, p.Text)
 		}
+		if p.Type == "refusal" && p.Refusal != "" {
+			texts = append(texts, p.Refusal)
+		}
 		if p.Type != "image_url" {
 			continue
 		}
