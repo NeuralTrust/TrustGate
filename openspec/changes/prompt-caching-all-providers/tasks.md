@@ -139,7 +139,7 @@ Reduced scope (investigation 2026-09-23, captures in the scratchpad `groq/`): st
 - [x] 3e.2 Regression tests from the real captures (buffered + stream): usage and `cached_tokens` on the finish chunk, the trailing `include_usage` chunk, max-not-sum merge.
 - [x] 3e.3 Optional: fall back to `x_groq.usage` when the standard usage fields are absent (max-not-sum with any standard usage chunk).
 - [ ] 3e.4 V1–V5 with V4 **Groq** (native + matrix, STREAM on/off, prompt_caching -k groq on gpt-oss). V1 done (vet, golangci-lint adapter+proxy, `go test -race` proxy+providers green); V2–V5 pending.
-- Follow-ups noted, not in this phase: `delta.reasoning` (analysis channel) dropped by `openaiStreamDelta`; trailing usage chunk re-encoded as `choices:[{index:0,delta:{}}]` instead of `[]`; Anthropic→Groq trims the system prompt's trailing whitespace (different cache prefix across client formats, handle in S2a).
+- Follow-ups noted, not in this phase: `delta.reasoning` (analysis channel) dropped by `openaiStreamDelta`; trailing usage chunk re-encoded as `choices:[{index:0,delta:{}}]` instead of `[]`; Anthropic→Groq trims the system prompt's trailing whitespace (fixed in S2a).
 
 ## Phase 3f (S1f): Gemini thought signatures (found in the S1e review, confirmed 2026-09-23)
 
@@ -167,13 +167,13 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 4 (S2a): canonical intent, normalize hook, Anthropic
 
-- [ ] 4.1 `adapter/cache_intent.go` (new): `CacheTTL`, `CanonicalCacheBreakpoint`, `CanonicalCacheOptions`, `cacheProfile`, `cacheProfileFor`, `normalizeCacheIntent` (4 steps).
-- [ ] 4.2 `canonical.go`: `SystemCache`, `CacheOptions`, `CanonicalMessage.Cache`, `CanonicalTool.Cache` (separate hunks per conflict map).
-- [ ] 4.3 `registry.go`: call `normalizeCacheIntent` after `dropRequestExtensionsForCrossFormat`.
-- [ ] 4.4 `anthropic_adapter.go` decode: `anthropicCacheControl`, `attachAnthropicCache`, `tool_result`→tool message, `bytes.Contains` fast path.
-- [ ] 4.5 Same file encode: system blocks, `anthropicCached`, tool/tool_use/tool_result markers, top-level `Auto`.
-- [ ] 4.6 `cache_intent_test.go` + Anthropic suite: no markers; round-trip (stream on/off); image-then-text; six→4; TTL downgrade; Gemini/Groq/Cohere drop.
-- [ ] 4.7 Rebase onto ENG-1608 if merged; else keep base-agnostic.
+- [x] 4.1 `adapter/cache_intent.go` (new): `CacheTTL`, `CanonicalCacheBreakpoint`, `CanonicalCacheOptions`, `cacheProfile`, `cacheProfileFor`, `normalizeCacheIntent` (4 steps). Rows: anthropic, bedrock; every other target drops all intent until its slice adds a row. `cacheProfileFor(target)` takes no model yet; S2b adds it with the GPT-5.6 predicate.
+- [x] 4.2 `canonical.go`: `SystemCache`, `CacheOptions`, `CanonicalMessage.Cache`, `CanonicalTool.Cache` (separate hunks per conflict map).
+- [x] 4.3 `registry.go`: call `normalizeCacheIntent` after `dropRequestExtensionsForCrossFormat`.
+- [x] 4.4 `anthropic_adapter.go` decode: `anthropicCacheControl`, `tool_result`→tool message. Markers are read in the existing block loop (ENG-1608 is in the base), so there is no `attachAnthropicCache` second pass and no `bytes.Contains` fast path is needed. System text is no longer trimmed (byte-stable across client formats; fixes the Anthropic→Groq 1677/1678 prefix drift).
+- [x] 4.5 Same file encode: system blocks, marker on the last emitted block (built in `anthropicMessageContent`, no raw-JSON `anthropicCached`), tool/tool_use/tool_result markers, top-level `Auto`.
+- [x] 4.6 `cache_intent_test.go` + Anthropic suite: no markers; round-trip (stream on/off); image-then-text; six→4; TTL downgrade; Gemini/Groq/Cohere drop.
+- [x] 4.7 N/A: ENG-1608 image content is already in the base.
 - [ ] 4.8 V1 (adapter); V2; V3; V4 **Anthropic, Gemini** (drop path); V5.
 
 ## Phase 5 (S2b): OpenAI Chat and Responses intent

@@ -177,6 +177,7 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
+	normalizeCacheIntent(canonical, target)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {

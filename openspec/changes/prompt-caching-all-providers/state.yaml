@@ -41,3 +41,6 @@ tickets:
   ENG-1626: mid-stream error propagation for non-Anthropic clients
   ENG-1627: Gemini thought signature round-trip
 delivery_update_2026-09-23: single integration branch, one PR to main (size:exception); slice PRs #846-#852 to be closed
+progress_s2a:
+  status: applied (V1 done; V2-V5 pending)
+  notes: normalizeCacheIntent on the cross-format AdaptRequest path only; anthropic + bedrock profile rows; Anthropic decode/encode of system/tool/message/tool_result/top-level markers; anthropic system text no longer trimmed (groq prefix drift fixed)
