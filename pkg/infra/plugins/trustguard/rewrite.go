@@ -70,10 +70,11 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 	return strings.Join(requestParts(creq), "\n")
 }
 
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, masked string) ([]byte, bool) {
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, masked string) ([]byte, bool) {
 	if reg == nil || creq == nil {
 		return nil, false
 	}
+	baseline := creq.Clone()
 	if !applyMaskedRequest(creq, masked) {
 		return nil, false
 	}
@@ -81,7 +82,7 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 	if err != nil {
 		return nil, false
 	}
-	body, err := adp.EncodeRequest(creq)
+	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
 	if err != nil {
 		return nil, false
 	}

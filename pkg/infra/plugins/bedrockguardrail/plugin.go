@@ -139,7 +139,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
-			return rewriteRequest(p.registry, format, creq, idx, masked)
+			return rewriteRequest(p.registry, format, in.Request.Body, creq, idx, masked)
 		},
 	}
 	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceInput, span)

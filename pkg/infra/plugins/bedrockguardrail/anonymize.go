@@ -31,7 +31,7 @@ func maskedText(out *bedrockruntime.ApplyGuardrailOutput) (string, bool) {
 	return text, true
 }
 
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, msgIndex int, masked string) ([]byte, bool) {
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, msgIndex int, masked string) ([]byte, bool) {
 	if reg == nil || creq == nil || msgIndex < 0 || msgIndex >= len(creq.Messages) {
 		return nil, false
 	}
@@ -39,8 +39,9 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 	if err != nil {
 		return nil, false
 	}
+	baseline := creq.Clone()
 	creq.Messages[msgIndex].Content = masked
-	body, err := adp.EncodeRequest(creq)
+	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
 	if err != nil {
 		return nil, false
 	}
