@@ -15,6 +15,8 @@
 package pluginutil
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -235,6 +237,62 @@ func NewStreamData(streamID string, r appplugins.StreamReport) *StreamData {
 		DegradedReason:      r.DegradedReason,
 		FallbackReason:      r.FallbackReason,
 	}
+}
+
+// fingerprintFieldSep joins identity fields before they are hashed, so that no
+// field can be mistaken for part of the one beside it.
+const fingerprintFieldSep = "\x00"
+
+// fingerprintBytes is how much of the digest is kept. Half of SHA-256 is still
+// 128 bits against a set holding a handful of entries per stream, and the
+// string lands in an event rather than in a security decision.
+const fingerprintBytes = 16
+
+// StreamFingerprint digests what stays the same about a finding while the
+// payload under it grows, so that alert-only reports one incident per stream
+// instead of one per block.
+//
+// Callers pass identity only: who detected it and what it decided. A score is
+// computed over the text the call carried, so on a longer prefix it comes back
+// different and would turn the set into a counter of blocks. Flagged spans of
+// the response are worse — hashing them would key the finding on content a
+// transform is allowed to rewrite underneath it, and put a value derived from
+// response text onto a span that publishes to OTLP.
+//
+// Fields that are all empty produce no fingerprint. An empty key would fold
+// every unidentifiable finding in the stream into one, which is the opposite of
+// what the set is for.
+func StreamFingerprint(fields ...string) string {
+	joined := strings.Join(fields, fingerprintFieldSep)
+	if strings.TrimSpace(strings.ReplaceAll(joined, fingerprintFieldSep, "")) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(joined))
+	return hex.EncodeToString(sum[:fingerprintBytes])
+}
+
+// DedupeFingerprints keeps the first occurrence of each key, in order, and
+// drops the empties StreamFingerprint returns for a finding with no identity.
+func DedupeFingerprints(prints []string) []string {
+	if len(prints) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(prints))
+	out := make([]string, 0, len(prints))
+	for _, fp := range prints {
+		if fp == "" {
+			continue
+		}
+		if _, dup := seen[fp]; dup {
+			continue
+		}
+		seen[fp] = struct{}{}
+		out = append(out, fp)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // StreamFingerprints is the fingerprint set a closing segment carries, without

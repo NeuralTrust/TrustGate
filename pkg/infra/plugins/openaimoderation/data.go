@@ -14,7 +14,10 @@
 
 package openaimoderation
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 type moderationRequest struct {
 	Model string            `json:"model"`
@@ -46,6 +49,9 @@ type ModerationData struct {
 	FlaggedByOpenAI   bool               `json:"flagged_by_openai"`
 	FlaggedCategories []violation        `json:"flagged_categories,omitempty"`
 	Decision          string             `json:"decision,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 type violation struct {
