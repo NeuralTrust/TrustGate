@@ -26,10 +26,17 @@ const (
 	CacheTTL1h CacheTTL = "1h"
 )
 
-// CanonicalCacheBreakpoint marks the end of a segment (system, tool or
-// message) as a prompt-cache boundary. A nil breakpoint means no intent.
+// CanonicalCacheBreakpoint marks a prompt-cache boundary in a segment (system,
+// tool or message). A nil breakpoint means no intent.
 type CanonicalCacheBreakpoint struct {
 	TTL CacheTTL `json:"ttl,omitempty"`
+	// Offset is where the boundary sits inside the segment's text when the
+	// decoder merged several text blocks into one string: the byte length of the
+	// text up to and including the marked block, without the "\n" joiner that
+	// follows it. Zero means the end of the segment. Encoders that cannot split
+	// text ignore it and place the boundary at the end; the Anthropic encoder
+	// splits the text there so the marker keeps its original block boundary.
+	Offset int `json:"offset,omitempty"`
 }
 
 // CanonicalCacheOptions is request-level cache intent: the OpenAI-family
@@ -64,16 +71,23 @@ func cacheProfileFor(target Format) cacheProfile {
 	}
 }
 
-func longerCacheBreakpoint(a, b *CanonicalCacheBreakpoint) *CanonicalCacheBreakpoint {
-	if a == nil || (b != nil && b.TTL == CacheTTL1h) {
-		return b
+// laterCacheBreakpoint merges two markers of one segment into one: the later
+// position with the longer TTL. Raising the later marker to 1h stays valid
+// because every marker before a 1h one must already be 1h.
+func laterCacheBreakpoint(earlier, later *CanonicalCacheBreakpoint) *CanonicalCacheBreakpoint {
+	if later == nil {
+		return earlier
 	}
-	return a
+	if earlier != nil && earlier.TTL == CacheTTL1h {
+		later.TTL = CacheTTL1h
+	}
+	return later
 }
 
 // normalizeCacheIntent applies the target's cache policy to intent decoded from
 // another format. Encoders stay faithful, so same-format re-encodes keep the
-// client's markers exactly as sent.
+// client's markers exactly as sent. The cap runs before the TTL walk so a
+// breakpoint that is dropped never downgrades the ones that stay.
 func normalizeCacheIntent(req *CanonicalRequest, target Format) {
 	if req == nil {
 		return
@@ -81,20 +95,19 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format) {
 	p := cacheProfileFor(target)
 	dropDisallowedCacheIntent(req, p)
 
-	marks := cacheBreakpointsInOrder(req)
+	for n := len(cacheBreakpointsInOrder(req)); p.max > 0 && n > p.max; n-- {
+		if !dropEarliestCacheBreakpoint(req.Messages, func(m *CanonicalMessage) **CanonicalCacheBreakpoint { return &m.Cache }) &&
+			!dropEarliestCacheBreakpoint(req.Tools, func(t *CanonicalTool) **CanonicalCacheBreakpoint { return &t.Cache }) {
+			break
+		}
+	}
+
 	short := false
-	for _, bp := range marks {
+	for _, bp := range cacheBreakpointsInOrder(req) {
 		if bp.TTL == CacheTTL1h && (short || !p.ttl1h) {
 			bp.TTL = CacheTTL5m
 		}
 		short = short || bp.TTL != CacheTTL1h
-	}
-
-	for n := len(marks); p.max > 0 && n > p.max; n-- {
-		if !dropEarliestCacheBreakpoint(req.Messages, func(m *CanonicalMessage) **CanonicalCacheBreakpoint { return &m.Cache }) &&
-			!dropEarliestCacheBreakpoint(req.Tools, func(t *CanonicalTool) **CanonicalCacheBreakpoint { return &t.Cache }) {
-			return
-		}
 	}
 }
 

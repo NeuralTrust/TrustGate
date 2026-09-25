@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1095,4 +1096,220 @@ func TestAnthropicEncodeRequest_NormalizedSixBreakpointsKeepFour(t *testing.T) {
 	for i, want := range []string{`"m"`, `"m"`, cc, cc} {
 		assert.JSONEq(t, want, string(got.Messages[i].Content), "message %d", i)
 	}
+}
+
+type anthropicRawBody struct {
+	CacheControl json.RawMessage `json:"cache_control"`
+	System       json.RawMessage `json:"system"`
+	Tools        json.RawMessage `json:"tools"`
+	Messages     []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	} `json:"messages"`
+}
+
+func reencodeAnthropic(t *testing.T, body string) anthropicRawBody {
+	t.Helper()
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRawBody
+	require.NoError(t, json.Unmarshal(out, &got))
+	return got
+}
+
+func TestAnthropicRequest_CacheMarkerKeepsItsBlockBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		system       string
+		messages     []string
+		wantSystem   string
+		wantMessages []string
+	}{
+		{
+			name:     "marker before volatile system and user text",
+			system:   `[{"type":"text","text":"Static instructions.","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Current time: 2026-09-25T08:00:00Z"}]`,
+			messages: []string{`[{"type":"text","text":"Big document ...","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]`},
+		},
+		{
+			name:     "marked text before tool calls stays on the text",
+			system:   `"s"`,
+			messages: []string{`"q"`, `[{"type":"text","text":"calling","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`, `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`},
+		},
+		{
+			name:         "several system markers keep the last position with the longest TTL",
+			system:       `[{"type":"text","text":"A","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"B","cache_control":{"type":"ephemeral"}},{"type":"text","text":"C"}]`,
+			messages:     []string{`"hi"`},
+			wantSystem:   `[{"type":"text","text":"A\nB","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"C"}]`,
+			wantMessages: []string{`"hi"`},
+		},
+		{
+			name:         "thinking markers are dropped with the block",
+			system:       `"s"`,
+			messages:     []string{`"q"`, `[{"type":"thinking","thinking":"hm","signature":"sig","cache_control":{"type":"ephemeral"}},{"type":"text","text":"a"}]`},
+			wantSystem:   `"s"`,
+			wantMessages: []string{`"q"`, `"a"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			roles := []string{"user", "assistant"}
+			msgs := make([]string, len(tt.messages))
+			for i, c := range tt.messages {
+				msgs[i] = `{"role":"` + roles[i%2] + `","content":` + c + `}`
+			}
+			body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + tt.system + `,"messages":[` + strings.Join(msgs, ",") + `]}`
+			got := reencodeAnthropic(t, body)
+
+			wantSystem, wantMessages := tt.wantSystem, tt.wantMessages
+			if wantSystem == "" {
+				wantSystem, wantMessages = tt.system, tt.messages
+			}
+			assert.JSONEq(t, wantSystem, string(got.System))
+			require.Len(t, got.Messages, len(wantMessages))
+			for i, want := range wantMessages {
+				assert.JSONEq(t, want, string(got.Messages[i].Content), "message %d", i)
+			}
+		})
+	}
+}
+
+func TestAnthropicRequest_ExplicitMarkerNeverConflictsWithAutomaticCaching(t *testing.T) {
+	t.Parallel()
+
+	stable := `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`
+	got := reencodeAnthropic(t, `{"model":"claude-haiku-4-5","max_tokens":5,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":`+stable+`}]}`)
+	assert.JSONEq(t, `{"type":"ephemeral"}`, string(got.CacheControl))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, stable, string(got.Messages[0].Content), "the 1h marker stays off the last block")
+
+	tests := []struct {
+		name    string
+		auto    *CanonicalCacheBreakpoint
+		message CanonicalMessage
+		want    string
+	}{
+		{
+			name:    "a boundary a plugin moved falls back to the end",
+			message: CanonicalMessage{Role: "user", Content: "stable, redacted\nvolatile", Cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 6}},
+			want:    `[{"type":"text","text":"stable, redacted\nvolatile","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:    "the fallback is dropped when automatic caching uses another TTL",
+			auto:    bp(""),
+			message: CanonicalMessage{Role: "user", Content: "stable, redacted\nvolatile", Cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 6}},
+			want:    `[{"type":"text","text":"stable, redacted\nvolatile"}]`,
+		},
+		{
+			name:    "a marker with the automatic TTL stays on the last block",
+			auto:    bp(CacheTTL5m),
+			message: CanonicalMessage{Role: "user", Content: "tail", Cache: bp("")},
+			want:    `[{"type":"text","text":"tail","cache_control":{"type":"ephemeral"}}]`,
+		},
+		{
+			name:    "a trailing tool result with another TTL loses its marker",
+			auto:    bp(""),
+			message: CanonicalMessage{Role: "tool", ToolCallID: "t1", Content: "ok", Cache: bp(CacheTTL1h)},
+			want:    `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := &CanonicalRequest{Model: "claude-haiku-4-5", Messages: []CanonicalMessage{tt.message}}
+			if tt.auto != nil {
+				req.CacheOptions = &CanonicalCacheOptions{Auto: tt.auto}
+			}
+			out, err := (&AnthropicAdapter{}).EncodeRequest(req)
+			require.NoError(t, err)
+			var got anthropicRawBody
+			require.NoError(t, json.Unmarshal(out, &got))
+			require.Len(t, got.Messages, 1)
+			assert.JSONEq(t, tt.want, string(got.Messages[0].Content))
+		})
+	}
+}
+
+func TestAnthropicSplitAtCacheOffset_RefusesUnsafeSplits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		text   string
+		offset int
+		ok     bool
+	}{
+		{name: "intact boundary", text: "a\nb", offset: 1, ok: true},
+		{name: "end of text", text: "a\nb", offset: 3, ok: true},
+		{name: "no offset", text: "a\nb", offset: 0},
+		{name: "past the end", text: "a\nb", offset: 4},
+		{name: "not the joiner", text: "ab\nc", offset: 1},
+		{name: "blank tail", text: "a\n ", offset: 1},
+		{name: "blank head", text: " \nb", offset: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, ok := anthropicSplitAtCacheOffset(tt.text, &CanonicalCacheBreakpoint{Offset: tt.offset})
+			assert.Equal(t, tt.ok, ok)
+		})
+	}
+}
+
+func TestAnthropicRequest_ClaudeCodeShapedBodyKeepsMarkersInPlace(t *testing.T) {
+	t.Parallel()
+
+	got := reencodeAnthropic(t, `{
+		"model": "claude-haiku-4-5", "max_tokens": 5,
+		"system": [
+			{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.0;"},
+			{"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+			{"type": "text", "text": "\nYou are an interactive CLI tool.\n", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+		],
+		"tools": [
+			{"name": "Bash", "input_schema": {"type": "object"}},
+			{"name": "Read", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+		],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "<system-reminder>ctx</system-reminder>"}, {"type": "text", "text": "list files"}]},
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "User wants ls.", "signature": "sig", "cache_control": {"type": "ephemeral"}},
+				{"type": "text", "text": "I'll list them."},
+				{"type": "tool_use", "id": "toolu_01A", "name": "Bash", "input": {"command": "ls"}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_01A", "content": "a.go"},
+				{"type": "text", "text": "thanks", "cache_control": {"type": "ephemeral"}}
+			]}
+		]
+	}`)
+
+	assert.JSONEq(t, `[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.0;\nYou are Claude Code.\n\nYou are an interactive CLI tool.\n","cache_control":{"type":"ephemeral","ttl":"1h"}}]`, string(got.System))
+	assert.Equal(t, 1, bytes.Count(got.Tools, []byte(`"cache_control"`)))
+	require.Len(t, got.Messages, 4)
+	assert.NotContains(t, string(got.Messages[1].Content), "cache_control")
+	assert.JSONEq(t, `[{"type":"tool_result","tool_use_id":"toolu_01A","content":"a.go"}]`, string(got.Messages[2].Content))
+	assert.JSONEq(t, `[{"type":"text","text":"thanks","cache_control":{"type":"ephemeral"}}]`, string(got.Messages[3].Content))
+}
+
+func TestAnthropicDecodeRequest_BlankSystemStringIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"claude-haiku-4-5","max_tokens":5,"system":" \n ","messages":[{"role":"user","content":"hi"}]}`)
+	cr, err := (&AnthropicAdapter{}).DecodeRequest(body)
+	require.NoError(t, err)
+	assert.Empty(t, cr.System)
+
+	cr, err = (&AnthropicAdapter{}).DecodeRequest([]byte(`{"model":"m","max_tokens":5,"system":"  keep me \n","messages":[]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "  keep me \n", cr.System)
+
+	out, err := NewRegistry().AdaptRequest(body, FormatAnthropic, FormatBedrock)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"system"`)
 }

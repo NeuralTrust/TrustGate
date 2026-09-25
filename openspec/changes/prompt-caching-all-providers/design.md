@@ -115,9 +115,9 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format) // called in Ada
 
 `normalizeCacheIntent` runs these steps in order:
 1. Clear the kinds the profile disallows.
-2. If `!ttl1h`, 1h becomes 5m.
-3. Walk tools → system → messages → auto, and downgrade any 1h found after a 5m or default marker to `5m`.
-4. While the count is above `max` (Auto counts as one): drop the earliest message breakpoint that is not the last message breakpoint, then the earliest tool breakpoint that is not the last tool breakpoint.
+2. While the count is above `max` (Auto counts as one): drop the earliest message breakpoint that is not the last message breakpoint, then the earliest tool breakpoint that is not the last tool breakpoint. Message breakpoints go first because the design keeps the latest boundary of every section; one per section always fits in 4.
+3. If `!ttl1h`, 1h becomes 5m.
+4. Walk tools → system → messages → auto, and downgrade any 1h found after a 5m or default marker to `5m`. This runs after the cap so a dropped breakpoint cannot downgrade the ones kept.
 
 | Target (`Format`) | tools | system | msgs | max | 1h | key | ret | opts | auto |
 |---|---|---|---|---|---|---|---|---|---|
@@ -131,7 +131,11 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format) // called in Ada
 | groq, deepseek, google, vertex, cohere | – | – | – | – | – | – | – | – | – |
 
 Lossy cases, deliberate and tested as no-ops:
-- Cross-format loses block granularity. A marker on a non-last block moves to the end of its segment, several system markers collapse into one (largest TTL), and a marker on an image moves to the trailing text.
+- Decoders merge text blocks with `"\n"`, so a breakpoint records `Offset`, the byte length of the merged text up to and including the marked block. The Anthropic encoder splits the text there (dropping the joiner), so a marker on a stable block never covers the volatile text that followed it. If the offset no longer lands on the joiner (a plugin changed the text) or a split would leave a blank block, the marker falls back to the end of its segment. Other targets ignore `Offset` until their slice.
+- Several markers in one segment collapse into one: the last position, with the longest TTL (valid, since every marker before a 1h one is already 1h). Unmarked block boundaries are still merged.
+- A marker on an image moves to the end of the segment (images are emitted before text). A marker on a non-last `tool_use` moves to the last one.
+- With top-level automatic caching, an explicit marker that ends up on the last block of the last message with a different TTL is dropped: Anthropic answers 400 to that pair.
+- Markers on block types the canonical model drops (`thinking`, `redacted_thinking`, `document`, server tool blocks, markers nested inside `tool_result` content) are dropped with the block.
 - An assistant turn with only tool calls and no text keeps its marker on the last `tool_use` (Anthropic) or drops it (Chat, which has no part to mark).
 - Gemini `cachedContent`, and anything bound for Groq, DeepSeek or Cohere, is dropped.
 - `FormatOpenAI` is shared by Moonshot, Cerebras and openai_compatible. A Responses client routed there sends the key fields; this is rare (OpenAI mirrors Responses). It is documented and not gated.
@@ -140,7 +144,7 @@ Lossy cases, deliberate and tested as no-ops:
 
 | Adapter | Decode | Encode |
 |---|---|---|
-| Anthropic | `anthropicCacheControl{Type, TTL}` on `anthropicContentBlock`, `anthropicTool` and `anthropicRequest` (top level → `Auto`). System blocks → `SystemCache` (largest TTL). Messages: new hook `attachAnthropicCache(out []CanonicalMessage, raw json.RawMessage)` called from `DecodeRequest` right after `decodeAnthropicMessageContent`. A marked `tool_result` goes to the `tool` message with that `ToolCallID`; any other marked block goes to the user/assistant message. Fast path: `bytes.Contains(raw, "cache_control")` | System as `[{type:text, text, cache_control}]` when `SystemCache` is set. `anthropicCached(content json.RawMessage, bp) json.RawMessage` turns a string into a single text block, or sets the marker on the last block of an array (so after ENG-1608 images). `tool_result` and `tool_use` blocks set the field directly. Tools set `CacheControl` |
+| Anthropic | `anthropicCacheControl{Type, TTL}` on `anthropicContentBlock`, `anthropicTool` and `anthropicRequest` (top level → `Auto`). System blocks → `SystemCache` (last marker position as `Offset`, longest TTL). Messages: new hook `attachAnthropicCache(out []CanonicalMessage, raw json.RawMessage)` called from `DecodeRequest` right after `decodeAnthropicMessageContent`. A marked `tool_result` goes to the `tool` message with that `ToolCallID`; any other marked block goes to the user/assistant message. Fast path: `bytes.Contains(raw, "cache_control")` | System as `[{type:text, text, cache_control}]` when `SystemCache` is set. `anthropicCached(content json.RawMessage, bp) json.RawMessage` turns a string into a single text block, or sets the marker on the last block of an array (so after ENG-1608 images). `tool_result` and `tool_use` blocks set the field directly. Tools set `CacheControl` |
 | OpenAI Chat | parts `cache_control` on system/developer messages → `SystemCache`, on other messages → `Cache`. `tools[].cache_control` → `Tool.Cache`. Top-level `prompt_cache_key`, `prompt_cache_retention`, `prompt_cache_options` (Mode parsed, raw kept) and `cache_control` → `CacheOptions` | `openAICachedContent(raw, bp)`, a raw-JSON helper that works on develop and on 1608. System as parts when marked. Tool results as parts. Top-level keys from `CacheOptions` |
 | Responses | `prompt_cache_breakpoint` on any `input_*` part of a system/developer item → `SystemCache`, of a user item → `Cache`, and on `function_call_output` → `Cache`. The same three top-level keys | Marked messages become `[{type:input_text, text, prompt_cache_breakpoint:{mode:"explicit"}}]` (the single-string `input` shortcut is skipped when any marker exists). `SystemCache` → a leading `developer` item |
 | Bedrock (S4a) | `cachePoint` after a block, tool or system entry → the preceding segment's `Cache` | see Bedrock below |
@@ -311,6 +315,11 @@ S1a–S1c apply cleanly to either base. S2a, S2b and S4a are written base-agnost
 | `app/proxy/provider.go` | :332-333 error wrap | :326 predicate | Adjacent, keep both |
 
 ENG-1608 follows its own path (separate branch, user decision). If it reaches main first, rebase the integration branch onto `origin/main`. Resolve the hunks above, run `go test ./pkg/infra/providers/... ./pkg/app/proxy/...`, then re-stack S2b…S5 with `git rebase --update-refs`.
+
+## Known limitations
+
+- Pre-existing: `thinking` and `redacted_thinking` blocks are not part of the canonical model, so a same-format plugin re-encode of an Anthropic request drops them (and any marker on them). Passthrough without a re-encoding plugin keeps them.
+- A whitespace-only string `system` decodes to `""`, so no target receives a blank system; non-blank system text is byte-exact.
 
 ## Open Questions
 
