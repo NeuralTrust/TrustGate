@@ -198,6 +198,7 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 - [ ] 7.1 `bedrock_adapter.go`: `ConverseCachePoint`; `CachePoint` on content/system/tool; system `Text` omitempty.
 - [ ] 7.2 Same file: encode after tool, after system, last block of marked message; decode back to `Cache`.
+- [ ] 7.2b Same file: a marker on an image (`cachedImageIndex`) puts `cachePoint` right after that image block; then flip `images: true` in the Bedrock `cacheProfileFor` entry (S2b keeps it false, so Bedrock gets the text marker behind the image or none).
 - [ ] 7.3 `bedrock/converse.go`: SDK members (system, content first case, tool); `Ttl` only for 1h.
 - [ ] 7.4 `converse.go` `foldSystemIntoFirstTurn`: prepend `[text, cachePoint]`, no merge.
 - [ ] 7.5 Tests: positions, merge order, fold; rebase vs 1608 conflict map.

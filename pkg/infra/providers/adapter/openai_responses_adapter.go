@@ -663,10 +663,11 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 // responsesInputParts writes text as input_text parts with the breakpoint on
 // the part it was decoded from, or on the last one. It returns nil when there
 // is no breakpoint or no text to carry it; an assistant message cannot carry
-// one, as its parts are output_text, and a breakpoint on an image is dropped
-// because the encoder sends no images.
+// one, as its parts are output_text, and a breakpoint on an image falls
+// back to the text marker behind it because the encoder sends no images.
 func responsesInputParts(text string, cache *CanonicalCacheBreakpoint) []openaiContentPart {
-	if cache == nil || cache.onImage() {
+	cache = cache.withoutImages()
+	if cache == nil {
 		return nil
 	}
 	texts, placed := cachedTextParts(text, cache)
