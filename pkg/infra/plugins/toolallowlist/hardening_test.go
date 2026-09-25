@@ -120,6 +120,24 @@ func TestPlugin_Execute_UnmodelledToolRules(t *testing.T) {
 			want:  `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]},{"googleSearch":{}}]}`,
 		},
 		{
+			name: "gemini built-in denied under its other spelling", format: "google",
+			body: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]},{"codeExecution":{}}]}`,
+			deny: []any{"code_execution"},
+			want: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]}]}`,
+		},
+		{
+			name: "gemini snake case built-in denied by camel case", format: "google",
+			body: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]},{"google_search":{}}]}`,
+			deny: []any{"googleSearch"},
+			want: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]}]}`,
+		},
+		{
+			name: "gemini built-in allowed under its other spelling", format: "google",
+			body:  `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"},{"name":"evil"}]},{"url_context":{}}]}`,
+			allow: []any{"f", "urlContext"},
+			want:  `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"f"}]},{"url_context":{}}]}`,
+		},
+		{
 			name: "chat legacy functions are judged by name", format: "openai",
 			body:  `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"functions":[{"name":"f","parameters":{"type":"object"}},{"name":"evil"}],"function_call":{"name":"evil"}}`,
 			allow: []any{"f"},

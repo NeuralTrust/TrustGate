@@ -65,6 +65,26 @@ func isBuiltinTool(ad adapter.RequestAdapter, kind string) bool {
 	return false
 }
 
+// builtinKindSpellings returns kind with the other spelling the provider
+// accepts for it: Gemini takes googleSearch and google_search alike, so a
+// policy naming either must apply to both.
+func builtinKindSpellings(ad adapter.RequestAdapter, kind string) []string {
+	if _, ok := ad.(*adapter.GeminiAdapter); !ok {
+		return []string{kind}
+	}
+	spellings := []string{kind}
+	for _, other := range geminiBuiltinTools {
+		if other != kind && geminiKindKey(other) == geminiKindKey(kind) {
+			spellings = append(spellings, other)
+		}
+	}
+	return spellings
+}
+
+func geminiKindKey(kind string) string {
+	return strings.ToLower(strings.ReplaceAll(kind, "_", ""))
+}
+
 func isDigits(s string) bool {
 	for _, r := range s {
 		if r < '0' || r > '9' {
