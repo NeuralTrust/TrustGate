@@ -25,6 +25,7 @@ const MetadataUsageKey = "usage"
 type CanonicalRequest struct {
 	Model             string                     `json:"model,omitempty"`
 	System            string                     `json:"system,omitempty"`
+	SystemCache       *CanonicalCacheBreakpoint  `json:"system_cache,omitempty"`
 	Messages          []CanonicalMessage         `json:"messages,omitempty"`
 	Tools             []CanonicalTool            `json:"tools,omitempty"`
 	ToolChoice        *CanonicalToolChoice       `json:"tool_choice,omitempty"`
@@ -36,6 +37,7 @@ type CanonicalRequest struct {
 	Stream            bool                       `json:"stream,omitempty"`
 	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
+	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
 	// DroppedInputItems counts the input items a decoder left out because it
 	// could not read them; callers that inspect the request log it.
@@ -53,11 +55,12 @@ type CanonicalImage struct {
 
 // CanonicalMessage represents a single turn in the conversation.
 type CanonicalMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
-	Images     []CanonicalImage    `json:"images,omitempty"`
-	ToolCalls  []CanonicalToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content"`
+	Images     []CanonicalImage          `json:"images,omitempty"`
+	ToolCalls  []CanonicalToolCall       `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Cache      *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolKind distinguishes the tool shapes the gateway can represent.
@@ -81,7 +84,8 @@ type CanonicalTool struct {
 	Schema      map[string]interface{} `json:"schema,omitempty"`
 	// Format carries the grammar/format payload of a ToolKindCustom tool
 	// verbatim. It is nil for function tools.
-	Format json.RawMessage `json:"format,omitempty"`
+	Format json.RawMessage           `json:"format,omitempty"`
+	Cache  *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.

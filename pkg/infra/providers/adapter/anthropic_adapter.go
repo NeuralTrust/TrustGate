@@ -29,18 +29,38 @@ type AnthropicAdapter struct{}
 
 // Provider-specific typed structs
 type anthropicRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	System      json.RawMessage        `json:"system,omitempty"`
-	Messages    []anthropicMessage     `json:"messages"`
-	MaxTokens   int                    `json:"max_tokens"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"top_p,omitempty"`
-	TopK        *int                   `json:"top_k,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
-	Tools       []anthropicTool        `json:"tools,omitempty"`
-	ToolChoice  *anthropicToolChoice   `json:"tool_choice,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Model        string                 `json:"model,omitempty"`
+	System       json.RawMessage        `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Temperature  *float64               `json:"temperature,omitempty"`
+	TopP         *float64               `json:"top_p,omitempty"`
+	TopK         *int                   `json:"top_k,omitempty"`
+	Stream       *bool                  `json:"stream,omitempty"`
+	StopSeqs     []string               `json:"stop_sequences,omitempty"`
+	Tools        []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+func anthropicCacheBreakpoint(cc *anthropicCacheControl) *CanonicalCacheBreakpoint {
+	if cc == nil {
+		return nil
+	}
+	return &CanonicalCacheBreakpoint{TTL: CacheTTL(cc.TTL)}
+}
+
+func anthropicCacheControlFrom(bp *CanonicalCacheBreakpoint) *anthropicCacheControl {
+	if bp == nil {
+		return nil
+	}
+	return &anthropicCacheControl{Type: "ephemeral", TTL: string(bp.TTL)}
 }
 
 type anthropicMessage struct {
@@ -50,11 +70,12 @@ type anthropicMessage struct {
 
 // anthropicTool is used when decoding requests (supports flat and type+custom).
 type anthropicTool struct {
-	Type        string                 `json:"type,omitempty"`
-	Custom      *anthropicToolCustom   `json:"custom,omitempty"`
-	Name        string                 `json:"name,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+	Type         string                 `json:"type,omitempty"`
+	Custom       *anthropicToolCustom   `json:"custom,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // anthropicToolCustom is the nested shape required by the API for custom tools (encode).
@@ -81,17 +102,18 @@ type anthropicResponse struct {
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Thinking  string          `json:"thinking,omitempty"`  // extended thinking block content
-	Signature string          `json:"signature,omitempty"` // thinking block signature
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"` // user message: tool_result block
-	Content   json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
-	IsError   bool            `json:"is_error,omitempty"`
-	Source    json.RawMessage `json:"source,omitempty"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`  // extended thinking block content
+	Signature    string                 `json:"signature,omitempty"` // thinking block signature
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        json.RawMessage        `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"` // user message: tool_result block
+	Content      json.RawMessage        `json:"content,omitempty"`     // tool_result content: string or blocks
+	IsError      bool                   `json:"is_error,omitempty"`
+	Source       json.RawMessage        `json:"source,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicImageSource struct {
@@ -271,7 +293,11 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		var textParts []string
 		var images []CanonicalImage
 		var toolMessages []CanonicalMessage
+		var cache *CanonicalCacheBreakpoint
 		for _, b := range blocks {
+			if b.Type != "tool_result" {
+				cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
+			}
 			switch b.Type {
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
@@ -286,6 +312,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 					Role:       "tool",
 					ToolCallID: b.ToolUseID,
 					Content:    content,
+					Cache:      anthropicCacheBreakpoint(b.CacheControl),
 				})
 			case "text":
 				textParts = append(textParts, b.Text)
@@ -297,12 +324,15 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 				Role:    "user",
 				Content: strings.Join(textParts, "\n"),
 				Images:  images,
+				Cache:   cache,
 			})
 		}
 	case "assistant":
 		var textParts []string
 		var toolCalls []CanonicalToolCall
+		var cache *CanonicalCacheBreakpoint
 		for _, b := range blocks {
+			cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
 			switch b.Type {
 			case "text":
 				textParts = append(textParts, b.Text)
@@ -318,6 +348,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			Role:      "assistant",
 			Content:   strings.Join(textParts, "\n"),
 			ToolCalls: toolCalls,
+			Cache:     cache,
 		})
 	default:
 		out = append(out, CanonicalMessage{
@@ -365,11 +396,15 @@ func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
 }
 
 func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
-	if m.Role != "user" || len(m.Images) == 0 {
+	images := m.Images
+	if m.Role != "user" {
+		images = nil
+	}
+	if len(images) == 0 && (m.Cache == nil || m.Content == "") {
 		return stringToContent(m.Content), nil
 	}
-	blocks := make([]anthropicContentBlock, 0, len(m.Images)+1)
-	for _, img := range m.Images {
+	blocks := make([]anthropicContentBlock, 0, len(images)+1)
+	for _, img := range images {
 		b, err := anthropicImageBlock(img)
 		if err != nil {
 			return nil, err
@@ -379,6 +414,7 @@ func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
 	if m.Content != "" {
 		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
 	}
+	blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
 	return json.Marshal(blocks)
 }
 
@@ -390,9 +426,11 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		return nil, err
 	}
 
+	system, systemCache := anthropicSystem(req.System)
 	cr := &CanonicalRequest{
 		Model:       req.Model,
-		System:      anthropicSystemText(req.System),
+		System:      system,
+		SystemCache: systemCache,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -403,6 +441,9 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
+	}
+	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
+		cr.CacheOptions = &CanonicalCacheOptions{Auto: auto}
 	}
 
 	// Messages: decode content blocks so tool_result (user) and tool_use (assistant) are preserved
@@ -420,6 +461,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 			Name:        name,
 			Description: desc,
 			Schema:      schema,
+			Cache:       anthropicCacheBreakpoint(t.CacheControl),
 		})
 	}
 
@@ -439,7 +481,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := anthropicRequest{
 		Model:       req.Model,
-		System:      anthropicSystemRaw(req.System),
+		System:      anthropicSystemRaw(req.System, req.SystemCache),
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
@@ -449,6 +491,9 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 
 	if req.Stream {
 		out.Stream = boolPtr(true)
+	}
+	if req.CacheOptions != nil {
+		out.CacheControl = anthropicCacheControlFrom(req.CacheOptions.Auto)
 	}
 
 	// max_tokens (required by Anthropic)
@@ -466,9 +511,10 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
 				content, _ := json.Marshal(req.Messages[i].Content)
 				toolResultBlocks = append(toolResultBlocks, anthropicContentBlock{
-					Type:      "tool_result",
-					ToolUseID: req.Messages[i].ToolCallID,
-					Content:   content,
+					Type:         "tool_result",
+					ToolUseID:    req.Messages[i].ToolCallID,
+					Content:      content,
+					CacheControl: anthropicCacheControlFrom(req.Messages[i].Cache),
 				})
 				i++
 			}
@@ -495,6 +541,7 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 					Input: anthropicToolInput(tc.Arguments),
 				})
 			}
+			blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
 			raw, err := json.Marshal(blocks)
 			if err != nil {
 				return nil, fmt.Errorf("encode anthropic assistant message: %w", err)
@@ -526,9 +573,10 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 			schema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 		}
 		out.Tools = append(out.Tools, anthropicTool{
-			Name:        name,
-			Description: t.Description,
-			InputSchema: schema,
+			Name:         name,
+			Description:  t.Description,
+			InputSchema:  schema,
+			CacheControl: anthropicCacheControlFrom(t.Cache),
 		})
 	}
 
@@ -820,34 +868,43 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 	return nil, nil
 }
 
-func anthropicSystemText(raw json.RawMessage) string {
+// anthropicSystem keeps the system text byte-for-byte, as the OpenAI decoders
+// do, so the same prompt reaches the upstream with the same cache prefix
+// whichever client format sent it.
+func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return strings.TrimSpace(s)
+		return s, nil
 	}
 	var blocks []anthropicContentBlock
 	if json.Unmarshal(raw, &blocks) != nil {
-		return strings.TrimSpace(contentToString(raw))
+		return contentToString(raw), nil
 	}
 	parts := make([]string, 0, len(blocks))
+	var cache *CanonicalCacheBreakpoint
 	for _, b := range blocks {
 		if b.Type == "" || b.Type == "text" {
-			if t := strings.TrimSpace(b.Text); t != "" {
-				parts = append(parts, t)
+			if strings.TrimSpace(b.Text) != "" {
+				parts = append(parts, b.Text)
 			}
+			cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), cache
 }
 
-func anthropicSystemRaw(system string) json.RawMessage {
+func anthropicSystemRaw(system string, cache *CanonicalCacheBreakpoint) json.RawMessage {
 	if strings.TrimSpace(system) == "" {
 		return nil
 	}
-	raw, err := json.Marshal(system)
+	var v any = system
+	if cache != nil {
+		v = []anthropicContentBlock{{Type: "text", Text: system, CacheControl: anthropicCacheControlFrom(cache)}}
+	}
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil
 	}

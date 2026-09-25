@@ -903,3 +903,196 @@ func TestDecodeAnthropicMessageContent_Images(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicRequest_NoCacheMarkersLeaveNoIntent(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"system": [{"type": "text", "text": "Be brief."}],
+		"tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "hi"}]},
+			{"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "lookup", "input": {}}]},
+			{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}
+		]
+	}`)
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest(body)
+	require.NoError(t, err)
+
+	assert.Nil(t, cr.SystemCache)
+	assert.Nil(t, cr.CacheOptions)
+	assert.Equal(t, []any{nil}, toolTTLs(cr.Tools))
+	assert.Equal(t, []any{nil, nil, nil}, messageTTLs(cr.Messages))
+
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "cache_control")
+	assert.Contains(t, string(out), `"system":"Be brief."`)
+}
+
+type anthropicCachedBody struct {
+	Stream       *bool                  `json:"stream"`
+	CacheControl *anthropicCacheControl `json:"cache_control"`
+	System       []struct {
+		Text         string                 `json:"text"`
+		CacheControl *anthropicCacheControl `json:"cache_control"`
+	} `json:"system"`
+	Tools []struct {
+		Name         string                 `json:"name"`
+		CacheControl *anthropicCacheControl `json:"cache_control"`
+	} `json:"tools"`
+	Messages []struct {
+		Role    string                  `json:"role"`
+		Content []anthropicContentBlock `json:"content"`
+	} `json:"messages"`
+}
+
+func TestAnthropicRequest_CacheMarkersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "buffered", true: "stream"}[stream], func(t *testing.T) {
+			t.Parallel()
+			body := []byte(`{
+				"model": "claude-sonnet-4-5",
+				"max_tokens": 64,
+				"stream": ` + map[bool]string{false: "false", true: "true"}[stream] + `,
+				"cache_control": {"type": "ephemeral"},
+				"system": [
+					{"type": "text", "text": "Part one."},
+					{"type": "text", "text": "Part two.", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+				],
+				"tools": [
+					{"name": "a", "input_schema": {"type": "object"}},
+					{"name": "b", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+				],
+				"messages": [
+					{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]},
+					{"role": "assistant", "content": [
+						{"type": "text", "text": "calling"},
+						{"type": "tool_use", "id": "t1", "name": "b", "input": {}, "cache_control": {"type": "ephemeral"}}
+					]},
+					{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]}
+				]
+			}`)
+			a := &AnthropicAdapter{}
+			cr, err := a.DecodeRequest(body)
+			require.NoError(t, err)
+
+			assert.Equal(t, "Part one.\nPart two.", cr.System)
+			assert.Equal(t, CacheTTL1h, ttlOf(cr.SystemCache))
+			require.NotNil(t, cr.CacheOptions)
+			assert.Equal(t, CacheTTL(""), ttlOf(cr.CacheOptions.Auto))
+			assert.Equal(t, []any{nil, CacheTTL1h}, toolTTLs(cr.Tools))
+			assert.Equal(t, []any{CacheTTL1h, CacheTTL(""), CacheTTL5m}, messageTTLs(cr.Messages))
+			assert.Equal(t, "tool", cr.Messages[2].Role)
+
+			out, err := a.EncodeRequest(cr)
+			require.NoError(t, err)
+			var got anthropicCachedBody
+			require.NoError(t, json.Unmarshal(out, &got))
+
+			assert.Equal(t, stream, got.Stream != nil && *got.Stream)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral"}, got.CacheControl)
+			require.Len(t, got.System, 1)
+			assert.Equal(t, "Part one.\nPart two.", got.System[0].Text)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.System[0].CacheControl)
+			require.Len(t, got.Tools, 2)
+			assert.Nil(t, got.Tools[0].CacheControl)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.Tools[1].CacheControl)
+			require.Len(t, got.Messages, 3)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.Messages[0].Content[0].CacheControl)
+			require.Len(t, got.Messages[1].Content, 2)
+			assert.Nil(t, got.Messages[1].Content[0].CacheControl)
+			assert.Equal(t, "tool_use", got.Messages[1].Content[1].Type)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral"}, got.Messages[1].Content[1].CacheControl)
+			assert.Equal(t, "tool_result", got.Messages[2].Content[0].Type)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "5m"}, got.Messages[2].Content[0].CacheControl)
+		})
+	}
+}
+
+func TestAnthropicRequest_MarkedImageBlockMarksTheMessage(t *testing.T) {
+	t.Parallel()
+
+	cr, err := (&AnthropicAdapter{}).DecodeRequest([]byte(`{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"messages": [{"role": "user", "content": [
+			{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}, "cache_control": {"type": "ephemeral"}},
+			{"type": "text", "text": "describe"}
+		]}]
+	}`))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 1)
+	assert.Equal(t, []any{CacheTTL("")}, messageTTLs(cr.Messages))
+}
+
+func TestAnthropicEncodeRequest_CacheMarkerGoesOnTheLastBlock(t *testing.T) {
+	t.Parallel()
+
+	img := CanonicalImage{MediaType: "image/png", Data: "iVBORw0KGgo="}
+	tests := []struct {
+		name        string
+		message     CanonicalMessage
+		wantContent string
+	}{
+		{
+			name:        "image then text",
+			message:     CanonicalMessage{Role: "user", Content: "describe", Images: []CanonicalImage{img}, Cache: bp(CacheTTL5m)},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"describe","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+		},
+		{
+			name:        "image only",
+			message:     CanonicalMessage{Role: "user", Images: []CanonicalImage{img}, Cache: bp("")},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="},"cache_control":{"type":"ephemeral"}}]`,
+		},
+		{
+			name:        "string content becomes a text block",
+			message:     CanonicalMessage{Role: "assistant", Content: "done", Cache: bp(CacheTTL1h)},
+			wantContent: `[{"type":"text","text":"done","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:        "empty content drops the marker",
+			message:     CanonicalMessage{Role: "user", Cache: bp("")},
+			wantContent: `""`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := (&AnthropicAdapter{}).EncodeRequest(&CanonicalRequest{Model: "claude-sonnet-4-5", Messages: []CanonicalMessage{tt.message}})
+			require.NoError(t, err)
+			var got struct {
+				Messages []anthropicMessage `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+			require.Len(t, got.Messages, 1)
+			assert.JSONEq(t, tt.wantContent, string(got.Messages[0].Content))
+		})
+	}
+}
+
+func TestAnthropicEncodeRequest_NormalizedSixBreakpointsKeepFour(t *testing.T) {
+	t.Parallel()
+
+	req := cachedRequest(1, 4, "")
+	req.Model = "claude-sonnet-4-5"
+	normalizeCacheIntent(req, FormatAnthropic)
+	out, err := (&AnthropicAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+	assert.Equal(t, 4, bytes.Count(out, []byte(`"cache_control"`)))
+
+	var got struct {
+		Messages []anthropicMessage `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 4)
+	cc := `[{"type":"text","text":"m","cache_control":{"type":"ephemeral"}}]`
+	for i, want := range []string{`"m"`, `"m"`, cc, cc} {
+		assert.JSONEq(t, want, string(got.Messages[i].Content), "message %d", i)
+	}
+}
