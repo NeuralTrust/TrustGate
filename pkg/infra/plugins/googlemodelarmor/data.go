@@ -14,33 +14,39 @@
 
 package googlemodelarmor
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 type Data struct {
-	Project        string   `json:"project,omitempty"`
-	Location       string   `json:"location,omitempty"`
-	Template       string   `json:"template,omitempty"`
-	Stage          string   `json:"stage,omitempty"`
-	Mode           string   `json:"mode,omitempty"`
-	Decision       string   `json:"decision,omitempty"`
-	Filter         string   `json:"filter,omitempty"`
-	InfoTypes      []string `json:"info_types,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	Location  string   `json:"location,omitempty"`
+	Template  string   `json:"template,omitempty"`
+	Stage     string   `json:"stage,omitempty"`
+	Mode      string   `json:"mode,omitempty"`
+	Decision  string   `json:"decision,omitempty"`
+	Filter    string   `json:"filter,omitempty"`
+	InfoTypes []string `json:"info_types,omitempty"`
 	// Confidence is Model Armor's own confidence in the match, and Category
 	// the RAI sub-filter it belongs to. The 403 body names only the filter,
 	// deliberately — it is a public contract — so without these two the
 	// difference between a borderline block and an unambiguous one is
 	// invisible to anyone tuning thresholds after the fact.
-	Confidence string `json:"confidence,omitempty"`
-	Category   string `json:"category,omitempty"`
-	LatencyMS      int64    `json:"latency_ms,omitempty"`
-	Degraded       bool     `json:"degraded,omitempty"`
-	DegradedReason string   `json:"degraded_reason,omitempty"`
+	Confidence     string `json:"confidence,omitempty"`
+	Category       string `json:"category,omitempty"`
+	LatencyMS      int64  `json:"latency_ms,omitempty"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FilterVersion is the Model Armor filter version that produced the
 	// verdict. A template pointed at an alias rather than a pinned version
 	// changes behaviour when Google promotes a new one, with no deploy on our
 	// side, so without this "it used to block this and now it does not" has
 	// no answer anyone can reach from our telemetry.
 	FilterVersion string `json:"filter_version,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {

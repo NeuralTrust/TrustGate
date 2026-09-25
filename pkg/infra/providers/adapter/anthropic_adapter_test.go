@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -611,4 +612,219 @@ func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
 
 	assert.Same(t, prev, MergeUsage(prev, nil))
 	assert.Same(t, next, MergeUsage(nil, next))
+}
+
+func encodeAnthropicStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
+	t.Helper()
+	a := &AnthropicAdapter{}
+	var got []string
+	for _, chunk := range chunks {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		got = append(got, bytesLinesToStrings(lines)...)
+	}
+	return got
+}
+
+// A guardrail cut has to be legible on the wire, which takes three things the
+// encoder used to get wrong: a stop_reason a client can tell apart from a
+// normal ending, the stop_details the real API pairs with that reason, and a
+// content_block_stop naming the block the stream was actually in. The
+// terminator is the whole cut on this dialect — no trailing error event
+// follows it. The last case pins the untouched shape of a normal finish.
+func TestAnthropicEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		chunks []*CanonicalStreamChunk
+		want   []string
+	}{
+		{
+			name: "cut on a text-only response",
+			chunks: []*CanonicalStreamChunk{
+				{ID: "msg_cut", Model: "claude-sonnet-4-5", Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				"event: message_start",
+				`data: {"type":"message_start","message":{"id":"msg_cut","type":"message","role":"assistant",` +
+					`"content":[],"model":"claude-sonnet-4-5","stop_reason":null,"stop_sequence":null,` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}}`,
+				"",
+				"event: content_block_start",
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+				"",
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Here is the "}}`,
+				"",
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"recipe"}}`,
+				"",
+				"event: content_block_stop",
+				`data: {"type":"content_block_stop","index":0}`,
+				"",
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}`,
+				"",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`,
+				"",
+			},
+		},
+		{
+			name: "cut on a response whose index 0 is a thinking block",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Here is the ", ContentBlockIndex: 1},
+				{FinishReason: "content_filter", ContentBlockIndex: 1},
+			},
+			want: []string{
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Here is the "}}`,
+				"",
+				"event: content_block_stop",
+				`data: {"type":"content_block_stop","index":1}`,
+				"",
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,` +
+					`"stop_details":{"type":"refusal"}},` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}`,
+				"",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`,
+				"",
+			},
+		},
+		{
+			name: "normal finish",
+			chunks: []*CanonicalStreamChunk{
+				{ID: "msg_ok", Model: "claude-sonnet-4-5", Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "stop"},
+			},
+			want: []string{
+				"event: message_start",
+				`data: {"type":"message_start","message":{"id":"msg_ok","type":"message","role":"assistant",` +
+					`"content":[],"model":"claude-sonnet-4-5","stop_reason":null,"stop_sequence":null,` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}}`,
+				"",
+				"event: content_block_start",
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+				"",
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Here is the "}}`,
+				"",
+				"event: content_block_delta",
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"recipe"}}`,
+				"",
+				"event: content_block_stop",
+				`data: {"type":"content_block_stop","index":0}`,
+				"",
+				"event: message_delta",
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},` +
+					`"usage":{"input_tokens":0,"output_tokens":0}}`,
+				"",
+				"event: message_stop",
+				`data: {"type":"message_stop"}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, encodeAnthropicStream(t, tc.chunks))
+		})
+	}
+}
+
+// The role-only and role-plus-text openings number their block the same way the
+// terminator does, or a cut closes a block the stream never opened.
+func TestAnthropicEncodeStreamChunk_OpeningHonoursTheBlockIndex(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		chunk *CanonicalStreamChunk
+		want  []string
+	}{
+		{
+			name:  "role only",
+			chunk: &CanonicalStreamChunk{ID: "msg_1", Model: "m", Role: "assistant", ContentBlockIndex: 2},
+			want: []string{
+				`data: {"type":"content_block_start","index":2,"content_block":{"type":"text"}}`,
+			},
+		},
+		{
+			name:  "role with text",
+			chunk: &CanonicalStreamChunk{ID: "msg_1", Model: "m", Role: "assistant", Delta: "hi", ContentBlockIndex: 2},
+			want: []string{
+				`data: {"type":"content_block_start","index":2,"content_block":{"type":"text"}}`,
+				`data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hi"}}`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var blocks []string
+			for _, line := range encodeAnthropicStream(t, []*CanonicalStreamChunk{tc.chunk}) {
+				if strings.Contains(line, `"content_block_`) {
+					blocks = append(blocks, line)
+				}
+			}
+			assert.Equal(t, tc.want, blocks)
+		})
+	}
+}
+
+// The buffered and the streamed encode must agree: a cut cannot read as
+// refusal on one path and as a clean end_turn on the other.
+func TestAnthropicStopReason_BufferedAndStreamedAgree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		finishReason string
+		want         string
+	}{
+		{name: "stop", finishReason: "stop", want: "end_turn"},
+		{name: "length", finishReason: "length", want: "max_tokens"},
+		{name: "tool calls", finishReason: "tool_calls", want: "tool_use"},
+		{name: "content filter", finishReason: "content_filter", want: "refusal"},
+		{name: "empty", finishReason: "", want: "end_turn"},
+		{name: "unrecognised", finishReason: "something_else", want: "end_turn"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &AnthropicAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ID: "msg_1", Model: "m", Content: "hi", FinishReason: tc.finishReason,
+			})
+			require.NoError(t, err)
+			var buffered struct {
+				StopReason string `json:"stop_reason"`
+			}
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.Equal(t, tc.want, buffered.StopReason, "buffered")
+
+			if tc.finishReason == "" {
+				return
+			}
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{FinishReason: tc.finishReason})
+			require.NoError(t, err)
+			assert.Contains(t, strings.Join(bytesLinesToStrings(lines), "\n"),
+				`"stop_reason":"`+tc.want+`"`, "streamed")
+		})
+	}
+}
+
+func bytesLinesToStrings(lines [][]byte) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, string(line))
+	}
+	return out
 }

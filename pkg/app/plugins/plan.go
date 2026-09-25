@@ -169,6 +169,34 @@ func (p *StagePlan) Blocks(stage policy.Stage) bool {
 	return false
 }
 
+// StreamPlan reports whether any entry of the stage opted into per-segment
+// inspection *and* has it enabled, and yields the options that entry runs
+// under. The stream guard is built only when it reports true, so a gateway
+// whose policies do not participate pays nothing for the feature.
+//
+// The opt-in and its configuration are answered together because only the
+// plugin can parse its own settings: split apart, a plan that says "yes" would
+// hand the caller no head_chars and no on_error, and the caller would run on
+// defaults an operator never asked for.
+//
+// The first participating entry wins. One stream carries one head gate, and
+// the entries are already ordered by priority.
+func (p *StagePlan) StreamPlan(stage policy.Stage) (bool, StreamOptions) {
+	if p == nil {
+		return false, StreamOptions{}
+	}
+	for _, entry := range p.byStage[stage] {
+		inspector, ok := streamInspector(entry.plugin)
+		if !ok {
+			continue
+		}
+		if enabled, opts := inspector.StreamSettings(entry.config.Settings); enabled {
+			return true, opts
+		}
+	}
+	return false, StreamOptions{}
+}
+
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
 	if p == nil {
 		return nil

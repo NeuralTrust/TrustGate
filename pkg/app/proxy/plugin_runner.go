@@ -91,35 +91,56 @@ func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID)
 	return nil, err
 }
 
+// runPreResponseGated runs the pre_response stage and hands back both ways it
+// can end the response: a PluginError, and the stage outcome a plugin's own
+// StopUpstream result produces.
+//
+// The outcome has to be returned because only one of the two callers can read
+// it off anything else. applyResults writes StatusCode, Body and Headers onto
+// the ResponseContext, and finalizeBodyGated renders its ForwardResult from
+// exactly that, so on the buffered leg a short circuit is already applied by
+// the time this returns. finalizeStream renders from the provider response and
+// forwards the upstream iterator, so there the same result reaches nothing:
+// without this the stream would be sent unmodified under the provider's own
+// status, and only a PluginError would ever stop it.
+//
+// No plugin in this repository produces that result on a stream today. Every
+// output-inspecting plugin skips a streaming pre_response leg outright, and the
+// ones that rewrite a body — regexreplace, googlemodelarmor, bedrockguardrail —
+// have nothing to rewrite there, because mergeStreamingResponse copies status
+// and headers and leaves the body empty. This is therefore a defensive fix with
+// no live producer: the stage contract says a pre_response result can end the
+// response, and one of the two legs was not honouring it.
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
 	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
-) *appplugins.PluginError {
+) (*appplugins.StageOutcome, *appplugins.PluginError) {
 	if f.executor == nil {
-		return nil
+		return nil, nil
 	}
-	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
+	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: policies,
 		Plan:     plan,
 		Request:  req,
 		Response: resp,
-	}); err != nil {
+	})
+	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return pe
+			return nil, pe
 		}
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
 		if preResponseBlocks(policies, plan) {
-			return &appplugins.PluginError{
+			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusBadGateway,
 				Message:    "pre_response plugin stage failed",
 			}
 		}
 	}
-	return nil
+	return outcome, nil
 }
 
 func preResponseBlocks(policies []*policy.Policy, plan *appplugins.StagePlan) bool {
@@ -156,22 +177,63 @@ func (f *forwarder) firePostResponse(
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) {
+	f.firePostResponseAfter(ctx, nil, policies, plan, req, resp)
+}
+
+// firePostResponseAfter runs the post_response stage once gate is closed, or
+// immediately when there is no gate. The only gate there is today is the
+// background drain a mid-stream cut leaves behind, and two things ride on it.
+//
+// The drain writes req.Metadata["usage"] from its own goroutine, so cloning the
+// map before it has finished is a concurrent map read and write, not a stale
+// number. And usage rides the last chunk, which on a cut is still upstream when
+// the terminator reaches the client, so a token_rate_limiter reading the map
+// before the drain ends charges a blocked stream nothing — the outcome the
+// drain exists to prevent.
+//
+// The client never waits for any of this: the terminator was yielded before the
+// drain started, and this stage has always been detached with a timeout of its
+// own.
+func (f *forwarder) firePostResponseAfter(
+	ctx context.Context,
+	gate <-chan struct{},
+	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+) {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return
 	}
 	rt := trace.FromContext(ctx)
-	reqCopy := snapshotRequest(req)
 	respCopy := snapshotResponse(resp)
+	var reqCopy *infracontext.RequestContext
+	if gate == nil {
+		reqCopy = snapshotRequest(req)
+	}
+	timeout := postResponseTimeout
+	if gate != nil {
+		timeout += cutDrainDeadline
+	}
 
 	if rt != nil {
 		rt.AddAsync()
 	}
 	go func() { // #nosec G118 -- post-response must outlive the request context, which is cancelled once the response is sent; the goroutine owns its own timeout
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postResponseTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 		defer cancel()
 		if rt != nil {
 			defer rt.Done()
 			ctx = trace.NewContext(ctx, rt)
+		}
+		if gate != nil {
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				f.logger.Warn("post_response skipped: the cut drain outlived its deadline")
+				return
+			}
+			reqCopy = snapshotRequest(req)
 		}
 		if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
 			Stage:    policy.StagePostResponse,
@@ -192,6 +254,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	stream iter.Seq2[[]byte, error],
+	gate func() <-chan struct{},
 ) iter.Seq2[[]byte, error] {
 	if f.executor == nil || !hasPostResponse(plan) {
 		return stream
@@ -225,7 +288,15 @@ func (f *forwarder) wrapStreamWithPostResponse(
 			return
 		}
 		resp.Body = body
-		f.firePostResponse(ctx, policies, plan, req, resp)
+		// gate is consulted here rather than captured above because a cut
+		// decides mid-stream: the guard installs the barrier on the goroutine
+		// this loop has just finished draining, so it is readable now and was
+		// not when the wrapper was built.
+		var drained <-chan struct{}
+		if gate != nil {
+			drained = gate()
+		}
+		f.firePostResponseAfter(ctx, drained, policies, plan, req, resp)
 	}
 }
 
@@ -273,6 +344,22 @@ func hasResponseHeader(headers map[string][]string, name string) bool {
 		}
 	}
 	return false
+}
+
+// setResponseHeader replaces name whatever case it was spelled in, so a value
+// the gateway is correcting cannot end up beside the one it corrected.
+func setResponseHeader(headers map[string][]string, name, value string) {
+	deleteResponseHeader(headers, name)
+	headers[textproto.CanonicalMIMEHeaderKey(name)] = []string{value}
+}
+
+func deleteResponseHeader(headers map[string][]string, name string) {
+	want := textproto.CanonicalMIMEHeaderKey(name)
+	for k := range headers {
+		if textproto.CanonicalMIMEHeaderKey(k) == want {
+			delete(headers, k)
+		}
+	}
 }
 
 func cloneResponseHeaders(headers map[string][]string) map[string][]string {

@@ -584,3 +584,15 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 	}
 	return SSEData(data), nil
 }
+
+// CompletionsTerminalStreamChunk builds the chunk that closes an OpenAI-chat
+// stream the gateway cut short. It carries id and model over from the first
+// observed chunk because strict client validators reject a chunk without them.
+func CompletionsTerminalStreamChunk(first *CanonicalStreamChunk, finishReason string) *CanonicalStreamChunk {
+	terminal := &CanonicalStreamChunk{FinishReason: finishReason}
+	if first != nil {
+		terminal.ID = first.ID
+		terminal.Model = first.Model
+	}
+	return terminal
+}

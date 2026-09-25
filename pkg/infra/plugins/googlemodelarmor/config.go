@@ -17,6 +17,7 @@ package googlemodelarmor
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -68,6 +69,17 @@ type Credentials struct {
 }
 
 // Settings configures the google_model_armor plugin.
+// Streaming defaults. A sanitize call runs every filter in the template
+// against the text, so it is closer to bedrock's guardrail than to a single
+// classifier and the block loop calls it at the same cadence.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 2048,
+	MaxHoldMS:            800,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         2 * time.Second,
+}
+
 type Settings struct {
 	Project     string      `mapstructure:"project"`
 	Location    string      `mapstructure:"location"`
@@ -76,6 +88,10 @@ type Settings struct {
 	SDPAction   string      `mapstructure:"sdp_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
+	// Streaming opts the pre_response leg into per-block inspection. Absent, a
+	// streamed response reaches the client unsanitized, which is what this
+	// plugin did before the block loop existed.
+	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -97,6 +113,9 @@ func (s *Settings) applyDefaults() {
 	if s.SDPAction == "" {
 		s.SDPAction = sdpActionBlock
 	}
+	// The buffered leg fails closed when the sanitize call fails, so the stream
+	// leg inherits that rather than a laxer default.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 }
 
 func (s *Settings) validate() error {
@@ -125,7 +144,7 @@ func (s *Settings) validate() error {
 			"google_model_armor: credentials: set only one of impersonate_service_account or service_account_json",
 		)
 	}
-	return nil
+	return s.Streaming.Validate(PluginName)
 }
 
 func isValidFilter(f string) bool {

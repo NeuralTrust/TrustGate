@@ -558,11 +558,12 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(body), "event: error") {
-			t.Fatalf("body = %s, want event: error", body)
-		}
-		if !strings.Contains(string(body), `"type":"error"`) {
-			t.Fatalf("body = %s, want type error", body)
+		want := "data: a\n" +
+			"event: error\n" +
+			`data: {"type":"error","error":{"type":"api_error","message":"upstream stream terminated unexpectedly"}}` +
+			"\n\n\n"
+		if string(body) != want {
+			t.Fatalf("body = %q, want %q", body, want)
 		}
 	})
 
@@ -581,11 +582,11 @@ func TestHandle_StreamingAbort_UsesIngressErrorEvent(t *testing.T) {
 			t.Fatalf("app.Test: %v", err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(body), `"type":"upstream_error"`) {
-			t.Fatalf("body = %s, want openai stream error", body)
-		}
-		if strings.Contains(string(body), "event: error") {
-			t.Fatalf("openai stream must not emit event: error")
+		want := "data: a\n" +
+			`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` +
+			"\n\n"
+		if string(body) != want {
+			t.Fatalf("body = %q, want %q", body, want)
 		}
 	})
 }
