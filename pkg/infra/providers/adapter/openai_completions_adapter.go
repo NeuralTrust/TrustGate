@@ -402,9 +402,6 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 // Request: Encode (Canonical → Chat Completions)
 // ---------------------------------------------------------------------------
 
-// encodeOpenAIContent writes text as a plain string unless it has images or a
-// cache marker. A marker goes on the image or text part it was decoded from,
-// or on the last part; one on an image that is gone is dropped.
 func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
 	imageAt, onImage := cachedImageIndex(cache, len(images))
 	if cache.onImage() && !onImage {
