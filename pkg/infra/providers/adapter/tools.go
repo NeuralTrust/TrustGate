@@ -662,7 +662,7 @@ func rawToolEntries(b []byte, arr rawSpan, gemini bool) ([]rawSpan, []rawTool, b
 			continue
 		}
 		fields, err := rawFields(b, item)
-		if err != nil {
+		if err != nil || !rawToolKeysUnique(fields) {
 			return nil, nil, false
 		}
 		if len(fields) == 1 && fields[0].key == "cachePoint" {
@@ -691,14 +691,23 @@ func (g *grafter) keepUnmodelled(t rawTool) bool {
 	return g.opts.KeepUnmodelledTool != nil && g.opts.KeepUnmodelledTool(t.unmodelledTool())
 }
 
+// rawToolKeysUnique reports whether each key rawToolKind, rawToolName and
+// rawMCPServerName read matches at most one field of a tools entry.
+func rawToolKeysUnique(fields []rawField) bool {
+	for _, key := range []string{"type", "name", "function", "custom", "toolSpec", "mcp_server_name"} {
+		if _, _, ok := rawFieldNamed(fields, key); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // rawToolKind returns the entry's "type", matched as the decoder matches it,
 // or its only key. A Bedrock system tool is "systemTool:<name>".
 func rawToolKind(b []byte, fields []rawField) string {
-	for _, f := range fields {
-		if strings.EqualFold(f.key, "type") {
-			kind, _ := rawString(b, f.value)
-			return kind
-		}
+	if f, found, ok := rawFieldNamed(fields, "type"); found || !ok {
+		kind, _ := rawString(b, f.value)
+		return kind
 	}
 	if len(fields) != 1 {
 		return ""
@@ -715,21 +724,21 @@ func rawToolKind(b []byte, fields []rawField) string {
 
 func rawToolName(b []byte, fields []rawField) string {
 	for _, key := range []string{"name", "function", "custom", "toolSpec"} {
-		for _, f := range fields {
-			if !strings.EqualFold(f.key, key) {
+		f, found, ok := rawFieldNamed(fields, key)
+		if !ok {
+			return ""
+		}
+		if !found {
+			continue
+		}
+		s := f.value
+		if key != "name" {
+			if s, ok = rawAt(b, f.value, []string{"name"}); !ok {
 				continue
 			}
-			s := f.value
-			if key != "name" {
-				var ok bool
-				if s, ok = rawAt(b, f.value, []string{"name"}); !ok {
-					break
-				}
-			}
-			if name, ok := rawString(b, s); ok && name != "" {
-				return name
-			}
-			break
+		}
+		if name, ok := rawString(b, s); ok && name != "" {
+			return name
 		}
 	}
 	return ""
@@ -740,13 +749,12 @@ func rawToolName(b []byte, fields []rawField) string {
 const mcpToolsetKind = "mcp_toolset"
 
 func rawMCPServerName(b []byte, fields []rawField) string {
-	for _, f := range fields {
-		if strings.EqualFold(f.key, "mcp_server_name") {
-			name, _ := rawString(b, f.value)
-			return name
-		}
+	f, found, ok := rawFieldNamed(fields, "mcp_server_name")
+	if !found || !ok {
+		return ""
 	}
-	return ""
+	name, _ := rawString(b, f.value)
+	return name
 }
 
 func toolsByName(tools []rawTool) (map[string]rawTool, bool) {

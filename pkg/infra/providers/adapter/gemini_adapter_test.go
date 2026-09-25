@@ -1103,3 +1103,41 @@ func TestGeminiCallIndexer_RenumberGivesCallsWithoutIDsDistinctIDs(t *testing.T)
 	assert.Equal(t, 2, second[0].Index)
 	assert.Equal(t, "call_9", third[0].ID)
 }
+
+func TestGemini_DecodeRequest_ReadsSnakeCaseSpellings(t *testing.T) {
+	t.Parallel()
+	body := `{"system_instruction":{"parts":[{"text":"be terse"}]},` +
+		`"contents":[{"role":"user","parts":[{"text":"weather?"}]},` +
+		`{"role":"model","parts":[{"function_call":{"name":"get_weather","args":{"city":"Paris"}},"thought_signature":"sig"}]},` +
+		`{"role":"user","parts":[{"function_response":{"name":"get_weather","response":{"sky":"clear"}}}]}],` +
+		`"generation_config":{"max_output_tokens":64,"top_p":0.5,"top_k":3,"response_mime_type":"application/json"},` +
+		`"tools":[{"function_declarations":[{"name":"get_weather"}]}]}`
+	req, err := (&GeminiAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+
+	assert.Equal(t, "be terse", req.System)
+	require.Len(t, req.Messages, 3)
+	require.Len(t, req.Messages[1].ToolCalls, 1)
+	assert.Equal(t, "get_weather", req.Messages[1].ToolCalls[0].Name)
+	assert.JSONEq(t, `{"city":"Paris"}`, req.Messages[1].ToolCalls[0].Arguments)
+	assert.Equal(t, "tool", req.Messages[2].Role)
+	assert.JSONEq(t, `{"sky":"clear"}`, req.Messages[2].Content)
+	assert.Equal(t, 64, req.MaxTokens)
+	require.NotNil(t, req.TopP)
+	assert.InDelta(t, 0.5, *req.TopP, 1e-9)
+	require.NotNil(t, req.TopK)
+	assert.Equal(t, 3, *req.TopK)
+	require.NotNil(t, req.ResponseFormat)
+	assert.Equal(t, "json_object", req.ResponseFormat.Type)
+	require.Len(t, req.Tools, 1)
+	assert.False(t, HasAmbiguousKeys(FormatGemini, []byte(body)))
+}
+
+func TestGemini_DecodeRequest_PrefersCamelCaseWhenBothSpellingsCome(t *testing.T) {
+	t.Parallel()
+	body := `{"contents":[],"systemInstruction":{"parts":[{"text":"camel"}]},"system_instruction":{"parts":[{"text":"snake"}]}}`
+	req, err := (&GeminiAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "camel", req.System)
+	assert.True(t, HasAmbiguousKeys(FormatGemini, []byte(body)), "the upstream may read the other spelling")
+}

@@ -144,7 +144,7 @@ func TestGraftChangedFieldsRefusesDuplicateKeys(t *testing.T) {
 		"top-level case":      `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"Messages":[{"role":"user","content":"decoy ` + leakSecret + `"}]}`,
 		"nested exact":        `{"model":"m","messages":[{"role":"user","content":"a ` + leakSecret + `","content":"hi ` + leakSecret + `"}]}`,
 		"nested case":         `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `","CONTENT":"decoy ` + leakSecret + `"}]}`,
-		"unicode fold":        `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"metadata":{"ſ":"a","s":"b"}}`,
+		"unicode fold":        `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"stream":false,"ſtream":true}`,
 		"inside a tool entry": `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"tools":[{"type":"function","function":{"name":"g","name":"f"}}]}`,
 	}
 	for name, body := range cases {
@@ -163,15 +163,51 @@ func TestGraftChangedFieldsRefusesDuplicateKeys(t *testing.T) {
 	})
 }
 
-func TestRawFieldsRejectsKeysTheDecoderFolds(t *testing.T) {
+func TestGraftChangedFieldsKeepsClientObjectsWithCaseVariants(t *testing.T) {
+	t.Parallel()
+	const schema = `{"type":"object","properties":{"Name":{"type":"string"},"name":{"type":"string"}}}`
+	cases := []struct {
+		name, keep string
+		format     Format
+		body       string
+		edit       func(*CanonicalRequest)
+	}{
+		{
+			name: "anthropic metadata", keep: `"metadata":{"a":"1","A":"2"}`, format: FormatAnthropic,
+			body: `{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"metadata":{"a":"1","A":"2"}}`,
+			edit: maskLeakSecret,
+		},
+		{
+			name: "chat metadata", keep: `"metadata":{"a":"1","A":"2"}`, format: FormatOpenAI,
+			body: `{"model":"m","messages":[{"role":"user","content":"hi ` + leakSecret + `"}],"metadata":{"a":"1","A":"2"}}`,
+			edit: maskLeakSecret,
+		},
+		{
+			name: "chat schema", keep: `"parameters":` + schema, format: FormatOpenAI,
+			body: `{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":` + schema + `}},` +
+				`{"type":"function","function":{"name":"g"}}]}`,
+			edit: func(r *CanonicalRequest) { r.Tools = r.Tools[:1] },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, encoded := graftWith(t, tc.format, tc.body, GraftOptions{}, tc.edit)
+			assert.NotEqual(t, string(encoded), string(out))
+			assert.Contains(t, string(out), tc.keep)
+			assert.False(t, HasAmbiguousKeys(tc.format, out))
+		})
+	}
+}
+
+func TestRawFieldsRejectsRepeatedKeys(t *testing.T) {
 	t.Parallel()
 	for body, dup := range map[string]bool{
 		`{"a":1,"b":2}`:             false,
 		`{"a":1,"a":2}`:             true,
-		`{"content":1,"Content":2}`: true,
-		`{"system":1,"ſystem":2}`:   true,
-		`{"k":1,"K":2}`:             true,
-		`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"J":0,"j":1}`: true,
+		`{"content":1,"Content":2}`: false,
+		`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"J":0,"j":1}`: false,
+		`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":0,"j":1}`: true,
 	} {
 		_, err := rawFields([]byte(body), rawSpan{0, len(body)})
 		if dup {
@@ -180,6 +216,27 @@ func TestRawFieldsRejectsKeysTheDecoderFolds(t *testing.T) {
 			assert.NoError(t, err, body)
 		}
 	}
+}
+
+func TestRawLookupsRefuseKeysTheDecoderFolds(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{"content":1,"Content":2}`, `{"system":1,"ſystem":2}`, `{"k":{"x":1},"K":{"x":2}}`} {
+		b := []byte(body)
+		root := rawSpan{0, len(b)}
+		fields, err := rawFields(b, root)
+		require.NoError(t, err)
+		key := fields[0].key
+		_, ok := rawFieldOf(b, root, key)
+		assert.False(t, ok, body)
+		_, _, ok = rawLookup(b, root, []string{key})
+		assert.False(t, ok, body)
+		_, _, ok = rawFieldAlias(b, root, key)
+		assert.False(t, ok, body)
+	}
+	b := []byte(`{"Content":1,"other":2}`)
+	v, found, ok := rawLookup(b, rawSpan{0, len(b)}, []string{"content"})
+	assert.True(t, found && ok)
+	assert.Equal(t, "1", string(b[v.start:v.end]))
 }
 
 func TestGraftChangedFieldsUnmodelledTools(t *testing.T) {
@@ -618,10 +675,10 @@ func TestHasAmbiguousKeysReadsAnySizeAndDepth(t *testing.T) {
 		"after a nested":    {`{"a":{"b":1,"c":2},"A":3}`, true},
 		"many keys":         {`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"ſ":0,"s":1}`, true},
 		"deep":              {strings.Repeat(`{"x":`, 5000) + `{"a":1,"a":2}` + strings.Repeat("}", 5000), true},
-		"unbalanced":        {`}]{"a":1}`, false},
-		"unterminated":      {`{"a":"b`, false},
+		"unbalanced":        {`}]{"a":1}`, true},
+		"unterminated":      {`{"a":"b`, true},
 	} {
-		assert.Equal(t, tc.want, HasAmbiguousKeys([]byte(tc.body)), name)
+		assert.Equal(t, tc.want, HasAmbiguousKeys("", []byte(tc.body)), name)
 	}
 }
 

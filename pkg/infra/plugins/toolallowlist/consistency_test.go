@@ -180,7 +180,7 @@ func TestPlugin_Execute_KeepsAnMCPToolsetWithItsServer(t *testing.T) {
 		require.NoError(t, err)
 		cfg, err := parseConfig(map[string]any{"allow_tools": []any{"f", "mcp_servers"}})
 		require.NoError(t, err)
-		kept, removed, _, _ := newToolFilter(ad, []byte(body), canonical, cfg).split()
+		kept, removed, _, _ := newToolFilter(ad, adapter.FormatAnthropic, []byte(body), canonical, cfg).split()
 		assert.Equal(t, []string{"f"}, kept)
 		assert.ElementsMatch(t, []string{"mcp_toolset:a", "mcp_servers:a"}, removed)
 	})

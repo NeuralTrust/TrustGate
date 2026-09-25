@@ -81,7 +81,7 @@ func TestForwardReencodesAnAmbiguousBody(t *testing.T) {
 	res, err = p.forward(ambiguous, string(adapter.FormatOpenAIResponses), canonical)
 	require.NoError(t, err)
 	require.NotNil(t, res.RequestBody)
-	assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+	assert.False(t, adapter.HasAmbiguousKeys(adapter.FormatOpenAIResponses, res.RequestBody), string(res.RequestBody))
 }
 
 func TestStripToolsRewritesAToolChoiceNamingAStrippedTool(t *testing.T) {
