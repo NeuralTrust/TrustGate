@@ -630,3 +630,122 @@ func TestFoldSystemIntoFirstTurn_KeepsCachePoint(t *testing.T) {
 		assert.IsType(t, &bedrockTypes.ContentBlockMemberCachePoint{}, params.messages[0].Content[1])
 	})
 }
+
+func TestDecodeConverseBody_CachePointAfterUntranslatedBlockIsDropped(t *testing.T) {
+	t.Parallel()
+
+	cp := &bedrockTypes.ContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}
+	tests := []struct {
+		name    string
+		content string
+		want    []bedrockTypes.ContentBlock
+	}{
+		{
+			name:    "document before the cachePoint (AWS documentation example)",
+			content: `[{"document":{"format":"pdf","name":"report","source":{"bytes":"JVBERi0="}}},{"cachePoint":{"type":"default"}},{"text":"Summarize"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "Summarize"}},
+		},
+		{
+			name:    "document and cachePoint only",
+			content: `[{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}}]`,
+			want:    []bedrockTypes.ContentBlock{},
+		},
+		{
+			name:    "S3 image before the cachePoint",
+			content: `[{"image":{"format":"png","source":{"s3Location":{"uri":"s3://b/k.png"}}}},{"cachePoint":{"type":"default"}},{"text":"what"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "what"}},
+		},
+		{
+			name:    "dropped block between text and cachePoint keeps one cachePoint",
+			content: `[{"text":"doc"},{"cachePoint":{"type":"default"}},{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}},{"text":"q"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "doc"}, cp, &bedrockTypes.ContentBlockMemberText{Value: "q"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			params, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":` + tt.content + `}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, params.messages[0].Content)
+		})
+	}
+}
+
+func TestDecodeConverseBody_ToolCachePointNeedsAToolBefore(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{"messages":[],"toolConfig":{"tools":[
+		{"cachePoint":{"type":"default"}},
+		{"toolSpec":{"name":"f","inputSchema":{"json":{"type":"object"}}}},
+		{"cachePoint":{"type":"default"}},
+		{"cachePoint":{"type":"default","ttl":"1h"}}
+	]}}`))
+	require.NoError(t, err)
+
+	tools := params.tools.Tools
+	require.Len(t, tools, 2)
+	assert.IsType(t, &bedrockTypes.ToolMemberToolSpec{}, tools[0])
+	assert.Equal(t, &bedrockTypes.ToolMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}, tools[1])
+}
+
+func TestDecodeConverseBody_SystemGuardContent(t *testing.T) {
+	t.Parallel()
+
+	cp := &bedrockTypes.SystemContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}
+	tests := []struct {
+		name   string
+		system string
+		want   []bedrockTypes.SystemContentBlock
+	}{
+		{
+			name:   "guarded text keeps its cachePoint",
+			system: `[{"guardContent":{"text":{"text":"policy","qualifiers":["guard_content"]}}},{"cachePoint":{"type":"default"}}]`,
+			want: []bedrockTypes.SystemContentBlock{
+				&bedrockTypes.SystemContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: bedrockTypes.GuardrailConverseTextBlock{
+					Text:       aws.String("policy"),
+					Qualifiers: []bedrockTypes.GuardrailConverseContentQualifier{bedrockTypes.GuardrailConverseContentQualifierGuardContent},
+				}}},
+				cp,
+			},
+		},
+		{
+			name:   "guarded image",
+			system: `[{"guardContent":{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}}}]`,
+			want: []bedrockTypes.SystemContentBlock{
+				&bedrockTypes.SystemContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberImage{Value: bedrockTypes.GuardrailConverseImageBlock{
+					Format: bedrockTypes.GuardrailConverseImageFormatPng,
+					Source: &bedrockTypes.GuardrailConverseImageSourceMemberBytes{Value: []byte("\x89PNG\r\n\x1a\n")},
+				}}},
+			},
+		},
+		{
+			name:   "unknown system block is dropped, not sent as empty text",
+			system: `[{"guardContent":{}},{"cachePoint":{"type":"default"}},{"text":"rules"}]`,
+			want:   []bedrockTypes.SystemContentBlock{&bedrockTypes.SystemContentBlockMemberText{Value: "rules"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			params, err := decodeConverseBody([]byte(`{"system":` + tt.system + `,"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, params.system)
+		})
+	}
+}
+
+func TestFoldSystemIntoFirstTurn_KeepsGuardContent(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"guardContent":{"text":{"text":"policy"}}}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+	require.NoError(t, err)
+	require.True(t, params.foldSystemIntoFirstTurn())
+
+	assert.Equal(t, []bedrockTypes.ContentBlock{
+		&bedrockTypes.ContentBlockMemberText{Value: "rules"},
+		&bedrockTypes.ContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: bedrockTypes.GuardrailConverseTextBlock{Text: aws.String("policy")}}},
+		&bedrockTypes.ContentBlockMemberText{Value: "hi"},
+	}, params.messages[0].Content)
+}

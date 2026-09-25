@@ -1306,9 +1306,161 @@ func TestBedrock_DecodeRequest_CachePointBoundaries(t *testing.T) {
 	out, err := a.EncodeRequest(cr)
 	require.NoError(t, err)
 	system, _, _ := converseSections(t, out)
-	assert.JSONEq(t, `[{"text":"stable"},{"cachePoint":{"type":"default"}},{"text":"\nvolatile"}]`, system)
+	assert.JSONEq(t, `[{"text":"stable"},{"cachePoint":{"type":"default"}},{"text":"volatile"}]`, system)
 
 	anthropic, err := (&AnthropicAdapter{}).EncodeRequest(cr)
 	require.NoError(t, err)
-	assert.Contains(t, string(anthropic), `{"type":"text","text":"stable","cache_control":{"type":"ephemeral"}}`)
+	var sent struct {
+		System json.RawMessage `json:"system"`
+	}
+	require.NoError(t, json.Unmarshal(anthropic, &sent))
+	assert.JSONEq(t, `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral"}},{"type":"text","text":"volatile"}]`, string(sent.System))
+}
+
+func TestBedrock_SystemReencodeIsByteStable(t *testing.T) {
+	t.Parallel()
+
+	for _, system := range []string{
+		`[{"text":"A"},{"cachePoint":{"type":"default"}},{"text":"B"}]`,
+		`[{"text":"A"},{"text":"B"},{"cachePoint":{"type":"default","ttl":"1h"}},{"text":"C\n\nD"}]`,
+		`[{"text":"A"},{"cachePoint":{"type":"default","ttl":"1h"}},{"text":"B"},{"cachePoint":{"type":"default"}}]`,
+	} {
+		t.Run(system, func(t *testing.T) {
+			t.Parallel()
+
+			a := &BedrockAdapter{}
+			body := []byte(`{"system":` + system + `,"messages":[{"role":"user","content":[{"text":"q"}]}]}`)
+			var passes []string
+			for range 3 {
+				cr, err := a.DecodeRequest(body)
+				require.NoError(t, err)
+				body, err = a.EncodeRequest(cr)
+				require.NoError(t, err)
+				passes = append(passes, string(body))
+			}
+			assert.Equal(t, passes[0], passes[1])
+			assert.Equal(t, passes[1], passes[2])
+		})
+	}
+}
+
+func TestBedrock_DecodeRequest_SystemGuardContent(t *testing.T) {
+	t.Parallel()
+
+	cr, err := (&BedrockAdapter{}).DecodeRequest([]byte(`{
+		"system":[{"guardContent":{}},{"cachePoint":{"type":"default"}},{"text":"rules"},{"guardContent":{"text":{"text":"policy"}}},{"cachePoint":{"type":"default","ttl":"1h"}}],
+		"messages":[{"role":"user","content":[{"text":"hi"}]}]
+	}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "rules\n\npolicy", cr.System)
+	require.NotNil(t, cr.SystemCache)
+	assert.Equal(t, CacheTTL1h, cr.SystemCache.TTL)
+}
+
+func TestBedrock_AutomaticCaching(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Anthropic top-level cache_control ends the last message", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"anthropic.claude-sonnet-4-6","max_tokens":64,"cache_control":{"type":"ephemeral","ttl":"1h"},
+			"system":"rules",
+			"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]}`
+		out, err := NewRegistry().AdaptRequestForProvider([]byte(body), FormatAnthropic, FormatBedrock, "bedrock", "")
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, bytes.Count(out, []byte(`"cachePoint"`)))
+		_, _, messages := converseSections(t, out)
+		assert.JSONEq(t, `[{"text":"again"},{"cachePoint":{"type":"default","ttl":"1h"}}]`, messages[2])
+	})
+	t.Run("OpenAI Chat top-level cache_control", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","cache_control":{"type":"ephemeral"},"messages":[{"role":"system","content":"s"},{"role":"user","content":"hi"}]}`
+		out, err := NewRegistry().AdaptRequestForProvider([]byte(body), FormatOpenAI, FormatBedrock, "bedrock", "")
+		require.NoError(t, err)
+
+		_, _, messages := converseSections(t, out)
+		assert.JSONEq(t, `[{"text":"hi"},{"cachePoint":{"type":"default"}}]`, messages[0])
+	})
+	t.Run("counted in the cap and last in TTL order", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"anthropic.claude-sonnet-4-6","max_tokens":64,"cache_control":{"type":"ephemeral","ttl":"1h"},
+			"tools":[{"name":"a","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","ttl":"1h"}}],
+			"system":[{"type":"text","text":"rules","cache_control":{"type":"ephemeral","ttl":"1h"}}],
+			"messages":[
+				{"role":"user","content":[{"type":"text","text":"u1","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
+				{"role":"assistant","content":[{"type":"text","text":"a1","cache_control":{"type":"ephemeral"}}]},
+				{"role":"user","content":"u2"}
+			]}`
+		out, err := NewRegistry().AdaptRequestForProvider([]byte(body), FormatAnthropic, FormatBedrock, "bedrock", "")
+		require.NoError(t, err)
+
+		assert.Equal(t, 4, bytes.Count(out, []byte(`"cachePoint"`)))
+		_, _, messages := converseSections(t, out)
+		assert.NotContains(t, messages[0], "cachePoint")
+		assert.JSONEq(t, `[{"text":"a1"},{"cachePoint":{"type":"default"}}]`, messages[1])
+		assert.JSONEq(t, `[{"text":"u2"},{"cachePoint":{"type":"default"}}]`, messages[2])
+	})
+
+	tests := []struct {
+		name  string
+		cache *CanonicalCacheBreakpoint
+		want  string
+	}{
+		{
+			name:  "client marker on the last block keeps its TTL",
+			cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, clientLast: true},
+			want:  `[{"text":"q"},{"cachePoint":{"type":"default","ttl":"1h"}}]`,
+		},
+		{
+			name:  "marker the gateway moved to the end takes the automatic TTL",
+			cache: bp(CacheTTL1h),
+			want:  `[{"text":"q"},{"cachePoint":{"type":"default"}}]`,
+		},
+		{
+			name:  "marker on an earlier block stays and automatic ends the turn",
+			cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, inText: true, newline: 0, newlines: 1},
+			want:  `[{"text":"doc"},{"cachePoint":{"type":"default","ttl":"1h"}},{"text":"q"},{"cachePoint":{"type":"default"}}]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			content := "q"
+			if tt.cache.inText {
+				content = "doc\nq"
+			}
+			out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{
+				Messages:     []CanonicalMessage{{Role: "user", Content: content, Cache: tt.cache}},
+				CacheOptions: &CanonicalCacheOptions{Auto: bp("")},
+			})
+			require.NoError(t, err)
+
+			_, _, messages := converseSections(t, out)
+			assert.JSONEq(t, tt.want, messages[0])
+		})
+	}
+}
+
+func TestBedrock_SystemMessageMarkerNeverPrecedesLongerTTL(t *testing.T) {
+	t.Parallel()
+
+	req := &CanonicalRequest{Model: "anthropic.claude-sonnet-4-6", Messages: []CanonicalMessage{
+		{Role: "user", Content: "u", Cache: bp(CacheTTL1h)},
+		{Role: "system", Content: "s", Cache: bp(CacheTTL5m)},
+		{Role: "assistant", Content: "a"},
+		{Role: "user", Content: "u2"},
+	}}
+	normalizeCacheIntent(req, FormatBedrock, "bedrock", "")
+	out, err := (&BedrockAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(out), `"ttl"`)
+	system, _, messages := converseSections(t, out)
+	assert.JSONEq(t, `[{"text":"s"},{"cachePoint":{"type":"default"}}]`, system)
+	assert.JSONEq(t, `[{"text":"u"},{"cachePoint":{"type":"default"}}]`, messages[0])
 }

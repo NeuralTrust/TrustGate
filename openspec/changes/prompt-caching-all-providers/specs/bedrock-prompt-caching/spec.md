@@ -25,6 +25,25 @@ For a model that supports explicit caching, the Bedrock encoder MUST emit a `cac
 - GIVEN a 1h breakpoint and a model listed without 1h support
 - THEN the `cachePoint` is emitted without `ttl`
 
+### Requirement: Automatic caching
+
+Top-level automatic caching (Anthropic or OpenAI Chat `cache_control`) MUST become one `cachePoint` after the last block of the last message, counted in the cap and last in TTL order. When that message already ends with an explicit `cachePoint`, only one is sent: with the client's TTL when the client put the marker on its last block, otherwise with the automatic TTL.
+
+#### Scenario: Automatic only
+
+- GIVEN an Anthropic body with top-level `cache_control` and no other marker
+- WHEN routed to Bedrock
+- THEN the last message ends with the only `cachePoint`
+
+### Requirement: Valid cachePoint positions on the SDK path
+
+A `cachePoint` MUST only follow a kept block that is not itself a `cachePoint`, in content, system and tools. Blocks the SDK translation has no member for (documents, videos, S3 images, citations) are dropped, and a `cachePoint` that followed one is dropped with it. System `guardContent` MUST be sent as `SystemContentBlockMemberGuardContent`, never as an empty text block.
+
+#### Scenario: AWS documentation example
+
+- GIVEN a native Bedrock turn `[document, cachePoint, text]`
+- THEN the SDK input is `[text]`
+
 ### Requirement: Model capability table
 
 A table in code MUST list, by model-family prefix (after stripping region or global inference-profile prefixes), whether explicit caching and 1h TTL are supported. Unlisted models, ARNs and unknown IDs MUST get no `cachePoint`. Minimum token counts MUST NOT be enforced.
