@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -823,4 +824,188 @@ func TestCompletionsRequest_PluginRewriteKeepsImage(t *testing.T) {
 		{"type":"text","text":"my email is [REDACTED]"}
 	]`, string(out.Messages[0].Content))
 	assert.NotContains(t, string(encoded), "a@b.c")
+}
+
+const chatCachedRequest = `{
+	"model": "anthropic/claude-haiku-4.5",
+	"prompt_cache_key": "k1",
+	"prompt_cache_retention": "24h",
+	"prompt_cache_options": {"mode": "explicit", "ttl": "30m"},
+	"cache_control": {"type": "ephemeral"},
+	"messages": [
+		{"role": "system", "content": [
+			{"type": "text", "text": "Static rules.", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+			{"type": "text", "text": "Current time: now"}
+		]},
+		{"role": "user", "content": [
+			{"type": "text", "text": "Big document", "cache_control": {"type": "ephemeral"}},
+			{"type": "text", "text": "Question?"}
+		]},
+		{"role": "assistant", "content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
+		{"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "result", "cache_control": {"type": "ephemeral"}}]}
+	],
+	"tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+}`
+
+func TestOpenAIChatRequest_CacheIntentRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	var compact bytes.Buffer
+	require.NoError(t, json.Compact(&compact, []byte(chatCachedRequest)))
+	a := &OpenAIAdapter{}
+	req, err := a.DecodeRequest(compact.Bytes())
+	require.NoError(t, err)
+
+	assert.Equal(t, "Static rules.\nCurrent time: now", req.System)
+	require.NotNil(t, req.SystemCache)
+	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
+	require.Len(t, req.Messages, 3)
+	assert.Equal(t, []any{CacheTTL(""), nil, CacheTTL("")}, messageTTLs(req.Messages))
+	assert.Equal(t, []any{CacheTTL1h}, toolTTLs(req.Tools))
+	require.NotNil(t, req.CacheOptions)
+	assert.Equal(t, "k1", req.CacheOptions.Key)
+	assert.Equal(t, "24h", req.CacheOptions.Retention)
+	assert.Equal(t, "explicit", req.CacheOptions.Mode)
+	assert.JSONEq(t, `{"mode":"explicit","ttl":"30m"}`, string(req.CacheOptions.Options))
+	assert.NotNil(t, req.CacheOptions.Auto)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.JSONEq(t, `"k1"`, string(got["prompt_cache_key"]))
+	assert.JSONEq(t, `"24h"`, string(got["prompt_cache_retention"]))
+	assert.JSONEq(t, `{"mode":"explicit","ttl":"30m"}`, string(got["prompt_cache_options"]))
+	assert.JSONEq(t, `{"type":"ephemeral"}`, string(got["cache_control"]))
+	assert.JSONEq(t, `[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}},"cache_control":{"type":"ephemeral","ttl":"1h"}}]`, string(got["tools"]))
+
+	var msgs []openaiMessage
+	require.NoError(t, json.Unmarshal(got["messages"], &msgs))
+	require.Len(t, msgs, 4)
+	assert.JSONEq(t, `[{"type":"text","text":"Static rules.","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"Current time: now"}]`, string(msgs[0].Content))
+	assert.JSONEq(t, `[{"type":"text","text":"Big document","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]`, string(msgs[1].Content))
+	assert.JSONEq(t, `""`, string(msgs[2].Content))
+	assert.JSONEq(t, `[{"type":"text","text":"result","cache_control":{"type":"ephemeral"}}]`, string(msgs[3].Content))
+
+	again, err := a.DecodeRequest(out)
+	require.NoError(t, err)
+	assert.Equal(t, req, again)
+}
+
+func TestOpenAIChatRequest_WithoutCacheFieldsStaysPlain(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"gpt-4o","messages":[{"role":"system","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]},{"role":"developer","content":"c"},{"role":"user","content":[{"type":"text","text":"hi"}]}]}`
+	a := &OpenAIAdapter{}
+	req, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "a\nb\nc", req.System)
+	assert.Nil(t, req.SystemCache)
+	assert.Nil(t, req.CacheOptions)
+	assert.Nil(t, req.Messages[0].Cache)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "cache")
+	assert.Contains(t, string(out), `{"role":"system","content":"a\nb\nc"}`)
+}
+
+func TestOpenAIChatRequest_SystemJoinStaysByteExact(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"m","messages":[
+		{"role":"system","content":""},
+		{"role":"system","content":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}}]},
+		{"role":"developer","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]},
+		{"role":"system","content":"b"},
+		{"role":"user","content":"hi"}]}`
+	req, err := (&OpenAIAdapter{}).DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "a\n\nb", req.System)
+	parts, placed := cachedTextParts(req.System, req.SystemCache)
+	assert.True(t, placed)
+	assert.Equal(t, []string{"a", "\nb"}, parts)
+}
+
+func TestAdaptRequest_OpenAIChatMarkersReachAnthropic(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	for _, stream := range []bool{false, true} {
+		body := map[string]any{
+			"model":            "claude-haiku-4-5",
+			"prompt_cache_key": "e2e-nonce",
+			"max_tokens":       64,
+			"stream":           stream,
+			"messages": []map[string]any{
+				{"role": "system", "content": []map[string]any{{"type": "text", "text": "Long prefix.", "cache_control": map[string]string{"type": "ephemeral", "ttl": "1h"}}}},
+				{"role": "user", "content": []map[string]any{
+					{"type": "text", "text": "Doc", "cache_control": map[string]string{"type": "ephemeral"}},
+					{"type": "text", "text": "Question?"},
+				}},
+			},
+		}
+		raw, err := json.Marshal(body)
+		require.NoError(t, err)
+
+		out, err := reg.AdaptRequest(raw, FormatOpenAI, FormatAnthropic)
+		require.NoError(t, err)
+		assert.NotContains(t, string(out), "prompt_cache")
+
+		var got anthropicRequest
+		require.NoError(t, json.Unmarshal(out, &got))
+		assert.JSONEq(t, `[{"type":"text","text":"Long prefix.","cache_control":{"type":"ephemeral","ttl":"1h"}}]`, string(got.System))
+		require.Len(t, got.Messages, 1)
+		assert.JSONEq(t, `[{"type":"text","text":"Doc","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]`, string(got.Messages[0].Content))
+	}
+}
+
+func TestAdaptRequest_OpenAIChatTargetsDropBreakpoints(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "gpt-4o",
+		"prompt_cache_key": "k1",
+		"prompt_cache_retention": "24h",
+		"instructions": "unused",
+		"input": [
+			{"role": "developer", "content": [{"type": "input_text", "text": "Static.", "prompt_cache_breakpoint": {"mode": "explicit"}}]},
+			{"role": "user", "content": [{"type": "input_text", "text": "Hi", "prompt_cache_breakpoint": {"mode": "explicit"}}]}
+		]
+	}`)
+	reg := NewRegistry()
+	tests := []struct {
+		target  Format
+		wantKey bool
+	}{
+		{target: FormatOpenAI, wantKey: true},
+		{target: FormatAzure, wantKey: true},
+		{target: FormatXAI},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.target), func(t *testing.T) {
+			t.Parallel()
+			out, err := reg.AdaptRequest(body, FormatOpenAIResponses, tt.target)
+			require.NoError(t, err)
+			assert.NotContains(t, string(out), "cache_control")
+			assert.NotContains(t, string(out), "prompt_cache_breakpoint")
+			assert.Contains(t, string(out), `{"role":"system","content":"unused\nStatic."}`)
+			assert.Equal(t, tt.wantKey, bytes.Contains(out, []byte(`"prompt_cache_key":"k1","prompt_cache_retention":"24h"`)), string(out))
+		})
+	}
+}
+
+func TestAdaptRequest_SameWireCacheFieldsPassThroughUnchanged(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	for _, target := range []Format{FormatOpenAI, FormatAzure, FormatXAI} {
+		out, err := reg.AdaptRequest([]byte(chatCachedRequest), FormatOpenAI, target)
+		require.NoError(t, err)
+		assert.Equal(t, chatCachedRequest, string(out))
+	}
+	responses := []byte(`{"model":"gpt-5.6","prompt_cache_key":"k","input":[{"role":"user","content":[{"type":"input_text","text":"x","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`)
+	out, err := reg.AdaptRequest(responses, FormatOpenAIResponses, FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Equal(t, responses, out)
 }

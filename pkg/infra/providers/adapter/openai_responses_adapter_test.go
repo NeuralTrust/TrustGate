@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1213,4 +1214,122 @@ func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
 	format, ok := out.Tools[1]["format"].(map[string]any)
 	require.True(t, ok, "format must survive: %v", out.Tools[1])
 	assert.Equal(t, "text", format["type"])
+}
+
+func TestResponsesRequest_CacheOptionsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	a := &OpenAIResponsesAdapter{}
+	req, err := a.DecodeRequest([]byte(`{"model":"gpt-5.6","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`))
+	require.NoError(t, err)
+	require.NotNil(t, req.CacheOptions)
+	assert.Equal(t, "explicit", req.CacheOptions.Mode)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`, string(out))
+}
+
+func TestResponsesRequest_BreakpointsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"gpt-5.6","input":[
+		{"role":"developer","content":[{"type":"input_text","text":"Static.","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Now: 12:00"}]},
+		{"role":"user","content":[{"type":"input_text","text":"Doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Q?"}]},
+		{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"result","prompt_cache_breakpoint":{"mode":"explicit"}}]}
+	]}`
+	a := &OpenAIResponsesAdapter{}
+	req, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "Static.\nNow: 12:00", req.System)
+	require.NotNil(t, req.SystemCache)
+	assert.Equal(t, []any{CacheTTL(""), nil, CacheTTL("")}, messageTTLs(req.Messages))
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	var got struct {
+		Instructions string            `json:"instructions"`
+		Input        []json.RawMessage `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.Empty(t, got.Instructions)
+	require.Len(t, got.Input, 4)
+	assert.JSONEq(t, `{"role":"developer","content":[{"type":"input_text","text":"Static.","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Now: 12:00"}]}`, string(got.Input[0]))
+	assert.JSONEq(t, `{"role":"user","content":[{"type":"input_text","text":"Doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Q?"}]}`, string(got.Input[1]))
+	assert.JSONEq(t, `{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"result","prompt_cache_breakpoint":{"mode":"explicit"}}]}`, string(got.Input[3]))
+
+	again, err := a.DecodeRequest(out)
+	require.NoError(t, err)
+	assert.Equal(t, req, again)
+}
+
+func TestResponsesRequest_WithoutBreakpointsKeepsInstructionsAndStringInput(t *testing.T) {
+	t.Parallel()
+
+	a := &OpenAIResponsesAdapter{}
+	body := `{"model":"gpt-5.6","instructions":"sys","input":[{"role":"developer","content":[{"type":"input_text","text":"dev"}]},{"role":"user","content":"hi"}]}`
+	req, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "sys\ndev", req.System)
+	assert.Nil(t, req.SystemCache)
+	assert.Nil(t, req.CacheOptions)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","instructions":"sys\ndev","input":"hi"}`, string(out))
+}
+
+func TestAdaptRequest_AnthropicBreakpointsReachResponsesOnGPT56Only(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	for _, stream := range []bool{false, true} {
+		for _, model := range []string{"gpt-5.6", "gpt-4o"} {
+			body, err := json.Marshal(map[string]any{
+				"model":      model,
+				"max_tokens": 64,
+				"stream":     stream,
+				"system":     []map[string]any{{"type": "text", "text": "Long prefix.", "cache_control": map[string]string{"type": "ephemeral", "ttl": "1h"}}},
+				"tools":      []map[string]any{{"name": "lookup", "input_schema": map[string]string{"type": "object"}, "cache_control": map[string]string{"type": "ephemeral"}}},
+				"messages":   []map[string]any{{"role": "user", "content": "Question?"}},
+			})
+			require.NoError(t, err)
+
+			out, err := reg.AdaptRequest(body, FormatAnthropic, FormatOpenAIResponses)
+			require.NoError(t, err)
+			var got struct {
+				Instructions string          `json:"instructions"`
+				Input        json.RawMessage `json:"input"`
+				Stream       bool            `json:"stream"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+			assert.Equal(t, stream, got.Stream)
+			assert.NotContains(t, string(out), "cache_control")
+			assert.NotContains(t, string(out), "prompt_cache_options")
+			if model == "gpt-4o" {
+				assert.Equal(t, "Long prefix.", got.Instructions)
+				assert.JSONEq(t, `"Question?"`, string(got.Input))
+				assert.NotContains(t, string(out), "prompt_cache_breakpoint")
+				continue
+			}
+			assert.Empty(t, got.Instructions)
+			assert.JSONEq(t, `[
+				{"role":"developer","content":[{"type":"input_text","text":"Long prefix.","prompt_cache_breakpoint":{"mode":"explicit"}}]},
+				{"role":"user","content":"Question?"}
+			]`, string(got.Input))
+			assert.Equal(t, 1, strings.Count(string(out), "prompt_cache_breakpoint"))
+		}
+	}
+}
+
+func TestResponsesEncodeRequest_BreakpointSkipsTheStringInputShortcut(t *testing.T) {
+	t.Parallel()
+
+	out, err := (&OpenAIResponsesAdapter{}).EncodeRequest(&CanonicalRequest{
+		Model:    "gpt-5.6",
+		Messages: []CanonicalMessage{{Role: "user", Content: "Question?", Cache: &CanonicalCacheBreakpoint{}}},
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","input":[{"role":"user","content":[{"type":"input_text","text":"Question?","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`, string(out))
 }

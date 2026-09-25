@@ -288,7 +288,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		return []CanonicalMessage{{Role: role, Content: contentToString(content)}}
 	}
 	var out []CanonicalMessage
-	var text anthropicTextJoin
+	var text cacheTextJoin
 	switch role {
 	case "user":
 		var images []CanonicalImage
@@ -299,7 +299,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
-					text.markEnd(b.CacheControl, last)
+					text.markEnd(anthropicCacheBreakpoint(b.CacheControl), last)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
@@ -318,7 +318,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 				})
 			case "text":
 				text.add(b.Text)
-				text.markText(b.CacheControl, last)
+				text.markText(anthropicCacheBreakpoint(b.CacheControl), last)
 			}
 		}
 		out = append(out, toolMessages...)
@@ -337,14 +337,14 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			switch b.Type {
 			case "text":
 				text.add(b.Text)
-				text.markText(b.CacheControl, last)
+				text.markText(anthropicCacheBreakpoint(b.CacheControl), last)
 			case "tool_use":
 				toolCalls = append(toolCalls, CanonicalToolCall{
 					ID:        b.ID,
 					Name:      b.Name,
 					Arguments: string(b.Input),
 				})
-				text.markEnd(b.CacheControl, last)
+				text.markEnd(anthropicCacheBreakpoint(b.CacheControl), last)
 			}
 		}
 		out = append(out, CanonicalMessage{
@@ -362,95 +362,19 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 	return out
 }
 
-// anthropicTextJoin merges the text blocks of one segment with "\n" and keeps
-// a single cache marker for it, remembering the block boundary it sat on as a
-// newline index. Markers on block types the canonical model drops (thinking,
-// documents, server tool blocks) are dropped with the block.
-type anthropicTextJoin struct {
-	parts    []string
-	newlines int
-	cache    *CanonicalCacheBreakpoint
-}
-
-func (j *anthropicTextJoin) add(text string) {
-	if len(j.parts) > 0 {
-		j.newlines++
-	}
-	j.parts = append(j.parts, text)
-	j.newlines += strings.Count(text, "\n")
-}
-
-func (j *anthropicTextJoin) markText(cc *anthropicCacheControl, last bool) {
-	if bp := anthropicCacheBreakpoint(cc); bp != nil {
-		bp.inText, bp.newline = true, j.newlines
-		j.merge(bp, last)
-	}
-}
-
-func (j *anthropicTextJoin) markEnd(cc *anthropicCacheControl, last bool) {
-	if bp := anthropicCacheBreakpoint(cc); bp != nil {
-		j.merge(bp, last)
-	}
-}
-
-func (j *anthropicTextJoin) merge(bp *CanonicalCacheBreakpoint, last bool) {
-	j.cache = laterCacheBreakpoint(j.cache, bp)
-	j.cache.clientLast = last && j.cache.TTL == bp.TTL
-	j.cache.raisedLast = last && !j.cache.clientLast
-	j.cache.clientTTL = bp.TTL
-}
-
-func (j *anthropicTextJoin) breakpoint() *CanonicalCacheBreakpoint {
-	if j.cache != nil && j.cache.inText {
-		j.cache.newlines = j.newlines
-	}
-	return j.cache
-}
-
-func (j *anthropicTextJoin) String() string {
-	return strings.Join(j.parts, "\n")
-}
-
 func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropicContentBlock, bool) {
-	if text == "" {
+	parts, placed := cachedTextParts(text, bp)
+	if len(parts) == 0 {
 		return nil, false
 	}
-	head, tail, ok := anthropicSplitAtCacheBoundary(text, bp)
-	if !ok {
-		return []anthropicContentBlock{{Type: "text", Text: text}}, false
+	blocks := make([]anthropicContentBlock, 0, len(parts))
+	for _, part := range parts {
+		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: part})
 	}
-	blocks := []anthropicContentBlock{{Type: "text", Text: head, CacheControl: anthropicCacheControlFrom(bp)}}
-	if tail != "" {
-		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: tail})
+	if placed {
+		blocks[0].CacheControl = anthropicCacheControlFrom(bp)
 	}
-	return blocks, true
-}
-
-// anthropicSplitAtCacheBoundary finds the boundary by newline index rather
-// than byte offset, so a plugin that changed the text's length without adding
-// or removing lines (masking, anonymizing) still splits at the joiner. When
-// the newline count changed, the index may point at a user newline, so it
-// refuses; it also refuses a split that would leave a blank block, which
-// Anthropic rejects.
-func anthropicSplitAtCacheBoundary(text string, bp *CanonicalCacheBreakpoint) (head, tail string, ok bool) {
-	if bp == nil || !bp.inText || bp.newline > bp.newlines || strings.Count(text, "\n") != bp.newlines {
-		return "", "", false
-	}
-	if bp.newline == bp.newlines {
-		if strings.TrimSpace(text) == "" {
-			return "", "", false
-		}
-		return text, "", true
-	}
-	at := 0
-	for range bp.newline + 1 {
-		at += strings.IndexByte(text[at:], '\n') + 1
-	}
-	head, tail = text[:at-1], text[at:]
-	if strings.TrimSpace(head) == "" || strings.TrimSpace(tail) == "" {
-		return "", "", false
-	}
-	return head, tail, true
+	return blocks, placed
 }
 
 func anthropicImageToCanonical(raw json.RawMessage) (CanonicalImage, bool) {
@@ -1028,7 +952,7 @@ func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	if json.Unmarshal(raw, &blocks) != nil {
 		return contentToString(raw), nil
 	}
-	var text anthropicTextJoin
+	var text cacheTextJoin
 	for _, b := range blocks {
 		if b.Type != "" && b.Type != "text" {
 			continue
@@ -1038,7 +962,7 @@ func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 		} else if len(text.parts) == 0 {
 			continue
 		}
-		text.markText(b.CacheControl, false)
+		text.markText(anthropicCacheBreakpoint(b.CacheControl), false)
 	}
 	return text.String(), text.breakpoint()
 }

@@ -146,7 +146,7 @@ func TestNormalizeCacheIntent_OneHourNeverFollowsAShorterTTL(t *testing.T) {
 func TestNormalizeCacheIntent_TargetsWithoutCachingDropAllIntent(t *testing.T) {
 	t.Parallel()
 
-	for _, target := range []Format{FormatGemini, FormatVertex, FormatGroq, FormatCohere, FormatDeepSeek, FormatOpenAI, FormatOpenAIResponses} {
+	for _, target := range []Format{FormatGemini, FormatVertex, FormatGroq, FormatCohere, FormatDeepSeek, FormatXAI} {
 		t.Run(string(target), func(t *testing.T) {
 			t.Parallel()
 			req := cachedRequest(1, 2, CacheTTL1h)
@@ -288,4 +288,124 @@ func TestLaterCacheBreakpoint_ReturnsACopy(t *testing.T) {
 	assert.Equal(t, &CanonicalCacheBreakpoint{inText: true, newline: 2}, later)
 	assert.Equal(t, bp(CacheTTL1h), earlier)
 	assert.Same(t, earlier, laterCacheBreakpoint(earlier, nil))
+}
+
+func TestIsGPT56OrLater(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{
+		"gpt-5.6":               true,
+		"gpt-5.6-mini":          true,
+		"gpt-5.6-2026-08-01":    true,
+		"openai/gpt-5.7":        true,
+		"GPT-5.10":              true,
+		"gpt-6":                 true,
+		"gpt-6.1-codex":         true,
+		"gpt-5.5":               false,
+		"gpt-5":                 false,
+		"gpt-5-mini":            false,
+		"gpt-5.1-codex":         false,
+		"gpt-4o":                false,
+		"gpt-4.1":               false,
+		"gpt-oss-120b":          false,
+		"o3":                    false,
+		"claude-sonnet-4-5":     false,
+		"":                      false,
+		"openai/gpt-5.5-turbo":  false,
+		"my-gpt-5.6-deployment": false,
+		"gpt-35-turbo":          false,
+		"gpt-50":                false,
+	}
+	for model, want := range tests {
+		t.Run(model, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, isGPT56OrLater(model))
+		})
+	}
+}
+
+func TestNormalizeCacheIntent_OpenAIChatTargetsKeepOnlyRequestKeys(t *testing.T) {
+	t.Parallel()
+
+	options := json.RawMessage(`{"mode":"explicit","ttl":"30m"}`)
+	tests := []struct {
+		name   string
+		target Format
+		model  string
+		want   *CanonicalCacheOptions
+	}{
+		{name: "openai before gpt-5.6 keeps retention", target: FormatOpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "openai gpt-5.6 keeps options", target: FormatOpenAI, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k", Mode: "explicit", Options: options}},
+		{name: "azure follows the model", target: FormatAzure, model: "gpt-4.1", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "responses before gpt-5.6", target: FormatOpenAIResponses, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "xai keys its cache by header", target: FormatXAI, model: "grok-4", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := cachedRequest(1, 2, CacheTTL1h)
+			req.Model = tt.model
+			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: options, Auto: bp("")}
+			normalizeCacheIntent(req, tt.target)
+
+			assert.Equal(t, tt.want, req.CacheOptions)
+			assert.Nil(t, req.SystemCache)
+			assert.Equal(t, []any{nil}, toolTTLs(req.Tools))
+			assert.Equal(t, []any{nil, nil}, messageTTLs(req.Messages))
+		})
+	}
+}
+
+func TestNormalizeCacheIntent_ResponsesBreakpointsNeedGPT56(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		model      string
+		mode       string
+		wantSystem bool
+		wantMsgs   []any
+	}{
+		{name: "implicit mode leaves one write to OpenAI", model: "gpt-5.6", wantSystem: true, wantMsgs: []any{nil, nil, CacheTTL(""), CacheTTL("")}},
+		{name: "explicit mode uses all four writes", model: "openai/gpt-5.6", mode: "explicit", wantSystem: true, wantMsgs: []any{nil, CacheTTL(""), CacheTTL(""), CacheTTL("")}},
+		{name: "older models get no breakpoint", model: "gpt-4o", wantMsgs: []any{nil, nil, nil, nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := cachedRequest(1, 4, "")
+			req.Model = tt.model
+			if tt.mode != "" {
+				req.CacheOptions = &CanonicalCacheOptions{Mode: tt.mode, Options: json.RawMessage(`{"mode":"explicit"}`)}
+			}
+			normalizeCacheIntent(req, FormatOpenAIResponses)
+
+			assert.Equal(t, tt.wantSystem, req.SystemCache != nil)
+			assert.Equal(t, []any{nil}, toolTTLs(req.Tools))
+			assert.Equal(t, tt.wantMsgs, messageTTLs(req.Messages))
+		})
+	}
+}
+
+func TestCacheTextJoin_ExtendKeepsTheMarkerOnItsBlock(t *testing.T) {
+	t.Parallel()
+
+	var system cacheTextJoin
+	system.add("intro\nline")
+	var msg cacheTextJoin
+	msg.add("stable")
+	msg.markText(bp(CacheTTL1h), false)
+	msg.add("volatile")
+	system.extend(&msg)
+
+	cache := system.breakpoint()
+	parts, placed := cachedTextParts(system.String(), cache)
+	assert.True(t, placed)
+	assert.Equal(t, []string{"intro\nline\nstable", "volatile"}, parts)
+	assert.Equal(t, CacheTTL1h, cache.TTL)
+
+	var empty, blank cacheTextJoin
+	blank.add("")
+	empty.extend(&blank)
+	assert.Empty(t, empty.parts)
 }

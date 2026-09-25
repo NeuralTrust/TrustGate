@@ -1418,7 +1418,7 @@ func TestAnthropicSplitAtCacheBoundary_RefusesUnsafeSplits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			head, tail, ok := anthropicSplitAtCacheBoundary(tt.text, tt.bp)
+			head, tail, ok := splitAtCacheBoundary(tt.text, tt.bp)
 			assert.Equal(t, tt.ok, ok)
 			assert.Equal(t, tt.head, head)
 			assert.Equal(t, tt.tail, tail)
