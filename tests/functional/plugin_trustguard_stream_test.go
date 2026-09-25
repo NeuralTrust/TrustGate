@@ -417,7 +417,10 @@ func TestPluginE2E_TrustGuard_StreamMidStreamCutAnthropicIngress(t *testing.T) {
 		"an Anthropic client must be able to tell a policy cut from a normal ending")
 	assert.NotContains(t, body, "end_turn", "end_turn is what a finished answer says")
 	assert.Contains(t, body, "event: message_stop", "the message the cut interrupted is closed")
-	assert.Contains(t, body, `"type":"permission_error"`, "the blocked event names the incident")
+	assert.Contains(t, body, `"stop_details":{"type":"refusal"}`,
+		"stop_details names the incident now that the trailing error event is gone")
+	assert.NotContains(t, body, "event: error",
+		"anthropic-sdk-python raises unconditionally on a trailing error event, and because our SSE rides a 200 the raise is a bare APIStatusError that `except PermissionDeniedError` does not catch")
 	assert.NotContains(t, body, "[DONE]", "the Anthropic wire has its own terminator")
 
 	opened, closed := anthropicBlockIndexes(t, body)
