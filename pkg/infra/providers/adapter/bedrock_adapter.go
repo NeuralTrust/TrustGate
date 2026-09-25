@@ -52,6 +52,14 @@ type ConverseContentBlock struct {
 	ToolUse          *ConverseToolUse          `json:"toolUse,omitempty"`
 	ToolResult       *ConverseToolResult       `json:"toolResult,omitempty"`
 	ReasoningContent *ConverseReasoningContent `json:"reasoningContent,omitempty"`
+	CachePoint       *ConverseCachePoint       `json:"cachePoint,omitempty"`
+}
+
+// ConverseCachePoint marks the end of a prompt prefix Bedrock may cache. It is
+// its own entry in content, system and tools, covering everything before it.
+type ConverseCachePoint struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 // ConverseImageBlock is an inline image; Bedrock takes bytes only, never URLs.
@@ -67,7 +75,8 @@ type ConverseImageSource struct {
 
 // ConverseSystemBlock is one system instruction.
 type ConverseSystemBlock struct {
-	Text string `json:"text"`
+	Text       string              `json:"text,omitempty"`
+	CachePoint *ConverseCachePoint `json:"cachePoint,omitempty"`
 }
 
 // ConverseToolUse is a tool call requested by the model.
@@ -118,9 +127,10 @@ type ConverseToolConfig struct {
 	ToolChoice *ConverseToolChoice `json:"toolChoice,omitempty"`
 }
 
-// ConverseTool is a tagged union with a single member today.
+// ConverseTool is a tagged union: exactly one field is set.
 type ConverseTool struct {
-	ToolSpec *ConverseToolSpec `json:"toolSpec,omitempty"`
+	ToolSpec   *ConverseToolSpec   `json:"toolSpec,omitempty"`
+	CachePoint *ConverseCachePoint `json:"cachePoint,omitempty"`
 }
 
 // ConverseToolSpec describes one callable tool.
@@ -267,6 +277,8 @@ const (
 
 	converseCacheTTL5m = "5m"
 	converseCacheTTL1h = "1h"
+
+	converseCachePointDefault = "default"
 )
 
 func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
@@ -284,9 +296,9 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	cr := &CanonicalRequest{
 		Model:    req.Model,
 		Stream:   req.Stream,
-		System:   converseSystemText(req.System),
 		Messages: make([]CanonicalMessage, 0, len(req.Messages)),
 	}
+	cr.System, cr.SystemCache = converseSystemText(req.System)
 	for _, m := range req.Messages {
 		cr.Messages = append(cr.Messages, converseMessageToCanonical(m)...)
 	}
@@ -298,6 +310,12 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	}
 	if tc := req.ToolConfig; tc != nil {
 		for _, t := range tc.Tools {
+			if t.CachePoint != nil {
+				if n := len(cr.Tools); n > 0 {
+					cr.Tools[n-1].Cache = laterCacheBreakpoint(cr.Tools[n-1].Cache, converseCacheBreakpoint(t.CachePoint))
+				}
+				continue
+			}
 			if t.ToolSpec == nil {
 				continue
 			}
@@ -312,18 +330,44 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	return cr, nil
 }
 
-func converseSystemText(blocks []ConverseSystemBlock) string {
-	switch len(blocks) {
-	case 0:
-		return ""
-	case 1:
-		return blocks[0].Text
+func converseCacheBreakpoint(cp *ConverseCachePoint) *CanonicalCacheBreakpoint {
+	if cp == nil {
+		return nil
 	}
-	parts := make([]string, 0, len(blocks))
+	return &CanonicalCacheBreakpoint{TTL: CacheTTL(cp.TTL)}
+}
+
+// converseCachePointFrom sends ttl only for 1h: omitting it is the 5m default,
+// and it keeps the request valid on models that take no ttl at all.
+func converseCachePointFrom(bp *CanonicalCacheBreakpoint) *ConverseCachePoint {
+	if bp == nil {
+		return nil
+	}
+	cp := &ConverseCachePoint{Type: converseCachePointDefault}
+	if bp.TTL == CacheTTL1h {
+		cp.TTL = converseCacheTTL1h
+	}
+	return cp
+}
+
+// converseSystemText joins the system blocks with "\n\n", spelled as an empty
+// part between two "\n" joiners so a cachePoint keeps the newline index of the
+// block it followed. A cachePoint before any text caches nothing and is
+// dropped.
+func converseSystemText(blocks []ConverseSystemBlock) (string, *CanonicalCacheBreakpoint) {
+	var text cacheTextJoin
 	for _, b := range blocks {
-		parts = append(parts, b.Text)
+		if b.CachePoint == nil || b.Text != "" {
+			if len(text.parts) > 0 {
+				text.add("")
+			}
+			text.add(b.Text)
+		}
+		if b.CachePoint != nil && len(text.parts) > 0 {
+			text.markText(converseCacheBreakpoint(b.CachePoint), false)
+		}
 	}
-	return strings.Join(parts, "\n\n")
+	return text.String(), text.breakpoint()
 }
 
 // converseMessageToCanonical splits one Converse turn into canonical messages:
@@ -337,13 +381,26 @@ func converseSystemText(blocks []ConverseSystemBlock) string {
 // results, so a round trip through it renders reasoning away and JSON results
 // as text. Only bodies a plugin rewrites take that trip; a plain proxy pass
 // never decodes the Converse body.
+//
+// Text blocks are joined with "\n", like the other decoders do, so a
+// cachePoint after one of them keeps its block boundary. A cachePoint marks
+// the block before it; after a block the canonical model drops, or first in
+// the turn, it is dropped too.
 func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 	var (
 		out  []CanonicalMessage
 		turn = CanonicalMessage{Role: m.Role}
-		text strings.Builder
+		text cacheTextJoin
+		mark func(*CanonicalCacheBreakpoint, bool)
 	)
-	for _, b := range m.Content {
+	for i, b := range m.Content {
+		if b.CachePoint != nil {
+			if mark != nil {
+				mark(converseCacheBreakpoint(b.CachePoint), i == len(m.Content)-1)
+			}
+			continue
+		}
+		mark = nil
 		switch {
 		case b.ToolResult != nil:
 			content := converseToolResultText(b.ToolResult.Content)
@@ -355,12 +412,19 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 				ToolCallID: b.ToolResult.ToolUseID,
 				Content:    content,
 			})
+			at := len(out) - 1
+			mark = func(bp *CanonicalCacheBreakpoint, last bool) {
+				bp.clientLast = last
+				out[at].Cache = laterCacheBreakpoint(out[at].Cache, bp)
+			}
 		case b.Image != nil:
 			if m.Role == converseRoleUser && len(b.Image.Source.Bytes) > 0 {
 				turn.Images = append(turn.Images, CanonicalImage{
 					MediaType: "image/" + b.Image.Format,
 					Data:      base64.StdEncoding.EncodeToString(b.Image.Source.Bytes),
 				})
+				text.addImage()
+				mark = text.markImage
 			}
 		case b.ToolUse != nil:
 			turn.ToolCalls = append(turn.ToolCalls, CanonicalToolCall{
@@ -368,11 +432,13 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 				Name:      b.ToolUse.Name,
 				Arguments: converseToolInputArguments(b.ToolUse.Input),
 			})
+			mark = text.markEnd
 		case b.Text != "":
-			text.WriteString(b.Text)
+			text.add(b.Text)
+			mark = text.markText
 		}
 	}
-	turn.Content = text.String()
+	turn.Content, turn.Cache = text.String(), text.breakpoint()
 	if turn.Content != "" || len(turn.ToolCalls) > 0 || len(turn.Images) > 0 {
 		out = append(out, turn)
 	}
@@ -412,15 +478,15 @@ func converseToolChoiceToCanonical(tc *ConverseToolChoice) *CanonicalToolChoice 
 }
 
 func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	out := ConverseRequest{Messages: make([]ConverseMessage, 0, len(req.Messages))}
-	if req.System != "" {
-		out.System = []ConverseSystemBlock{{Text: req.System}}
+	out := ConverseRequest{
+		Messages: make([]ConverseMessage, 0, len(req.Messages)),
+		System:   converseSystemBlocks(nil, req.System, req.SystemCache),
 	}
 	for _, m := range req.Messages {
 		// Converse has no system turn; instructions found in the conversation
 		// join the dedicated field rather than being dropped.
 		if m.Role == "system" {
-			out.System = append(out.System, ConverseSystemBlock{Text: m.Content})
+			out.System = converseSystemBlocks(out.System, m.Content, m.Cache)
 			continue
 		}
 		msg, err := converseMessageFromCanonical(m)
@@ -432,6 +498,26 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out.InferenceConfig = converseInferenceConfigFrom(req)
 	out.ToolConfig = converseToolConfigFrom(req)
 	return json.Marshal(out)
+}
+
+// converseSystemBlocks appends text to system, with a cachePoint after the
+// block the breakpoint sat on, or after the whole text when that boundary is
+// lost.
+func converseSystemBlocks(system []ConverseSystemBlock, text string, bp *CanonicalCacheBreakpoint) []ConverseSystemBlock {
+	if text == "" {
+		return system
+	}
+	parts, placed := cachedTextParts(text, bp)
+	for i, part := range parts {
+		system = append(system, ConverseSystemBlock{Text: part})
+		if i == 0 && placed {
+			system = append(system, ConverseSystemBlock{CachePoint: converseCachePointFrom(bp)})
+		}
+	}
+	if !placed && bp != nil {
+		system = append(system, ConverseSystemBlock{CachePoint: converseCachePointFrom(bp)})
+	}
+	return system
 }
 
 // appendConverseMessage merges msg into the previous turn when both share a
@@ -449,15 +535,21 @@ func appendConverseMessage(msgs []ConverseMessage, msg ConverseMessage) []Conver
 	return append(msgs, msg)
 }
 
+// converseMessageFromCanonical puts a cachePoint right after the block the
+// breakpoint sat on: the marked image, the marked text block (split back out
+// of the joined text) or the tool result. When that boundary is lost it goes
+// last. A marker whose image is gone is dropped rather than moved onto the
+// text after it.
 func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 	if m.Role == "tool" {
-		return ConverseMessage{
-			Role: converseRoleUser,
-			Content: []ConverseContentBlock{{ToolResult: &ConverseToolResult{
-				ToolUseID: m.ToolCallID,
-				Content:   []ConverseToolResultContent{{Text: m.Content}},
-			}}},
-		}, nil
+		blocks := []ConverseContentBlock{{ToolResult: &ConverseToolResult{
+			ToolUseID: m.ToolCallID,
+			Content:   []ConverseToolResultContent{{Text: m.Content}},
+		}}}
+		if m.Cache != nil {
+			blocks = append(blocks, ConverseContentBlock{CachePoint: converseCachePointFrom(m.Cache)})
+		}
+		return ConverseMessage{Role: converseRoleUser, Content: blocks}, nil
 	}
 	role := converseRoleUser
 	if m.Role == converseRoleAssistant {
@@ -467,16 +559,33 @@ func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 	if m.Role == converseRoleUser {
 		images = m.Images
 	}
-	blocks := make([]ConverseContentBlock, 0, len(images)+1+len(m.ToolCalls))
-	for _, img := range images {
+	cache := m.Cache
+	imageAt := -1
+	if cache.onImage() {
+		if at, ok := cachedImageIndex(cache, len(images)); ok {
+			imageAt = at
+		}
+	}
+	blocks := make([]ConverseContentBlock, 0, len(images)+3+len(m.ToolCalls))
+	for i, img := range images {
 		block, err := converseImageFromCanonical(img)
 		if err != nil {
 			return ConverseMessage{}, err
 		}
 		blocks = append(blocks, ConverseContentBlock{Image: block})
+		if i == imageAt {
+			blocks = append(blocks, ConverseContentBlock{CachePoint: converseCachePointFrom(cache)})
+		}
 	}
-	if m.Content != "" {
-		blocks = append(blocks, ConverseContentBlock{Text: m.Content})
+	if cache.onImage() {
+		cache = nil
+	}
+	parts, placed := cachedTextParts(m.Content, cache)
+	for i, part := range parts {
+		blocks = append(blocks, ConverseContentBlock{Text: part})
+		if i == 0 && placed {
+			blocks = append(blocks, ConverseContentBlock{CachePoint: converseCachePointFrom(cache)})
+		}
 	}
 	for _, tc := range m.ToolCalls {
 		blocks = append(blocks, ConverseContentBlock{ToolUse: &ConverseToolUse{
@@ -484,6 +593,9 @@ func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 			Name:      tc.Name,
 			Input:     converseToolInput(tc.Arguments),
 		}})
+	}
+	if !placed && cache != nil && len(blocks) > 0 {
+		blocks = append(blocks, ConverseContentBlock{CachePoint: converseCachePointFrom(cache)})
 	}
 	return ConverseMessage{Role: role, Content: blocks}, nil
 }
@@ -566,6 +678,9 @@ func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 			Description: t.Description,
 			InputSchema: ConverseToolInputSchema{JSON: schema},
 		}})
+		if t.Cache != nil {
+			cfg.Tools = append(cfg.Tools, ConverseTool{CachePoint: converseCachePointFrom(t.Cache)})
+		}
 	}
 	cfg.ToolChoice = converseToolChoiceFrom(choice)
 	return cfg

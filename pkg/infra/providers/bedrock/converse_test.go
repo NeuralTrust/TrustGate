@@ -573,3 +573,60 @@ func TestDecodeConverseBody_InvalidImageBytesIsARequestDecodeError(t *testing.T)
 	require.Error(t, err)
 	assert.True(t, adapter.IsRequestDecodeError(err))
 }
+
+func TestDecodeConverseBody_CachePoints(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{
+		"system":[{"text":"rules"},{"cachePoint":{"type":"default","ttl":"1h"}}],
+		"messages":[{"role":"user","content":[{"text":"doc"},{"cachePoint":{"type":"default","ttl":"5m"}},{"text":"question"}]}],
+		"toolConfig":{"tools":[{"toolSpec":{"name":"f","inputSchema":{"json":{"type":"object"}}}},{"cachePoint":{"type":"default"}}]}
+	}`))
+	require.NoError(t, err)
+	in := params.input("m")
+
+	require.Len(t, in.System, 2)
+	systemPoint, ok := in.System[1].(*bedrockTypes.SystemContentBlockMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault, Ttl: bedrockTypes.CacheTTLOneHour}, systemPoint.Value)
+
+	require.Len(t, in.Messages[0].Content, 3)
+	contentPoint, ok := in.Messages[0].Content[1].(*bedrockTypes.ContentBlockMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}, contentPoint.Value)
+
+	require.Len(t, in.ToolConfig.Tools, 2)
+	toolPoint, ok := in.ToolConfig.Tools[1].(*bedrockTypes.ToolMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}, toolPoint.Value)
+}
+
+func TestFoldSystemIntoFirstTurn_KeepsCachePoint(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prepended before the first user text without merging", func(t *testing.T) {
+		t.Parallel()
+		params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"cachePoint":{"type":"default","ttl":"1h"}},{"text":"today"}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+		require.NoError(t, err)
+		require.True(t, params.foldSystemIntoFirstTurn())
+		assert.Nil(t, params.system)
+
+		content := params.messages[0].Content
+		require.Len(t, content, 4)
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "rules"}, content[0])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault, Ttl: bedrockTypes.CacheTTLOneHour}}, content[1])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "today"}, content[2])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "hi"}, content[3])
+	})
+	t.Run("new user turn when the conversation opens with the assistant", func(t *testing.T) {
+		t.Parallel()
+		params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"assistant","content":[{"text":"Hello"}]}]}`))
+		require.NoError(t, err)
+		require.True(t, params.foldSystemIntoFirstTurn())
+
+		require.Len(t, params.messages, 2)
+		assert.Equal(t, bedrockTypes.ConversationRoleUser, params.messages[0].Role)
+		require.Len(t, params.messages[0].Content, 2)
+		assert.IsType(t, &bedrockTypes.ContentBlockMemberCachePoint{}, params.messages[0].Content[1])
+	})
+}

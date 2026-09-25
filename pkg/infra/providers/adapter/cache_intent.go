@@ -160,14 +160,12 @@ type cacheProfile struct {
 }
 
 // cacheProfileFor returns what target accepts from providerName for model.
-// Bedrock keeps images off until its encoder places cachePoint after the
-// marked image (ENG-1618 S4a).
 func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 	switch target {
 	case FormatAnthropic:
 		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4, auto: true}
 	case FormatBedrock:
-		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, max: 4}
+		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4}
 	case FormatOpenAIResponses, FormatOpenAI, FormatAzure:
 		return openAICacheProfile(target, providerName, model)
 	case FormatOpenRouter:
