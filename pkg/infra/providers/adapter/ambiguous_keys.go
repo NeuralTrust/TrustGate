@@ -353,6 +353,10 @@ func (f *keyFrame) valueShape() *keyShape {
 	return f.shape
 }
 
+// keyFrameLinearKeys is how many keys an object is scanned linearly for
+// repeats before it switches to a set.
+const keyFrameLinearKeys = 8
+
 func (f *keyFrame) repeats(key string) bool {
 	k, next := f.shape.lookup(key)
 	f.next, f.atKey = next, false
@@ -362,10 +366,10 @@ func (f *keyFrame) repeats(key string) bool {
 				return true
 			}
 		}
-		if f.keys = append(f.keys, k); len(f.keys) <= 8 {
+		if f.keys = append(f.keys, k); len(f.keys) <= keyFrameLinearKeys {
 			return false
 		}
-		f.seen = make(map[string]struct{}, 2*len(f.keys))
+		f.seen = make(map[string]struct{}, 2*keyFrameLinearKeys)
 		for _, seen := range f.keys {
 			f.seen[seen] = struct{}{}
 		}
