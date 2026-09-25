@@ -396,6 +396,8 @@ func (j *anthropicTextJoin) markEnd(cc *anthropicCacheControl, last bool) {
 func (j *anthropicTextJoin) merge(bp *CanonicalCacheBreakpoint, last bool) {
 	j.cache = laterCacheBreakpoint(j.cache, bp)
 	j.cache.clientLast = last && j.cache.TTL == bp.TTL
+	j.cache.raisedLast = last && !j.cache.clientLast
+	j.cache.clientTTL = bp.TTL
 }
 
 func (j *anthropicTextJoin) breakpoint() *CanonicalCacheBreakpoint {
@@ -588,16 +590,23 @@ func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]
 // block when top-level automatic caching puts a different TTL on that same
 // block, a pair Anthropic answers with 400, but only when the gateway put it
 // there: a fallback from its block boundary, a TTL raised by merging markers,
-// or a marker a plugin added. A client that sent the pair itself gets the
-// same answer as on passthrough.
+// or a marker a plugin added. A raised TTL goes back to the one the client
+// sent on that block when that one does not conflict. A client that sent the
+// pair itself gets the same answer as on passthrough.
 func dropCacheControlConflictingWithAuto(blocks []anthropicContentBlock, cache, auto *CanonicalCacheBreakpoint) {
 	if auto == nil || len(blocks) == 0 || (cache != nil && cache.clientLast) {
 		return
 	}
 	last := &blocks[len(blocks)-1]
-	if last.CacheControl != nil && anthropicEffectiveTTL(CacheTTL(last.CacheControl.TTL)) != anthropicEffectiveTTL(auto.TTL) {
-		last.CacheControl = nil
+	autoTTL := anthropicEffectiveTTL(auto.TTL)
+	if last.CacheControl == nil || anthropicEffectiveTTL(CacheTTL(last.CacheControl.TTL)) == autoTTL {
+		return
 	}
+	if cache != nil && cache.raisedLast && anthropicEffectiveTTL(cache.clientTTL) == autoTTL {
+		last.CacheControl = anthropicCacheControlFrom(&CanonicalCacheBreakpoint{TTL: cache.clientTTL})
+		return
+	}
+	last.CacheControl = nil
 }
 
 func anthropicEffectiveTTL(ttl CacheTTL) CacheTTL {
