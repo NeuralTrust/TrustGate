@@ -178,11 +178,11 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 5 (S2b): OpenAI Chat and Responses intent
 
-- [ ] 5.1 `openai_completions_adapter.go` decode: parts/tool `cache_control`, `prompt_cache_{key,retention,options}`, top-level `cache_control`.
-- [ ] 5.2 Same file encode: `openAICachedContent`, system/tool-result parts, top-level keys from `CacheOptions`.
-- [ ] 5.3 `openai_responses_adapter.go`: `prompt_cache_breakpoint` decode/encode; system → leading `developer` item; skip string `input` shortcut.
-- [ ] 5.4 `cache_intent.go`: GPT-5.6+ predicate; Responses and openai/azure/xai rows (D3, D4).
-- [ ] 5.5 Tests: Responses options round-trip; Anthropic→Responses gpt-5.6 vs gpt-4o; OpenAI→Anthropic marker, no key; Chat target drops breakpoints.
+- [x] 5.1 `openai_completions_adapter.go` decode: parts/tool `cache_control`, `prompt_cache_{key,retention,options}`, top-level `cache_control`. Parts join through the shared `cacheTextJoin` (moved from the Anthropic adapter), so the newline-index boundary is kept; system/developer messages join byte-exact as before.
+- [x] 5.2 Same file encode: faithful; marked content becomes text parts split at the boundary (`cachedTextParts`), system/tool-result parts, tool `cache_control`, top-level keys from `CacheOptions`.
+- [x] 5.3 `openai_responses_adapter.go`: `prompt_cache_breakpoint` decode/encode on user, developer and `function_call_output` parts; system breakpoint → leading `developer` item (instructions cleared); string `input` shortcut skipped when a marker must be emitted; top-level keys.
+- [x] 5.4 `cache_intent.go`: `isGPT56OrLater` (one-digit major, vendor prefix, suffixes); `cacheProfileFor(target, model)`. Responses GPT-5.6+: system+messages, max 4 (3 unless `mode=explicit`). openai/azure/Responses: key always, `prompt_cache_options` only on GPT-5.6+, `prompt_cache_retention` only before GPT-5.6 (OpenAI/Azure docs: 400 on options before 5.6, retention deprecated on 5.6). **xAI Chat: nothing** (xAI Chat caches by the `x-grok-conv-id` header, not a body key) — deviation from D3.
+- [x] 5.5 Tests: Responses options and breakpoints round-trip; Anthropic→Responses gpt-5.6 vs gpt-4o (buffered + stream); OpenAI Chat→Anthropic markers, no key (buffered + stream); Responses→openai/azure/xai drops breakpoints; same-wire passthrough byte-identical; GPT-5.6 predicate table.
 - [ ] 5.6 V1 (adapter); V2; V3; V4 **OpenAI, openai_responses, Azure, xAI**; V5.
 
 ## Phase 6 (S3): request passthrough and pass-through fixes

@@ -164,34 +164,68 @@ func contentToString(raw json.RawMessage) string {
 }
 
 func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
+	var text cacheTextJoin
+	images := decodeOpenAIParts(raw, &text, nil)
+	return text.String(), images
+}
+
+// decodeOpenAIParts adds the text of raw, a string or a list of content parts,
+// to text and returns its images. marker reads the cache marker of a part in
+// the client's dialect; nil ignores markers. A marker on an empty text part
+// moves to the text before it and one on a part the canonical model drops
+// (audio, files) is dropped with it.
+func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint) []CanonicalImage {
 	if raw == nil {
-		return "", nil
+		return nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s, nil
+		text.add(s)
+		return nil
 	}
 	var parts []openaiContentPart
 	if json.Unmarshal(raw, &parts) != nil {
-		return string(raw), nil
+		text.add(string(raw))
+		return nil
 	}
-	var texts []string
 	var images []CanonicalImage
-	for _, p := range parts {
+	for i, p := range parts {
+		var bp *CanonicalCacheBreakpoint
+		if marker != nil {
+			bp = marker(p)
+		}
+		last := i == len(parts)-1
+		isText := p.Type == "text" || p.Type == "input_text" || p.Text != "" || (p.Type == "refusal" && p.Refusal != "")
 		if p.Text != "" {
-			texts = append(texts, p.Text)
+			text.add(p.Text)
 		}
 		if p.Type == "refusal" && p.Refusal != "" {
-			texts = append(texts, p.Refusal)
+			text.add(p.Refusal)
+		}
+		if isText {
+			if len(text.parts) > 0 {
+				text.markText(bp, last)
+			}
+			continue
 		}
 		if p.Type != "image_url" {
 			continue
 		}
 		if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
 			images = append(images, img)
+			text.markEnd(bp, last)
 		}
 	}
-	return strings.Join(texts, "\n"), images
+	return images
+}
+
+// appendOpenAISystem adds one system or developer message to system the way
+// the decoders always joined them: with "\n", except before the first
+// non-empty one, so the text stays byte-exact.
+func appendOpenAISystem(system *cacheTextJoin, raw json.RawMessage, marker func(openaiContentPart) *CanonicalCacheBreakpoint) {
+	var msg cacheTextJoin
+	decodeOpenAIParts(raw, &msg, marker)
+	system.extend(&msg)
 }
 
 func decodeOpenAIImageURL(raw json.RawMessage) (CanonicalImage, bool) {

@@ -26,15 +26,18 @@ import (
 // ---------------------------------------------------------------------------
 
 type openaiResponsesRequest struct {
-	Model           string            `json:"model,omitempty"`
-	Input           json.RawMessage   `json:"input"`
-	Instructions    string            `json:"instructions,omitempty"`
-	MaxOutputTokens *int              `json:"max_output_tokens,omitempty"`
-	Temperature     *float64          `json:"temperature,omitempty"`
-	TopP            *float64          `json:"top_p,omitempty"`
-	Stream          *bool             `json:"stream,omitempty"`
-	Tools           []json.RawMessage `json:"tools,omitempty"`
-	Text            *openaiTextFormat `json:"text,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	Input                json.RawMessage   `json:"input"`
+	Instructions         string            `json:"instructions,omitempty"`
+	MaxOutputTokens      *int              `json:"max_output_tokens,omitempty"`
+	Temperature          *float64          `json:"temperature,omitempty"`
+	TopP                 *float64          `json:"top_p,omitempty"`
+	Stream               *bool             `json:"stream,omitempty"`
+	Tools                []json.RawMessage `json:"tools,omitempty"`
+	Text                 *openaiTextFormat `json:"text,omitempty"`
+	PromptCacheKey       string            `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string            `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   json.RawMessage   `json:"prompt_cache_options,omitempty"`
 }
 
 type openaiTextFormat struct {
@@ -52,6 +55,21 @@ type openaiResponsesInputItem struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	Output    json.RawMessage `json:"output,omitempty"`
 	Status    string          `json:"status,omitempty"`
+
+	PromptCacheBreakpoint *openaiPromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
+}
+
+var responsesExplicitBreakpoint = &openaiPromptCacheBreakpoint{Mode: "explicit"}
+
+func responsesPartBreakpoint(p openaiContentPart) *CanonicalCacheBreakpoint {
+	return responsesBreakpoint(p.PromptCacheBreakpoint)
+}
+
+func responsesBreakpoint(b *openaiPromptCacheBreakpoint) *CanonicalCacheBreakpoint {
+	if b == nil {
+		return nil
+	}
+	return &CanonicalCacheBreakpoint{}
 }
 
 const responsesNonTextToolOutput = "[tool output without text]"
@@ -158,10 +176,10 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	cr := &CanonicalRequest{
-		Model:       req.Model,
-		System:      req.Instructions,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
+		Model:        req.Model,
+		Temperature:  req.Temperature,
+		TopP:         req.TopP,
+		CacheOptions: openAICacheOptions(req.PromptCacheKey, req.PromptCacheRetention, req.PromptCacheOptions),
 	}
 
 	if req.Stream != nil {
@@ -177,9 +195,14 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	cr.Tools = decodeResponsesTools(req.Tools)
-	if err := decodeResponsesInput(req.Input, cr); err != nil {
+	var system cacheTextJoin
+	if req.Instructions != "" {
+		system.add(req.Instructions)
+	}
+	if err := decodeResponsesInput(req.Input, cr, &system); err != nil {
 		return nil, err
 	}
+	cr.System, cr.SystemCache = system.String(), system.breakpoint()
 	return cr, nil
 }
 
@@ -215,7 +238,7 @@ func decodeResponsesTools(raws []json.RawMessage) []CanonicalTool {
 // items, to cr. Items are decoded one by one so that one item of a shape the
 // gateway does not know is counted in cr.DroppedInputItems instead of failing
 // the request or dropping the rest of the history.
-func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
+func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest, system *cacheTextJoin) error {
 	if len(input) == 0 || string(input) == "null" {
 		return nil
 	}
@@ -235,7 +258,7 @@ func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 			cr.DroppedInputItems++
 			continue
 		}
-		turn = appendResponsesInputItem(cr, item, turn)
+		turn = appendResponsesInputItem(cr, system, item, turn)
 	}
 	return nil
 }
@@ -245,7 +268,7 @@ func decodeResponsesInput(input json.RawMessage, cr *CanonicalRequest) error {
 // assistant message per turn. Only a user message, an input_text or a
 // function_call_output ends a turn; developer and system text goes to the
 // system prompt wherever it appears.
-func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputItem, turn bool) bool {
+func appendResponsesInputItem(cr *CanonicalRequest, system *cacheTextJoin, item openaiResponsesInputItem, turn bool) bool {
 	switch {
 	case item.Type == "function_call":
 		callID := item.CallID
@@ -254,23 +277,23 @@ func appendResponsesInputItem(cr *CanonicalRequest, item openaiResponsesInputIte
 		}
 		return appendResponsesAssistant(cr, turn, "", CanonicalToolCall{ID: callID, Name: item.Name, Arguments: responsesCallArguments(item.Arguments)})
 	case item.Type == "function_call_output":
-		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "tool", Content: responsesToolOutput(item.Output), ToolCallID: item.CallID})
+		output, cache := responsesToolOutput(item.Output)
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "tool", Content: output, ToolCallID: item.CallID, Cache: cache})
 		return false
 	case item.Type == "reasoning":
 		return turn
 	case item.Role == "assistant":
 		return appendResponsesAssistant(cr, turn, contentToString(item.Content))
 	case item.Role == "system", item.Role == "developer":
-		if cr.System != "" {
-			cr.System += "\n"
-		}
-		cr.System += contentToString(item.Content)
+		appendOpenAISystem(system, item.Content, responsesPartBreakpoint)
 		return turn
 	case item.Role != "":
-		cr.Messages = append(cr.Messages, CanonicalMessage{Role: item.Role, Content: contentToString(item.Content)})
+		var text cacheTextJoin
+		decodeOpenAIParts(item.Content, &text, responsesPartBreakpoint)
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: item.Role, Content: text.String(), Cache: text.breakpoint()})
 		return false
 	case item.Type == "input_text":
-		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "user", Content: item.Text})
+		cr.Messages = append(cr.Messages, CanonicalMessage{Role: "user", Content: item.Text, Cache: responsesBreakpoint(item.PromptCacheBreakpoint)})
 		return false
 	default:
 		return turn
@@ -301,17 +324,22 @@ func responsesCallArguments(raw json.RawMessage) string {
 // responsesToolOutput returns the text of a function_call_output, leaving out
 // images and files, and passes any other value on as its JSON text. An output
 // without text gets a placeholder, since upstreams reject an empty tool
-// result.
-func responsesToolOutput(output json.RawMessage) string {
+// result; a breakpoint on it then marks the end of the placeholder.
+func responsesToolOutput(output json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	trimmed := bytes.TrimSpace(output)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return responsesNonTextToolOutput
+		return responsesNonTextToolOutput, nil
 	}
-	text := contentToString(trimmed)
-	if strings.TrimSpace(text) == "" {
-		return responsesNonTextToolOutput
+	var text cacheTextJoin
+	decodeOpenAIParts(trimmed, &text, responsesPartBreakpoint)
+	cache := text.breakpoint()
+	if strings.TrimSpace(text.String()) == "" {
+		if cache != nil {
+			cache = &CanonicalCacheBreakpoint{TTL: cache.TTL}
+		}
+		return responsesNonTextToolOutput, cache
 	}
-	return text
+	return text.String(), cache
 }
 
 // appendResponsesAssistant folds an assistant item into the last message of
@@ -503,6 +531,10 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 			Format: &openaiRespFormat{Type: req.ResponseFormat.Type},
 		}
 	}
+	if o := req.CacheOptions; o != nil {
+		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention
+		out.PromptCacheOptions = o.openAIOptions()
+	}
 
 	// Pre-pass: ensure every tool call has a stable call_id so that
 	// function_call and function_call_output items can be linked even when
@@ -539,19 +571,28 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 		}
 	}
 
-	if len(req.Messages) == 1 && req.Messages[0].Role == "user" && len(req.Messages[0].ToolCalls) == 0 {
+	var inputItems []json.RawMessage
+	if system := responsesInputParts(req.System, req.SystemCache); system != nil {
+		out.Instructions = ""
+		raw, _ := json.Marshal(map[string]any{"role": "developer", "content": system})
+		inputItems = append(inputItems, raw)
+	}
+	if len(inputItems) == 0 && len(req.Messages) == 1 && req.Messages[0].Role == "user" &&
+		len(req.Messages[0].ToolCalls) == 0 && req.Messages[0].Cache == nil {
 		out.Input, _ = json.Marshal(req.Messages[0].Content)
-	} else if len(req.Messages) > 0 {
-		var inputItems []json.RawMessage
+	} else if len(req.Messages) > 0 || len(inputItems) > 0 {
 		for _, m := range req.Messages {
 			switch {
 			case m.Role == "tool":
-				item := map[string]string{
+				var output any = m.Content
+				if parts := responsesInputParts(m.Content, m.Cache); parts != nil {
+					output = parts
+				}
+				raw, _ := json.Marshal(map[string]any{
 					"type":    "function_call_output",
 					"call_id": m.ToolCallID,
-					"output":  m.Content,
-				}
-				raw, _ := json.Marshal(item)
+					"output":  output,
+				})
 				inputItems = append(inputItems, raw)
 
 			case m.Role == "assistant" && len(m.ToolCalls) > 0:
@@ -583,9 +624,13 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 				out.Instructions += m.Content
 
 			default:
+				var content any = m.Content
+				if parts := responsesInputParts(m.Content, m.Cache); parts != nil && m.Role != "assistant" {
+					content = parts
+				}
 				item := map[string]interface{}{
 					"role":    m.Role,
-					"content": m.Content,
+					"content": content,
 				}
 				raw, _ := json.Marshal(item)
 				inputItems = append(inputItems, raw)
@@ -611,6 +656,30 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 
 	return json.Marshal(out)
+}
+
+// responsesInputParts writes text as input_text parts with the breakpoint on
+// the part it was decoded from, or on the last one. It returns nil when there
+// is no breakpoint or no text to carry it; an assistant message cannot carry
+// one, as its parts are output_text.
+func responsesInputParts(text string, cache *CanonicalCacheBreakpoint) []openaiContentPart {
+	if cache == nil {
+		return nil
+	}
+	texts, placed := cachedTextParts(text, cache)
+	if len(texts) == 0 {
+		return nil
+	}
+	parts := make([]openaiContentPart, 0, len(texts))
+	for _, t := range texts {
+		parts = append(parts, openaiContentPart{Type: "input_text", Text: t})
+	}
+	at := len(parts) - 1
+	if placed {
+		at = 0
+	}
+	parts[at].PromptCacheBreakpoint = responsesExplicitBreakpoint
+	return parts
 }
 
 // ---------------------------------------------------------------------------

@@ -25,18 +25,22 @@ import (
 // ---------------------------------------------------------------------------
 
 type openaiRequest struct {
-	Model               string            `json:"model,omitempty"`
-	Messages            []openaiMessage   `json:"messages"`
-	MaxTokens           *int              `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int              `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64          `json:"temperature,omitempty"`
-	TopP                *float64          `json:"top_p,omitempty"`
-	TopK                *int              `json:"top_k,omitempty"`
-	Stream              *bool             `json:"stream,omitempty"`
-	Stop                json.RawMessage   `json:"stop,omitempty"` // string or []string
-	ResponseFormat      *openaiRespFormat `json:"response_format,omitempty"`
-	Tools               []openaiTool      `json:"tools,omitempty"`
-	ToolChoice          json.RawMessage   `json:"tool_choice,omitempty"` // string or object
+	Model                string                 `json:"model,omitempty"`
+	Messages             []openaiMessage        `json:"messages"`
+	MaxTokens            *int                   `json:"max_tokens,omitempty"`
+	MaxCompletionTokens  *int                   `json:"max_completion_tokens,omitempty"`
+	Temperature          *float64               `json:"temperature,omitempty"`
+	TopP                 *float64               `json:"top_p,omitempty"`
+	TopK                 *int                   `json:"top_k,omitempty"`
+	Stream               *bool                  `json:"stream,omitempty"`
+	Stop                 json.RawMessage        `json:"stop,omitempty"` // string or []string
+	ResponseFormat       *openaiRespFormat      `json:"response_format,omitempty"`
+	Tools                []openaiTool           `json:"tools,omitempty"`
+	ToolChoice           json.RawMessage        `json:"tool_choice,omitempty"` // string or object
+	PromptCacheKey       string                 `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string                 `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   json.RawMessage        `json:"prompt_cache_options,omitempty"`
+	CacheControl         *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type openaiMessage struct {
@@ -52,6 +56,18 @@ type openaiContentPart struct {
 	Text     string          `json:"text,omitempty"`
 	Refusal  string          `json:"refusal,omitempty"`
 	ImageURL json.RawMessage `json:"image_url,omitempty"`
+	// CacheControl is the OpenRouter and Anthropic-compatible marker on Chat
+	// parts; PromptCacheBreakpoint is the Responses marker on input parts.
+	CacheControl          *anthropicCacheControl       `json:"cache_control,omitempty"`
+	PromptCacheBreakpoint *openaiPromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
+}
+
+type openaiPromptCacheBreakpoint struct {
+	Mode string `json:"mode"`
+}
+
+func openAIPartCacheControl(p openaiContentPart) *CanonicalCacheBreakpoint {
+	return anthropicCacheBreakpoint(p.CacheControl)
 }
 
 type openaiImageURL struct {
@@ -60,9 +76,10 @@ type openaiImageURL struct {
 }
 
 type openaiTool struct {
-	Type     string            `json:"type"`
-	Function *openaiFunction   `json:"function,omitempty"`
-	Custom   *openaiCustomTool `json:"custom,omitempty"`
+	Type         string                 `json:"type"`
+	Function     *openaiFunction        `json:"function,omitempty"`
+	Custom       *openaiCustomTool      `json:"custom,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // openaiCustomTool is the freeform tool shape GPT-5 models accept. Format is
@@ -325,13 +342,19 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type}
 	}
 
+	var system cacheTextJoin
 	for _, m := range req.Messages {
-		content, images := decodeOpenAIContent(m.Content)
-
+		if m.Role == "system" || m.Role == "developer" {
+			appendOpenAISystem(&system, m.Content, openAIPartCacheControl)
+			continue
+		}
+		var text cacheTextJoin
+		images := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl)
 		cm := CanonicalMessage{
 			Role:       m.Role,
-			Content:    content,
+			Content:    text.String(),
 			ToolCallID: m.ToolCallID,
+			Cache:      text.breakpoint(),
 		}
 		if m.Role == "user" {
 			cm.Images = images
@@ -339,16 +362,9 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
 		}
-
-		if m.Role == "system" || m.Role == "developer" {
-			if cr.System != "" {
-				cr.System += "\n"
-			}
-			cr.System += content
-		} else {
-			cr.Messages = append(cr.Messages, cm)
-		}
+		cr.Messages = append(cr.Messages, cm)
 	}
+	cr.System, cr.SystemCache = system.String(), system.breakpoint()
 
 	for _, t := range req.Tools {
 		switch {
@@ -358,17 +374,26 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 				Name:        t.Custom.Name,
 				Description: t.Custom.Description,
 				Format:      t.Custom.Format,
+				Cache:       anthropicCacheBreakpoint(t.CacheControl),
 			})
 		case t.Function != nil:
 			cr.Tools = append(cr.Tools, CanonicalTool{
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
 				Schema:      t.Function.Parameters,
+				Cache:       anthropicCacheBreakpoint(t.CacheControl),
 			})
 		}
 	}
 
 	cr.ToolChoice = decodeOpenAIToolChoice(req.ToolChoice)
+	cr.CacheOptions = openAICacheOptions(req.PromptCacheKey, req.PromptCacheRetention, req.PromptCacheOptions)
+	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
+		if cr.CacheOptions == nil {
+			cr.CacheOptions = &CanonicalCacheOptions{}
+		}
+		cr.CacheOptions.Auto = auto
+	}
 
 	return cr, nil
 }
@@ -377,18 +402,31 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 // Request: Encode (Canonical → Chat Completions)
 // ---------------------------------------------------------------------------
 
-func encodeOpenAIContent(m CanonicalMessage) json.RawMessage {
-	if len(m.Images) == 0 {
-		return stringToContent(m.Content)
+// encodeOpenAIContent writes text as a plain string unless it has images or a
+// cache marker. A marker goes on the text part it was decoded from, or on
+// the last part.
+func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
+	if len(images) == 0 && cache == nil {
+		return stringToContent(text)
 	}
-	parts := make([]openaiContentPart, 0, len(m.Images)+1)
-	for _, img := range m.Images {
+	parts := make([]openaiContentPart, 0, len(images)+2)
+	for _, img := range images {
 		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
 		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
 	}
-	if m.Content != "" {
-		parts = append(parts, openaiContentPart{Type: "text", Text: m.Content})
+	texts, placed := cachedTextParts(text, cache)
+	first := len(parts)
+	for _, t := range texts {
+		parts = append(parts, openaiContentPart{Type: "text", Text: t})
 	}
+	if len(parts) == 0 {
+		return stringToContent(text)
+	}
+	at := len(parts) - 1
+	if placed {
+		at = first
+	}
+	parts[at].CacheControl = anthropicCacheControlFrom(cache)
 	b, _ := json.Marshal(parts)
 	return b
 }
@@ -419,14 +457,15 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	if req.System != "" {
 		out.Messages = append(out.Messages, openaiMessage{
 			Role:    "system",
-			Content: stringToContent(req.System),
+			Content: encodeOpenAIContent(req.System, nil, req.SystemCache),
 		})
 	}
 	for _, m := range req.Messages {
-		content := stringToContent(m.Content)
+		var images []CanonicalImage
 		if m.Role == "user" {
-			content = encodeOpenAIContent(m)
+			images = m.Images
 		}
+		content := encodeOpenAIContent(m.Content, images, m.Cache)
 		msg := openaiMessage{
 			Role:       m.Role,
 			Content:    content,
@@ -443,6 +482,11 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	dropped := len(req.Tools) > len(out.Tools)
 	if req.ToolChoice != nil && (!dropped || !toolChoiceDangles(req.ToolChoice, out.Tools)) {
 		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	}
+	if o := req.CacheOptions; o != nil {
+		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention
+		out.PromptCacheOptions = o.openAIOptions()
+		out.CacheControl = anthropicCacheControlFrom(o.Auto)
 	}
 
 	return json.Marshal(out)
@@ -462,6 +506,7 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 					Description: t.Description,
 					Format:      t.Format,
 				},
+				CacheControl: anthropicCacheControlFrom(t.Cache),
 			})
 			continue
 		}
@@ -472,6 +517,7 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 				Description: t.Description,
 				Parameters:  t.Schema,
 			},
+			CacheControl: anthropicCacheControlFrom(t.Cache),
 		})
 	}
 	return out
