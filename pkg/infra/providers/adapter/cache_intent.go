@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 // CacheTTL is a requested prompt-cache lifetime; empty means the provider default.
@@ -67,6 +69,25 @@ type CanonicalCacheBreakpoint struct {
 	// with clientTTL and merging with an earlier 1h marker raised it.
 	raisedLast bool
 	clientTTL  CacheTTL
+	// image is the 1-based position of the image block the marker sat on
+	// among the segment's images, and images their count at decode time.
+	// Encoders that emit images first keep the marker on that image; a
+	// different count at encode time drops the marker instead of moving it
+	// onto the text that followed the image.
+	image, images int
+}
+
+func (bp *CanonicalCacheBreakpoint) onImage() bool {
+	return bp != nil && bp.image > 0
+}
+
+// cachedImageIndex returns the index of the image a marker sat on when the
+// segment still has the images it was decoded with.
+func cachedImageIndex(bp *CanonicalCacheBreakpoint, images int) (int, bool) {
+	if !bp.onImage() || bp.images != images {
+		return 0, false
+	}
+	return bp.image - 1, true
 }
 
 // CanonicalCacheOptions is request-level cache intent: the OpenAI-family
@@ -84,8 +105,8 @@ func (o *CanonicalCacheOptions) empty() bool {
 	return o.Key == "" && o.Retention == "" && o.Mode == "" && len(o.Options) == 0 && o.Auto == nil
 }
 
-// openAICacheOptions reads the OpenAI-family request keys; options is kept
-// verbatim and its mode parsed. It returns nil when none is set.
+// openAICacheOptions keeps options verbatim and parses its mode. It returns
+// nil when none of the three is set.
 func openAICacheOptions(key, retention string, options json.RawMessage) *CanonicalCacheOptions {
 	o := &CanonicalCacheOptions{Key: key, Retention: retention}
 	if len(options) > 0 && string(options) != "null" {
@@ -119,47 +140,72 @@ func (o *CanonicalCacheOptions) openAIOptions() json.RawMessage {
 
 type cacheProfile struct {
 	tools, system, messages, ttl1h bool
-	max                            int
-	key, retention, options, auto  bool
+	// inputOnly reports that only user and tool messages can carry a
+	// breakpoint, as Responses marks input parts and assistant items are
+	// output.
+	inputOnly bool
+	// images reports that a breakpoint can stay on an image block.
+	images                        bool
+	max                           int
+	key, retention, options, auto bool
 	// implicitSlot reports that the provider spends one of the max writes on
 	// its own breakpoint unless prompt_cache_options.mode is "explicit".
 	implicitSlot bool
 }
 
-// cacheProfileFor returns what target accepts for model. GPT-5.6 and later
-// take breakpoints and prompt_cache_options and no longer take
-// prompt_cache_retention; earlier models answer 400 to the first two. xAI
-// Chat keys its cache by the x-grok-conv-id header, not a body field.
-func cacheProfileFor(target Format, model string) cacheProfile {
+// cacheProfileFor returns what target accepts from providerName for model.
+func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 	switch target {
 	case FormatAnthropic:
-		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, max: 4, auto: true}
+		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4, auto: true}
 	case FormatBedrock:
-		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, max: 4}
-	case FormatOpenAIResponses:
-		p := openAICacheOptionsProfile(model)
-		if p.options {
-			p.system, p.messages, p.max, p.implicitSlot = true, true, 4, true
-		}
-		return p
-	case FormatOpenAI, FormatAzure:
-		return openAICacheOptionsProfile(model)
+		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4}
+	case FormatOpenAIResponses, FormatOpenAI, FormatAzure:
+		return openAICacheProfile(target, providerName, model)
 	default:
 		return cacheProfile{}
 	}
 }
 
-func openAICacheOptionsProfile(model string) cacheProfile {
+// openAICacheProfile gates the OpenAI cache keys on the provider, since
+// Cerebras and openai_compatible share FormatOpenAI and reject or ignore
+// them. GPT-5.6 and later take breakpoints and prompt_cache_options and no
+// longer take prompt_cache_retention; earlier models answer 400 to the first
+// two. An Azure model is usually a deployment name, so Azure gets only
+// prompt_cache_key until a 400 fallback for retention exists (ENG-1618 S3).
+func openAICacheProfile(target Format, providerName, model string) cacheProfile {
+	switch providerName {
+	case provider.OpenAI:
+	case provider.Azure:
+		return cacheProfile{key: true}
+	default:
+		return cacheProfile{}
+	}
 	explicit := isGPT56OrLater(model)
-	return cacheProfile{key: true, retention: !explicit, options: explicit}
+	p := cacheProfile{key: true, retention: !explicit, options: explicit}
+	if target == FormatOpenAIResponses && explicit {
+		p.system, p.messages, p.inputOnly, p.max, p.implicitSlot = true, true, true, 4, true
+	}
+	return p
 }
 
-// isGPT56OrLater reports whether model is gpt-5.6, a later gpt-5 minor or
-// gpt-6 to gpt-9, with or without a vendor prefix ("openai/") or a suffix
-// ("-2026-08-01", "-mini"). The major version must be one digit so Azure's
-// "gpt-35-turbo" (GPT-3.5) does not match.
+// formatProvider names the provider a target format stands for when the
+// caller does not know the actual one.
+func formatProvider(target Format) string {
+	if target == FormatOpenAIResponses {
+		return provider.OpenAI
+	}
+	return string(target)
+}
+
+// isGPT56OrLater reports whether model is gpt-5.6, a later gpt-5 minor or a
+// later major, with or without a vendor prefix ("openai/"), a fine-tune
+// wrapper ("ft:gpt-5.6:org::id") or a suffix ("-2026-08-01", "-mini"). A
+// two-digit major must end the name or be followed by "." or "-", and 35 is
+// excluded because Azure spells GPT-3.5 "gpt-35-turbo".
 func isGPT56OrLater(model string) bool {
-	model = strings.ToLower(model)
+	model = strings.TrimPrefix(strings.ToLower(model), "ft:")
+	model, _, _ = strings.Cut(model, ":")
 	if i := strings.LastIndexByte(model, '/'); i >= 0 {
 		model = model[i+1:]
 	}
@@ -168,14 +214,15 @@ func isGPT56OrLater(model string) bool {
 		return false
 	}
 	major, after := leadingNumber(rest)
-	switch {
-	case len(rest)-len(after) != 1 || major < 5:
+	switch digits := len(rest) - len(after); {
+	case digits == 2:
+		return major >= 10 && major != 35 && (after == "" || after[0] == '.' || after[0] == '-')
+	case digits != 1 || major < 5:
 		return false
 	case major > 5:
 		return true
 	}
-	rest = after
-	minorText, ok := strings.CutPrefix(rest, ".")
+	minorText, ok := strings.CutPrefix(after, ".")
 	if !ok {
 		return false
 	}
@@ -210,15 +257,16 @@ func laterCacheBreakpoint(earlier, later *CanonicalCacheBreakpoint) *CanonicalCa
 	return &merged
 }
 
-// normalizeCacheIntent applies the target's cache policy to intent decoded from
-// another format. Encoders stay faithful, so same-format re-encodes keep the
-// client's markers exactly as sent. The cap runs before the TTL walk so a
-// breakpoint that is dropped never downgrades the ones that stay.
-func normalizeCacheIntent(req *CanonicalRequest, target Format) {
+// normalizeCacheIntent applies the cache policy of target, served by
+// providerName, to intent decoded from another format. Encoders stay
+// faithful, so same-format re-encodes keep the client's markers exactly as
+// sent. The cap runs before the TTL walk so a breakpoint that is dropped
+// never downgrades the ones that stay.
+func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName string) {
 	if req == nil {
 		return
 	}
-	p := cacheProfileFor(target, req.Model)
+	p := cacheProfileFor(target, providerName, req.Model)
 	dropDisallowedCacheIntent(req, p)
 	if p.implicitSlot && (req.CacheOptions == nil || req.CacheOptions.Mode != "explicit") {
 		p.max--
@@ -238,6 +286,39 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format) {
 		}
 		short = short || bp.TTL != CacheTTL1h
 	}
+	if len(cacheBreakpointsInOrder(req)) == 0 {
+		dropExplicitCacheMode(req)
+	}
+}
+
+// dropExplicitCacheMode removes mode "explicit" from a request left without
+// breakpoints: it turns off the provider's implicit breakpoint, so sent alone
+// it would disable caching.
+func dropExplicitCacheMode(req *CanonicalRequest) {
+	o := req.CacheOptions
+	if o == nil || o.Mode != "explicit" {
+		return
+	}
+	o.Mode, o.Options = "", withoutCacheMode(o.Options)
+	if o.empty() {
+		req.CacheOptions = nil
+	}
+}
+
+func withoutCacheMode(options json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(options, &fields) != nil {
+		return nil
+	}
+	delete(fields, "mode")
+	if len(fields) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func dropDisallowedCacheIntent(req *CanonicalRequest, p cacheProfile) {
@@ -249,9 +330,10 @@ func dropDisallowedCacheIntent(req *CanonicalRequest, p cacheProfile) {
 			req.Tools[i].Cache = nil
 		}
 	}
-	if !p.messages {
-		for i := range req.Messages {
-			req.Messages[i].Cache = nil
+	for i := range req.Messages {
+		m := &req.Messages[i]
+		if !p.messages || (p.inputOnly && m.Role != "user" && m.Role != "tool") || (!p.images && m.Cache.onImage()) {
+			m.Cache = nil
 		}
 	}
 	o := req.CacheOptions
@@ -320,6 +402,7 @@ func dropEarliestCacheBreakpoint[T any](segments []T, cache func(*T) **Canonical
 type cacheTextJoin struct {
 	parts    []string
 	newlines int
+	images   int
 	cache    *CanonicalCacheBreakpoint
 }
 
@@ -334,6 +417,21 @@ func (j *cacheTextJoin) add(text string) {
 func (j *cacheTextJoin) markText(bp *CanonicalCacheBreakpoint, last bool) {
 	if bp != nil {
 		bp.inText, bp.newline = true, j.newlines
+		j.merge(bp, last)
+	}
+}
+
+func (j *cacheTextJoin) addImage() {
+	j.images++
+}
+
+// markImage replaces any earlier marker rather than taking its TTL: images
+// are emitted before the text, so the earlier marker's prefix no longer
+// precedes the image.
+func (j *cacheTextJoin) markImage(bp *CanonicalCacheBreakpoint, last bool) {
+	if bp != nil {
+		bp.image = j.images
+		j.cache = nil
 		j.merge(bp, last)
 	}
 }
@@ -354,6 +452,9 @@ func (j *cacheTextJoin) merge(bp *CanonicalCacheBreakpoint, last bool) {
 func (j *cacheTextJoin) breakpoint() *CanonicalCacheBreakpoint {
 	if j.cache != nil && j.cache.inText {
 		j.cache.newlines = j.newlines
+	}
+	if j.cache.onImage() {
+		j.cache.images = j.images
 	}
 	return j.cache
 }
@@ -409,7 +510,7 @@ func cachedTextParts(text string, bp *CanonicalCacheBreakpoint) (parts []string,
 // removing lines (masking, anonymizing) still splits at the joiner. When the
 // newline count changed, the index may point at a user newline, so it
 // refuses; it also refuses a split that would leave a blank block, which
-// Anthropic rejects.
+// Anthropic rejects and OpenAI Chat and Responses gain nothing from.
 func splitAtCacheBoundary(text string, bp *CanonicalCacheBreakpoint) (head, tail string, ok bool) {
 	if bp == nil || !bp.inText || bp.newline > bp.newlines || strings.Count(text, "\n") != bp.newlines {
 		return "", "", false

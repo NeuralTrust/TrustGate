@@ -17,8 +17,10 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -975,24 +977,77 @@ func TestAdaptRequest_OpenAIChatTargetsDropBreakpoints(t *testing.T) {
 	}`)
 	reg := NewRegistry()
 	tests := []struct {
-		target  Format
-		wantKey bool
+		target   Format
+		provider string
+		want     string
 	}{
-		{target: FormatOpenAI, wantKey: true},
-		{target: FormatAzure, wantKey: true},
-		{target: FormatXAI},
+		{target: FormatOpenAI, provider: provider.OpenAI, want: `"prompt_cache_key":"k1","prompt_cache_retention":"24h"}`},
+		{target: FormatAzure, provider: provider.Azure, want: `"prompt_cache_key":"k1"}`},
+		{target: FormatXAI, provider: provider.XAI},
+		{target: FormatOpenAI, provider: provider.Cerebras},
+		{target: FormatOpenAI, provider: provider.OpenAICompatible},
 	}
 	for _, tt := range tests {
-		t.Run(string(tt.target), func(t *testing.T) {
+		t.Run(tt.provider, func(t *testing.T) {
 			t.Parallel()
-			out, err := reg.AdaptRequest(body, FormatOpenAIResponses, tt.target)
+			out, err := reg.AdaptRequestForProvider(body, FormatOpenAIResponses, tt.target, tt.provider)
 			require.NoError(t, err)
 			assert.NotContains(t, string(out), "cache_control")
 			assert.NotContains(t, string(out), "prompt_cache_breakpoint")
 			assert.Contains(t, string(out), `{"role":"system","content":"unused\nStatic."}`)
-			assert.Equal(t, tt.wantKey, bytes.Contains(out, []byte(`"prompt_cache_key":"k1","prompt_cache_retention":"24h"`)), string(out))
+			if tt.want == "" {
+				assert.NotContains(t, string(out), "prompt_cache")
+				return
+			}
+			assert.True(t, strings.HasSuffix(string(out), tt.want), string(out))
 		})
 	}
+}
+
+func TestAdaptRequest_ImageMarkerStaysOnTheImage(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.6","max_tokens":5,"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"describe"},` +
+		`{"type":"image_url","image_url":{"url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral","ttl":"1h"}},` +
+		`{"type":"text","text":"volatile"}]}]}`)
+	reg := NewRegistry()
+
+	out, err := reg.AdaptRequest(body, FormatOpenAI, FormatAnthropic)
+	require.NoError(t, err)
+	var got anthropicRequest
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, `[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"describe\nvolatile"}]`, string(got.Messages[0].Content))
+
+	out, err = reg.AdaptRequest(body, FormatOpenAI, FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "prompt_cache_breakpoint", "Responses sends no images, so the marker is dropped rather than moved onto volatile text")
+
+	cr, err := (&OpenAIAdapter{}).DecodeRequest(body)
+	require.NoError(t, err)
+	enc, err := (&OpenAIAdapter{}).EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.Contains(t, string(enc), `"content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"describe\nvolatile"}]`)
+
+	cr.Messages[0].Images = nil
+	enc, err = (&OpenAIAdapter{}).EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.NotContains(t, string(enc), "cache_control", "a marker whose image a plugin removed is dropped")
+}
+
+func TestDecodeCompletionsRequest_ImageMarkersOutsideUserMessagesAreDropped(t *testing.T) {
+	t.Parallel()
+
+	image := `{"type":"image_url","image_url":{"url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral"}}`
+	body := []byte(`{"model":"gpt-4o","messages":[` +
+		`{"role":"system","content":[{"type":"text","text":"sys"},` + image + `]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"a"},` + image + `]},` +
+		`{"role":"user","content":"q"}]}`)
+	cr, err := decodeCompletionsRequest(body)
+	require.NoError(t, err)
+	assert.Nil(t, cr.SystemCache)
+	assert.Equal(t, []any{nil, nil}, messageTTLs(cr.Messages))
 }
 
 func TestAdaptRequest_SameWireCacheFieldsPassThroughUnchanged(t *testing.T) {

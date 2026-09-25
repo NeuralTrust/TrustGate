@@ -1032,6 +1032,23 @@ func TestAnthropicRequest_MarkedImageBlockMarksTheMessage(t *testing.T) {
 	assert.Equal(t, []any{CacheTTL("")}, messageTTLs(cr.Messages))
 }
 
+func TestAnthropicRequest_ImageMarkerStaysOnTheImage(t *testing.T) {
+	t.Parallel()
+
+	image := `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}`
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"describe"},` + image + `,"cache_control":{"type":"ephemeral"}},{"type":"text","text":"volatile"}]}]}`)
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest(body)
+	require.NoError(t, err)
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRequest
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, `[`+image+`,"cache_control":{"type":"ephemeral"}},{"type":"text","text":"describe\nvolatile"}]`, string(got.Messages[0].Content))
+}
+
 func TestAnthropicEncodeRequest_CacheMarkerGoesOnTheLastBlock(t *testing.T) {
 	t.Parallel()
 
@@ -1082,7 +1099,7 @@ func TestAnthropicEncodeRequest_NormalizedSixBreakpointsKeepFour(t *testing.T) {
 
 	req := cachedRequest(1, 4, "")
 	req.Model = "claude-sonnet-4-5"
-	normalizeCacheIntent(req, FormatAnthropic)
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
 	out, err := (&AnthropicAdapter{}).EncodeRequest(req)
 	require.NoError(t, err)
 	assert.Equal(t, 4, bytes.Count(out, []byte(`"cache_control"`)))
@@ -1318,9 +1335,9 @@ func TestAnthropicRequest_AutomaticCachingConflicts(t *testing.T) {
 			want:    `[{"type":"text","text":"a\nb","cache_control":{"type":"ephemeral"}}]`,
 		},
 		{
-			name:    "a raised explicit 5m TTL goes back to 5m on the last block",
+			name:    "a marker on an image stays on it with its own TTL",
 			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"},"cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
-			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"},"cache_control":{"type":"ephemeral","ttl":"5m"}},{"type":"text","text":"a"}]`,
 		},
 		{
 			name:    "a text marker moved last by image reordering is dropped when it conflicts",

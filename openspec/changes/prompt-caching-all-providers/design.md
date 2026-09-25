@@ -22,7 +22,7 @@ The work splits into three independent mechanisms. All of them live in `pkg/infr
 |---|---|---|---|
 | D1 | Side-field intent (`Cache` on message/tool, `SystemCache`, `CacheOptions`) | B: content-block canonical model; C: raw-JSON preservation only | B rewrites every adapter and plugin and collides with ENG-1608 and #826. C cannot do true cross-format (anthropic→bedrock is the ISDIN case). A leaves the `Content string` readers untouched. |
 | D2 | Encoders are faithful; target policy lives in one `normalizeCacheIntent(req, target)` | Per-adapter dialect flags (`OpenAIAdapter{cache: …}`) | Plugins re-encode in the **client** format (`req.SourceFormat`). Dialect flags would strip OpenRouter-style parts `cache_control` from an OpenAI client body headed to OpenRouter. One function gives one place for precedence, the max of 4 and TTL order. |
-| D3 | Native OpenAI, Azure and xAI Chat targets get request-level `prompt_cache_key`, `prompt_cache_retention` and `prompt_cache_options` only. Per-block breakpoints are dropped | Emit parts `cache_control` | OpenAI rejects unknown part keys. Parts-level `cache_control` goes to OpenRouter only. |
+| D3 | OpenAI Chat targets get request-level keys only, gated on the provider that serves the target: provider `openai` gets `prompt_cache_key`, plus `prompt_cache_options` on GPT-5.6+ or `prompt_cache_retention` before it; provider `azure` gets `prompt_cache_key` only; xAI Chat, Cerebras, openai_compatible and any other provider get nothing. Per-block breakpoints are dropped | Emit parts `cache_control`; gate on the wire format | OpenAI rejects unknown part keys, and parts-level `cache_control` goes to OpenRouter only. Cerebras and openai_compatible share `FormatOpenAI`, so the format alone would send them OpenAI's keys; `AdaptRequestForProvider` passes the target provider into `cacheProfileFor`. xAI Chat caches by the `x-grok-conv-id` header, not a body key. An Azure model is usually a deployment name, so the GPT-5.6 gate cannot pick between options and retention; Azure gets the key alone until S3 task 6.4 adds retention behind its 400 fallback. |
 | D4 | Responses breakpoint = `prompt_cache_breakpoint:{"mode":"explicit"}` on the last input part, only when the model is GPT-5.6+ (`gpt-5.6`, `gpt-5.N` N≥6, `gpt-6+`). A system breakpoint moves system from `instructions` to a leading `developer` message | Always emit; never emit | This is the only documented placement (OpenAI and AWS docs), and older models may reject it. `instructions` is a string and cannot carry a marker. |
 | D5 | Azure keeps today's API selection. Responses→Azure Chat maps `CacheOptions` into Chat `prompt_cache_key`/`prompt_cache_retention` | Force Responses for Azure | Coordinator decision. The Azure client only builds `chat/completions` (`azure/client.go:379`). **The passthrough spec's "Azure Responses stays Responses" must be amended.** |
 | D6 | Groq and OpenRouter requests pass through (`ShouldPassthroughRequest`). Responses stay re-encoded | Graft unmodelled top-level keys onto the re-encoded body | Passthrough is strictly more faithful (routing keys, `session_id`, parts `cache_control`, `seed`), and it needs no key denylist. `NormalizeGroqRequest` already works on raw JSON. Grafting is rejected for Mistral because Mistral answers 422 `extra_forbidden` on unknown fields. Mistral gets only the mapped key. |
@@ -109,8 +109,8 @@ type cacheProfile struct {
 	key, retention, options, auto            bool
 }
 
-func cacheProfileFor(target Format, model string) cacheProfile
-func normalizeCacheIntent(req *CanonicalRequest, target Format) // called in AdaptRequest after dropRequestExtensionsForCrossFormat
+func cacheProfileFor(target Format, providerName, model string) cacheProfile
+func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName string) // called in AdaptRequestForProvider after dropRequestExtensionsForCrossFormat
 ```
 
 `normalizeCacheIntent` runs these steps in order:
@@ -118,14 +118,22 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format) // called in Ada
 2. While the count is above `max` (Auto counts as one): drop the earliest message breakpoint that is not the last message breakpoint, then the earliest tool breakpoint that is not the last tool breakpoint. Message breakpoints go first because the design keeps the latest boundary of every section; one per section always fits in 4.
 3. If `!ttl1h`, 1h becomes 5m.
 4. Walk tools → system → messages → auto, and downgrade any 1h found after a 5m or default marker to `5m`. This runs after the cap so a dropped breakpoint cannot downgrade the ones kept.
+5. If no breakpoint is left, remove `mode: "explicit"` from `prompt_cache_options` (and omit it when nothing else is in it): explicit mode turns off the provider's implicit breakpoint, so sent without one it disables caching.
+
+Step 1 also clears, for Responses, markers on assistant messages (with or without tool calls), since Responses marks input parts only, and, for targets whose encoder cannot mark an image (Responses sends no images), markers that sat on an image. Both happen before the cap so they never take a slot.
+
+`Registry.AdaptRequest(body, source, target)` stays for callers that only know the format and assumes the provider the format is named after (`openai` for Responses). The proxy calls `AdaptRequestForProvider` with `bk.Provider()`.
 
 | Target (`Format`) | tools | system | msgs | max | 1h | key | ret | opts | auto |
 |---|---|---|---|---|---|---|---|---|---|
 | anthropic | ✓ | ✓ | ✓ | 4 | ✓ | – | – | – | ✓ |
 | bedrock | ✓ | ✓ | ✓ | 4 | ✓ (SDK strips per model) | – | – | – | – |
-| openai_responses, model GPT-5.6+ | – | ✓ | ✓ | 4 if Mode=explicit, else 3 | n/a | ✓ | ✓ | ✓ | – |
-| openai_responses, other models | – | – | – | – | – | ✓ | ✓ | ✓ | – |
-| openai, azure, xai | – | – | – | – | – | ✓ | ✓ | ✓ | – |
+| openai_responses, provider openai, model GPT-5.6+ | – | ✓ | user and tool only | 4 if Mode=explicit, else 3 | n/a | ✓ | – | ✓ | – |
+| openai_responses, provider openai, other models | – | – | – | – | – | ✓ | ✓ | – | – |
+| openai, provider openai, GPT-5.6+ | – | – | – | – | – | ✓ | – | ✓ | – |
+| openai, provider openai, other models | – | – | – | – | – | ✓ | ✓ | – | – |
+| azure, or openai_responses with provider azure (S3 task 6.4 adds ret behind the 400 fallback) | – | – | – | – | – | ✓ | – | – | – |
+| openai with any other provider (cerebras, openai_compatible), xai | – | – | – | – | – | – | – | – | – |
 | openrouter (S3) | – | ✓ | ✓ | 4 | ✓ | – | – | – | ✓ |
 | mistral (S3) | – | – | – | – | – | ✓ | – | – | – |
 | groq, deepseek, google, vertex, cohere | – | – | – | – | – | – | – | – | – |
@@ -134,12 +142,12 @@ Lossy cases, deliberate and tested as no-ops:
 - Decoders merge text blocks with `"\n"`, so a breakpoint records its boundary as a newline index (unexported fields): the joiner's ordinal among the newlines of the merged text, and the segment's total newline count. The Anthropic encoder splits the text at that newline (dropping the joiner), so a marker on a stable block never covers the volatile text that followed it. A byte offset would go stale when a rewriting plugin (TrustGuard mask, regexreplace, promptcompression, Bedrock Guardrails or Model Armor anonymize) changes the text length, and could land on a user newline inside the volatile text. The newline index survives length changes that keep the lines (masking). If the newline count changed, or a split would leave a blank block, the marker falls back to the end of its segment. A plugin that removes one newline and adds another keeps the count and splits at the wrong line; that stays a known limitation. Other targets ignore the boundary until their slice.
 - Several markers in one segment collapse into one: the last position, with the longest TTL (valid, since every marker before a 1h one is already 1h). Unmarked block boundaries are still merged. Raising the later marker to 1h has a cost: the text between the two markers is now written at the 1h rate (2× input instead of 1.25×) even though the client asked for 5m there. The alternative, keeping the later 5m, would lose the 1h the client asked for on the prefix; we keep the longer TTL.
 - A marker on a blank system block moves to the text block before it (blank blocks are skipped because Anthropic rejects them). A marker on a leading blank block is dropped: it caches no text.
-- A marker on an image moves to the end of the segment (images are emitted before text). A marker on a non-last `tool_use` moves to the last one.
+- A marker on an image stays on that image: the decoder records its position among the segment's images, and the Anthropic and Chat encoders, which emit images before the text, put `cache_control` on it. It keeps its own TTL instead of merging with an earlier text marker, since the reorder puts the image ahead of that text. Responses sends no images, so the marker is dropped there; it is also dropped when a plugin changed the image count, and on segments whose images the canonical model drops (system, assistant and tool content). It never moves onto the text after the image, which is usually the volatile part. A marker on a non-last `tool_use` moves to the last one.
 - With top-level automatic caching, an explicit marker that ends up on the last block of the last message with a different TTL is dropped when the gateway put it there: a fallback from its block boundary, a TTL raised by merging markers, a reorder (images go first), or a marker a plugin added. Anthropic answers 400 to that pair. A client that sent the pair itself (the marker was on its last block with that TTL) gets it unchanged, the same 400 it gets on passthrough.
 - Markers on block types the canonical model drops (`thinking`, `redacted_thinking`, `document`, server tool blocks, markers nested inside `tool_result` content) are dropped with the block.
 - An assistant turn with only tool calls and no text keeps its marker on the last `tool_use` (Anthropic) or drops it (Chat, which has no part to mark).
 - Gemini `cachedContent`, and anything bound for Groq, DeepSeek or Cohere, is dropped.
-- `FormatOpenAI` is shared by Moonshot, Cerebras and openai_compatible. A Responses client routed there sends the key fields; this is rare (OpenAI mirrors Responses). It is documented and not gated.
+- `FormatOpenAI` is shared by Cerebras and openai_compatible. The profile is gated on the target provider, so a Responses or Anthropic client routed there sends no cache key.
 
 ### Per-adapter decode/encode (S2a/S2b)
 
@@ -321,6 +329,7 @@ ENG-1608 follows its own path (separate branch, user decision). If it reaches ma
 
 - Pre-existing: `thinking` and `redacted_thinking` blocks are not part of the canonical model, so a same-format plugin re-encode of an Anthropic request drops them (and any marker on them). Passthrough without a re-encoding plugin keeps them.
 - A whitespace-only string `system` decodes to `""`, so no target receives a blank system; non-blank system text is byte-exact.
+- W5, S5 scope: a same-format plugin re-encode is not byte-faithful. Responses `instructions` and `developer` items are folded into one system text, which comes back as `instructions` or as a leading `developer` item wherever the client had put it, several Chat system messages are merged into one, JSON schema keys come back in Go's order, and Codex fields the canonical model does not carry (`reasoning`, `include`, `store`, `parallel_tool_calls`, `tool_choice`, tool `strict`) are dropped. Cache markers survive, but the prefix bytes can change. S5 (`GraftChangedFields`, see Plugins) fixes this by grafting only the changed fields onto the original body.
 
 ## Open Questions
 

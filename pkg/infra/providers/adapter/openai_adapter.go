@@ -165,16 +165,17 @@ func contentToString(raw json.RawMessage) string {
 
 func decodeOpenAIContent(raw json.RawMessage) (string, []CanonicalImage) {
 	var text cacheTextJoin
-	images := decodeOpenAIParts(raw, &text, nil)
+	images := decodeOpenAIParts(raw, &text, nil, true)
 	return text.String(), images
 }
 
 // decodeOpenAIParts adds the text of raw, a string or a list of content parts,
-// to text and returns its images. marker reads the cache marker of a part in
-// the client's dialect; nil ignores markers. A marker on an empty text part
-// moves to the text before it and one on a part the canonical model drops
-// (audio, files) is dropped with it.
-func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint) []CanonicalImage {
+// to text and returns its images when keepImages is set. marker reads the
+// cache marker of a part in the client's dialect; nil ignores markers. A
+// marker on an empty text part moves to the text before it, one on an image
+// stays on that image, and one on a part the canonical model drops (audio,
+// files, images of a segment that keeps none) is dropped with it.
+func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(openaiContentPart) *CanonicalCacheBreakpoint, keepImages bool) []CanonicalImage {
 	if raw == nil {
 		return nil
 	}
@@ -208,12 +209,13 @@ func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(ope
 			}
 			continue
 		}
-		if p.Type != "image_url" {
+		if p.Type != "image_url" || !keepImages {
 			continue
 		}
 		if img, ok := decodeOpenAIImageURL(p.ImageURL); ok {
 			images = append(images, img)
-			text.markEnd(bp, last)
+			text.addImage()
+			text.markImage(bp, last)
 		}
 	}
 	return images
@@ -224,7 +226,7 @@ func decodeOpenAIParts(raw json.RawMessage, text *cacheTextJoin, marker func(ope
 // non-empty one, so the text stays byte-exact.
 func appendOpenAISystem(system *cacheTextJoin, raw json.RawMessage, marker func(openaiContentPart) *CanonicalCacheBreakpoint) {
 	var msg cacheTextJoin
-	decodeOpenAIParts(raw, &msg, marker)
+	decodeOpenAIParts(raw, &msg, marker, false)
 	system.extend(&msg)
 }
 

@@ -349,7 +349,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			continue
 		}
 		var text cacheTextJoin
-		images := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl)
+		images := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl, m.Role == "user")
 		cm := CanonicalMessage{
 			Role:       m.Role,
 			Content:    text.String(),
@@ -403,9 +403,13 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 // ---------------------------------------------------------------------------
 
 // encodeOpenAIContent writes text as a plain string unless it has images or a
-// cache marker. A marker goes on the text part it was decoded from, or on
-// the last part.
+// cache marker. A marker goes on the image or text part it was decoded from,
+// or on the last part; one on an image that is gone is dropped.
 func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
+	imageAt, onImage := cachedImageIndex(cache, len(images))
+	if cache.onImage() && !onImage {
+		cache = nil
+	}
 	if len(images) == 0 && cache == nil {
 		return stringToContent(text)
 	}
@@ -413,6 +417,10 @@ func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalC
 	for _, img := range images {
 		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
 		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
+	}
+	if onImage {
+		parts[imageAt].CacheControl = anthropicCacheControlFrom(cache)
+		cache = nil
 	}
 	texts, placed := cachedTextParts(text, cache)
 	first := len(parts)
@@ -422,11 +430,13 @@ func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalC
 	if len(parts) == 0 {
 		return stringToContent(text)
 	}
-	at := len(parts) - 1
-	if placed {
-		at = first
+	if cache != nil {
+		at := len(parts) - 1
+		if placed {
+			at = first
+		}
+		parts[at].CacheControl = anthropicCacheControlFrom(cache)
 	}
-	parts[at].CacheControl = anthropicCacheControlFrom(cache)
 	b, _ := json.Marshal(parts)
 	return b
 }

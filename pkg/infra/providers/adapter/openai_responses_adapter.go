@@ -289,7 +289,7 @@ func appendResponsesInputItem(cr *CanonicalRequest, system *cacheTextJoin, item 
 		return turn
 	case item.Role != "":
 		var text cacheTextJoin
-		decodeOpenAIParts(item.Content, &text, responsesPartBreakpoint)
+		decodeOpenAIParts(item.Content, &text, responsesPartBreakpoint, false)
 		cr.Messages = append(cr.Messages, CanonicalMessage{Role: item.Role, Content: text.String(), Cache: text.breakpoint()})
 		return false
 	case item.Type == "input_text":
@@ -321,17 +321,19 @@ func responsesCallArguments(raw json.RawMessage) string {
 	return arguments
 }
 
-// responsesToolOutput returns the text of a function_call_output, leaving out
-// images and files, and passes any other value on as its JSON text. An output
-// without text gets a placeholder, since upstreams reject an empty tool
-// result; a breakpoint on it then marks the end of the placeholder.
+// responsesToolOutput returns the text of a function_call_output and the
+// breakpoint of its text parts; parts that are not text (images, files) are
+// left out with their breakpoints, and a value that is neither a string nor a
+// list of parts is passed on as its JSON text. An output with no text gets a
+// placeholder, since upstreams reject an empty tool result, and a breakpoint
+// on its blank text then marks the end of the placeholder.
 func responsesToolOutput(output json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	trimmed := bytes.TrimSpace(output)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return responsesNonTextToolOutput, nil
 	}
 	var text cacheTextJoin
-	decodeOpenAIParts(trimmed, &text, responsesPartBreakpoint)
+	decodeOpenAIParts(trimmed, &text, responsesPartBreakpoint, false)
 	cache := text.breakpoint()
 	if strings.TrimSpace(text.String()) == "" {
 		if cache != nil {
@@ -661,9 +663,10 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 // responsesInputParts writes text as input_text parts with the breakpoint on
 // the part it was decoded from, or on the last one. It returns nil when there
 // is no breakpoint or no text to carry it; an assistant message cannot carry
-// one, as its parts are output_text.
+// one, as its parts are output_text, and a breakpoint on an image is dropped
+// because the encoder sends no images.
 func responsesInputParts(text string, cache *CanonicalCacheBreakpoint) []openaiContentPart {
-	if cache == nil {
+	if cache == nil || cache.onImage() {
 		return nil
 	}
 	texts, placed := cachedTextParts(text, cache)

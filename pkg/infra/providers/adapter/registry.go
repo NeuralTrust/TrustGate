@@ -155,7 +155,17 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 	return cr, nil
 }
 
+// AdaptRequest is AdaptRequestForProvider for the provider target is named
+// after, with openai for the Responses API.
 func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, error) {
+	return r.AdaptRequestForProvider(body, source, target, formatProvider(target))
+}
+
+// AdaptRequestForProvider transforms a request body from source to target
+// format via the canonical model. providerName is the provider that serves
+// target; it decides which cache intent is sent, since formats such as
+// FormatOpenAI are shared by providers that accept different cache keys.
+func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, providerName string) ([]byte, error) {
 	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
@@ -177,7 +187,7 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
-	normalizeCacheIntent(canonical, target)
+	normalizeCacheIntent(canonical, target, providerName)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {

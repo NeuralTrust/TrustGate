@@ -1323,6 +1323,47 @@ func TestAdaptRequest_AnthropicBreakpointsReachResponsesOnGPT56Only(t *testing.T
 	}
 }
 
+func TestAdaptRequest_AssistantBreakpointsDoNotTakeResponsesSlots(t *testing.T) {
+	t.Parallel()
+
+	cc := `,"cache_control":{"type":"ephemeral"}`
+	body := []byte(`{"model":"gpt-5.6","max_tokens":10,"system":[{"type":"text","text":"sys"` + cc + `}],"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"u1"` + cc + `}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"a1"` + cc + `}]},` +
+		`{"role":"user","content":[{"type":"text","text":"u2"` + cc + `}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"a2"` + cc + `}]}]}`)
+	out, err := NewRegistry().AdaptRequest(body, FormatAnthropic, FormatOpenAIResponses)
+	require.NoError(t, err)
+	var got struct {
+		Input json.RawMessage `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	bp := `"prompt_cache_breakpoint":{"mode":"explicit"}`
+	assert.JSONEq(t, `[
+		{"role":"developer","content":[{"type":"input_text","text":"sys",`+bp+`}]},
+		{"role":"user","content":[{"type":"input_text","text":"u1",`+bp+`}]},
+		{"role":"assistant","content":"a1"},
+		{"role":"user","content":[{"type":"input_text","text":"u2",`+bp+`}]},
+		{"role":"assistant","content":"a2"}
+	]`, string(got.Input))
+}
+
+func TestAdaptRequest_ExplicitModeIsDroppedWithTheLastBreakpoint(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.6","input":[{"role":"user","content":[{"type":"input_text","text":"doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"q"}]}],"prompt_cache_key":"k","prompt_cache_options":{"mode":"explicit"}}`)
+	out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatOpenAI)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "prompt_cache_options")
+	assert.Contains(t, string(out), `"prompt_cache_key":"k"`)
+
+	chat := []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":[{"type":"text","text":"doc","cache_control":{"type":"ephemeral"}}]}],"prompt_cache_options":{"mode":"explicit"}}`)
+	out, err = NewRegistry().AdaptRequest(chat, FormatOpenAI, FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"prompt_cache_breakpoint":{"mode":"explicit"}`)
+	assert.Contains(t, string(out), `"prompt_cache_options":{"mode":"explicit"}`)
+}
+
 func TestResponsesEncodeRequest_BreakpointSkipsTheStringInputShortcut(t *testing.T) {
 	t.Parallel()
 
