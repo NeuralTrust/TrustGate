@@ -17,6 +17,7 @@ package bedrockguardrail
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -28,6 +29,18 @@ const (
 	defaultRegion      = "us-east-1"
 	defaultSessionName = "BedrockClientSession"
 )
+
+// Streaming defaults. ApplyGuardrail is a remote call against a full guardrail
+// configuration rather than a single classifier, so it is slower than
+// openai_moderation and the block loop calls it less often to keep the hold on
+// a client's bytes bounded.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 2048,
+	MaxHoldMS:            800,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         2 * time.Second,
+}
 
 type Credentials struct {
 	AWSRegion       string `mapstructure:"aws_region"`
@@ -45,6 +58,10 @@ type Settings struct {
 	PIIAction   string      `mapstructure:"pii_action"`
 	Message     string      `mapstructure:"message"`
 	Credentials Credentials `mapstructure:"credentials"`
+	// Streaming opts the pre_response leg into per-block inspection. Absent, a
+	// streamed response reaches the client unguarded, which is what this plugin
+	// did before the block loop existed.
+	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -72,6 +89,9 @@ func (s *Settings) applyDefaults() {
 	if s.Credentials.UseRole && s.Credentials.SessionName == "" {
 		s.Credentials.SessionName = defaultSessionName
 	}
+	// The buffered leg fails closed when ApplyGuardrail is unreachable, so the
+	// stream leg inherits that rather than a laxer default.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 }
 
 func (s *Settings) validate() error {
@@ -87,10 +107,10 @@ func (s *Settings) validate() error {
 		if strings.TrimSpace(s.Credentials.RoleARN) == "" {
 			return fmt.Errorf("bedrock_guardrail: role_arn is required when use_role is true")
 		}
-		return nil
+		return s.Streaming.Validate(PluginName)
 	}
 	if strings.TrimSpace(s.Credentials.AccessKeyID) == "" || strings.TrimSpace(s.Credentials.SecretAccessKey) == "" {
 		return fmt.Errorf("bedrock_guardrail: access_key_id and secret_access_key are required when use_role is false")
 	}
-	return nil
+	return s.Streaming.Validate(PluginName)
 }
