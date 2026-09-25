@@ -319,13 +319,28 @@ func TestHandler_Initialize_AdvertisesToolListChanged(t *testing.T) {
 	}
 }
 
-func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
+// A client that asks initialize for a revision the gateway does not know is
+// answered with one it can speak: never 2026-07-28, which has no initialize
+// and which such a client refuses ("Server's protocol version is not
+// supported"), as Cursor did when it offered 2025-11-25 before that was listed.
+func TestHandler_Initialize_NegotiatesAVersionTheClientSpeaks(t *testing.T) {
 	t.Parallel()
+	cases := []struct{ requested, want string }{
+		{"2025-11-25", "2025-11-25"},
+		{"2025-06-18", "2025-06-18"},
+		{"2026-07-28", "2026-07-28"},
+		{"2025-09-01", "2025-06-18"},
+		{"2027-01-01", "2025-11-25"},
+		{"", "2025-11-25"},
+		{"1999-01-01", "2024-11-05"},
+	}
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
-	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`)
-	result := body["result"].(map[string]any)
-	if result["protocolVersion"] != "2026-07-28" {
-		t.Fatalf("protocolVersion = %v, want latest", result["protocolVersion"])
+	for _, tc := range cases {
+		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"`+tc.requested+`"}}`)
+		result := body["result"].(map[string]any)
+		if result["protocolVersion"] != tc.want {
+			t.Errorf("requested %q: protocolVersion = %v, want %s", tc.requested, result["protocolVersion"], tc.want)
+		}
 	}
 }
 
