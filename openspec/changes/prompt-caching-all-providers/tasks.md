@@ -207,11 +207,11 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 8 (S4b): Bedrock capability table and retry
 
-- [ ] 8.1 `bedrock/cache_capability.go` (new): `bedrockCacheFamilies`, `cacheCapabilityFor` (strip region prefixes, longest prefix; ARNs/unknown → none).
-- [ ] 8.2 `converse.go`: `applyCacheCapability`, `stripCachePoints`, `converseWithCachePointFallback`; rename `systemFoldMemo`→`modelMemo`.
-- [ ] 8.3 `bedrock/client.go:86,:251`: nested fallback with `cacheStrip` memo.
-- [ ] 8.4 Tests: profile prefix, Mistral 7B, 1h on 3.7 cleared; retry on ValidationException only, not Throttling; memo only after success.
-- [ ] 8.5 V1 (bedrock; `bedrock_live`); V2; V3; V4 **Bedrock** (all three variants); V5.
+- [x] 8.1 `bedrock/cache_capability.go` (new): `bedrockCacheFamilies`, `cacheCapabilityFor` (strip region prefixes, longest prefix; ARNs/unknown → none).
+- [x] 8.2 `converse.go`: `applyCacheCapability`, `stripCachePoints`, `converseWithCachePointFallback`; rename `systemFoldMemo`→`modelMemo`.
+- [x] 8.3 `bedrock/client.go:86,:251`: nested fallback with `cacheStrip` memo.
+- [x] 8.4 Tests: profile prefix, Mistral 7B, 1h on 3.7 cleared; retry on ValidationException only, not Throttling; memo only after success.
+- [ ] 8.5 V1 (bedrock; `bedrock_live`); V2; V3; V4 **Bedrock** (all three variants); V5. *(V1 done: gofmt, vet incl. `bedrock_live`, golangci-lint 0 issues, race tests providers+proxy, `go test ./pkg/...`; V2-V5 pending: AWS credentials expired, no live calls.)*
 
 ## Phase 9 (S5): plugins keep cache intent
 

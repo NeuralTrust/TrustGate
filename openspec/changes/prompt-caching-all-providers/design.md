@@ -201,9 +201,11 @@ func (p *converseParams) stripCachePoints() bool
 func converseWithCachePointFallback[T any](memo *modelMemo, model string, p *converseParams, call func(*converseParams) (T, error)) (T, error)
 ```
 
-`bedrockCacheFamilies` (per the AWS table, 2026-09-23):
-- Explicit with 1h: `anthropic.claude-{opus-5, fable-5, mythos-5, opus-4-8, opus-4-7, opus-4-6, opus-4-5, sonnet-5, sonnet-4-6, sonnet-4-5, haiku-4-5}`.
-- Explicit, 5m only: `anthropic.claude-3-7-sonnet`, `anthropic.claude-3-5-sonnet-20241022-v2`, `amazon.nova-{micro, lite, pro, premier}`.
+`bedrockCacheFamilies` (per the AWS table and the Nova model cards, re-read 2026-09-25 in S4b; `cacheCapability` also carries `tools`):
+- Explicit with 1h, system/messages/tools: `anthropic.claude-{opus-5-5, opus-5, fable-5-1, fable-5, mythos-5-1, mythos-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, opus-4-5, sonnet-4-6, sonnet-4-5, haiku-4-5}`.
+- Explicit, 5m only, system/messages/tools: `anthropic.claude-3-7-sonnet`, `anthropic.claude-3-5-sonnet-20241022-v2`.
+- Explicit, 5m only, system/messages (no tools): `amazon.nova-{micro, lite, pro, premier}`, `amazon.nova-2-lite`.
+- A family matches on an ID boundary (`-`, `:` or end), so `claude-sonnet-4-…` (Sonnet 4) and `claude-opus-4-1` resolve to none.
 - Minimum token counts are not enforced.
 
 Retry, fold and wiring:

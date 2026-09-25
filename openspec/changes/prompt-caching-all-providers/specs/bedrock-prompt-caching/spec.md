@@ -46,7 +46,7 @@ A `cachePoint` MUST only follow a kept block that is not itself a `cachePoint`, 
 
 ### Requirement: Model capability table
 
-A table in code MUST list, by model-family prefix (after stripping region or global inference-profile prefixes), whether explicit caching and 1h TTL are supported. Unlisted models, ARNs and unknown IDs MUST get no `cachePoint`. Minimum token counts MUST NOT be enforced.
+A table in code MUST list, by model-family prefix (after stripping region or global inference-profile prefixes), whether explicit caching, 1h TTL and a `cachePoint` in `tools` are supported; a model without tools support keeps its system and messages `cachePoint`s. The table follows the AWS supported-models table and the Nova model cards read 2026-09-25. Unlisted models, ARNs and unknown IDs MUST get no `cachePoint`. Minimum token counts MUST NOT be enforced.
 
 #### Scenario: Unsupported family
 
@@ -57,6 +57,11 @@ A table in code MUST list, by model-family prefix (after stripping region or glo
 
 - GIVEN `global.anthropic.claude-sonnet-4-6`
 - THEN it resolves to the Claude family entry
+
+#### Scenario: Nova tools
+
+- GIVEN breakpoints on a tool, the system and a message, and model `us.amazon.nova-lite-v1:0`
+- THEN only the system and message `cachePoint`s are sent, without `ttl`
 
 #### Scenario: Short prefix
 
