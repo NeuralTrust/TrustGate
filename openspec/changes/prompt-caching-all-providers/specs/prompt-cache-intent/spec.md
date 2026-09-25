@@ -72,6 +72,7 @@ Markers on block types the canonical model drops (`thinking`, `redacted_thinking
 - WHEN encoded as Anthropic or OpenAI Chat, which emit images before text
 - THEN `cache_control` stays on the image block, with the image's own TTL, and the text carries none
 - AND for OpenAI Responses, whose encoder sends no images, the marker is dropped rather than moved onto the volatile text
+- AND when an earlier text block of the segment was marked too, targets that cannot mark the image (Responses; Bedrock until S4a) keep that text marker at its block boundary instead
 - AND if a plugin removed or added an image, the marker is dropped
 
 #### Scenario: Responses options

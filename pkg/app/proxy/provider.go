@@ -89,7 +89,7 @@ type ProviderInvoker interface {
 // registry keeps the app layer off the infra adapter implementation and makes
 // the invoker testable in isolation.
 type providerCodec interface {
-	AdaptRequestForProvider(body []byte, source, target adapter.Format, providerName string) ([]byte, error)
+	AdaptRequestForProvider(body []byte, source, target adapter.Format, providerName, defaultModel string) ([]byte, error)
 	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
 	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
 	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
@@ -319,7 +319,7 @@ func (p *providerInvoker) prepare(
 
 	body := req.Body
 	if crossFormat {
-		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), capability)
+		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), req.DefaultModel, capability)
 		if err != nil {
 			var contentErr *adapter.UnsupportedContentError
 			if errors.As(err, &contentErr) {
@@ -436,7 +436,7 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 func (p *providerInvoker) adaptRequestBody(
 	body []byte,
 	sourceFormat, targetFormat adapter.Format,
-	providerName, capability string,
+	providerName, defaultModel, capability string,
 ) ([]byte, error) {
 	switch capability {
 	case capabilityEmbeddings:
@@ -452,7 +452,7 @@ func (p *providerInvoker) adaptRequestBody(
 		}
 		return adapter.AdaptRerankRequest(reg, body, sourceFormat, targetFormat)
 	default:
-		return p.registry.AdaptRequestForProvider(body, sourceFormat, targetFormat, providerName)
+		return p.registry.AdaptRequestForProvider(body, sourceFormat, targetFormat, providerName, defaultModel)
 	}
 }
 

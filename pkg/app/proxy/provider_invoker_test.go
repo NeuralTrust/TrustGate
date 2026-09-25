@@ -495,6 +495,48 @@ func TestProviderInvoke_CacheKeysFollowTheTargetProvider(t *testing.T) {
 	}
 }
 
+func TestProviderInvoke_CacheProfileFollowsTheInjectedDefaultModel(t *testing.T) {
+	const strippedBody = `{"max_tokens":10,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`
+	const responsesBody = `{"id":"r","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+
+	tests := []struct {
+		defaultModel   string
+		wantBreakpoint bool
+	}{
+		{defaultModel: "gpt-5.6", wantBreakpoint: true},
+		{defaultModel: "gpt-4o"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.defaultModel, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(responsesBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "openai", client)
+			target := apiKeyTarget("openai")
+			target.LLMTarget.ProviderOptions = map[string]any{"api": "responses"}
+			req := &infracontext.RequestContext{
+				Body:         []byte(strippedBody),
+				SourceFormat: string(adapter.FormatAnthropic),
+				DefaultModel: tc.defaultModel,
+			}
+
+			_, err := inv.Invoke(context.Background(), target, req)
+			require.NoError(t, err)
+
+			model, err := adapter.ExtractModel(sent)
+			require.NoError(t, err)
+			assert.Equal(t, tc.defaultModel, model)
+			assert.Equal(t, tc.wantBreakpoint, strings.Contains(string(sent), "prompt_cache_breakpoint"), string(sent))
+		})
+	}
+}
+
 func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 	const novaModel = "eu.amazon.nova-pro-v1:0"
 	const novaResponseBody = `{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`

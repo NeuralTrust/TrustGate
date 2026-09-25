@@ -75,10 +75,22 @@ type CanonicalCacheBreakpoint struct {
 	// different count at encode time drops the marker instead of moving it
 	// onto the text that followed the image.
 	image, images int
+	// text is the marker of an earlier text block of the segment, kept for
+	// targets that send no images and so can still cache up to that block.
+	text *CanonicalCacheBreakpoint
 }
 
 func (bp *CanonicalCacheBreakpoint) onImage() bool {
 	return bp != nil && bp.image > 0
+}
+
+// withoutImages returns the marker a target that sends no images keeps: the
+// text marker behind an image marker, or bp itself when it is not on an image.
+func (bp *CanonicalCacheBreakpoint) withoutImages() *CanonicalCacheBreakpoint {
+	if bp.onImage() {
+		return bp.text
+	}
+	return bp
 }
 
 // cachedImageIndex returns the index of the image a marker sat on when the
@@ -154,12 +166,14 @@ type cacheProfile struct {
 }
 
 // cacheProfileFor returns what target accepts from providerName for model.
+// Bedrock keeps images off until its encoder places cachePoint after the
+// marked image (ENG-1618 S4a).
 func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 	switch target {
 	case FormatAnthropic:
 		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4, auto: true}
 	case FormatBedrock:
-		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4}
+		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, max: 4}
 	case FormatOpenAIResponses, FormatOpenAI, FormatAzure:
 		return openAICacheProfile(target, providerName, model)
 	default:
@@ -204,11 +218,11 @@ func formatProvider(target Format) string {
 // two-digit major must end the name or be followed by "." or "-", and 35 is
 // excluded because Azure spells GPT-3.5 "gpt-35-turbo".
 func isGPT56OrLater(model string) bool {
-	model = strings.TrimPrefix(strings.ToLower(model), "ft:")
-	model, _, _ = strings.Cut(model, ":")
+	model = strings.ToLower(model)
 	if i := strings.LastIndexByte(model, '/'); i >= 0 {
 		model = model[i+1:]
 	}
+	model, _, _ = strings.Cut(strings.TrimPrefix(model, "ft:"), ":")
 	rest, ok := strings.CutPrefix(model, "gpt-")
 	if !ok {
 		return false
@@ -258,15 +272,20 @@ func laterCacheBreakpoint(earlier, later *CanonicalCacheBreakpoint) *CanonicalCa
 }
 
 // normalizeCacheIntent applies the cache policy of target, served by
-// providerName, to intent decoded from another format. Encoders stay
+// providerName, to intent decoded from another format. defaultModel is the
+// model the gateway sends when the request names none. Encoders stay
 // faithful, so same-format re-encodes keep the client's markers exactly as
 // sent. The cap runs before the TTL walk so a breakpoint that is dropped
 // never downgrades the ones that stay.
-func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName string) {
+func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName, defaultModel string) {
 	if req == nil {
 		return
 	}
-	p := cacheProfileFor(target, providerName, req.Model)
+	model := req.Model
+	if model == "" {
+		model = defaultModel
+	}
+	p := cacheProfileFor(target, providerName, model)
 	dropDisallowedCacheIntent(req, p)
 	if p.implicitSlot && (req.CacheOptions == nil || req.CacheOptions.Mode != "explicit") {
 		p.max--
@@ -332,7 +351,10 @@ func dropDisallowedCacheIntent(req *CanonicalRequest, p cacheProfile) {
 	}
 	for i := range req.Messages {
 		m := &req.Messages[i]
-		if !p.messages || (p.inputOnly && m.Role != "user" && m.Role != "tool") || (!p.images && m.Cache.onImage()) {
+		if !p.images {
+			m.Cache = m.Cache.withoutImages()
+		}
+		if !p.messages || (p.inputOnly && m.Role != "user" && m.Role != "tool") {
 			m.Cache = nil
 		}
 	}
@@ -427,13 +449,21 @@ func (j *cacheTextJoin) addImage() {
 
 // markImage replaces any earlier marker rather than taking its TTL: images
 // are emitted before the text, so the earlier marker's prefix no longer
-// precedes the image.
+// precedes the image. The earlier text marker stays behind the image marker
+// for targets that send no images.
 func (j *cacheTextJoin) markImage(bp *CanonicalCacheBreakpoint, last bool) {
-	if bp != nil {
-		bp.image = j.images
-		j.cache = nil
-		j.merge(bp, last)
+	if bp == nil {
+		return
 	}
+	var text *CanonicalCacheBreakpoint
+	if prev := j.cache.withoutImages(); prev != nil && prev.inText {
+		kept := *prev
+		text = &kept
+	}
+	bp.image = j.images
+	j.cache = nil
+	j.merge(bp, last)
+	j.cache.text = text
 }
 
 func (j *cacheTextJoin) markEnd(bp *CanonicalCacheBreakpoint, last bool) {
@@ -455,6 +485,9 @@ func (j *cacheTextJoin) breakpoint() *CanonicalCacheBreakpoint {
 	}
 	if j.cache.onImage() {
 		j.cache.images = j.images
+		if j.cache.text != nil {
+			j.cache.text.newlines = j.newlines
+		}
 	}
 	return j.cache
 }

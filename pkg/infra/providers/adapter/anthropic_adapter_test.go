@@ -1099,7 +1099,7 @@ func TestAnthropicEncodeRequest_NormalizedSixBreakpointsKeepFour(t *testing.T) {
 
 	req := cachedRequest(1, 4, "")
 	req.Model = "claude-sonnet-4-5"
-	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 	out, err := (&AnthropicAdapter{}).EncodeRequest(req)
 	require.NoError(t, err)
 	assert.Equal(t, 4, bytes.Count(out, []byte(`"cache_control"`)))

@@ -92,7 +92,7 @@ func TestNormalizeCacheIntent_KeepsTheLastBreakpointsWithinTheLimit(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			normalizeCacheIntent(tt.req, FormatAnthropic, formatProvider(FormatAnthropic))
+			normalizeCacheIntent(tt.req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 			assert.Equal(t, tt.wantTools, toolTTLs(tt.req.Tools))
 			assert.Equal(t, tt.wantMsgs, messageTTLs(tt.req.Messages))
 			assert.NotNil(t, tt.req.SystemCache)
@@ -105,7 +105,7 @@ func TestNormalizeCacheIntent_AutoCountsTowardTheLimit(t *testing.T) {
 
 	req := cachedRequest(1, 3, "")
 	req.CacheOptions = &CanonicalCacheOptions{Auto: bp("")}
-	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 
 	assert.Equal(t, []any{nil, nil, CacheTTL("")}, messageTTLs(req.Messages))
 	require.NotNil(t, req.CacheOptions)
@@ -138,7 +138,7 @@ func TestNormalizeCacheIntent_OneHourNeverFollowsAShorterTTL(t *testing.T) {
 				Tools:       []CanonicalTool{{Name: "t", Cache: bp(tt.toolTTL)}},
 				Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp(tt.messageTTL)}},
 			}
-			normalizeCacheIntent(req, tt.target, formatProvider(tt.target))
+			normalizeCacheIntent(req, tt.target, formatProvider(tt.target), "")
 			assert.Equal(t, tt.want, [3]CacheTTL{req.Tools[0].Cache.TTL, req.SystemCache.TTL, req.Messages[0].Cache.TTL})
 		})
 	}
@@ -152,7 +152,7 @@ func TestNormalizeCacheIntent_TargetsWithoutCachingDropAllIntent(t *testing.T) {
 			t.Parallel()
 			req := cachedRequest(1, 2, CacheTTL1h)
 			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: json.RawMessage(`{}`), Auto: bp("")}
-			normalizeCacheIntent(req, target, formatProvider(target))
+			normalizeCacheIntent(req, target, formatProvider(target), "")
 
 			assert.Nil(t, req.SystemCache)
 			assert.Nil(t, req.CacheOptions)
@@ -167,7 +167,7 @@ func TestNormalizeCacheIntent_BedrockDropsAutoAndRequestOptions(t *testing.T) {
 
 	req := cachedRequest(0, 1, CacheTTL1h)
 	req.CacheOptions = &CanonicalCacheOptions{Key: "k", Auto: bp("")}
-	normalizeCacheIntent(req, FormatBedrock, formatProvider(FormatBedrock))
+	normalizeCacheIntent(req, FormatBedrock, formatProvider(FormatBedrock), "")
 
 	assert.Nil(t, req.CacheOptions)
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
@@ -177,10 +177,10 @@ func TestNormalizeCacheIntent_BedrockDropsAutoAndRequestOptions(t *testing.T) {
 func TestNormalizeCacheIntent_NoIntentIsANoOp(t *testing.T) {
 	t.Parallel()
 
-	normalizeCacheIntent(nil, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(nil, FormatAnthropic, formatProvider(FormatAnthropic), "")
 	req := &CanonicalRequest{System: "s", Messages: []CanonicalMessage{{Role: "user", Content: "hi"}}, Tools: []CanonicalTool{{Name: "t"}}}
 	want := *req
-	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 	assert.Equal(t, want, *req)
 }
 
@@ -260,7 +260,7 @@ func TestNormalizeCacheIntent_DroppedBreakpointsDoNotDowngradeTheRest(t *testing
 			{Role: "user", Content: "c", Cache: bp(CacheTTL1h)},
 		},
 	}
-	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 
 	assert.Equal(t, []any{nil, CacheTTL1h, CacheTTL1h}, messageTTLs(req.Messages))
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
@@ -276,7 +276,7 @@ func TestNormalizeCacheIntent_KeepsTheTextBoundary(t *testing.T) {
 		SystemCache: &sys,
 		Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp("")}},
 	}
-	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
 	assert.Equal(t, &boundary, req.SystemCache)
 }
 
@@ -327,6 +327,8 @@ func TestIsGPT56OrLater(t *testing.T) {
 		"FT:GPT-5.6:acme::abc":                true,
 		"ft:gpt-4o-mini:acme::abc":            false,
 		"gpt-5.6:free":                        true,
+		"openai/ft:gpt-5.6:org::id":           true,
+		"azure/ft:gpt-4o:org::id":             false,
 	}
 	for model, want := range tests {
 		t.Run(model, func(t *testing.T) {
@@ -362,7 +364,7 @@ func TestNormalizeCacheIntent_OpenAIFamilyKeysFollowTheProvider(t *testing.T) {
 			req := cachedRequest(1, 2, CacheTTL1h)
 			req.Model = tt.model
 			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: json.RawMessage(`{"mode":"explicit","ttl":"30m"}`), Auto: bp("")}
-			normalizeCacheIntent(req, tt.target, tt.provider)
+			normalizeCacheIntent(req, tt.target, tt.provider, "")
 
 			assert.Equal(t, tt.want, req.CacheOptions)
 			assert.Nil(t, req.SystemCache)
@@ -396,7 +398,7 @@ func TestNormalizeCacheIntent_ExplicitModeNeedsABreakpoint(t *testing.T) {
 				req.Messages = append(req.Messages, CanonicalMessage{Role: "user", Content: "m", Cache: bp("")})
 			}
 			req.CacheOptions = openAICacheOptions("", "", json.RawMessage(tt.options))
-			normalizeCacheIntent(req, tt.target, provider.OpenAI)
+			normalizeCacheIntent(req, tt.target, provider.OpenAI, "")
 
 			assert.Equal(t, tt.want, req.CacheOptions)
 		})
@@ -418,7 +420,7 @@ func TestNormalizeCacheIntent_ResponsesClearsAssistantBreakpointsBeforeTheCap(t 
 			{Role: "tool", ToolCallID: "c1", Content: "out", Cache: bp("")},
 		},
 	}
-	normalizeCacheIntent(req, FormatOpenAIResponses, provider.OpenAI)
+	normalizeCacheIntent(req, FormatOpenAIResponses, provider.OpenAI, "")
 
 	assert.NotNil(t, req.SystemCache)
 	assert.Equal(t, []any{nil, nil, CacheTTL(""), nil, CacheTTL("")}, messageTTLs(req.Messages))
@@ -432,7 +434,7 @@ func TestNormalizeCacheIntent_ImageMarkers(t *testing.T) {
 		want   []any
 	}{
 		{target: FormatAnthropic, want: []any{CacheTTL("")}},
-		{target: FormatBedrock, want: []any{CacheTTL("")}},
+		{target: FormatBedrock, want: []any{nil}},
 		{target: FormatOpenAIResponses, want: []any{nil}},
 	}
 	for _, tt := range tests {
@@ -447,7 +449,7 @@ func TestNormalizeCacheIntent_ImageMarkers(t *testing.T) {
 					Cache:   &CanonicalCacheBreakpoint{image: 1, images: 1},
 				}},
 			}
-			normalizeCacheIntent(req, tt.target, formatProvider(tt.target))
+			normalizeCacheIntent(req, tt.target, formatProvider(tt.target), "")
 
 			assert.Equal(t, tt.want, messageTTLs(req.Messages))
 		})
@@ -477,6 +479,53 @@ func TestCacheTextJoin_ImageMarkerKeepsItsOwnTTL(t *testing.T) {
 	assert.False(t, text.breakpoint().onImage(), "a later text marker wins")
 }
 
+func TestCacheTextJoin_ImageMarkerKeepsTheTextMarkerBehindIt(t *testing.T) {
+	t.Parallel()
+
+	var text cacheTextJoin
+	text.add("stable")
+	text.markText(bp(CacheTTL1h), false)
+	text.addImage()
+	text.markImage(bp(CacheTTL5m), false)
+	text.add("volatile")
+
+	cache := text.breakpoint()
+	require.True(t, cache.onImage())
+	fallback := cache.withoutImages()
+	require.NotNil(t, fallback)
+	assert.False(t, fallback.onImage())
+	assert.Equal(t, CacheTTL1h, fallback.TTL)
+	parts, placed := cachedTextParts(text.String(), fallback)
+	assert.True(t, placed)
+	assert.Equal(t, []string{"stable", "volatile"}, parts)
+}
+
+func TestNormalizeCacheIntent_EffectiveModelPicksTheProfile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, model, defaultModel string
+		want                      []any
+	}{
+		{name: "default model", defaultModel: "gpt-5.6", want: []any{CacheTTL("")}},
+		{name: "body model wins", model: "gpt-4o", defaultModel: "gpt-5.6", want: []any{nil}},
+		{name: "no model", want: []any{nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := &CanonicalRequest{
+				Model:    tt.model,
+				Messages: []CanonicalMessage{{Role: "user", Content: "hi", Cache: bp("")}},
+			}
+			normalizeCacheIntent(req, FormatOpenAIResponses, provider.OpenAI, tt.defaultModel)
+
+			assert.Equal(t, tt.want, messageTTLs(req.Messages))
+			assert.Equal(t, tt.model, req.Model)
+		})
+	}
+}
+
 func TestNormalizeCacheIntent_ResponsesBreakpointsNeedGPT56(t *testing.T) {
 	t.Parallel()
 
@@ -499,7 +548,7 @@ func TestNormalizeCacheIntent_ResponsesBreakpointsNeedGPT56(t *testing.T) {
 			if tt.mode != "" {
 				req.CacheOptions = &CanonicalCacheOptions{Mode: tt.mode, Options: json.RawMessage(`{"mode":"explicit"}`)}
 			}
-			normalizeCacheIntent(req, FormatOpenAIResponses, formatProvider(FormatOpenAIResponses))
+			normalizeCacheIntent(req, FormatOpenAIResponses, formatProvider(FormatOpenAIResponses), "")
 
 			assert.Equal(t, tt.wantSystem, req.SystemCache != nil)
 			assert.Equal(t, []any{nil}, toolTTLs(req.Tools))

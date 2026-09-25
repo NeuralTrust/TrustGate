@@ -990,7 +990,7 @@ func TestAdaptRequest_OpenAIChatTargetsDropBreakpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
 			t.Parallel()
-			out, err := reg.AdaptRequestForProvider(body, FormatOpenAIResponses, tt.target, tt.provider)
+			out, err := reg.AdaptRequestForProvider(body, FormatOpenAIResponses, tt.target, tt.provider, "")
 			require.NoError(t, err)
 			assert.NotContains(t, string(out), "cache_control")
 			assert.NotContains(t, string(out), "prompt_cache_breakpoint")
@@ -1034,6 +1034,52 @@ func TestAdaptRequest_ImageMarkerStaysOnTheImage(t *testing.T) {
 	enc, err = (&OpenAIAdapter{}).EncodeRequest(cr)
 	require.NoError(t, err)
 	assert.NotContains(t, string(enc), "cache_control", "a marker whose image a plugin removed is dropped")
+}
+
+func TestAdaptRequest_TextMarkerBehindAnImageMarker(t *testing.T) {
+	t.Parallel()
+
+	chat := []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"a","cache_control":{"type":"ephemeral"}},` +
+		`{"type":"image_url","image_url":{"url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral"}},` +
+		`{"type":"text","text":"b"}]}]}`)
+	anthropic := []byte(`{"model":"gpt-5.6","max_tokens":5,"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"a","cache_control":{"type":"ephemeral"}},` +
+		`{"type":"image","source":{"type":"url","url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral"}},` +
+		`{"type":"text","text":"b"}]}]}`)
+	reg := NewRegistry()
+
+	for source, body := range map[Format][]byte{FormatOpenAI: chat, FormatAnthropic: anthropic} {
+		out, err := reg.AdaptRequest(body, source, FormatOpenAIResponses)
+		require.NoError(t, err)
+		var got openaiResponsesRequest
+		require.NoError(t, json.Unmarshal(out, &got))
+		assert.JSONEq(t, `[{"role":"user","content":[{"type":"input_text","text":"a","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"b"}]}]`, string(got.Input), source)
+	}
+
+	out, err := reg.AdaptRequest(chat, FormatOpenAI, FormatAnthropic)
+	require.NoError(t, err)
+	var got anthropicRequest
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, `[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"},"cache_control":{"type":"ephemeral"}},{"type":"text","text":"a\nb"}]`, string(got.Messages[0].Content))
+}
+
+func TestAdaptRequest_AzureResponsesGetsOnlyTheCacheKey(t *testing.T) {
+	t.Parallel()
+
+	chat := []byte(`{"model":"gpt-5.6","prompt_cache_key":"k","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit"},` +
+		`"messages":[{"role":"system","content":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}]},` +
+		`{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`)
+
+	out, err := NewRegistry().AdaptRequestForProvider(chat, FormatOpenAI, FormatOpenAIResponses, provider.Azure, "")
+	require.NoError(t, err)
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.JSONEq(t, `"k"`, string(got["prompt_cache_key"]))
+	assert.NotContains(t, got, "prompt_cache_retention")
+	assert.NotContains(t, got, "prompt_cache_options")
+	assert.NotContains(t, string(out), "prompt_cache_breakpoint")
 }
 
 func TestDecodeCompletionsRequest_ImageMarkersOutsideUserMessagesAreDropped(t *testing.T) {
