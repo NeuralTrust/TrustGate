@@ -177,10 +177,15 @@ const responseFormatJSONSchema = "json_schema"
 // encodeChatResponseFormat returns nil for a json_schema format without its
 // schema, which OpenAI-compatible targets reject.
 func encodeChatResponseFormat(f *CanonicalRespFormat) *openaiChatRespFormat {
-	if f == nil || (f.Type == responseFormatJSONSchema && len(f.JSONSchema) == 0) {
+	if f == nil || (f.Type == responseFormatJSONSchema && isEmptyJSON(f.JSONSchema)) {
 		return nil
 	}
 	return &openaiChatRespFormat{Type: f.Type, JSONSchema: f.JSONSchema}
+}
+
+func isEmptyJSON(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
 }
 
 type openaiResponse struct {

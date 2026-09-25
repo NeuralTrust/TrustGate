@@ -451,3 +451,30 @@ func TestRegistry_MistralNotSameWireFormatAsOpenAI(t *testing.T) {
 	assert.False(t, IsSameWireFormat(FormatMistral, FormatOpenAI),
 		"Mistral and OpenAI should NOT be wire-compatible (Mistral has its own adapter)")
 }
+
+func TestWithMistralRandomSeed_KeepsTheBodyBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"appends after the last field", `{"model":"m","messages":[{"role":"user","content":"a<b"}]}`, `{"model":"m","messages":[{"role":"user","content":"a<b"}],"random_seed":42}`},
+		{"empty object", `{}`, `{"random_seed":42}`},
+		{"trailing newline", "{\"model\":\"m\"}\n", `{"model":"m","random_seed":42}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := withMistralRandomSeed([]byte(tt.body), 42)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, string(got))
+		})
+	}
+	_, err := withMistralRandomSeed([]byte(`[]`), 42)
+	assert.Error(t, err)
+}
+
+func TestEncodeChatResponseFormat_DropsANullSchema(t *testing.T) {
+	assert.Nil(t, encodeChatResponseFormat(&CanonicalRespFormat{Type: responseFormatJSONSchema, JSONSchema: []byte(" null ")}))
+	assert.Nil(t, encodeChatResponseFormat(&CanonicalRespFormat{Type: responseFormatJSONSchema}))
+	assert.NotNil(t, encodeChatResponseFormat(&CanonicalRespFormat{Type: responseFormatJSONSchema, JSONSchema: []byte(`{"name":"x","schema":{}}`)}))
+}

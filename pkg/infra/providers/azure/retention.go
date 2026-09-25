@@ -88,7 +88,7 @@ func (m *retentionMemo) remember(url string) {
 		m.size.Add(-1)
 	}
 	if m.saturated.CompareAndSwap(false, true) {
-		slog.Info("Azure prompt_cache_retention memo is full; deployments it cannot hold pay the retry until entries expire",
+		slog.Warn("Azure prompt_cache_retention memo is full; deployments it cannot hold pay the retry until entries expire",
 			slog.Int64("entries", m.max))
 	}
 }
