@@ -39,10 +39,14 @@ import (
 )
 
 const (
-	serverName              = "trustgate"
-	serverVersion           = "1.0"
-	latestProtocolVersion   = "2026-07-28"
-	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
+	serverName            = "trustgate"
+	serverVersion         = "1.0"
+	latestProtocolVersion = "2026-07-28"
+	// handshakeProtocolVersion is the newest revision that still has
+	// initialize: whatever a client asks for, it is the newest answer
+	// initialize can give.
+	handshakeProtocolVersion = "2025-11-25"
+	modernServerInfoMetaKey  = "io.modelcontextprotocol/serverInfo"
 )
 
 // advertisedProtocolVersions is what server/discover offers and what
@@ -70,14 +74,46 @@ const (
 // initialize and ping are gone in this revision but still answered, because
 // every client below it needs them and answering a method nobody on the newer
 // revision calls costs nothing.
+//
+// 2025-11-25 asks nothing of a server that this gateway was not already doing
+// or that is not negotiated away (tasks, URL elicitation and sampling tools are
+// capabilities it does not claim). It is listed because it is what current
+// clients offer in initialize: left out, they were answered with a revision
+// they had never heard of, and Cursor refused the connection.
 var advertisedProtocolVersions = []string{
 	latestProtocolVersion,
+	handshakeProtocolVersion,
 	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
 
 var supportedProtocolVersions = negotiableVersions(advertisedProtocolVersions)
+
+// negotiateHandshakeVersion is the revision initialize answers with.
+//
+// The one asked for when it is supported. Otherwise the newest supported
+// revision no newer than it, since a client that knows a revision knows the
+// ones before it; and never one past handshakeProtocolVersion, because a
+// client that asks initialize for a revision this gateway has not heard of
+// only knows revisions that have initialize, and answering with the one that
+// dropped it is answering with one it cannot speak. The oldest supported
+// revision is the last resort, for a version older than all of them.
+func negotiateHandshakeVersion(requested string) string {
+	if supportedProtocolVersions[requested] {
+		return requested
+	}
+	ceiling := handshakeProtocolVersion
+	if requested != "" && requested < ceiling {
+		ceiling = requested
+	}
+	for _, version := range advertisedProtocolVersions {
+		if version <= ceiling {
+			return version
+		}
+	}
+	return advertisedProtocolVersions[len(advertisedProtocolVersions)-1]
+}
 
 func negotiableVersions(advertised []string) map[string]bool {
 	versions := make(map[string]bool, len(advertised))
@@ -295,12 +331,8 @@ type initializeParams struct {
 func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
 	var params initializeParams
 	_ = json.Unmarshal(req.Params, &params)
-	version := latestProtocolVersion
-	if supportedProtocolVersions[params.ProtocolVersion] {
-		version = params.ProtocolVersion
-	}
 	return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, fiber.Map{
-		"protocolVersion": version,
+		"protocolVersion": negotiateHandshakeVersion(params.ProtocolVersion),
 		"capabilities": fiber.Map{
 			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
