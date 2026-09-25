@@ -35,7 +35,8 @@ var (
 
 // isBuiltinTool reports whether kind names a tool the provider behind ad
 // runs itself. Anthropic versions its server tools by date, as in
-// web_search_20250305.
+// web_search_20250305, and connects remote MCP servers through mcp_servers;
+// a Bedrock system tool is systemTool:<name>.
 func isBuiltinTool(ad adapter.RequestAdapter, kind string) bool {
 	switch ad.(type) {
 	case *adapter.OpenAIResponsesAdapter:
@@ -43,8 +44,12 @@ func isBuiltinTool(ad adapter.RequestAdapter, kind string) bool {
 	case *adapter.GeminiAdapter:
 		return slices.Contains(geminiBuiltinTools, kind)
 	case *adapter.BedrockAdapter:
-		return kind == "systemTool"
+		name, ok := strings.CutPrefix(kind, "systemTool:")
+		return ok && name != ""
 	case *adapter.AnthropicAdapter:
+		if kind == "mcp_servers" {
+			return true
+		}
 		for _, family := range anthropicServerToolFamilies {
 			if version, ok := strings.CutPrefix(kind, family); ok && len(version) == 8 && isDigits(version) {
 				return true

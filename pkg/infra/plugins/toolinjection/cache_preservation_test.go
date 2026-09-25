@@ -66,3 +66,16 @@ func TestPluginInjectKeepsToolsTheCanonicalDoesNotModel(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(string(res.RequestBody), `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a"},`), string(res.RequestBody))
 }
+
+func TestPluginReencodesAnAmbiguousBodyItLeftUnchanged(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"safety_check","parameters":{"type":"object"}}}],` +
+		`"Tools":[{"type":"function","function":{"name":"safety_check","parameters":{"type":"object"}}}]}`
+
+	settings := injectSettings()
+	settings["on_conflict"] = conflictClientWins
+
+	res := execPreRequest(t, settings, string(adapter.FormatOpenAI), []byte(body))
+
+	assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+}

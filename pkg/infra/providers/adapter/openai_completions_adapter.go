@@ -46,7 +46,13 @@ type openaiRequest struct {
 	PromptCacheRetention string                 `json:"prompt_cache_retention,omitempty"`
 	PromptCacheOptions   json.RawMessage        `json:"prompt_cache_options,omitempty"`
 	CacheControl         *anthropicCacheControl `json:"cache_control,omitempty"`
+	Store                json.RawMessage        `json:"store,omitempty"`
 }
+
+// chatCarriedKeys are the Chat keys a re-encode carries through
+// RequestExtensions, as responsesCarriedKeys are for Responses. metadata may
+// hold personal data and is left out.
+var chatCarriedKeys = []string{"store"}
 
 type openaiMessage struct {
 	Role       string           `json:"role"`
@@ -370,6 +376,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 		TopP:        req.TopP,
 		TopK:        req.TopK,
 	}
+	carryRequestKeys(cr, chatCarriedKeys, []*json.RawMessage{&req.Store})
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
@@ -531,6 +538,7 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 
 	out.ResponseFormat = encodeChatResponseFormat(req.ResponseFormat)
 	out.Seed = req.Seed
+	carriedRequestKeys(req, chatCarriedKeys, []*json.RawMessage{&out.Store})
 
 	if req.System != "" {
 		out.Messages = append(out.Messages, openaiMessage{

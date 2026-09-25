@@ -276,14 +276,17 @@ func rawWithinCaps(b []byte) bool {
 	return true
 }
 
-// hasAmbiguousKeys reports a valid JSON body with an object whose keys
+// HasAmbiguousKeys reports a valid JSON body with an object whose keys
 // encoding/json folds into one, where the decoder may have read another copy
-// than the upstream will. It reads the body in one pass, at any size or
-// depth.
-func hasAmbiguousKeys(b []byte) bool {
-	if !json.Valid(b) {
-		return false
-	}
+// than the upstream will. A plugin that checks tools must then forward its
+// own encoding of the request, never the body. It reads the body in one
+// pass, at any size or depth.
+func HasAmbiguousKeys(b []byte) bool {
+	return json.Valid(b) && repeatsKey(b)
+}
+
+// repeatsKey is HasAmbiguousKeys on a body already known to be valid.
+func repeatsKey(b []byte) bool {
 	var stack []keyFrame
 	for i := 0; i < len(b); i++ {
 		switch b[i] {
@@ -344,6 +347,32 @@ func (f *keyFrame) repeats(key string) bool {
 	}
 	f.folded[k] = struct{}{}
 	return false
+}
+
+// rawLookup follows the object keys of path from s. found is false when a
+// key is missing or a value on the way is null; ok is false when an object
+// on the way cannot be read, such as one that repeats a key.
+func rawLookup(b []byte, s rawSpan, path []string) (v rawSpan, found, ok bool) {
+	for _, step := range path {
+		if string(b[s.start:s.end]) == "null" {
+			return rawSpan{}, false, true
+		}
+		fields, err := rawFields(b, s)
+		if err != nil {
+			return rawSpan{}, false, false
+		}
+		found = false
+		for _, f := range fields {
+			if strings.EqualFold(f.key, step) {
+				s, found = f.value, true
+				break
+			}
+		}
+		if !found {
+			return rawSpan{}, false, true
+		}
+	}
+	return s, true, true
 }
 
 func rawAt(b []byte, s rawSpan, path []string) (rawSpan, bool) {

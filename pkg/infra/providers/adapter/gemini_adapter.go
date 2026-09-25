@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -85,7 +86,7 @@ type geminiCallIDs struct {
 func newGeminiCallIDs(tools []geminiToolGroup) *geminiCallIDs {
 	u := &geminiCallIDs{used: map[string]bool{}}
 	for _, tg := range tools {
-		for _, d := range tg.FunctionDeclarations {
+		for _, d := range tg.declarations() {
 			if u.tools == nil {
 				u.tools = map[string]bool{}
 			}
@@ -181,6 +182,16 @@ type geminiGenConfig struct {
 
 type geminiToolGroup struct {
 	FunctionDeclarations []geminiFuncDecl `json:"functionDeclarations,omitempty"`
+	// FunctionDeclarationsSnake is the snake_case spelling the API also
+	// accepts; it is decoded only.
+	FunctionDeclarationsSnake []geminiFuncDecl `json:"function_declarations,omitempty"`
+}
+
+func (tg geminiToolGroup) declarations() []geminiFuncDecl {
+	if len(tg.FunctionDeclarationsSnake) == 0 {
+		return tg.FunctionDeclarations
+	}
+	return append(slices.Clip(tg.FunctionDeclarations), tg.FunctionDeclarationsSnake...)
 }
 
 type geminiFuncDecl struct {
@@ -339,7 +350,7 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 
 	// tools — convert Gemini UPPER_CASE types to JSON Schema lowercase
 	for _, tg := range req.Tools {
-		for _, d := range tg.FunctionDeclarations {
+		for _, d := range tg.declarations() {
 			cr.Tools = append(cr.Tools, CanonicalTool{
 				Name:        d.Name,
 				Description: d.Description,

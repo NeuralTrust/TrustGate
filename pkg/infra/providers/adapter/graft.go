@@ -57,12 +57,14 @@ var graftedKeys = map[string]bool{
 // GraftOptions tunes GraftChangedFieldsWith for the plugin making the edit.
 type GraftOptions struct {
 	// KeepUnmodelledTool reports whether a tools entry the canonical request
-	// does not model (a built-in or server tool such as mcp or web_search)
-	// stays in the body. kind is as UnmodelledToolKinds reports it. When set,
-	// it is applied even if the modelled tools did not change, so an entry it
-	// refuses is always removed. Nil keeps every such entry while the tools
-	// are unchanged and drops them all when they change.
-	KeepUnmodelledTool func(kind string) bool
+	// does not model (a built-in or server tool such as mcp or web_search, a
+	// legacy Chat function, an Anthropic MCP server) stays in the body. The
+	// entry is as UnmodelledTools reports it. When set, it is applied even if
+	// the modelled tools did not change, so an entry it refuses is always
+	// removed. Nil keeps every such entry while the tools are unchanged and
+	// drops the tools entries when they change; a full re-encode drops them
+	// all.
+	KeepUnmodelledTool func(UnmodelledTool) bool
 }
 
 // GraftChangedFields is GraftChangedFieldsWith with the default options:
@@ -99,7 +101,7 @@ func GraftChangedFieldsWith(ad RequestAdapter, original []byte, baseline, mutate
 	var g *grafter
 	if baseline != nil {
 		g = newGrafter(ad, original, baseline, mutated, opts)
-		if g.unchanged() && !hasAmbiguousKeys(original) {
+		if g.unchanged() && !HasAmbiguousKeys(original) {
 			return original, nil
 		}
 	}
@@ -178,6 +180,9 @@ type grafter struct {
 	opts              GraftOptions
 	bedrock           bool
 
+	orig                        rawToolList
+	origRead, origFound, origOK bool
+
 	sameRest, textChanged, toolsChanged bool
 }
 
@@ -191,7 +196,8 @@ func newGrafter(ad RequestAdapter, original []byte, baseline, mutated *Canonical
 	g := &grafter{ad: ad, original: original, baseline: baseline, mutated: mutated, opts: opts, bedrock: bedrock}
 	g.sameRest = bytes.Equal(canonicalJSON(withoutTextAndTools(baseline)), canonicalJSON(withoutTextAndTools(mutated)))
 	g.textChanged = g.sameRest && textChanged(baseline, mutated)
-	g.toolsChanged = !bytes.Equal(toolsJSON(baseline.Tools), toolsJSON(mutated.Tools)) || g.refusesUnmodelledTool()
+	g.toolsChanged = !sameTools(baseline.Tools, mutated.Tools) || !sameToolChoice(baseline.ToolChoice, mutated.ToolChoice) ||
+		g.refusesUnmodelledTool()
 	return g
 }
 
@@ -232,7 +238,7 @@ func (g *grafter) graft() ([]byte, bool) {
 		return nil, false
 	}
 	out, err := applyRawPatches(g.original, append(patches, topPatches...))
-	if err != nil || !json.Valid(out) || hasAmbiguousKeys(out) || !g.faithful(out) {
+	if err != nil || !g.faithful(out) || repeatsKey(out) {
 		return nil, false
 	}
 	return out, true
@@ -240,23 +246,39 @@ func (g *grafter) graft() ([]byte, bool) {
 
 // faithful reports whether out means what mutated means, directly or as the
 // full re-encode would carry it (an encoder may drop a tool_choice that names
-// a removed tool, for one).
+// a removed tool, for one). out must decode, which also proves it valid JSON
+// before repeatsKey scans it.
 func (g *grafter) faithful(out []byte) bool {
 	decoded, err := g.ad.DecodeRequest(out)
 	if err != nil || decoded == nil {
 		return false
 	}
-	got := canonicalJSON(decoded)
-	if bytes.Equal(got, canonicalJSON(g.mutated)) {
+	if sameRequest(decoded, g.mutated) {
 		return true
 	}
 	reencoded, err := g.ad.DecodeRequest(g.encoded)
-	return err == nil && reencoded != nil && bytes.Equal(got, canonicalJSON(reencoded))
+	return err == nil && reencoded != nil && sameRequest(decoded, reencoded)
 }
 
+// sameRequest reports whether a and b encode alike, comparing text and tools
+// directly rather than through their JSON.
+func sameRequest(a, b *CanonicalRequest) bool {
+	if len(a.Messages) != len(b.Messages) || textChanged(a, b) || !sameTools(a.Tools, b.Tools) ||
+		!sameToolChoice(a.ToolChoice, b.ToolChoice) {
+		return false
+	}
+	return bytes.Equal(canonicalJSON(withoutTextAndTools(a)), canonicalJSON(withoutTextAndTools(b)))
+}
+
+func sameToolChoice(a, b *CanonicalToolChoice) bool {
+	return (a == nil) == (b == nil) && (a == nil || *a == *b)
+}
+
+// withoutTextAndTools is r without the text and tool fields a graft edits in
+// place.
 func withoutTextAndTools(r *CanonicalRequest) *CanonicalRequest {
 	c := *r
-	c.System, c.Tools = "", nil
+	c.System, c.Tools, c.ToolChoice = "", nil, nil
 	c.Messages = make([]CanonicalMessage, len(r.Messages))
 	for i, m := range r.Messages {
 		m.Content = ""

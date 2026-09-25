@@ -63,3 +63,34 @@ func TestStripToolsDropsToolsTheCanonicalDoesNotModel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"}]}`, string(res.RequestBody))
 }
+
+func TestForwardReencodesAnAmbiguousBody(t *testing.T) {
+	t.Parallel()
+	reg := adapter.NewRegistry()
+	p := New(nil, reg)
+	plain := []byte(`{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"}]}`)
+	canonical, err := reg.DecodeRequestFor(plain, adapter.FormatOpenAIResponses)
+	require.NoError(t, err)
+	res, err := p.forward(plain, string(adapter.FormatOpenAIResponses), canonical)
+	require.NoError(t, err)
+	assert.Nil(t, res.RequestBody)
+
+	ambiguous := []byte(`{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"}],"Tools":[{"type":"function","name":"limited"}]}`)
+	canonical, err = reg.DecodeRequestFor(ambiguous, adapter.FormatOpenAIResponses)
+	require.NoError(t, err)
+	res, err = p.forward(ambiguous, string(adapter.FormatOpenAIResponses), canonical)
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody)
+	assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+}
+
+func TestStripToolsRewritesAToolChoiceNamingAStrippedTool(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"a","input_schema":{"type":"object"}},{"name":"b","input_schema":{"type":"object"}}],"tool_choice":{"type":"tool","name":"b"}}`)
+	reg := adapter.NewRegistry()
+	canonical, err := reg.DecodeRequestFor(body, adapter.FormatAnthropic)
+	require.NoError(t, err)
+	res, err := New(nil, reg).stripTools(body, string(adapter.FormatAnthropic), canonical, map[string]struct{}{"b": {}})
+	require.NoError(t, err)
+	assert.Equal(t, `{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"a","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"}}`, string(res.RequestBody))
+}

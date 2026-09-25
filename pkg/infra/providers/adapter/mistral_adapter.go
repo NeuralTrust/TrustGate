@@ -30,8 +30,14 @@ type MistralAdapter struct {
 // Request
 // ---------------------------------------------------------------------------
 
+// DecodeRequest reads a Chat body. Mistral has no store, so it is not
+// carried.
 func (a *MistralAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	return a.openai.DecodeRequest(body)
+	cr, err := a.openai.DecodeRequest(body)
+	if cr != nil {
+		cr.RequestExtensions = nil
+	}
+	return cr, err
 }
 
 func (a *MistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {

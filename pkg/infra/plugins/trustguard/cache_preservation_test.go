@@ -105,3 +105,21 @@ func TestRewriteRequestReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testin
 	assert.NotContains(t, string(out), "4111")
 	assert.NotContains(t, string(out), `"thinking"`)
 }
+
+func TestRewriteRequestKeepsResponsesStorageKeys(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-5","store":false,"previous_response_id":"resp_1","include":["reasoning.encrypted_content"],` +
+		`"reasoning":{"effort":"low"},"metadata":{"who":"bob@corp.example"},"input":"mail bob@corp.example"}`
+	reg := adapter.NewRegistry()
+	creq, err := reg.DecodeRequestFor([]byte(body), adapter.FormatOpenAIResponses)
+	require.NoError(t, err)
+	masked := strings.ReplaceAll(joinRequestText(creq), "bob@corp.example", "[EMAIL]")
+
+	out, ok := rewriteRequest(reg, adapter.FormatOpenAIResponses, []byte(body), creq, masked)
+
+	require.True(t, ok)
+	assert.NotContains(t, string(out), "bob@corp.example")
+	for _, kept := range []string{`"store":false`, `"previous_response_id":"resp_1"`, `"include":["reasoning.encrypted_content"]`, `"reasoning":{"effort":"low"}`} {
+		assert.Contains(t, string(out), kept)
+	}
+}

@@ -94,31 +94,15 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if err != nil {
 		return okResult(), nil
 	}
-	unmodelled, readable := adapter.UnmodelledToolKinds(ad, in.Request.Body, canonical)
-	if !readable {
-		unmodelled = []string{""}
-	}
-	if len(canonical.Tools) == 0 && len(unmodelled) == 0 {
-		return okResult(), nil
+	f := newToolFilter(ad, in.Request.Body, canonical, cfg)
+	if len(f.named) == 0 && len(f.unmodelled) == 0 {
+		return f.forward(in.Mode)
 	}
 
-	requested := append(toolNames(canonical.Tools), namedKinds(unmodelled)...)
-	kept, removed, keptCount, removedCount := filter(canonical.Tools, cfg)
-	for _, kind := range unmodelled {
-		list := &removed
-		if allowsUnmodelled(ad, kind, cfg) {
-			keptCount++
-			list = &kept
-		} else {
-			removedCount++
-		}
-		if kind != "" {
-			*list = append(*list, kind)
-		}
-	}
+	kept, removed, keptCount, removedCount := f.split()
 	data := ToolAllowlistData{
 		Provider:       in.Request.Provider,
-		ToolsRequested: requested,
+		ToolsRequested: f.requested(),
 		ToolsAllowed:   kept,
 		ToolsRemoved:   removed,
 		OnEmpty:        cfg.OnEmptyAfterFilter,
@@ -128,7 +112,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if removedCount == 0 {
 		data.Action = actionSkipped
 		setExtras(in.Event, data)
-		return okResult(), nil
+		return f.forward(in.Mode)
 	}
 
 	data.Action = plannedAction(keptCount, cfg)
@@ -140,26 +124,118 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 
 	if keptCount > 0 {
-		return stripTools(ad, in.Request.Body, canonical, cfg)
+		return f.strip()
 	}
 
 	switch cfg.OnEmptyAfterFilter {
 	case onEmptyStripField:
-		return rewriteEmpty(in.Request.Body, true)
+		return f.rewriteEmpty(true)
 	case onEmptyPassThrough:
-		return rewriteEmpty(in.Request.Body, false)
+		return f.rewriteEmpty(false)
 	default:
-		return newRejectResult(requested)
+		return newRejectResult(data.ToolsRequested)
 	}
 }
 
-func stripTools(ad adapter.ProviderAdapter, originalBody []byte, canonical *adapter.CanonicalRequest, cfg *config) (*appplugins.Result, error) {
-	baseline := canonical.Clone()
-	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
-		return keepTool(t.Name, cfg)
+// toolFilter applies the allow and deny patterns to one request.
+type toolFilter struct {
+	ad        adapter.ProviderAdapter
+	body      []byte
+	canonical *adapter.CanonicalRequest
+	cfg       *config
+	// named are the canonical tools the patterns judge by name. Outside
+	// Gemini a tool with no name is judged as the unmodelled entry it
+	// comes from instead, so it is not counted twice.
+	named       []adapter.CanonicalTool
+	unmodelled  []adapter.UnmodelledTool
+	serverTypes map[string][]string
+	// ambiguous marks a body with keys the decoder folds into one: what it
+	// decoded may not be what the upstream reads, so the plugin never
+	// forwards the body itself.
+	ambiguous bool
+}
+
+func newToolFilter(ad adapter.ProviderAdapter, body []byte, canonical *adapter.CanonicalRequest, cfg *config) *toolFilter {
+	f := &toolFilter{ad: ad, body: body, canonical: canonical, cfg: cfg, ambiguous: adapter.HasAmbiguousKeys(body)}
+	unmodelled, readable := adapter.UnmodelledTools(ad, body, canonical)
+	if !readable {
+		unmodelled = []adapter.UnmodelledTool{{}}
+	}
+	f.unmodelled = unmodelled
+	_, gemini := ad.(*adapter.GeminiAdapter)
+	for _, t := range canonical.Tools {
+		if t.Name != "" || gemini {
+			f.named = append(f.named, t)
+		}
+	}
+	f.serverTypes = adapter.ServerToolTypes(ad, body)
+	return f
+}
+
+func (f *toolFilter) keeps(t adapter.CanonicalTool) bool {
+	return keepTool(t.Name, f.serverTypes[t.Name], f.cfg)
+}
+
+func (f *toolFilter) requested() []string {
+	out := toolNames(f.named)
+	for _, u := range f.unmodelled {
+		if label := unmodelledLabel(u); label != "" {
+			out = append(out, label)
+		}
+	}
+	return out
+}
+
+func (f *toolFilter) split() (kept, removed []string, keptCount, removedCount int) {
+	kept = make([]string, 0, len(f.named))
+	removed = make([]string, 0, len(f.named))
+	add := func(label string, keep bool) {
+		list := &removed
+		if keep {
+			keptCount++
+			list = &kept
+		} else {
+			removedCount++
+		}
+		if label != "" {
+			*list = append(*list, label)
+		}
+	}
+	for _, t := range f.named {
+		add(t.Name, f.keeps(t))
+	}
+	for _, u := range f.unmodelled {
+		add(unmodelledLabel(u), allowsUnmodelled(f.ad, u, f.cfg))
+	}
+	return kept, removed, keptCount, removedCount
+}
+
+// forward lets the request through as it came, or, when its body is
+// ambiguous and the policy enforces, as the plugin decoded it.
+func (f *toolFilter) forward(mode policy.Mode) (*appplugins.Result, error) {
+	if !f.ambiguous || !appplugins.Blocks(mode) {
+		return okResult(), nil
+	}
+	return f.encode()
+}
+
+func (f *toolFilter) encode() (*appplugins.Result, error) {
+	body, err := f.ad.EncodeRequest(f.canonical)
+	if err != nil {
+		return nil, fmt.Errorf("tool_allowlist: encode: %w", err)
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func (f *toolFilter) strip() (*appplugins.Result, error) {
+	baseline := f.canonical.Clone()
+	_, gemini := f.ad.(*adapter.GeminiAdapter)
+	f.canonical.Tools = adapter.FilterTools(f.canonical.Tools, func(t adapter.CanonicalTool) bool {
+		return (t.Name != "" || gemini) && f.keeps(t)
 	})
-	body, err := adapter.GraftChangedFieldsWith(ad, originalBody, baseline, canonical, adapter.GraftOptions{
-		KeepUnmodelledTool: func(kind string) bool { return allowsUnmodelled(ad, kind, cfg) },
+	adapter.DropDanglingToolChoice(f.canonical)
+	body, err := adapter.GraftChangedFieldsWith(f.ad, f.body, baseline, f.canonical, adapter.GraftOptions{
+		KeepUnmodelledTool: func(u adapter.UnmodelledTool) bool { return allowsUnmodelled(f.ad, u, f.cfg) },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
@@ -167,16 +243,35 @@ func stripTools(ad adapter.ProviderAdapter, originalBody []byte, canonical *adap
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
 
-func rewriteEmpty(originalBody []byte, deleteTools bool) (*appplugins.Result, error) {
+// toolKeys are the top-level keys that declare tools or steer their use in
+// the formats the plugin reads. Bedrock and Gemini keep the choice under
+// toolConfig.
+var toolKeys = []string{
+	"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call", "mcp_servers",
+	"toolConfig", "tool_config",
+}
+
+// rewriteEmpty forwards the request with no tools once the filter removed
+// them all: without the tools keys, or with an empty tools array when
+// deleteTools is false. Bedrock takes no empty tools list, so its toolConfig
+// always goes. An ambiguous body is re-encoded without tools instead.
+func (f *toolFilter) rewriteEmpty(deleteTools bool) (*appplugins.Result, error) {
+	if f.ambiguous {
+		f.canonical.Tools, f.canonical.ToolChoice, f.canonical.ParallelToolCalls = nil, nil, nil
+		return f.encode()
+	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(originalBody, &m); err != nil {
+	if err := json.Unmarshal(f.body, &m); err != nil {
 		return nil, fmt.Errorf("tool_allowlist: rewrite: %w", err)
 	}
-	delete(m, "tool_choice")
-	delete(m, "parallel_tool_calls")
-	if deleteTools {
-		delete(m, "tools")
-	} else {
+	for key := range m {
+		for _, k := range toolKeys {
+			if strings.EqualFold(key, k) {
+				delete(m, key)
+			}
+		}
+	}
+	if _, bedrock := f.ad.(*adapter.BedrockAdapter); !deleteTools && !bedrock {
 		m["tools"] = json.RawMessage("[]")
 	}
 	body, err := json.Marshal(m)
@@ -218,59 +313,57 @@ func newRejectResult(requested []string) (*appplugins.Result, error) {
 	}, nil
 }
 
-func keepTool(name string, cfg *config) bool {
-	if len(cfg.AllowTools) > 0 {
-		if _, ok := matchAny(cfg.AllowTools, name); !ok {
-			return false
-		}
-	}
-	if _, ok := matchAny(cfg.DenyTools, name); ok {
+// keepTool applies the patterns to a tool by its name and, for an Anthropic
+// server tool, by its versioned type too: allow_tools must match one of
+// them and deny_tools none.
+func keepTool(name string, types []string, cfg *config) bool {
+	ids := append([]string{name}, types...)
+	if len(cfg.AllowTools) > 0 && !matchesAny(cfg.AllowTools, ids) {
 		return false
 	}
-	return true
+	return !matchesAny(cfg.DenyTools, ids)
 }
 
-// allowsUnmodelled keeps a tool the canonical request does not model only
-// when its kind is a built-in tool of the wire format, allow_tools names that
-// kind exactly and no deny pattern matches it. Patterns never reach such a
-// tool, and any other kind is refused, since the plugin cannot see what it
-// would expose.
-func allowsUnmodelled(ad adapter.RequestAdapter, kind string, cfg *config) bool {
-	if !isBuiltinTool(ad, kind) || !slices.Contains(cfg.AllowTools, kind) {
+func matchesAny(patterns, ids []string) bool {
+	for _, id := range ids {
+		if _, ok := matchAny(patterns, id); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// allowsUnmodelled decides a tools entry the canonical request does not
+// model. A legacy Chat function is judged by its name like any function
+// tool. A built-in tool of the wire format stays when no deny pattern
+// matches its kind or name and, if allow_tools is set, allow_tools names its
+// kind exactly: patterns never allow such a tool, and a request left with
+// only built-ins allow_tools does not name is refused (fail closed). Any
+// other kind is refused, since the plugin cannot see what it would expose.
+func allowsUnmodelled(ad adapter.RequestAdapter, u adapter.UnmodelledTool, cfg *config) bool {
+	if u.Kind == "functions" {
+		return u.Name != "" && keepTool(u.Name, nil, cfg)
+	}
+	if !isBuiltinTool(ad, u.Kind) {
 		return false
 	}
-	_, denied := matchAny(cfg.DenyTools, kind)
-	return !denied
+	ids := []string{u.Kind}
+	if u.Name != "" {
+		ids = append(ids, u.Name)
+	}
+	if matchesAny(cfg.DenyTools, ids) {
+		return false
+	}
+	return len(cfg.AllowTools) == 0 || slices.Contains(cfg.AllowTools, u.Kind)
 }
 
-func namedKinds(kinds []string) []string {
-	out := make([]string, 0, len(kinds))
-	for _, k := range kinds {
-		if k != "" {
-			out = append(out, k)
-		}
+// unmodelledLabel names an unmodelled entry in the event and the refusal:
+// its kind, with the name for the entries of a second tools list.
+func unmodelledLabel(u adapter.UnmodelledTool) string {
+	if (u.Kind == "functions" || u.Kind == "mcp_servers") && u.Name != "" {
+		return u.Kind + ":" + u.Name
 	}
-	return out
-}
-
-func filter(tools []adapter.CanonicalTool, cfg *config) (kept, removed []string, keptCount, removedCount int) {
-	kept = make([]string, 0, len(tools))
-	removed = make([]string, 0, len(tools))
-	for i := range tools {
-		name := tools[i].Name
-		if keepTool(name, cfg) {
-			keptCount++
-			if name != "" {
-				kept = append(kept, name)
-			}
-			continue
-		}
-		removedCount++
-		if name != "" {
-			removed = append(removed, name)
-		}
-	}
-	return kept, removed, keptCount, removedCount
+	return u.Kind
 }
 
 func plannedAction(keptCount int, cfg *config) string {

@@ -161,9 +161,15 @@ tool call outputs, Chat `prediction`, `refusal`, `name`, `user`, `metadata`
 or file parts, Gemini `thought` parts, `labels`, `inlineData` or code
 execution parts, Bedrock `guardContent`, `reasoningContent`, `document` or
 `promptVariables`, Cohere `documents`), and no text search can prove that
-none holds one in another spelling, split or encoding. Codex bodies lose
-`reasoning`, `include` and `store` this way, as they did before grafting.
-When nothing is masked, the body goes upstream byte-identical.
+none holds one in another spelling, split or encoding. When nothing is
+masked, the body goes upstream byte-identical.
+
+A few top-level keys that hold no prompt text survive every re-encode, since
+dropping them changes what the upstream keeps: Responses `store`,
+`previous_response_id`, `include` and `reasoning`, and Chat `store`. Without
+`store: false` the upstream would store a response the client asked it not to
+keep. They are carried only within one wire format. `metadata` is dropped in
+both formats, since it may hold personal data.
 
 What redaction does not cover:
 
@@ -214,40 +220,70 @@ The graft falls back to the full re-encode, never to a partial body, when:
   runs on bodies over the caps;
 - the plugin added or removed messages, or changed a field other than the
   prompt text and the tools;
-- the edit differs from the original text in more than 512 words;
+- the edit differs from the original text in more than 512 words, the text
+  left after the common prefix and suffix holds more than 4M words and
+  separators, or the diff exhausts its comparison budget (about twice the
+  words compared, which only repetitive text such as `x x x` reaches);
 - the edited system text crosses a block boundary;
 - the grafted body does not decode to the edited request.
 
 A tools entry the gateway does not model is one the adapter skips when it
 decodes (Responses `mcp`, `web_search`, `file_search`,
 `computer_use_preview`, `code_interpreter`, `local_shell`,
-`image_generation`; Gemini `googleSearch`, `codeExecution`, `urlContext`
-and snake_case `function_declarations`; Bedrock `systemTool`), or one that
-shares its name with more entries than the decoded request has tools of that
-name. `per_tool_rate_limiter` drops every such entry whenever it withdraws a
-tool, as the full re-encode did before grafting. `tool_injection` keeps
-them.
+`image_generation`; Gemini `googleSearch`, `codeExecution`, `urlContext`;
+Bedrock `systemTool`), or one that shares its name with more entries than the
+decoded request has tools of that name. A Gemini tools object that mixes
+function declarations with other keys counts once per other key, and each is
+kept or dropped on its own; both `functionDeclarations` and
+`function_declarations` are decoded. Chat's legacy `functions` and
+Anthropic's `mcp_servers` are a second tools list the adapters do not decode,
+and their entries count as unmodelled too. `per_tool_rate_limiter` drops the
+tools entries whenever it withdraws a tool, as the full re-encode did before
+grafting, and leaves the second lists alone. `tool_injection` keeps them all.
 
 `tool_allowlist` evaluates each such entry on every request, whether or not
-it removes a modelled tool, and counts a refused one as removed. It keeps
-one only when its kind (its `type`, or for Gemini and Bedrock its only key)
-is a built-in tool of the wire format, `allow_tools` names that kind
-exactly, and no deny pattern matches it. The built-ins are the Responses
-and Gemini tools above (`googleSearch`, `googleSearchRetrieval`,
-`codeExecution`, `urlContext`, in either spelling), Bedrock `systemTool`, and
-Anthropic dated server tools (`web_search_*`, `web_fetch_*`,
-`code_execution_*`, `bash_*`, `text_editor_*`, `computer_*`, such as
-`web_search_20250305`). Any other kind, such as `mcp_toolset` or a nameless
-entry, is always refused, and patterns such as `*` never keep one. Anthropic
-server tools carry a `name`, so the adapter models them and `allow_tools`
-patterns match that name. When a Gemini or Bedrock tool change cannot be
-placed entry by entry, the tools value is replaced by the re-encoded one and
-the kept built-ins are appended to it.
+it removes a modelled tool, and counts a refused one as removed:
 
-Tools declared outside the tools array (Chat `functions` and
-`function_call`, Anthropic `mcp_servers`) and a `tool_choice` or Gemini
-`allowedFunctionNames` that names a removed tool are not filtered. ENG-1637
+- A legacy Chat function is judged by its name, like any function tool. A
+  `function_call` naming a removed one goes with it.
+- A built-in tool of the wire format stays when no deny pattern matches its
+  kind or name and, if `allow_tools` is set, `allow_tools` names its kind
+  exactly. The kind is its `type` (matched ignoring case, as the decoder
+  reads it), or for Gemini its key and for Bedrock `systemTool:<name>`, as in
+  `systemTool:nova_grounding`. With only `deny_tools` set, built-ins no deny
+  pattern names stay. The built-ins are the Responses and Gemini tools above
+  (`googleSearch`, `googleSearchRetrieval`, `codeExecution`, `urlContext`, in
+  either spelling), Bedrock system tools, Anthropic `mcp_servers`, and
+  Anthropic dated server tools (`web_search_*`, `web_fetch_*`,
+  `code_execution_*`, `bash_*`, `text_editor_*`, `computer_*`, such as
+  `web_search_20250305`).
+- Any other kind, such as `mcp_toolset` or a nameless entry, is always
+  refused, and patterns such as `*` never keep a built-in.
+- A request left with only built-ins that `allow_tools` does not name is
+  refused (or handled by `on_empty_after_filter`). This is intended: an allow
+  list that names no built-in does not let one through.
+
+Anthropic server tools carry a `name`, so the adapter models them by it;
+`allow_tools` and `deny_tools` match either that name or the dated `type`,
+and a removed one leaves the body. When a Gemini or Bedrock tool change
+cannot be placed entry by entry, the tools value is replaced by the
+re-encoded one and the kept built-ins are appended to it. When
+`on_empty_after_filter` strips the tools field, it also drops `tool_choice`,
+`parallel_tool_calls`, the second tools lists and, for Bedrock and Gemini,
+`toolConfig`; Bedrock takes no empty tools list, so `pass_through_empty` drops
+its `toolConfig` too.
+
+A `tool_choice` that names a tool `tool_allowlist` or `per_tool_rate_limiter`
+removed becomes `auto`. A Gemini `allowedFunctionNames` or a Responses
+`tool_choice` naming a built-in that was dropped is not rewritten; ENG-1637
 tracks them.
+
+The tool plugins never forward a body whose keys the decoder folds into one
+(`tools` and `Tools`, a repeated `model`, `toolConfig.tools` and
+`toolConfig.Tools`): the tools they judged are the decoded copy, and the
+upstream may read the other. `tool_allowlist` treats the tools of such a body
+as unreadable and refuses them, and every plugin that lets the request
+through sends its own encoding of it instead of the body.
 
 | Plugin | Changes | Effect on the cached prefix |
 |---|---|---|
