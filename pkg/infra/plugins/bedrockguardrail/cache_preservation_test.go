@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRewriteRequestAnonymizesOnlyTheMaskedMessage(t *testing.T) {
+func TestRewriteRequestReencodesAndKeepsCacheMarkers(t *testing.T) {
 	t.Parallel()
 	const email = "carol@example.com"
 	cases := []struct {
@@ -32,7 +32,7 @@ func TestRewriteRequestAnonymizesOnlyTheMaskedMessage(t *testing.T) {
 		body   string
 	}{
 		{
-			name:   "responses keeps prompt_cache_key and codex fields",
+			name:   "responses keeps the prompt cache key and retention",
 			format: adapter.FormatOpenAIResponses,
 			body: `{"model":"gpt-5.6","instructions":"Stable instructions","input":[` +
 				`{"type":"message","role":"user","content":[{"type":"input_text","text":"earlier turn"}]},` +
@@ -58,9 +58,33 @@ func TestRewriteRequestAnonymizesOnlyTheMaskedMessage(t *testing.T) {
 			require.GreaterOrEqual(t, idx, 0)
 			body, ok := rewriteRequest(reg, tc.format, []byte(tc.body), creq, idx, strings.ReplaceAll(text, email, "{EMAIL}"))
 			require.True(t, ok)
-			assert.Equal(t, strings.ReplaceAll(tc.body, email, "{EMAIL}"), string(body))
+			ad, err := reg.GetAdapter(tc.format)
+			require.NoError(t, err)
+			want, err := ad.EncodeRequest(creq)
+			require.NoError(t, err)
+			assert.Equal(t, string(want), string(body))
+			assert.NotContains(t, string(body), email)
+			decoded, err := reg.DecodeRequestFor(body, tc.format)
+			require.NoError(t, err)
+			assert.Equal(t, creq.CacheOptions, decoded.CacheOptions)
+			assert.Equal(t, creq.SystemCache, decoded.SystemCache)
+			for i := range creq.Messages {
+				assert.Equal(t, creq.Messages[i].Cache, decoded.Messages[i].Cache, "message %d", i)
+			}
 		})
 	}
+}
+
+func TestRewriteRequestForwardsAnUnchangedMaskAsItCame(t *testing.T) {
+	t.Parallel()
+	body := `{"messages":[{"role":"user","content":[{"text":"hello"},{"guardContent":{"text":{"text":"g"}}}]}]}`
+	reg := adapter.NewRegistry()
+	creq, err := reg.DecodeRequestFor([]byte(body), adapter.FormatBedrock)
+	require.NoError(t, err)
+	text, idx := lastUserText(creq)
+	out, ok := rewriteRequest(reg, adapter.FormatBedrock, []byte(body), creq, idx, text)
+	require.True(t, ok)
+	assert.Equal(t, body, string(out))
 }
 
 func TestRewriteRequestReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testing.T) {

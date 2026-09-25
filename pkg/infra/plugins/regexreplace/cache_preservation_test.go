@@ -27,7 +27,7 @@ import (
 
 const cacheEmail = "bob@example.com"
 
-func TestRequestRewriteChangesOnlyTheMaskedText(t *testing.T) {
+func TestRequestRewriteReencodesAndKeepsCacheMarkers(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name     string
@@ -46,13 +46,13 @@ func TestRequestRewriteChangesOnlyTheMaskedText(t *testing.T) {
 				`{"role":"user","content":"write to ` + cacheEmail + `"}],"thinking":{"type":"enabled","budget_tokens":2048}}`,
 		},
 		{
-			name:     "openai chat keeps unmodelled keys",
+			name:     "openai chat keeps the prompt cache key",
 			provider: openAIProvider,
 			body: `{"model":"gpt-4o","messages":[{"role":"system","content":"s"},{"role":"system","content":"t"},` +
 				`{"role":"user","content":"to ` + cacheEmail + `"}],"n":2,"logprobs":true,"prompt_cache_key":"k"}`,
 		},
 		{
-			name:     "codex responses body keeps reasoning, include and store",
+			name:     "codex responses body",
 			provider: openAIProvider,
 			source:   string(adapter.FormatOpenAIResponses),
 			body: `{"model":"gpt-5.6","instructions":"You are Codex.","input":[` +
@@ -73,7 +73,33 @@ func TestRequestRewriteChangesOnlyTheMaskedText(t *testing.T) {
 			in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(tc.provider, tc.source, []byte(tc.body)), nil, event)
 			res, err := p.Execute(context.Background(), in)
 			require.NoError(t, err)
-			assert.Equal(t, strings.ReplaceAll(tc.body, cacheEmail, "[EMAIL]"), string(res.RequestBody))
+
+			format := adapter.Format(tc.provider)
+			if tc.source != "" {
+				format = adapter.Format(tc.source)
+			}
+			reg := adapter.NewRegistry()
+			want, err := reg.DecodeRequestFor([]byte(strings.ReplaceAll(tc.body, cacheEmail, "[EMAIL]")), format)
+			require.NoError(t, err)
+			ad, err := reg.GetAdapter(format)
+			require.NoError(t, err)
+			encoded, err := ad.EncodeRequest(want)
+			require.NoError(t, err)
+			assert.Equal(t, string(encoded), string(res.RequestBody))
+			assert.NotContains(t, string(res.RequestBody), cacheEmail)
+
+			got, err := reg.DecodeRequestFor(res.RequestBody, format)
+			require.NoError(t, err)
+			assert.Equal(t, want.CacheOptions, got.CacheOptions)
+			assert.Equal(t, want.SystemCache, got.SystemCache)
+			require.Len(t, got.Messages, len(want.Messages))
+			for i := range want.Messages {
+				assert.Equal(t, want.Messages[i].Cache, got.Messages[i].Cache, "message %d", i)
+			}
+			require.Len(t, got.Tools, len(want.Tools))
+			for i := range want.Tools {
+				assert.Equal(t, want.Tools[i].Cache, got.Tools[i].Cache, "tool %d", i)
+			}
 		})
 	}
 }

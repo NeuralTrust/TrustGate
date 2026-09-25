@@ -29,7 +29,8 @@ const (
 
 	maxGraftBody   = 8 << 20
 	maxGraftValues = 250_000
-	minLeakPiece   = 4
+	maxGraftDepth  = 64
+	maxGraftRescan = 16
 )
 
 // probeKeys are the keys whose string values carry prompt text in the
@@ -55,21 +56,17 @@ var graftedKeys = map[string]bool{
 
 // GraftOptions tunes GraftChangedFieldsWith for the plugin making the edit.
 type GraftOptions struct {
-	// Redaction marks an edit that removes text the upstream must not see,
-	// such as a PII mask. Every piece of removed text is then searched for
-	// in the grafted body, however short; otherwise pieces shorter than four
-	// bytes are ignored.
-	Redaction bool
 	// KeepUnmodelledTool reports whether a tools entry the canonical request
 	// does not model (a built-in or server tool such as mcp or web_search)
-	// stays in the body when the tools change. kind is the entry's "type",
-	// or its only key. Nil drops every such entry.
+	// stays in the body. kind is as UnmodelledToolKinds reports it. When set,
+	// it is applied even if the modelled tools did not change, so an entry it
+	// refuses is always removed. Nil keeps every such entry while the tools
+	// are unchanged and drops them all when they change.
 	KeepUnmodelledTool func(kind string) bool
 }
 
 // GraftChangedFields is GraftChangedFieldsWith with the default options:
-// short removed pieces are not searched for and unmodelled tools are dropped
-// when the tools change.
+// unmodelled tools are dropped when the tools change.
 func GraftChangedFields(ad RequestAdapter, original []byte, baseline, mutated *CanonicalRequest) ([]byte, error) {
 	return GraftChangedFieldsWith(ad, original, baseline, mutated, GraftOptions{})
 }
@@ -82,15 +79,19 @@ func GraftChangedFields(ad RequestAdapter, original []byte, baseline, mutated *C
 // markers survive and the cached prefix is unchanged up to the first edit.
 // Nothing changed returns original itself, unless it repeats a key.
 //
+// Grafting is for edits that add, remove or reword content the upstream may
+// see anyway (tools, compressed whitespace). A redaction must encode mutated
+// in full instead: text it removes can have copies in fields the canonical
+// request does not model, which a graft keeps and a re-encode drops.
+//
 // A text edit is diffed against the text it replaces and each changed run
 // is written into the block that holds it. When a run crosses a block
 // boundary, only that message's content is replaced by its re-encoded form.
 // The result is mutated encoded in full, as before grafting existed, when
-// the change cannot be placed (messages added or removed, fields other than
-// text and tools changed, duplicate keys, a body over the size caps, or a
-// grafted body that does not decode to mutated) and when any removed text
-// still appears in a string of the grafted body that the full re-encode
-// does not also carry.
+// the change cannot be placed: messages added or removed, fields other than
+// text and tools changed, duplicate keys, a body over the size, value or
+// nesting caps (the raw walks rescan a value at each level above it), or a
+// grafted body that does not decode to mutated.
 func GraftChangedFieldsWith(ad RequestAdapter, original []byte, baseline, mutated *CanonicalRequest, opts GraftOptions) ([]byte, error) {
 	if ad == nil || mutated == nil {
 		return nil, errors.New("graft: missing adapter or request")
@@ -169,42 +170,6 @@ func canonicalJSON(req *CanonicalRequest) []byte {
 	return b
 }
 
-// hasAmbiguousKeys reports a body with keys encoding/json folds into one,
-// where the decoder may have read another copy than the upstream will.
-func hasAmbiguousKeys(b []byte) bool {
-	if len(b) > maxGraftBody || !json.Valid(b) {
-		return false
-	}
-	root, err := rawRoot(b)
-	return err == nil && errors.Is(walkRaw(b, root), errDuplicateKey)
-}
-
-func walkRaw(b []byte, s rawSpan) error {
-	var children []rawSpan
-	switch b[s.start] {
-	case '{':
-		fields, err := rawFields(b, s)
-		if err != nil {
-			return err
-		}
-		for _, f := range fields {
-			children = append(children, f.value)
-		}
-	case '[':
-		items, err := rawItems(b, s)
-		if err != nil {
-			return err
-		}
-		children = items
-	}
-	for _, c := range children {
-		if err := walkRaw(b, c); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 type grafter struct {
 	ad                RequestAdapter
 	original          []byte
@@ -214,7 +179,6 @@ type grafter struct {
 	bedrock           bool
 
 	sameRest, textChanged, toolsChanged bool
-	pieces                              map[string]struct{}
 }
 
 type topEdit struct {
@@ -227,7 +191,7 @@ func newGrafter(ad RequestAdapter, original []byte, baseline, mutated *Canonical
 	g := &grafter{ad: ad, original: original, baseline: baseline, mutated: mutated, opts: opts, bedrock: bedrock}
 	g.sameRest = bytes.Equal(canonicalJSON(withoutTextAndTools(baseline)), canonicalJSON(withoutTextAndTools(mutated)))
 	g.textChanged = g.sameRest && textChanged(baseline, mutated)
-	g.toolsChanged = !bytes.Equal(toolsJSON(baseline.Tools), toolsJSON(mutated.Tools))
+	g.toolsChanged = !bytes.Equal(toolsJSON(baseline.Tools), toolsJSON(mutated.Tools)) || g.refusesUnmodelledTool()
 	return g
 }
 
@@ -243,13 +207,13 @@ func (g *grafter) graft() ([]byte, bool) {
 	if err != nil || g.original[root.start] != '{' {
 		return nil, false
 	}
-	leaves, ok := indexLeaves(g.original, root)
+	idx, ok := indexLeaves(g.original, root)
 	if !ok {
 		return nil, false
 	}
 	var patches []rawPatch
 	if g.textChanged {
-		p, ok := g.textPatches(leaves)
+		p, ok := g.textPatches(idx)
 		if !ok {
 			return nil, false
 		}
@@ -268,7 +232,7 @@ func (g *grafter) graft() ([]byte, bool) {
 		return nil, false
 	}
 	out, err := applyRawPatches(g.original, append(patches, topPatches...))
-	if err != nil || !json.Valid(out) || !g.faithful(out) || g.leaks(out) {
+	if err != nil || !json.Valid(out) || hasAmbiguousKeys(out) || !g.faithful(out) {
 		return nil, false
 	}
 	return out, true
@@ -328,21 +292,26 @@ func rawObjectEdits(b []byte, obj rawSpan, edits map[string]topEdit) ([]rawPatch
 	if err != nil {
 		return nil, false
 	}
+	byFold := make(map[string]string, len(edits))
+	for key := range edits {
+		byFold[foldKey(key)] = key
+	}
 	entries := make([]rawSpan, len(fields))
 	drop := make([]bool, len(fields))
 	replace := map[int][]byte{}
 	seen := map[string]bool{}
 	for i, f := range fields {
 		entries[i] = f.entry
-		e, ok := edits[f.key]
+		key, ok := byFold[foldKey(f.key)]
 		if !ok {
 			continue
 		}
-		if e.remove || seen[f.key] {
+		e := edits[key]
+		if e.remove || seen[key] {
 			drop[i] = true
 			continue
 		}
-		seen[f.key] = true
+		seen[key] = true
 		replace[i] = append(append([]byte(nil), b[f.entry.start:f.value.start]...), e.value...)
 	}
 	var added [][]byte

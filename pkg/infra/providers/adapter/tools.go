@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"strings"
 )
 
 // FilterTools returns the tools keep accepts, in their original order. The
@@ -50,9 +51,120 @@ func toolsJSON(tools []CanonicalTool) []byte {
 }
 
 type rawTool struct {
-	name     string
-	item     int
-	trailers []int
+	name       string
+	kind       string
+	item       int
+	trailers   []int
+	unmodelled bool
+}
+
+// UnmodelledToolKinds returns the kind of each tools entry of body that req,
+// decoded from body by ad, does not carry: a built-in or server tool such as
+// mcp or web_search. The kind is the entry's "type", or its only key, or ""
+// when it has neither. An entry sharing its name with more entries than req
+// has tools of that name counts as unmodelled too, since which one req
+// carries is unknown. ok is false when the tools cannot be read.
+func UnmodelledToolKinds(ad RequestAdapter, body []byte, req *CanonicalRequest) ([]string, bool) {
+	if ad == nil || req == nil {
+		return nil, false
+	}
+	root, err := rawRoot(body)
+	if err != nil || body[root.start] != '{' {
+		return nil, false
+	}
+	_, tools, found, ok := rawToolsOf(ad, body, root, req.Tools)
+	if !ok || !found {
+		return nil, ok
+	}
+	var kinds []string
+	for _, t := range tools {
+		if t.unmodelled {
+			kinds = append(kinds, t.kind)
+		}
+	}
+	return kinds, true
+}
+
+func toolsPath(ad RequestAdapter) (string, []string) {
+	if _, bedrock := ad.(*BedrockAdapter); bedrock {
+		return "toolConfig", []string{"toolConfig", "tools"}
+	}
+	return "tools", []string{"tools"}
+}
+
+// rawToolsOf reads the tools array of the object at root and marks the
+// entries modelled does not carry. found is false when there is no array.
+func rawToolsOf(ad RequestAdapter, b []byte, root rawSpan, modelled []CanonicalTool) ([]rawSpan, []rawTool, bool, bool) {
+	_, path := toolsPath(ad)
+	arr, found := rawAt(b, root, path)
+	if !found || string(b[arr.start:arr.end]) == "null" {
+		return nil, nil, false, true
+	}
+	items, tools, ok := rawToolEntries(b, arr)
+	if !ok {
+		return nil, nil, true, false
+	}
+	_, gemini := ad.(*GeminiAdapter)
+	markUnmodelled(b, items, tools, modelled, gemini)
+	return items, tools, true, true
+}
+
+func markUnmodelled(b []byte, items []rawSpan, tools []rawTool, modelled []CanonicalTool, gemini bool) {
+	want := map[string]int{}
+	for _, t := range modelled {
+		want[t.Name]++
+	}
+	have := map[string]int{}
+	for _, t := range tools {
+		have[t.name]++
+	}
+	for i := range tools {
+		t := &tools[i]
+		t.kind = rawToolKind(b, items[t.item])
+		if gemini {
+			t.unmodelled = !geminiDeclarations(b, items[t.item])
+		} else {
+			t.unmodelled = t.name == "" || have[t.name] > want[t.name]
+		}
+	}
+}
+
+// geminiDeclarations reports a Gemini tools entry that holds nothing but the
+// function declarations the adapter decodes.
+func geminiDeclarations(b []byte, item rawSpan) bool {
+	if b[item.start] != '{' {
+		return false
+	}
+	fields, err := rawFields(b, item)
+	if err != nil || len(fields) == 0 {
+		return false
+	}
+	for _, f := range fields {
+		if !strings.EqualFold(f.key, "functionDeclarations") {
+			return false
+		}
+	}
+	return true
+}
+
+// refusesUnmodelledTool reports whether KeepUnmodelledTool refuses a tools
+// entry of original the baseline does not carry, which must then go even
+// though the modelled tools are unchanged. A body whose tools cannot be read
+// counts as refused, so the full re-encode drops them.
+func (g *grafter) refusesUnmodelledTool() bool {
+	if g.opts.KeepUnmodelledTool == nil {
+		return false
+	}
+	kinds, ok := UnmodelledToolKinds(g.ad, g.original, g.baseline)
+	if !ok {
+		return true
+	}
+	for _, kind := range kinds {
+		if !g.opts.KeepUnmodelledTool(kind) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolPatches edits the tools array of original entry by entry: unchanged
@@ -61,8 +173,8 @@ type rawTool struct {
 // carry stay only when GraftOptions.KeepUnmodelledTool keeps them. Top-level
 // keys the tool change touched in the re-encode (a tool_choice that named a
 // removed tool) are recorded in top. When the entries cannot be matched by
-// name, the whole tools value is replaced by the re-encoded one, which
-// carries no unmodelled tool.
+// name, the whole tools value is replaced by the re-encoded one followed by
+// the unmodelled entries that stay.
 func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch, bool) {
 	encRoot, err := rawRoot(g.encoded)
 	if err != nil {
@@ -71,24 +183,47 @@ func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch,
 	if !g.otherTopEdits(encRoot, top) {
 		return nil, false
 	}
-	topKey, path := "tools", []string{"tools"}
-	if g.bedrock {
-		topKey, path = "toolConfig", []string{"toolConfig", "tools"}
+	topKey, path := toolsPath(g.ad)
+	origItems, origTools, hasOrig, ok := rawToolsOf(g.ad, g.original, root, g.baseline.Tools)
+	if !ok {
+		return nil, false
 	}
-	origArr, hasOrig := rawAt(g.original, root, path)
+	var kept [][]byte
+	for _, rt := range origTools {
+		if rt.unmodelled && g.keepUnmodelled(rt.kind) {
+			it := origItems[rt.item]
+			kept = append(kept, g.original[it.start:it.end])
+		}
+	}
+	origArr, _ := rawAt(g.original, root, path)
 	encArr, hasEnc := rawAt(g.encoded, encRoot, path)
 	if !hasOrig || !hasEnc || len(g.mutated.Tools) == 0 {
-		if v, ok := rawFieldOf(g.encoded, encRoot, topKey); ok {
+		switch v, ok := rawFieldOf(g.encoded, encRoot, topKey); {
+		case len(kept) > 0 && hasOrig && !g.bedrock:
+			top[topKey] = topEdit{value: joinRawArray(nil, kept)}
+		case ok:
 			top[topKey] = topEdit{value: g.encoded[v.start:v.end]}
-		} else {
+		default:
 			top[topKey] = topEdit{remove: true}
 		}
 		return nil, true
 	}
-	if patches, ok := g.toolEntryPatches(origArr, encArr); ok {
+	if patches, ok := g.toolEntryPatches(origArr, origItems, origTools, encArr); ok {
 		return patches, true
 	}
-	return []rawPatch{{at: origArr, with: g.encoded[encArr.start:encArr.end]}}, true
+	encItems, err := rawItems(g.encoded, encArr)
+	if err != nil {
+		return nil, false
+	}
+	whole := make([][]byte, 0, len(encItems)+len(kept))
+	for _, it := range encItems {
+		whole = append(whole, g.encoded[it.start:it.end])
+	}
+	return []rawPatch{{at: origArr, with: joinRawArray(whole, kept)}}, true
+}
+
+func joinRawArray(a, b [][]byte) []byte {
+	return append(append([]byte{'['}, bytes.Join(append(a, b...), []byte(","))...), ']')
 }
 
 func (g *grafter) otherTopEdits(encRoot rawSpan, top map[string]topEdit) bool {
@@ -139,11 +274,7 @@ func rawValues(b []byte, obj rawSpan) (map[string][]byte, bool) {
 	return out, true
 }
 
-func (g *grafter) toolEntryPatches(origArr, encArr rawSpan) ([]rawPatch, bool) {
-	origItems, origTools, ok := rawToolEntries(g.original, origArr)
-	if !ok {
-		return nil, false
-	}
+func (g *grafter) toolEntryPatches(origArr rawSpan, origItems []rawSpan, origTools []rawTool, encArr rawSpan) ([]rawPatch, bool) {
 	encItems, encTools, ok := rawToolEntries(g.encoded, encArr)
 	if !ok {
 		return nil, false
@@ -190,13 +321,11 @@ func (g *grafter) toolEntryPatches(origArr, encArr rawSpan) ([]rawPatch, bool) {
 	drop := make([]bool, len(origItems))
 	replace := map[int][]byte{}
 	for _, rt := range origTools {
-		was, modelled := before[rt.name]
-		if rt.name == "" || !modelled {
-			if !g.keepUnmodelled(g.original, origItems[rt.item]) {
-				drop[rt.item] = true
-			}
+		if rt.unmodelled {
+			drop[rt.item] = !g.keepUnmodelled(rt.kind)
 			continue
 		}
+		was := before[rt.name]
 		now, kept := after[rt.name]
 		if kept && bytes.Equal(toolsJSON([]CanonicalTool{was}), toolsJSON([]CanonicalTool{now})) {
 			continue
@@ -245,11 +374,8 @@ func rawToolEntries(b []byte, arr rawSpan) ([]rawSpan, []rawTool, bool) {
 // keepUnmodelled applies GraftOptions.KeepUnmodelledTool to a tools entry
 // the canonical request does not carry. With no option the entry goes: a
 // filter that cannot see a tool must not let it through.
-func (g *grafter) keepUnmodelled(b []byte, item rawSpan) bool {
-	if g.opts.KeepUnmodelledTool == nil {
-		return false
-	}
-	return g.opts.KeepUnmodelledTool(rawToolKind(b, item))
+func (g *grafter) keepUnmodelled(kind string) bool {
+	return g.opts.KeepUnmodelledTool != nil && g.opts.KeepUnmodelledTool(kind)
 }
 
 func rawToolKind(b []byte, item rawSpan) string {

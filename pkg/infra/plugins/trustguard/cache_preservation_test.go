@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRewriteRequestMasksWithoutTouchingTheRest(t *testing.T) {
+func TestRewriteRequestReencodesAndKeepsCacheMarkers(t *testing.T) {
 	t.Parallel()
 	body := `{"model":"claude-sonnet-4-5","max_tokens":64,` +
 		`"system":[{"type":"text","text":"Stable prefix\nsecond line","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
@@ -38,7 +38,31 @@ func TestRewriteRequestMasksWithoutTouchingTheRest(t *testing.T) {
 	out, ok := rewriteRequest(reg, adapter.FormatAnthropic, []byte(body), creq, masked)
 
 	require.True(t, ok)
-	assert.Equal(t, strings.ReplaceAll(body, "4111 1111 1111 1111", "[CARD]"), string(out))
+	ad, err := reg.GetAdapter(adapter.FormatAnthropic)
+	require.NoError(t, err)
+	want, err := ad.EncodeRequest(creq)
+	require.NoError(t, err)
+	assert.Equal(t, string(want), string(out))
+	assert.NotContains(t, string(out), "4111")
+	decoded, err := reg.DecodeRequestFor(out, adapter.FormatAnthropic)
+	require.NoError(t, err)
+	require.NotNil(t, decoded.SystemCache)
+	assert.Equal(t, adapter.CacheTTL1h, decoded.SystemCache.TTL)
+	require.NotNil(t, decoded.Messages[0].Cache)
+	assert.Equal(t, "card [CARD]", decoded.Messages[2].Content)
+}
+
+func TestRewriteRequestForwardsAnUnchangedMaskAsItCame(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hello"}],"container":"c"}`
+	reg := adapter.NewRegistry()
+	creq, err := reg.DecodeRequestFor([]byte(body), adapter.FormatAnthropic)
+	require.NoError(t, err)
+
+	out, ok := rewriteRequest(reg, adapter.FormatAnthropic, []byte(body), creq, joinRequestText(creq))
+
+	require.True(t, ok)
+	assert.Equal(t, body, string(out))
 }
 
 func TestRewriteResponseKeepsCacheUsage(t *testing.T) {

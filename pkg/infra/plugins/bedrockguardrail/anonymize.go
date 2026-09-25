@@ -31,6 +31,10 @@ func maskedText(out *bedrockruntime.ApplyGuardrailOutput) (string, bool) {
 	return text, true
 }
 
+// rewriteRequest re-encodes the request in full once the mask changes its
+// text: an in-place edit could leave a copy of the masked text in a field the
+// canonical request does not model, so a redaction never keeps those fields.
+// An unchanged text forwards original as it came.
 func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, msgIndex int, masked string) ([]byte, bool) {
 	if reg == nil || creq == nil || msgIndex < 0 || msgIndex >= len(creq.Messages) {
 		return nil, false
@@ -39,9 +43,11 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byt
 	if err != nil {
 		return nil, false
 	}
-	baseline := creq.Clone()
+	if creq.Messages[msgIndex].Content == masked && original != nil {
+		return original, true
+	}
 	creq.Messages[msgIndex].Content = masked
-	body, err := adapter.GraftChangedFieldsWith(adp, original, baseline, creq, adapter.GraftOptions{Redaction: true})
+	body, err := adp.EncodeRequest(creq)
 	if err != nil {
 		return nil, false
 	}
