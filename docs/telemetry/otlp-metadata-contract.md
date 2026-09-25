@@ -123,6 +123,40 @@ Discounting the async part is what makes the attribute usable: it is routinely l
 the gateway's own overhead, so counting it drives the remainder negative and flattens
 `gateway_ms` to zero on most requests.
 
+#### The streamed response leg is blocking
+
+A policy that inspects a streamed response block by block runs **during stream drain**,
+after the `pre_response` stage has already returned. It holds bytes the client is waiting
+for, so it is client-visible latency, and the split above has no third bucket for it: it
+is neither a stage that ran before the response nor an asynchronous pass that ran after.
+
+It is resolved into `blocking_policies_ms`, not into a bucket of its own. The policy-chain
+entry for a streamed leg carries `stage: pre_response`, which the fold already counts as
+blocking, and the entry's `latency_ms` is set explicitly to the time **that policy** spent
+deciding while bytes were held — **not** to the span's wall clock. The distinction
+matters: a stream span opens on the first block and ends when the stream does, so its
+default wall clock would be the whole drain, provider generation included, and
+`policies_ms` on a streamed request would come out at roughly the whole request.
+
+**The reconciliation does not survive a streamed leg, and that is a known limitation.**
+The block loop runs *during* drain, so the hold is inside the provider span: `provider_ms`
+already contains the guard time that `blocking_policies_ms` now also carries. Subtracting
+both leaves a negative remainder and `gateway_ms` clamps to zero on a streamed request
+with per-block inspection enabled — not because the policy chain was charged the drain,
+but because the two buckets overlap by construction. Do not read that zero as "the gateway
+spent nothing", and do not reconcile `total_ms` against the three buckets on a streamed
+leg. The chain's own cost is the entry's `latency_ms`, which stays honest either way.
+
+Three consequences for anyone charting this:
+
+- `policies_ms` on a streamed request grows when per-block inspection is enabled. That is
+  a real change in what the client waited for, not an accounting artefact.
+- The per-entry `latency_ms` of a streamed leg is **not** `ended_at - started_at`. Do not
+  reconstruct it from span timestamps.
+- Each streaming policy is charged its own share, so the sum over a chain of N streaming
+  policies is one hold, not N. The figure a policy reports is what that policy cost, never
+  what the chain around it cost.
+
 The per-stage split is deliberately **not** duplicated into its own attribute — it is
 derivable from `trustgate.policy_chain`, where each entry already carries `stage` and
 `latency_ms`. To chart the full policy cost use `policies_ms`; to chart what the client
@@ -137,6 +171,89 @@ SELECT
   )) AS policies_async_ms
 FROM trustgate_events
 ```
+
+### Streamed response inspection
+
+A policy that inspects a streamed response per block emits **one** policy-chain entry for
+the whole stream, not one per block. Its `extras` carry a `streaming` object, written once
+when the stream ends because span extras are replaced rather than merged — a per-block
+write would leave only the last block's account of a response that took several.
+
+Several streaming policies can inspect the same response, and each gets its own entry. The
+**Scope** column says whether a key answers for that policy or for the response as a
+whole. A per-stream key repeats, byte for byte, on every entry of the same stream: sum a
+per-policy key across entries, never a per-stream one.
+
+| Key | Scope | Meaning |
+|-----|-------|---------|
+| `streaming.enabled` | stream | The leg ran with per-block inspection. Always `true` when the object is present |
+| `streaming.stream_id` | stream | Correlates the evaluate calls of this response leg. Derived from the trace id; distinct from `session_id`, which spans the conversation |
+| `streaming.evals_total` | stream | Blocks handed to the chain |
+| `streaming.guard_calls` | stream | Blocks that came back with a verdict. `evals_total - guard_calls` is the number that failed |
+| `streaming.guard_latency_ms_total` | policy | Time this policy spent deciding, summed over the stream's blocks. This is the value the entry's own `latency_ms` carries |
+| `streaming.guard_latency_ms_max` | stream | The slowest single block, measured across the chain |
+| `streaming.added_latency_ms` | stream | How long held text waited before reaching the client, summed over blocks. **Not** a policy's own cost and **not** gateway overhead — see below |
+| `streaming.final_pass` | stream | A block covering the end of the response was inspected. `false` means the tail went uninspected on this leg |
+| `streaming.cut_at_eval` | policy | The block at which the stream stopped, on the policy the stop is attributable to. `0` on every policy that did not cut, which is every observe-mode policy |
+| `streaming.cut_offset_chars` | policy | Characters the client had **already received** when the cut landed. Not what the provider had produced — this is the exposure the cut did not prevent, and the number `min_chars_between_evals` sets |
+| `streaming.degraded_reason` | stream | Why one block was released without the verdict the policy asked for |
+| `streaming.fallback_reason` | stream | Why per-block inspection stopped for the rest of the stream |
+
+Every key is emitted even when zero. Once the object is present a zero is an answer — "no
+cut", "no degradation" — and dropping it would make an absent key ambiguous with a leg
+that never reported.
+
+#### `added_latency_ms` and `guard_latency_ms_total` are different quantities
+
+They are not two views of one number and neither bounds the other. Only
+`guard_latency_ms_total` is what the policy chain cost, and it is the one the entry's
+`latency_ms` carries; `added_latency_ms` answers a different question and belongs on no
+latency ledger.
+
+`added_latency_ms` is charged from the moment the oldest unreleased event arrived to the
+moment a flush released it, summed over the blocks that released something. Between those
+two moments the gateway is still pulling from the provider, so each term is **block fill
+plus the verdict's round trip** — and block fill is the provider generating the rest of
+the block. It is therefore a sum of per-block worst cases, not a delay added to the
+request: within a block only the first event waits the whole term and the last waits
+almost nothing.
+
+Two consequences:
+
+- **Do not add it to `gateway_ms`, and do not treat it as gateway overhead.** Most of it
+  is provider time already counted in `provider_ms`; adding it back is the
+  double-subtraction the per-entry `latency_ms` exists to prevent.
+- **`added_latency_ms` can be `0` against a real hold.** It is charged only where a flush
+  released something, so a head-of-stream block that released nothing, a mid-stream cut
+  whose last verdict released nothing, and a client that disconnected all report `0` with
+  a non-zero round trip behind them. A zero here means "nothing was ever handed over after
+  waiting", not "nothing waited".
+
+New tokens. `degraded` is per block and recoverable; `fallback` retires inspection for the
+rest of the stream; `skip_reason` says the leg never inspected anything at all:
+
+| Token | Field | Meaning |
+|-------|-------|---------|
+| `accumulation_cap` | `degraded_reason` | The payload crossed its size cap and the block was inspected against a tail window rather than the whole prefix |
+| `guard_timeout` | `degraded_reason` | A block's verdict did not arrive and the held text was released uninspected |
+| `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
+| `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
+| `provider_not_streaming` | `skip_reason` | The leg opted into per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
+
+**A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
+outright stops the stream too, and that stop is reported the way a verdict's is:
+`cut_at_eval` names the block and the decision is `blocked`, on every policy that could
+have blocked. Nothing in `degraded_reason` marks it — fail_closed does not degrade, it
+stops — so the tell is `guard_calls` short of `evals_total` on a leg with a cut. Read
+`cut_at_eval` as "the block at which the stream stopped", not "the block whose verdict
+stopped it".
+
+**`status.reason` does not yet name a mid-stream cut.** It is set on the error path only
+(`writeProxyError`), so a head-of-stream block — which happens before a single byte is
+written and is a real HTTP 403 — carries a reason, while a cut after the first release is
+an HTTP 200 whose `status.reason` is empty. On the wire the response ends with the
+dialect's content-filter terminator, and on the event the cut is visible only through
+`streaming.cut_at_eval`. Charting cuts means reading that field, not `status.reason`.
 
 ### Savings semantics
 

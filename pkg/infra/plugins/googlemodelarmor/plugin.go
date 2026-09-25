@@ -65,9 +65,10 @@ func (s rewriteSpan) result(body []byte) *appplugins.Result {
 // Plugin is the google_model_armor guardrail: a single Model Armor sanitize
 // call per stage, with block_on picking which of its orthogonal findings
 // (sdp, rai, pi_and_jailbreak, malicious_uris, csam) blocks the request.
-// Streaming responses and multimodal content are out of scope: the REST v1
-// API this client speaks has no StreamSanitize* method and no DataItem
-// support for those endpoints.
+// Multimodal content is out of scope: the REST v1 API this client speaks has
+// no DataItem support for these endpoints. Streamed responses are inspected per
+// block through StreamInspector, which needs no streaming sanitize method — a
+// block is an ordinary sanitize call over the prefix produced so far.
 type Plugin struct {
 	registry *adapter.Registry
 	clients  *clientCache

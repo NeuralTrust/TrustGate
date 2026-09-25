@@ -16,6 +16,8 @@ package trustguard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +59,24 @@ const (
 	skipReasonUnsupportedFormat   = "unsupported_agent_format"
 	skipReasonUndecodableResponse = "undecodable_response"
 	skipReasonObserveMode         = "observe_mode"
+	// skipReasonProviderNotStreaming marks a response leg that opted into
+	// per-block inspection and never got a block to inspect: the provider
+	// produced no stream the guard could close a block on. Without it the
+	// event is indistinguishable from a stream that was inspected and found
+	// clean, which is the same gap skipReasonEmptyResponseBody closed on the
+	// buffered leg.
+	skipReasonProviderNotStreaming = "provider_not_streaming"
+)
+
+// Why a streamed leg stopped being inspected the way the policy asked. The
+// values are the shared tokens: the guard records them and this plugin
+// publishes them, and they land in ClickHouse, so a rename after release is a
+// data migration rather than a code change.
+const (
+	degradedReasonAccumulationCap     = appplugins.StreamDegradeAccumulationCap
+	degradedReasonGuardTimeout        = appplugins.StreamDegradeGuardTimeout
+	fallbackReasonSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
+	fallbackReasonClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )
 
 const (
@@ -81,7 +101,10 @@ const (
 
 const transformedInputKey = "input"
 
-var _ appplugins.Plugin = (*Plugin)(nil)
+var (
+	_ appplugins.Plugin          = (*Plugin)(nil)
+	_ appplugins.StreamInspector = (*Plugin)(nil)
+)
 
 type Plugin struct {
 	registry *adapter.Registry
@@ -274,6 +297,67 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
+}
+
+// InspectSegment evaluates one closed block of a streaming response leg and
+// returns the verdict for it. It is the streaming counterpart of Execute's
+// output leg and leaves Execute untouched: the buffered path keeps calling the
+// guard once per response.
+//
+// Ownership of streaming.on_error: the caller owns it, this plugin never reads
+// it. The setting decides what happens to text the caller is holding — release
+// it and degrade, or cut — and only the caller knows how much is held, whether
+// the head block is still uncommitted, and how many blocks in a row have
+// failed. Applying it here as well would apply it twice. So a failure whose
+// handling is configurable comes back as an error and the caller resolves it.
+//
+// The exception is a rejection the engine issued deliberately: 401/403, 429
+// and 503 come back as a blocking verdict, not an error, so no value of
+// streaming.on_error can turn them into a release. That mirrors Execute, where
+// the same three fail closed regardless of on_error.
+//
+// Mode is likewise not applied here. A block verdict is what the engine said;
+// the executor downgrades it to a report for an observe-mode entry.
+func (p *Plugin) InspectSegment(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	seg appplugins.StreamSegment,
+) (*appplugins.SegmentVerdict, error) {
+	return p.inspectSegment(ctx, in, seg)
+}
+
+// StreamSettings reports whether these policy settings enable per-block
+// inspection of the response leg, and the options the caller must run the
+// stream under. Implementing InspectSegment is not the opt-in on its own: this
+// plugin is on every pre_response chain that names it, and streaming.enabled
+// defaults to false, so without this the head gate would be built for policies
+// that never asked for it.
+//
+// head_chars and streaming.on_error come back with the opt-in because this
+// settings map is this plugin's schema. Settings that fail to parse disable
+// the stream leg here; the buffered legs surface the same error where they
+// already do.
+func (p *Plugin) StreamSettings(settings map[string]any) (bool, appplugins.StreamOptions) {
+	// The opt-in has to cost nothing for the policies that did not take it.
+	// This runs on every streamed request, and p.config digests the whole
+	// settings map to key its cache, which is not free.
+	if _, ok := settings["streaming"]; !ok {
+		return false, appplugins.StreamOptions{}
+	}
+	cfg, err := p.config(settings)
+	if err != nil {
+		return false, appplugins.StreamOptions{}
+	}
+	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+		return false, appplugins.StreamOptions{}
+	}
+	return true, appplugins.StreamOptions{
+		HeadChars:            cfg.Streaming.HeadChars,
+		OnError:              cfg.Streaming.OnError,
+		MinCharsBetweenEvals: cfg.Streaming.MinCharsBetweenEvals,
+		MaxHoldMS:            cfg.Streaming.MaxHoldMS,
+		MaxAccumulatedBytes:  cfg.Streaming.MaxAccumulatedBytes,
+	}
 }
 
 func (p *Plugin) inspectionPayload(
@@ -503,25 +587,35 @@ func guardOutcomeDecision(status string, mode policy.Mode) string {
 }
 
 func (p *Plugin) config(settings map[string]any) (Settings, error) {
-	key := configCacheKey(settings)
-	if v, ok := p.cfgCache.Load(key); ok {
-		return v.(Settings), nil
+	key, cacheable := configCacheKey(settings)
+	if cacheable {
+		if v, ok := p.cfgCache.Load(key); ok {
+			return v.(Settings), nil
+		}
 	}
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return Settings{}, err
 	}
-	p.cfgCache.Store(key, cfg)
+	if cacheable {
+		p.cfgCache.Store(key, cfg)
+	}
 	return cfg, nil
 }
 
-func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf(
-		"%v\x00%v\x00%v",
-		settings["direction"],
-		settings["collector_id"],
-		settings["on_error"],
-	)
+// configCacheKey digests the whole settings map, so a setting added to
+// Settings later is part of the key the day it is added. Naming individual
+// keys made every other one invisible on an already-parsed policy until the
+// process restarted. It reports false when the map does not marshal, in which
+// case the caller must bypass the cache rather than share an entry with a
+// different config.
+func configCacheKey(settings map[string]any) (string, bool) {
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), true
 }
 
 func gatewayTraceID(ctx context.Context) string {
@@ -564,12 +658,26 @@ func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {
 }
 
 func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
+	return p.guardWith(ctx, p.tokens.token, baseURL, collectorID, traceID, body, playground)
+}
+
+// guardWith runs one evaluate call, retrying once with a fresh token after a
+// 401. The token leg comes from the caller because the two legs are bounded
+// differently: a buffered call waits out a token fetch under the HTTP client
+// timeout, a streamed block holding bytes back cannot.
+func (p *Plugin) guardWith(
+	ctx context.Context,
+	fetchToken tokenSource,
+	baseURL, collectorID, traceID string,
+	body GuardRequest,
+	playground bool,
+) (*GuardResponse, error) {
 	params := tokenParams{
 		baseURL:     baseURL,
 		collectorID: collectorID,
 		gatewayID:   body.GatewayID,
 	}
-	token, err := p.tokens.token(ctx, params)
+	token, err := fetchToken(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +689,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 		return nil, err
 	}
 	p.tokens.invalidate(params)
-	token, err = p.tokens.token(ctx, params)
+	token, err = fetchToken(ctx, params)
 	if err != nil {
 		return nil, err
 	}

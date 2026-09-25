@@ -16,8 +16,12 @@ package trustguard
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
 	"testing"
+	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -214,5 +218,351 @@ func TestRecordGuardOutcomeAllowedHasNoScoreLabel(t *testing.T) {
 	}
 	if attrs.Score != nil {
 		t.Fatalf("Score = %v, want nil", attrs.Score)
+	}
+}
+
+// marshalKeys returns the top-level keys of v's JSON encoding, sorted.
+func marshalKeys(t *testing.T, v any) []string {
+	t.Helper()
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	keys := make([]string, 0, len(decoded))
+	for k := range decoded {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func hasKey(keys []string, want string) bool {
+	return slices.Contains(keys, want)
+}
+
+func TestGuardAttributesStreamOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		attrs      GuardAttributes
+		wantStream bool
+	}{
+		{
+			name:       "nil stream is absent",
+			attrs:      GuardAttributes{ContentType: "text", Model: GuardModel{Name: "gpt-4o", Provider: "openai"}},
+			wantStream: false,
+		},
+		{
+			name:       "zero-value stream is still present",
+			attrs:      GuardAttributes{ContentType: "text", Stream: &GuardStream{}},
+			wantStream: true,
+		},
+		{
+			name:       "populated stream is present",
+			attrs:      GuardAttributes{ContentType: "text", Stream: &GuardStream{ID: "trace-1:response", Seq: 3, Final: true}},
+			wantStream: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			keys := marshalKeys(t, tc.attrs)
+			if got := hasKey(keys, "stream"); got != tc.wantStream {
+				t.Fatalf("stream present = %v, want %v (keys %v)", got, tc.wantStream, keys)
+			}
+			for _, always := range []string{"content_type", "model"} {
+				if !hasKey(keys, always) {
+					t.Fatalf("missing %q in %v", always, keys)
+				}
+			}
+		})
+	}
+}
+
+func TestGuardStreamJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		stream   GuardStream
+		wantKeys []string
+	}{
+		{
+			name:     "truncated omitted when false",
+			stream:   GuardStream{ID: "trace-1:response", Seq: 0, Final: false},
+			wantKeys: []string{"final", "id", "seq"},
+		},
+		{
+			name:     "truncated omitted on the zero value",
+			stream:   GuardStream{},
+			wantKeys: []string{"final", "id", "seq"},
+		},
+		{
+			name:     "truncated present when true",
+			stream:   GuardStream{ID: "trace-1:response", Seq: 7, Final: true, Truncated: true},
+			wantKeys: []string{"final", "id", "seq", "truncated"},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := marshalKeys(t, tc.stream); !slices.Equal(got, tc.wantKeys) {
+				t.Fatalf("keys = %v, want %v", got, tc.wantKeys)
+			}
+		})
+	}
+}
+
+func TestGuardStreamJSONValues(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(GuardAttributes{
+		ContentType: "text",
+		Model:       GuardModel{Name: "gpt-4o", Provider: "openai"},
+		Stream:      &GuardStream{ID: "trace-1:response", Seq: 4, Final: true, Truncated: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `{"content_type":"text","model":{"name":"gpt-4o","provider":"openai"},"stream":{"id":"trace-1:response","seq":4,"final":true,"truncated":true}}`
+	if string(encoded) != want {
+		t.Fatalf("encoded = %s, want %s", encoded, want)
+	}
+}
+
+func TestGuardDataStreamingBlock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		data          guardData
+		wantStreaming bool
+	}{
+		{
+			name:          "buffered leg carries no streaming block",
+			data:          guardData{Direction: "output", Decision: decisionAllowed},
+			wantStreaming: false,
+		},
+		{
+			name:          "streamed leg carries the aggregate",
+			data:          guardData{Direction: "output", Streaming: &streamData{Enabled: true, StreamID: "trace-1:response"}},
+			wantStreaming: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hasKey(marshalKeys(t, tc.data), "streaming"); got != tc.wantStreaming {
+				t.Fatalf("streaming present = %v, want %v", got, tc.wantStreaming)
+			}
+		})
+	}
+}
+
+func TestStreamDataJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"added_latency_ms",
+		"cut_at_eval",
+		"cut_offset_chars",
+		"degraded_reason",
+		"enabled",
+		"evals_total",
+		"fallback_reason",
+		"final_pass",
+		"guard_calls",
+		"guard_latency_ms_max",
+		"guard_latency_ms_total",
+		"stream_id",
+	}
+	// The zero value is marshalled on purpose: every key must survive it, or
+	// an absent key would be ambiguous with a leg that never reported.
+	if got := marshalKeys(t, streamData{}); !slices.Equal(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
+	}
+}
+
+func TestStreamOutcomeShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   guardData
+	}{
+		{
+			name: "a clean stream reports what it cost and nothing else",
+			report: appplugins.StreamReport{
+				Evals: 4, GuardCalls: 4, FinalPass: true,
+				GuardLatency: 410 * time.Millisecond, GuardLatencyMax: 120 * time.Millisecond,
+				AddedLatency: 95 * time.Millisecond,
+			},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionAllowed,
+				Streaming: &streamData{
+					Enabled: true, StreamID: "trace-1:response",
+					EvalsTotal: 4, GuardCalls: 4, FinalPass: true,
+					GuardLatencyMsTotal: 410, GuardLatencyMsMax: 120, AddedLatencyMs: 95,
+				},
+			},
+		},
+		{
+			name: "a cut names the eval that cut and what the client had already read",
+			report: appplugins.StreamReport{
+				Evals: 5, GuardCalls: 5, CutAtEval: 5, CutOffsetChars: 1840,
+			},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionBlocked,
+				Streaming: &streamData{
+					Enabled: true, StreamID: "trace-1:response",
+					EvalsTotal: 5, GuardCalls: 5, CutAtEval: 5, CutOffsetChars: 1840,
+				},
+			},
+		},
+		{
+			name: "a degraded stream is degraded on the event, not only inside the aggregate",
+			report: appplugins.StreamReport{
+				Evals: 3, GuardCalls: 2, FinalPass: true,
+				DegradedReason: degradedReasonGuardTimeout,
+			},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionAllowed,
+				Degraded:  true, DegradedReason: degradedReasonGuardTimeout,
+				Streaming: &streamData{
+					Enabled: true, StreamID: "trace-1:response",
+					EvalsTotal: 3, GuardCalls: 2, FinalPass: true,
+					DegradedReason: degradedReasonGuardTimeout,
+				},
+			},
+		},
+		{
+			name: "a retired loop carries the fallback that retired it",
+			report: appplugins.StreamReport{
+				Evals: 3, GuardCalls: 0, FinalPass: true,
+				DegradedReason: degradedReasonGuardTimeout,
+				FallbackReason: fallbackReasonSegmentationUnavail,
+			},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionAllowed,
+				Degraded:  true, DegradedReason: degradedReasonGuardTimeout,
+				Streaming: &streamData{
+					Enabled: true, StreamID: "trace-1:response",
+					EvalsTotal: 3, FinalPass: true,
+					DegradedReason: degradedReasonGuardTimeout,
+					FallbackReason: fallbackReasonSegmentationUnavail,
+				},
+			},
+		},
+		{
+			name:   "no block ever closed is a skip, never a clean pass",
+			report: appplugins.StreamReport{},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionAllowed,
+				Skipped:   true, SkipReason: skipReasonProviderNotStreaming,
+				Streaming: &streamData{Enabled: true, StreamID: "trace-1:response"},
+			},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := streamOutcome("trace-1:response", tc.report)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("streamOutcome =\n%+v\nwant\n%+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStreamOutcomeLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		report appplugins.StreamReport
+		want   string
+	}{
+		{
+			name: "a cut outranks every reason that led to it",
+			report: appplugins.StreamReport{
+				Evals: 3, CutAtEval: 3,
+				DegradedReason: degradedReasonAccumulationCap,
+				FallbackReason: fallbackReasonClientDisconnected,
+			},
+			want: streamOutcomeBlocked,
+		},
+		{
+			name:   "a retired loop outranks the degrade that retired it",
+			report: appplugins.StreamReport{Evals: 3, DegradedReason: degradedReasonGuardTimeout, FallbackReason: fallbackReasonSegmentationUnavail},
+			want:   streamOutcomeFallback,
+		},
+		{
+			name:   "a client that left is a fallback",
+			report: appplugins.StreamReport{Evals: 2, FallbackReason: fallbackReasonClientDisconnected},
+			want:   streamOutcomeFallback,
+		},
+		{
+			name:   "the accumulation cap is a degrade",
+			report: appplugins.StreamReport{Evals: 9, DegradedReason: degradedReasonAccumulationCap},
+			want:   streamOutcomeDegraded,
+		},
+		{
+			name:   "zero evals is a skip",
+			report: appplugins.StreamReport{},
+			want:   streamOutcomeSkipped,
+		},
+		{
+			name:   "inspected throughout",
+			report: appplugins.StreamReport{Evals: 4, GuardCalls: 4, FinalPass: true},
+			want:   streamOutcomeAllowed,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := streamOutcomeLabel(tc.report); got != tc.want {
+				t.Fatalf("streamOutcomeLabel = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The aggregate has to be written once and last. SetExtras takes ownership of
+// what it is handed and replaces whatever was there, so a per-block write keeps
+// only the final block's account of a response that took several — this asserts
+// the overwrite directly, so the single-write rule has a reason on the record
+// and not only a comment.
+func TestSpanExtrasKeepOnlyTheLastWrite(t *testing.T) {
+	t.Parallel()
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	event := metrics.NewEventContext(span)
+
+	setExtras(event, streamOutcome("trace-1:response", appplugins.StreamReport{Evals: 1, GuardCalls: 1}))
+	setExtras(event, streamOutcome("trace-1:response", appplugins.StreamReport{Evals: 2, GuardCalls: 2}))
+
+	data, ok := span.PluginAttrsCopy().Extras.(guardData)
+	if !ok {
+		t.Fatalf("Extras = %T, want guardData", span.PluginAttrsCopy().Extras)
+	}
+	if data.Streaming.EvalsTotal != 2 {
+		t.Fatalf("evals_total = %d, want 2: the second write replaced the first rather than merging with it",
+			data.Streaming.EvalsTotal)
 	}
 }

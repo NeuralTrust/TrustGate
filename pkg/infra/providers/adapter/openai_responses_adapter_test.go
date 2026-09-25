@@ -804,3 +804,428 @@ func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
 	require.True(t, ok, "format must survive: %v", out.Tools[1])
 	assert.Equal(t, "text", format["type"])
 }
+
+func encodeResponsesStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
+	t.Helper()
+	a := &OpenAIResponsesAdapter{}
+	var got []string
+	for _, chunk := range chunks {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		got = append(got, bytesLinesToStrings(lines)...)
+	}
+	return got
+}
+
+// A Responses stream opens an output item before any delta and never closed it
+// again: a cut used to emit response.completed with status "completed", so the
+// SDK saw a clean finish over an item that was still open. The close events
+// have to come before the terminator and in protocol order — text, part, item —
+// because the SDKs rebuild the response from them. The last two cases pin the
+// untouched shape of a normal finish and of a length finish.
+func TestEncodeResponsesStreamChunk_CutTerminatorGolden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		chunks []*CanonicalStreamChunk
+		want   []string
+	}{
+		{
+			name: "cut after partial text",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				"event: response.output_item.added",
+				`data: {"type":"response.output_item.added","item":{"role":"assistant","type":"message"}}`,
+				"",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","delta":"Here is the "}`,
+				"",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","delta":"recipe"}`,
+				"",
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"},` +
+					`"object":"response","output":[],"status":"incomplete"}}`,
+				"",
+			},
+		},
+		{
+			name: "cut carrying the identity and usage of the stream it ends",
+			chunks: []*CanonicalStreamChunk{
+				{FinishReason: "content_filter", ID: "resp_1", Model: "gpt-4o", Usage: newCanonicalUsage(11, 7, 0)},
+			},
+			want: []string{
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"id":"resp_1","incomplete_details":{"reason":"content_filter"},` +
+					`"model":"gpt-4o","object":"response","output":[],"status":"incomplete",` +
+					`"usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18}}}`,
+				"",
+			},
+		},
+		{
+			// Anthropic decodes an upstream refusal to canonical refusal and
+			// Claude emits it for its own safety stops, so it has to land on
+			// the same terminator as content_filter.
+			name: "cut on an upstream refusal",
+			chunks: []*CanonicalStreamChunk{
+				{FinishReason: "refusal"},
+			},
+			want: []string{
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"},` +
+					`"object":"response","output":[],"status":"incomplete"}}`,
+				"",
+			},
+		},
+		{
+			// The function_call item is opened at the caller's output index and
+			// the cut closes the message item at index 0, the only index this
+			// encoder controls. The sequence still ends on exactly one
+			// terminator and that terminator is response.incomplete.
+			name: "cut on a stream that already emitted a tool call",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{Delta: "Let me check"},
+				{ToolCallDeltas: []StreamToolCallDelta{{
+					Index: 1, ID: "call_1", Name: "get_weather", ArgumentsDelta: `{"city":`,
+				}}},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				"event: response.output_item.added",
+				`data: {"type":"response.output_item.added","item":{"role":"assistant","type":"message"}}`,
+				"",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","delta":"Let me check"}`,
+				"",
+				"event: response.output_item.added",
+				`data: {"type":"response.output_item.added","output_index":1,` +
+					`"item":{"call_id":"call_1","id":"call_1","name":"get_weather","type":"function_call"}}`,
+				"",
+				"event: response.function_call_arguments.delta",
+				`data: {"type":"response.function_call_arguments.delta","delta":"{\"city\":","output_index":1}`,
+				"",
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"},` +
+					`"object":"response","output":[],"status":"incomplete"}}`,
+				"",
+			},
+		},
+		{
+			name: "normal finish",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "stop"},
+			},
+			want: []string{
+				"event: response.output_item.added",
+				`data: {"type":"response.output_item.added","item":{"role":"assistant","type":"message"}}`,
+				"",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","delta":"Here is the "}`,
+				"",
+				"event: response.output_text.delta",
+				`data: {"type":"response.output_text.delta","delta":"recipe"}`,
+				"",
+				"event: response.completed",
+				`data: {"type":"response.completed","response":{"object":"response","output":[],"status":"completed"}}`,
+				"",
+			},
+		},
+		{
+			name:   "length finish keeps the terminator it had",
+			chunks: []*CanonicalStreamChunk{{FinishReason: "length"}},
+			want: []string{
+				"event: response.completed",
+				`data: {"type":"response.completed","response":{"object":"response","output":[],"status":"incomplete"}}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, encodeResponsesStream(t, tc.chunks))
+		})
+	}
+}
+
+// response.function_call_arguments.done decodes to canonical tool_calls and is
+// emitted once per function call, before the stream ends. The cut branch keys
+// on the finish reason, so this pins that a mid-stream tool-call finish is not
+// promoted into a cut terminator and emits no close events.
+func TestEncodeResponsesStreamChunk_ToolCallsDoneIsNotACut(t *testing.T) {
+	t.Parallel()
+	got := encodeResponsesStream(t, []*CanonicalStreamChunk{{FinishReason: "tool_calls"}})
+	assert.Equal(t, []string{
+		"event: response.function_call_arguments.done",
+		`data: {"type":"response.function_call_arguments.done"}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"object":"response","output":[],"status":"completed"}}`,
+		"",
+	}, got)
+}
+
+// Both encoders read the same mapping, so a cut cannot be incomplete on the
+// stream and completed on the buffered body.
+func TestResponsesFinishReason_BufferedAndStreamedAgree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		finishReason     string
+		wantStatus       string
+		wantReason       string
+		wantMessageState string
+		wantTerminator   string
+	}{
+		{
+			name: "stop", finishReason: "stop", wantStatus: "completed",
+			wantMessageState: "completed", wantTerminator: "response.completed",
+		},
+		{
+			name: "length", finishReason: "length", wantStatus: "incomplete",
+			wantMessageState: "completed", wantTerminator: "response.completed",
+		},
+		{
+			name: "tool calls", finishReason: "tool_calls", wantStatus: "completed",
+			wantMessageState: "completed", wantTerminator: "response.completed",
+		},
+		{
+			name: "content filter", finishReason: "content_filter", wantStatus: "incomplete",
+			wantReason: "content_filter", wantMessageState: "incomplete", wantTerminator: "response.incomplete",
+		},
+		{
+			name: "upstream refusal", finishReason: "refusal", wantStatus: "incomplete",
+			wantReason: "content_filter", wantMessageState: "incomplete", wantTerminator: "response.incomplete",
+		},
+		{
+			name: "unrecognised", finishReason: "something_else", wantStatus: "completed",
+			wantMessageState: "completed", wantTerminator: "response.completed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &OpenAIResponsesAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ID: "resp_1", Model: "gpt-4o", Content: "hi", FinishReason: tc.finishReason,
+			})
+			require.NoError(t, err)
+			var buffered openaiResponsesResponse
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.Equal(t, tc.wantStatus, buffered.Status, "buffered status")
+			if tc.wantReason == "" {
+				assert.Nil(t, buffered.IncompleteDetails, "buffered incomplete_details")
+			} else {
+				require.NotNil(t, buffered.IncompleteDetails, "buffered incomplete_details")
+				assert.Equal(t, tc.wantReason, buffered.IncompleteDetails.Reason, "buffered incomplete_details")
+			}
+			require.Len(t, buffered.Output, 1)
+			assert.Equal(t, tc.wantMessageState, buffered.Output[0].Status, "buffered message item status")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{FinishReason: tc.finishReason})
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			var terminal openaiResponsesStreamEvent
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[len(lines)-2], []byte("data: ")), &terminal))
+			assert.Equal(t, tc.wantTerminator, terminal.Type, "streamed terminator")
+
+			var streamed openaiResponsesResponse
+			require.NoError(t, json.Unmarshal(terminal.Response, &streamed))
+			assert.Equal(t, tc.wantStatus, streamed.Status, "streamed status")
+			if tc.wantReason == "" {
+				assert.Nil(t, streamed.IncompleteDetails, "streamed incomplete_details")
+			} else {
+				require.NotNil(t, streamed.IncompleteDetails, "streamed incomplete_details")
+				assert.Equal(t, tc.wantReason, streamed.IncompleteDetails.Reason, "streamed incomplete_details")
+			}
+		})
+	}
+}
+
+// A cut on a tool-calls-only stream emits the terminator and nothing else. The
+// encoder is stateless per chunk and both a message item and a function_call
+// item open at output index 0, so closing index 0 as a message here would leave
+// the real item unterminated and close one that was never added. Emitting no
+// close is strictly less wrong; closing properly needs the guard to carry the
+// open item's index and kind.
+func TestEncodeResponsesStreamChunk_ToolCallsOnlyCutEmitsNoCloseEvents(t *testing.T) {
+	t.Parallel()
+	got := encodeResponsesStream(t, []*CanonicalStreamChunk{
+		{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "get_weather"}}},
+		{FinishReason: "content_filter"},
+	})
+
+	for _, line := range got {
+		assert.NotContains(t, line, "response.output_item.done")
+		assert.NotContains(t, line, "response.content_part.done")
+		assert.NotContains(t, line, "response.output_text.done")
+	}
+	assert.Contains(t, got, "event: response.incomplete")
+}
+
+// The encoder emits response.incomplete on a cut, so the decoder has to read it
+// back. A nil decode classifies as an opaque unit, which the stream guard
+// releases immediately — our own terminator would overtake the held text.
+func TestDecodeResponsesStreamChunk_Incomplete(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "content filter",
+			body: `{"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-4o","status":"incomplete","incomplete_details":{"reason":"content_filter"}}}`,
+			want: "content_filter",
+		},
+		{
+			name: "max output tokens",
+			body: `{"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-4o","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`,
+			want: "length",
+		},
+		{
+			name: "no details",
+			body: `{"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-4o","status":"incomplete"}}`,
+			want: "length",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := decodeResponsesStreamChunk([]byte(tc.body))
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got.FinishReason)
+			assert.Equal(t, "resp_1", got.ID)
+			assert.Equal(t, "gpt-4o", got.Model)
+		})
+	}
+}
+
+// A buffered body incomplete because of a content filter must not decode as a
+// length truncation: that is the same category error on the decode side that
+// the terminator fixes on the encode side.
+func TestDecodeResponsesResponse_IncompleteDetailsDrivesTheFinishReason(t *testing.T) {
+	t.Parallel()
+	filtered := `{"id":"resp_1","object":"response","model":"gpt-4o","status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[]}`
+	got, err := decodeResponsesResponse([]byte(filtered))
+	require.NoError(t, err)
+	assert.Equal(t, "content_filter", got.FinishReason)
+
+	truncated := `{"id":"resp_1","object":"response","model":"gpt-4o","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}`
+	got, err = decodeResponsesResponse([]byte(truncated))
+	require.NoError(t, err)
+	assert.Equal(t, "length", got.FinishReason)
+}
+
+// TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen pins the other half of
+// the cut: which item a terminator closes. The adapter is a stateless shared
+// singleton, so it closes what the chunk names and nothing else — a message and
+// a function_call both open at output index 0, and the kind is the only thing
+// telling them apart. The indices are not omitempty either: to a client reading
+// output_index, an absent field is not the first item.
+//
+// The closed item carries the fields its SDK type requires rather than only the
+// ones a cut happens to know. ResponseOutputMessage requires id and content and
+// ResponseFunctionToolCall requires arguments, call_id and name, so an item that
+// omitted them would raise a validation error in a strict client instead of
+// delivering the refusal.
+func TestResponsesCutCloseEvents_CloseWhatTheGuardSaysIsOpen(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		chunk *CanonicalStreamChunk
+		want  []string
+	}{
+		{
+			name: "a message item the guard located",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem:     &StreamOpenItem{Index: 2, Kind: "message", ID: "msg_1"},
+			},
+			want: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":2,"content_index":0}`,
+				"",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":2,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`,
+				"",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":2,` +
+					`"item":{"id":"msg_1","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`,
+				"",
+			},
+		},
+		{
+			name: "a function call has no text part to close",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem: &StreamOpenItem{
+					Kind: "function_call", ID: "fc_1", CallID: "call_1", Name: "lookup",
+				},
+			},
+			want: []string{
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"fc_1","type":"function_call","call_id":"call_1",` +
+					`"name":"lookup","arguments":"","status":"incomplete"}}`,
+				"",
+			},
+		},
+		{
+			name:  "a bare terminator names no item, so it closes none",
+			chunk: &CanonicalStreamChunk{FinishReason: "content_filter"},
+		},
+		{
+			name: "an item kind this encoder does not emit",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				OpenItem:     &StreamOpenItem{Kind: "reasoning"},
+			},
+		},
+		{
+			name: "a cut chunk carrying its own text proves a message open",
+			chunk: &CanonicalStreamChunk{
+				FinishReason: "content_filter",
+				Delta:        "half a sentence",
+			},
+			want: []string{
+				"event: response.output_text.done",
+				`data: {"type":"response.output_text.done","output_index":0,"content_index":0}`,
+				"",
+				"event: response.content_part.done",
+				`data: {"type":"response.content_part.done","output_index":0,"content_index":0,` +
+					`"part":{"type":"output_text","text":""}}`,
+				"",
+				"event: response.output_item.done",
+				`data: {"type":"response.output_item.done","output_index":0,` +
+					`"item":{"id":"","type":"message","role":"assistant",` +
+					`"status":"incomplete","content":[]}}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := responsesCutCloseEvents(tc.chunk)
+			if tc.want == nil {
+				assert.Nil(t, got, "closing an item nobody opened is worse than closing nothing")
+				return
+			}
+			assert.Equal(t, tc.want, bytesLinesToStrings(got))
+		})
+	}
+}

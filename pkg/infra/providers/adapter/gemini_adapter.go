@@ -380,13 +380,41 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 	return cr, nil
 }
 
-func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
-	fr := "STOP"
-	switch resp.FinishReason {
+// canonicalFinishToGeminiReason maps a canonical finish reason onto Gemini's
+// finishReason vocabulary, returning "" for anything outside it so each call
+// site keeps the fallback it had.
+//
+// content_filter becomes PROHIBITED_CONTENT rather than SAFETY. The choice is
+// between two kinds of legacy exposure, and SAFETY is the worse one:
+//
+//   - The legacy JS SDK @google/generative-ai hardcodes a blocklist
+//     (src/requests/response-helpers.ts): RECITATION, SAFETY and LANGUAGE.
+//     hadBadFinishReason and the text() helper read it, so on 0.24.1 a SAFETY
+//     finish makes .text() throw GoogleGenerativeAIResponseError, while
+//     PROHIBITED_CONTENT and BLOCKLIST both return "".
+//   - PROHIBITED_CONTENT is in the final legacy generations
+//     (google-ai-generativelanguage 0.6.9+, @google/generative-ai 0.22.0+), so
+//     only clients pinned below those see an unknown enum member — a narrower
+//     window than the throw, and an unknown member degrades to a string rather
+//     than raising.
+//   - Legacy Python raises on both, so it does not discriminate.
+func canonicalFinishToGeminiReason(reason string) string {
+	switch reason {
+	case "stop", "tool_calls": // Gemini reports STOP even for function calls.
+		return "STOP"
 	case "length":
-		fr = "MAX_TOKENS"
-	case "tool_calls":
-		fr = "STOP" // Gemini uses STOP even for function calls
+		return "MAX_TOKENS"
+	case "content_filter", "refusal":
+		return "PROHIBITED_CONTENT"
+	default:
+		return ""
+	}
+}
+
+func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
+	fr := canonicalFinishToGeminiReason(resp.FinishReason)
+	if fr == "" {
+		fr = "STOP"
 	}
 
 	var parts []geminiPart
@@ -497,7 +525,15 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		role = "model" // Gemini stream expects "model"
 	}
 
-	var parts []geminiPart
+	// @google/genai does not distinguish a null parts from an absent one:
+	// chats.ts guards with `parts === undefined || parts.length === 0`, so a JSON
+	// null falls through to `null.length` and throws a TypeError inside
+	// sendMessageStream before the first chunk is yielded. A chunk that carries
+	// only a role or only a finish reason has no parts, so it has to encode as an
+	// empty array. omitempty on geminiContent.Parts would also work here, but the
+	// struct is shared with the buffered response encoder, where it would drop
+	// the key from a response that legitimately has no parts.
+	parts := []geminiPart{}
 	if chunk.Delta != "" {
 		parts = append(parts, geminiPart{Text: chunk.Delta})
 	}
@@ -514,16 +550,9 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		})
 	}
 
-	finishReason := ""
-	switch chunk.FinishReason {
-	case "stop", "tool_calls":
-		finishReason = "STOP"
-	case "length":
-		finishReason = "MAX_TOKENS"
-	default:
-		if chunk.FinishReason != "" {
-			finishReason = chunk.FinishReason
-		}
+	finishReason := canonicalFinishToGeminiReason(chunk.FinishReason)
+	if finishReason == "" {
+		finishReason = chunk.FinishReason
 	}
 
 	out := geminiResponse{

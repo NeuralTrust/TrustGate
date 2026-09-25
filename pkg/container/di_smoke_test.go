@@ -21,6 +21,7 @@ import (
 
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -171,6 +172,12 @@ func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
 			var invErr error
 			switch plane {
 			case "proxy":
+				// The forwarder is resolved explicitly: its provider now takes
+				// the adapter registry for the stream guard, and a missing
+				// binding there would otherwise only surface at runtime.
+				if err := c.Invoke(func(appproxy.Forwarder) {}); err != nil {
+					t.Fatalf("Invoke(appproxy.Forwarder): %v", err)
+				}
 				invErr = c.Invoke(func(p dblessProxyServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			case "mcp":
 				invErr = c.Invoke(func(p dblessMCPServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
