@@ -35,6 +35,8 @@ type CanonicalRequest struct {
 	TopK              *int                       `json:"top_k,omitempty"`
 	Stop              []string                   `json:"stop,omitempty"`
 	Stream            bool                       `json:"stream,omitempty"`
+	Seed              *int64                     `json:"seed,omitempty"`
+	ParallelToolCalls *bool                      `json:"parallel_tool_calls,omitempty"`
 	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
 	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
@@ -109,6 +111,9 @@ type CanonicalToolCall struct {
 // CanonicalRespFormat controls the response format.
 type CanonicalRespFormat struct {
 	Type string `json:"type"` // "json_object", "text"
+	// JSONSchema is the OpenAI Chat json_schema object (name, schema,
+	// strict) of a "json_schema" format, kept verbatim.
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

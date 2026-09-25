@@ -318,7 +318,7 @@ func (p *providerInvoker) prepare(
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
 
 	body := req.Body
-	if !adapter.ShouldPassthroughRequest(sourceFormat, targetFormat) {
+	if crossFormat {
 		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), req.DefaultModel, capability)
 		if err != nil {
 			var contentErr *adapter.UnsupportedContentError
@@ -357,11 +357,12 @@ func (p *providerInvoker) prepare(
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
-			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
-			Model:         sentModel,
-			DefaultModel:  req.DefaultModel,
-			AllowedModels: req.AllowedModels,
+			Options:              adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
+			Credentials:          registryCredentials(bk, req.HeaderValue("Authorization")),
+			Model:                sentModel,
+			DefaultModel:         req.DefaultModel,
+			AllowedModels:        req.AllowedModels,
+			CacheRetentionMapped: crossFormat,
 		},
 		body:         body,
 		sentModel:    sentModel,

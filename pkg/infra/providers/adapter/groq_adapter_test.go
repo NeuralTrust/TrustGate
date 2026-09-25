@@ -104,10 +104,6 @@ func TestGroqAdapter_FormatRegistration(t *testing.T) {
 	assert.True(t, ShouldPassthroughSameWireFormat(FormatGroq, FormatGroq))
 	assert.False(t, ShouldPassthroughSameWireFormat(FormatOpenAI, FormatGroq))
 	assert.False(t, ShouldPassthroughSameWireFormat(FormatGroq, FormatOpenAI))
-	assert.True(t, ShouldPassthroughRequest(FormatOpenAI, FormatGroq))
-	assert.True(t, ShouldPassthroughRequest(FormatGroq, FormatOpenAI))
-	assert.False(t, ShouldPassthroughRequest(FormatOpenAIResponses, FormatGroq))
-	assert.False(t, ShouldPassthroughRequest(FormatAnthropic, FormatGroq))
 
 	opts := map[string]any{"api": "responses"}
 	assert.Equal(t, FormatOpenAIResponses, ResolveTargetFormat("openai", opts))
@@ -281,20 +277,4 @@ func TestGroqAdapter_RequestMappings(t *testing.T) {
 		}
 		assert.Contains(t, combined, `"x_groq"`)
 	})
-}
-
-func TestGroqAdapter_OpenAIRequestPassesThroughUnchanged(t *testing.T) {
-	body := []byte(`{"model":"openai/gpt-oss-120b","seed":7,"prompt_cache_key":"k","reasoning_format":"parsed","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64}`)
-
-	out, err := NewRegistry().AdaptRequestForProvider(body, FormatOpenAI, FormatGroq, "groq", "")
-	require.NoError(t, err)
-	assert.Equal(t, string(body), string(out))
-
-	normalized := NormalizeRequestForProvider("groq", FormatGroq, []byte(`{"model":"m","seed":7,"prompt_cache_key":"k","tools":[{"function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`))
-	var got map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(normalized, &got))
-	assert.JSONEq(t, `7`, string(got["seed"]))
-	assert.JSONEq(t, `"k"`, string(got["prompt_cache_key"]))
-	assert.JSONEq(t, `false`, string(got["parallel_tool_calls"]), "Groq normalisation still applies")
-	assert.JSONEq(t, `[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]`, string(got["tools"]))
 }

@@ -25,6 +25,17 @@ var openRouterRequestKeys = []string{"provider", "models", "transforms", "route"
 
 var openRouterResponseKeys = []string{"provider"}
 
+// openRouterClientKeys are the top-level keys an OpenAI Chat client may send
+// to OpenRouter through the gateway: provider routing preferences and the
+// session_id and user that pin requests to a warm cache. models, route and
+// plugins stay out because they bypass model enforcement or bill the tenant
+// key for paid features (ENG-1618 D6).
+var openRouterClientKeys = []string{"provider", "session_id", "user"}
+
+// openRouterModelKeys would select a model from inside provider; OpenRouter
+// documents none there, so any that appear are dropped rather than trusted.
+var openRouterModelKeys = []string{"model", "models"}
+
 // OpenRouterAdapter wraps OpenAIAdapter and preserves OpenRouter routing fields.
 type OpenRouterAdapter struct {
 	openai OpenAIAdapter
@@ -188,6 +199,46 @@ func mergeJSONExtensions(base []byte, extensions map[string]json.RawMessage) ([]
 		out[k] = v
 	}
 	return json.Marshal(out)
+}
+
+// graftOpenRouterClientKeys copies openRouterClientKeys from the client's
+// body onto the re-encoded one. provider must be an object and session_id and
+// user strings; anything else is left out.
+func graftOpenRouterClientKeys(clientBody, encoded []byte) ([]byte, error) {
+	keys := extractOpenRouterKeys(clientBody, openRouterClientKeys)
+	for k, v := range keys {
+		var ok bool
+		if k == "provider" {
+			v, ok = openRouterProviderPreferences(v)
+			keys[k] = v
+		} else {
+			var s string
+			ok = json.Unmarshal(v, &s) == nil
+		}
+		if !ok {
+			delete(keys, k)
+		}
+	}
+	return mergeJSONExtensions(encoded, keys)
+}
+
+func openRouterProviderPreferences(raw json.RawMessage) (json.RawMessage, bool) {
+	var prefs map[string]json.RawMessage
+	if json.Unmarshal(raw, &prefs) != nil || prefs == nil {
+		return nil, false
+	}
+	dropped := false
+	for _, k := range openRouterModelKeys {
+		if _, has := prefs[k]; has {
+			delete(prefs, k)
+			dropped = true
+		}
+	}
+	if !dropped {
+		return raw, true
+	}
+	out, err := json.Marshal(prefs)
+	return out, err == nil
 }
 
 func isSSECommentLine(line []byte) bool {
