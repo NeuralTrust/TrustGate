@@ -57,3 +57,12 @@ func TestPluginInjectGatewayWinsKeepsTheReplacedToolMarker(t *testing.T) {
 	assert.Equal(t, "gateway", decoded.Tools[1].Description)
 	assert.NotNil(t, decoded.Tools[1].Cache)
 }
+
+func TestPluginInjectKeepsToolsTheCanonicalDoesNotModel(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a"}]}`
+
+	res := execPreRequest(t, injectSettings(), string(adapter.FormatOpenAIResponses), []byte(body))
+
+	assert.True(t, strings.HasPrefix(string(res.RequestBody), `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a"},`), string(res.RequestBody))
+}

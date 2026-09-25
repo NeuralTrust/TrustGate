@@ -69,3 +69,26 @@ func TestPlugin_Execute_KeepsToolCacheMarkers(t *testing.T) {
 			`{"type":"function","function":{"name":"lookup_clause","strict":true,"parameters":{"type":"object"}}}],"tool_choice":"none","prompt_cache_key":"k","n":1}`, string(res.RequestBody))
 	})
 }
+
+func TestPlugin_Execute_DropsToolsTheCanonicalDoesNotModel(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"function","name":"bad_b"},` +
+		`{"type":"mcp","server_label":"x","server_url":"https://x.example/mcp"},{"type":"web_search"}]}`
+	cases := []struct {
+		name  string
+		allow []any
+		want  string
+	}{
+		{name: "patterns never reach them", allow: []any{"ok_*", "*"}, want: `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"}]}`},
+		{name: "an exact type keeps one", allow: []any{"ok_*", "web_search"}, want: `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"web_search"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			settings := map[string]any{"allow_tools": tc.allow, "deny_tools": []any{"bad_*"}}
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, settings, reqFor("openai_responses", body))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(res.RequestBody))
+		})
+	}
+}

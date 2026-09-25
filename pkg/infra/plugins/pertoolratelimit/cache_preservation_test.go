@@ -52,3 +52,14 @@ func TestStripToolsKeepsOtherToolsAndMarkers(t *testing.T) {
 	require.NotNil(t, decoded.Tools[1].Cache)
 	assert.Equal(t, adapter.CacheTTL1h, decoded.Tools[1].Cache.TTL)
 }
+
+func TestStripToolsDropsToolsTheCanonicalDoesNotModel(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"},{"type":"function","name":"b"},{"type":"mcp","server_label":"x","server_url":"https://x.example/mcp"}]}`)
+	reg := adapter.NewRegistry()
+	canonical, err := reg.DecodeRequestFor(body, adapter.FormatOpenAIResponses)
+	require.NoError(t, err)
+	res, err := New(nil, reg).stripTools(body, string(adapter.FormatOpenAIResponses), canonical, map[string]struct{}{"b": {}})
+	require.NoError(t, err)
+	assert.Equal(t, `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"}]}`, string(res.RequestBody))
+}

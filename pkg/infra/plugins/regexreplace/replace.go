@@ -49,7 +49,7 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byt
 	if !changed {
 		return nil, false, nil
 	}
-	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
+	body, err := adapter.GraftChangedFieldsWith(adp, original, baseline, creq, adapter.GraftOptions{Redaction: true})
 	if err != nil {
 		return nil, false, err
 	}

@@ -21,9 +21,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-var errRawJSON = errors.New("malformed json")
+var (
+	errRawJSON      = errors.New("malformed json")
+	errDuplicateKey = errors.New("duplicate json key")
+)
 
 type rawSpan struct{ start, end int }
 
@@ -135,9 +140,9 @@ func rawFields(b []byte, s rawSpan) ([]rawField, error) {
 		if err != nil {
 			return nil, err
 		}
-		var key string
-		if err := json.Unmarshal(b[j:keyEnd], &key); err != nil {
-			return nil, err
+		key, ok := rawString(b, rawSpan{j, keyEnd})
+		if !ok {
+			return nil, errRawJSON
 		}
 		v := skipRawSpace(b, skipRawSpace(b, keyEnd)+1)
 		vEnd, err := rawValueEnd(b, v)
@@ -150,7 +155,47 @@ func rawFields(b []byte, s rawSpan) ([]rawField, error) {
 			j = skipRawSpace(b, j+1)
 		}
 	}
+	if hasDuplicateKey(fields) {
+		return nil, errDuplicateKey
+	}
 	return fields, nil
+}
+
+// hasDuplicateKey reports keys that encoding/json would treat as one field:
+// it keeps the last of equal keys and matches struct fields ignoring case,
+// so a decoy copy could hide the value the decoder reads.
+func hasDuplicateKey(fields []rawField) bool {
+	if len(fields) <= 8 {
+		for i := range fields {
+			for j := i + 1; j < len(fields); j++ {
+				if strings.EqualFold(fields[i].key, fields[j].key) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		k := foldKey(f.key)
+		if _, dup := seen[k]; dup {
+			return true
+		}
+		seen[k] = struct{}{}
+	}
+	return false
+}
+
+func foldKey(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		low := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			low = min(low, f)
+		}
+		sb.WriteRune(low)
+	}
+	return sb.String()
 }
 
 func rawItems(b []byte, s rawSpan) ([]rawSpan, error) {
@@ -173,20 +218,17 @@ func rawItems(b []byte, s rawSpan) ([]rawSpan, error) {
 	return items, nil
 }
 
-// rawFieldOf returns the last field named key, as encoding/json does for
-// duplicate keys.
 func rawFieldOf(b []byte, s rawSpan, key string) (rawSpan, bool) {
 	fields, err := rawFields(b, s)
 	if err != nil {
 		return rawSpan{}, false
 	}
-	found, ok := rawSpan{}, false
 	for _, f := range fields {
 		if f.key == key {
-			found, ok = f.value, true
+			return f.value, true
 		}
 	}
-	return found, ok
+	return rawSpan{}, false
 }
 
 func rawAt(b []byte, s rawSpan, path []string) (rawSpan, bool) {
@@ -212,8 +254,12 @@ func rawAt(b []byte, s rawSpan, path []string) (rawSpan, bool) {
 }
 
 func rawString(b []byte, s rawSpan) (string, bool) {
-	if s.end-s.start < 2 || b[s.start] != '"' {
+	if s.end-s.start < 2 || b[s.start] != '"' || b[s.end-1] != '"' {
 		return "", false
+	}
+	inner := b[s.start+1 : s.end-1]
+	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) {
+		return string(inner), true
 	}
 	var v string
 	if json.Unmarshal(b[s.start:s.end], &v) != nil {
@@ -222,7 +268,36 @@ func rawString(b []byte, s rawSpan) (string, bool) {
 	return v, true
 }
 
+// forEachString calls fn with every decoded string of a valid JSON body,
+// object keys included, until fn returns false.
+func forEachString(b []byte, fn func(string) bool) error {
+	for i := 0; i < len(b); i++ {
+		if b[i] != '"' {
+			continue
+		}
+		end, err := rawStringEnd(b, i)
+		if err != nil {
+			return err
+		}
+		s, ok := rawString(b, rawSpan{i, end})
+		if !ok {
+			return errRawJSON
+		}
+		if !fn(s) {
+			return nil
+		}
+		i = end - 1
+	}
+	return nil
+}
+
 func marshalRawString(s string) []byte {
+	if plainJSONString(s) {
+		out := make([]byte, 0, len(s)+2)
+		out = append(out, '"')
+		out = append(out, s...)
+		return append(out, '"')
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -230,6 +305,15 @@ func marshalRawString(s string) []byte {
 		return nil
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+}
+
+func plainJSONString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == '"' || c == '\\' || c >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // rawListEdits edits the entries of one object or array in place: drop[i]
