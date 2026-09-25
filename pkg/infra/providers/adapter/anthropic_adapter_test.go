@@ -1256,6 +1256,13 @@ func TestAnthropicRequest_CacheBoundarySurvivesTextRewrites(t *testing.T) {
 			wantText:      whole("doc john@example.com line2\ntoday\nWhat?"),
 			wantAssistant: onToolUse("doc john@example.com line2"),
 		},
+		{
+			name:          "a newline moved across the boundary keeps the count and splits at the wrong line",
+			old:           "doc john@example.com\nline2\ntoday",
+			new:           "doc john@example.com line2\nto\nday",
+			wantText:      split("doc john@example.com line2\nto", "day\nWhat?"),
+			wantAssistant: onText("doc john@example.com\nline2"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1306,9 +1313,19 @@ func TestAnthropicRequest_AutomaticCachingConflicts(t *testing.T) {
 			want: `[{"type":"text","text":"stable\nvolatile\ntail"}]`,
 		},
 		{
-			name:    "a TTL raised by merging markers is dropped from the last block",
+			name:    "a TTL raised by merging markers goes back to the client's TTL on the last block",
 			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"b","cache_control":{"type":"ephemeral"}}]`,
-			want:    `[{"type":"text","text":"a\nb"}]`,
+			want:    `[{"type":"text","text":"a\nb","cache_control":{"type":"ephemeral"}}]`,
+		},
+		{
+			name:    "a raised explicit 5m TTL goes back to 5m on the last block",
+			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"},"cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+		},
+		{
+			name:    "a text marker moved last by image reordering is dropped when it conflicts",
+			content: `[{"type":"text","text":"A","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}}]`,
+			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"A"}]`,
 		},
 		{
 			name:    "a marker with the automatic TTL stays on the last block",

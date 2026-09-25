@@ -34,6 +34,13 @@ const (
 // segment's text blocks with "\n". They let the Anthropic encoder split the
 // text back at the marked block even after a plugin changed its length.
 // Encoders for other targets ignore them.
+//
+// Only a change in the segment's newline count is detected. A rewrite that
+// moves a newline across the boundary while keeping the count splits the text
+// at the wrong line. The fields are tied to the segment the marker was decoded
+// from, so a plugin that copies or moves a message must clone its Cache rather
+// than share the pointer, and must not expect clientLast or the boundary to
+// follow the message to its new position.
 type CanonicalCacheBreakpoint struct {
 	TTL CacheTTL `json:"ttl,omitempty"`
 
@@ -52,6 +59,10 @@ type CanonicalCacheBreakpoint struct {
 	// clientLast reports that the client sent this marker, with this TTL, on
 	// the last block of the segment.
 	clientLast bool
+	// raisedLast reports that the client sent this marker on the last block
+	// with clientTTL and merging with an earlier 1h marker raised it.
+	raisedLast bool
+	clientTTL  CacheTTL
 }
 
 // CanonicalCacheOptions is request-level cache intent: the OpenAI-family
@@ -88,7 +99,8 @@ func cacheProfileFor(target Format) cacheProfile {
 
 // laterCacheBreakpoint merges two markers of one segment into a new one: the
 // later position with the longer TTL. Raising the later marker to 1h stays
-// valid because every marker before a 1h one must already be 1h.
+// valid because every marker before a 1h one must already be 1h. A nil later
+// returns earlier unchanged.
 func laterCacheBreakpoint(earlier, later *CanonicalCacheBreakpoint) *CanonicalCacheBreakpoint {
 	if later == nil {
 		return earlier
