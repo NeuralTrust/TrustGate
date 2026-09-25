@@ -200,47 +200,92 @@ func (p *Plugin) preRequest(
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}
-	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, canonical.Tools)
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return okResult(), nil
+	}
+	legacy := legacyFunctionNames(ad, in.Request.Body, canonical)
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, append(toolNames(canonical.Tools), legacy...))
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
 	}
-	if len(canonical.Messages) > 0 {
-		if err := p.countExecuted(ctx, cfg, in, dimension, subject, canonical.Messages); err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
-		}
-	}
-	if len(canonical.Tools) == 0 {
-		return p.forward(in.Request.Body, format, canonical)
+	if err := p.countExecuted(ctx, cfg, in, dimension, subject, executedCalls(ad, in.Request.Body, canonical.Messages)); err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
 	}
 
-	strip := make(map[string]struct{})
-	for i := range canonical.Tools {
-		tool := canonical.Tools[i].Name
-		if tool == "" {
-			continue
+	strip := toolStrip{}
+	// A legacy function is withdrawn at the request whatever the behavior:
+	// the response rewrite does not model a legacy function_call.
+	for _, set := range []struct {
+		names  []string
+		legacy bool
+	}{{toolNames(canonical.Tools), false}, {legacy, true}} {
+		for _, tool := range set.names {
+			rule, ok := matchRule(cfg.Rules, tool)
+			if !ok {
+				continue
+			}
+			behavior := effectiveBehavior(rule, cfg)
+			if !set.legacy && !p.enforcedAtRequest(behavior, canonical.Stream) {
+				continue
+			}
+			ws := spent[tool]
+			if ws == nil {
+				continue
+			}
+			setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, behavior, true))
+			if behavior == behaviorReject {
+				return p.reject(ctx, tool, ws, dimension)
+			}
+			strip.add(tool, set.legacy)
 		}
-		rule, ok := matchRule(cfg.Rules, tool)
-		if !ok {
-			continue
-		}
-		behavior := effectiveBehavior(rule, cfg)
-		if !p.enforcedAtRequest(behavior, canonical.Stream) {
-			continue
-		}
-		ws := spent[tool]
-		if ws == nil {
-			continue
-		}
-		setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, behavior, true))
-		if behavior == behaviorReject {
-			return p.reject(ctx, tool, ws, dimension)
-		}
-		strip[tool] = struct{}{}
 	}
-	if len(strip) == 0 {
+	if strip.empty() {
 		return p.forward(in.Request.Body, format, canonical)
 	}
 	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+// toolStrip names the tools a request loses while they are over their
+// limits: tools the canonical request models, and legacy Chat functions.
+type toolStrip struct {
+	tools, legacy map[string]struct{}
+}
+
+func (s *toolStrip) add(tool string, legacy bool) {
+	set := &s.tools
+	if legacy {
+		set = &s.legacy
+	}
+	if *set == nil {
+		*set = map[string]struct{}{}
+	}
+	(*set)[tool] = struct{}{}
+}
+
+func (s toolStrip) empty() bool { return len(s.tools) == 0 && len(s.legacy) == 0 }
+
+func toolNames(tools []adapter.CanonicalTool) []string {
+	out := make([]string, 0, len(tools))
+	for i := range tools {
+		if tools[i].Name != "" {
+			out = append(out, tools[i].Name)
+		}
+	}
+	return out
+}
+
+// legacyFunctionNames returns the names of the legacy Chat functions body
+// declares, which canonical does not model.
+func legacyFunctionNames(ad adapter.RequestAdapter, body []byte, canonical *adapter.CanonicalRequest) []string {
+	unmodelled, _ := adapter.UnmodelledTools(ad, body, canonical)
+	var out []string
+	for _, u := range unmodelled {
+		if u.Kind == adapter.LegacyFunctionKind && u.Name != "" {
+			out = append(out, u.Name)
+		}
+	}
+	return out
 }
 
 // forward lets a request the limits leave alone through as it came. A body
@@ -266,14 +311,10 @@ func (p *Plugin) spentBefore(
 	cfg *config,
 	in appplugins.ExecInput,
 	dimension, subject string,
-	tools []adapter.CanonicalTool,
+	tools []string,
 ) (map[string]*windowState, error) {
 	spent := make(map[string]*windowState, len(tools))
-	for i := range tools {
-		tool := tools[i].Name
-		if tool == "" {
-			continue
-		}
+	for _, tool := range tools {
 		if _, done := spent[tool]; done {
 			continue
 		}
@@ -301,11 +342,14 @@ func (p *Plugin) enforcedAtRequest(behavior string, streaming bool) bool {
 	}
 }
 
+// stripTools removes the tools in strip. Other entries the canonical request
+// does not model go too when a modelled tool is removed, as a full re-encode
+// would drop them; a legacy function stays unless strip names it.
 func (p *Plugin) stripTools(
 	originalBody []byte,
 	format string,
 	canonical *adapter.CanonicalRequest,
-	strip map[string]struct{},
+	strip toolStrip,
 ) (*appplugins.Result, error) {
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
@@ -313,11 +357,20 @@ func (p *Plugin) stripTools(
 	}
 	baseline := canonical.Clone()
 	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
-		_, drop := strip[t.Name]
+		_, drop := strip.tools[t.Name]
 		return !drop
 	})
 	adapter.DropDanglingToolChoice(canonical)
-	body, err := adapter.GraftChangedFields(ad, originalBody, baseline, canonical)
+	modelledChanged := len(strip.tools) > 0
+	body, err := adapter.GraftChangedFieldsWith(ad, originalBody, baseline, canonical, adapter.GraftOptions{
+		KeepUnmodelledTool: func(u adapter.UnmodelledTool) bool {
+			if u.Kind == adapter.LegacyFunctionKind {
+				_, drop := strip.legacy[u.Name]
+				return !drop
+			}
+			return !modelledChanged
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
 	}
@@ -508,31 +561,45 @@ func latestToolCallTurn(messages []adapter.CanonicalMessage) int {
 	return last
 }
 
+// executedCall is a tool call a request reports the result of.
+type executedCall struct {
+	id, tool string
+}
+
+// executedCalls returns the calls of the latest tool call turn that later
+// tool messages answer, and those a legacy function message answers.
+func executedCalls(ad adapter.RequestAdapter, body []byte, messages []adapter.CanonicalMessage) []executedCall {
+	var out []executedCall
+	if turn := latestToolCallTurn(messages); turn >= 0 {
+		names := toolCallNames(messages)
+		for i := turn + 1; i < len(messages); i++ {
+			if messages[i].Role != "tool" || messages[i].ToolCallID == "" {
+				continue
+			}
+			if tool := names[messages[i].ToolCallID]; tool != "" {
+				out = append(out, executedCall{id: messages[i].ToolCallID, tool: tool})
+			}
+		}
+	}
+	for _, c := range adapter.ExecutedLegacyFunctionCalls(ad, body) {
+		out = append(out, executedCall{id: c.ID, tool: c.Name})
+	}
+	return out
+}
+
 func (p *Plugin) countExecuted(
 	ctx context.Context,
 	cfg *config,
 	in appplugins.ExecInput,
 	dimension, subject string,
-	messages []adapter.CanonicalMessage,
+	calls []executedCall,
 ) error {
-	turn := latestToolCallTurn(messages)
-	if turn < 0 {
-		return nil
-	}
-	names := toolCallNames(messages)
-	for i := turn + 1; i < len(messages); i++ {
-		if messages[i].Role != "tool" || messages[i].ToolCallID == "" {
-			continue
-		}
-		tool, ok := names[messages[i].ToolCallID]
-		if !ok || tool == "" {
-			continue
-		}
-		rule, ok := matchRule(cfg.Rules, tool)
+	for _, c := range calls {
+		rule, ok := matchRule(cfg.Rules, c.tool)
 		if !ok {
 			continue
 		}
-		if err := p.recordOnce(ctx, cfg, in, dimension, subject, tool, messages[i].ToolCallID, rule); err != nil {
+		if err := p.recordOnce(ctx, cfg, in, dimension, subject, c.tool, c.id, rule); err != nil {
 			return err
 		}
 	}

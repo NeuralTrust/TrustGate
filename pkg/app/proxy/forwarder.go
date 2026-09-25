@@ -36,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -43,6 +44,11 @@ var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
 	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
+	// ErrAmbiguousRequestBody refuses a chat request whose body repeats a
+	// key or folds two keys into one struct field (adapter.HasAmbiguousKeys):
+	// the plugins would judge the copy the decoder reads, and the upstream
+	// may read the other.
+	ErrAmbiguousRequestBody = errors.New("request body repeats a key or has keys that differ only in case")
 )
 
 type ForwardInput struct {
@@ -134,6 +140,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
+	if ambiguousChatBody(in.Request) {
+		return nil, ErrAmbiguousRequestBody
+	}
 
 	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
 		return result, err
@@ -181,6 +190,17 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	stream := DetectStream(dto.request)
 
 	return f.invokeWithFailover(ctx, in.Consumer, dto, stream, route)
+}
+
+// ambiguousChatBody reports a chat request, the kind the plugins inspect
+// through the canonical decode, whose body the decoder may read otherwise
+// than the upstream. Other capabilities carry no prompt or tools and keep
+// their bodies as sent.
+func ambiguousChatBody(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	return adapter.IsChatRequest(req.ProxyCapability, sourceFormatFromRequest(req)) && adapter.HasAmbiguousKeys(req.Body)
 }
 
 func (f *forwarder) invokeWithFailover(

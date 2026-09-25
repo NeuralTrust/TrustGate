@@ -276,25 +276,61 @@ func rawWithinCaps(b []byte) bool {
 	return true
 }
 
-// HasAmbiguousKeys reports a valid JSON body with an object whose keys
-// encoding/json folds into one, where the decoder may have read another copy
-// than the upstream will. A plugin that checks tools must then forward its
-// own encoding of the request, never the body. It reads the body in one
-// pass, at any size or depth.
+// HasAmbiguousKeys reports a JSON body whose keys let encoding/json read
+// another value than the upstream will: an object that repeats a key, where
+// the decoder keeps the last copy and another parser may keep the first, or
+// an object decoded into a struct with two keys that differ only in case,
+// which the decoder folds into one field. Keys that differ in case are left
+// alone inside the objects the chat formats carry as free-form maps, such as
+// JSON schemas, tool arguments and metadata (freeFormKeys): the decoder keeps
+// both there, as the upstream does.
+//
+// It reads the body once, at any size or depth. On a body that is not valid
+// JSON the answer means nothing, since no decoder accepts such a body.
 func HasAmbiguousKeys(b []byte) bool {
-	return json.Valid(b) && repeatsKey(b)
+	return repeatsKey(b)
 }
 
-// repeatsKey is HasAmbiguousKeys on a body already known to be valid.
+// freeFormKeys are the keys, folded as the decoder folds them, whose object
+// values the chat adapters decode as maps or raw JSON, and whose own keys
+// are the client's rather than the format's. nestedOnly marks a key that
+// names such an object only below the top level (Anthropic and Bedrock tool
+// call input; the Responses input is never an object).
+var freeFormKeys = func() map[string]bool {
+	m := map[string]bool{foldKey("input"): true}
+	for _, k := range []string{
+		"parameters", "input_schema", "schema", "json_schema", "properties", "json",
+		"parametersJsonSchema", "parameters_json_schema", "responseSchema", "response_schema",
+		"responseJsonSchema", "response_json_schema", "_responseJsonSchema", "guided_json",
+		"args", "response", "metadata", "labels", "logit_bias", "headers", "variables",
+		"chat_template_kwargs", "additionalModelRequestFields", "requestMetadata", "promptVariables",
+	} {
+		m[foldKey(k)] = false
+	}
+	return m
+}()
+
+func freeFormValue(key string, topLevel bool) bool {
+	nestedOnly, ok := freeFormKeys[foldKey(key)]
+	return ok && (!nestedOnly || !topLevel)
+}
+
+// repeatsKey is HasAmbiguousKeys.
 func repeatsKey(b []byte) bool {
 	var stack []keyFrame
 	for i := 0; i < len(b); i++ {
 		switch b[i] {
-		case '{':
-			stack = append(stack, keyFrame{object: true, atKey: true})
-		case '[':
-			stack = append(stack, keyFrame{})
+		case '{', '[':
+			frame := keyFrame{object: b[i] == '{', atKey: b[i] == '{'}
+			if n := len(stack); n > 0 {
+				parent := &stack[n-1]
+				frame.free = parent.free || (frame.object && parent.object && freeFormValue(parent.lastKey, n == 1))
+			}
+			stack = append(stack, frame)
 		case '}', ']':
+			if len(stack) == 0 {
+				return false
+			}
 			stack = stack[:len(stack)-1]
 		case ',':
 			if n := len(stack); n > 0 && stack[n-1].object {
@@ -311,6 +347,7 @@ func repeatsKey(b []byte) bool {
 					return true
 				}
 				stack[n-1].atKey = false
+				stack[n-1].lastKey = key
 			}
 			i = end - 1
 		}
@@ -318,34 +355,43 @@ func repeatsKey(b []byte) bool {
 	return false
 }
 
+// keyFrame tracks the keys of one open object. A free frame is a
+// free-form object or lies inside one: only exact repeats count there.
 type keyFrame struct {
-	object, atKey bool
-	keys          []string
-	folded        map[string]struct{}
+	object, atKey, free bool
+	lastKey             string
+	keys                []string
+	seen                map[string]struct{}
 }
 
 func (f *keyFrame) repeats(key string) bool {
-	if f.folded == nil {
+	same := strings.EqualFold
+	norm := foldKey
+	if f.free {
+		same = func(a, b string) bool { return a == b }
+		norm = func(s string) string { return s }
+	}
+	if f.seen == nil {
 		for _, k := range f.keys {
-			if strings.EqualFold(k, key) {
+			if same(k, key) {
 				return true
 			}
 		}
 		if f.keys = append(f.keys, key); len(f.keys) <= 8 {
 			return false
 		}
-		f.folded = make(map[string]struct{}, 2*len(f.keys))
+		f.seen = make(map[string]struct{}, 2*len(f.keys))
 		for _, k := range f.keys {
-			f.folded[foldKey(k)] = struct{}{}
+			f.seen[norm(k)] = struct{}{}
 		}
 		f.keys = nil
 		return false
 	}
-	k := foldKey(key)
-	if _, dup := f.folded[k]; dup {
+	k := norm(key)
+	if _, dup := f.seen[k]; dup {
 		return true
 	}
-	f.folded[k] = struct{}{}
+	f.seen[k] = struct{}{}
 	return false
 }
 

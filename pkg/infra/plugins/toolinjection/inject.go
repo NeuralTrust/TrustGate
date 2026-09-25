@@ -66,6 +66,7 @@ func applyInjections(
 		case conflictGatewayWins:
 			ct.Cache = tools[idx].Cache
 			tools[idx] = ct
+			tools = dropLaterCopies(tools, idx)
 			outcomes = append(outcomes, injectOutcome{Name: ct.Name, Outcome: outcomeReplaced})
 		case conflictClientWins:
 			outcomes = append(outcomes, injectOutcome{Name: ct.Name, Outcome: outcomeDropped})
@@ -74,6 +75,54 @@ func applyInjections(
 		}
 	}
 	return tools, outcomes, nil
+}
+
+// dropLaterCopies removes the tools after idx that share its name, so a
+// client that declares a tool twice keeps no copy of its own beside the
+// gateway's.
+func dropLaterCopies(tools []adapter.CanonicalTool, idx int) []adapter.CanonicalTool {
+	name := tools[idx].Name
+	out := tools[:idx+1]
+	for _, t := range tools[idx+1:] {
+		if t.Name != name {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// resolveLegacyConflicts applies conflict to the injected tools that share a
+// name with a legacy Chat function of the client. gateway_wins drops the
+// client's function, client_wins skips the injection, and reject refuses
+// the request. It returns the entries left to inject and the functions to
+// drop.
+func resolveLegacyConflicts(entries []injectDef, legacy map[string]bool, conflict string) ([]injectDef, map[string]bool, []injectOutcome, error) {
+	if len(legacy) == 0 {
+		return entries, nil, nil, nil
+	}
+	kept := make([]injectDef, 0, len(entries))
+	var drop map[string]bool
+	var skipped []injectOutcome
+	for _, e := range entries {
+		name := e.Function.Name
+		if !legacy[name] {
+			kept = append(kept, e)
+			continue
+		}
+		switch conflict {
+		case conflictReject:
+			return nil, nil, nil, rejectError(name)
+		case conflictClientWins:
+			skipped = append(skipped, injectOutcome{Name: name, Outcome: outcomeDropped})
+		default:
+			if drop == nil {
+				drop = map[string]bool{}
+			}
+			drop[name] = true
+			kept = append(kept, e)
+		}
+	}
+	return kept, drop, skipped, nil
 }
 
 func rejectError(name string) error {

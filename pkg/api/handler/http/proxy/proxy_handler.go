@@ -62,6 +62,7 @@ const (
 	errCodeMethodNotAllowed     = "method_not_allowed"
 	errCodeNoBackendAvailable   = "no_backend_available"
 	errCodeInvalidRequest       = "invalid_request"
+	errCodeInvalidRequestBody   = "invalid_request_body"
 	errCodeInvalidModel         = "invalid_model"
 	errCodeModelNotAllowed      = "model_not_allowed"
 	errCodeModelNotSupported    = "model_not_supported"
@@ -514,6 +515,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrAmbiguousRequestBody):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequestBody, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
