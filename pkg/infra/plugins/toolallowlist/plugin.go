@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -143,7 +144,9 @@ func (p *Plugin) stripTools(
 	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
 		return keepTool(t.Name, cfg)
 	})
-	body, err := adapter.GraftChangedFields(ad, originalBody, baseline, canonical)
+	body, err := adapter.GraftChangedFieldsWith(ad, originalBody, baseline, canonical, adapter.GraftOptions{
+		KeepUnmodelledTool: func(kind string) bool { return allowsUnmodelled(kind, cfg) },
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
 	}
@@ -211,6 +214,17 @@ func keepTool(name string, cfg *config) bool {
 		return false
 	}
 	return true
+}
+
+// allowsUnmodelled keeps a built-in or server tool the canonical request
+// does not model only when allow_tools names its type exactly and no deny
+// pattern matches it; patterns never reach such a tool.
+func allowsUnmodelled(kind string, cfg *config) bool {
+	if kind == "" || !slices.Contains(cfg.AllowTools, kind) {
+		return false
+	}
+	_, denied := matchAny(cfg.DenyTools, kind)
+	return !denied
 }
 
 func filter(tools []adapter.CanonicalTool, cfg *config) (kept, removed []string, keptCount, removedCount int) {

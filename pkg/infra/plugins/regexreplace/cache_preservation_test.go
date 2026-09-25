@@ -88,3 +88,17 @@ func TestRequestRewriteNoMatchForwardsTheBodyUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, res.RequestBody)
 }
+
+func TestRequestRewriteReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"notify ` + cacheEmail + `"}]},` +
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":"notify ` + cacheEmail + `"}],"encrypted_content":"gAAA"}],"store":false}`
+	p := New(adapter.NewRegistry(), nil)
+	event, _ := newEvent()
+	set := settings(targetRequest, maskRule(`bob@example\.com`, "[EMAIL]"))
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, string(adapter.FormatOpenAIResponses), []byte(body)), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	assert.NotContains(t, string(res.RequestBody), cacheEmail)
+	assert.NotContains(t, string(res.RequestBody), "summary_text")
+}

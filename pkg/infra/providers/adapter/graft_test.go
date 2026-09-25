@@ -209,11 +209,11 @@ func TestGraftChangedFieldsFilterTools(t *testing.T) {
 		out, _ := graftEdit(t, FormatOpenAI, body, keep())
 		assert.Equal(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"n":1}`, out)
 	})
-	t.Run("responses keeps built-in tools", func(t *testing.T) {
+	t.Run("responses drops built-in tools it cannot see", func(t *testing.T) {
 		t.Parallel()
 		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a","strict":true},{"type":"function","name":"b"}],"store":false}`
 		out, _ := graftEdit(t, FormatOpenAIResponses, body, keep("b"))
-		assert.Equal(t, `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"b"}],"store":false}`, out)
+		assert.Equal(t, `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"b"}],"store":false}`, out)
 	})
 	t.Run("bedrock cachePoint follows its tool", func(t *testing.T) {
 		t.Parallel()

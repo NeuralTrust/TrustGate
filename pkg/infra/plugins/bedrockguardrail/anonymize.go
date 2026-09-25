@@ -41,7 +41,7 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byt
 	}
 	baseline := creq.Clone()
 	creq.Messages[msgIndex].Content = masked
-	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
+	body, err := adapter.GraftChangedFieldsWith(adp, original, baseline, creq, adapter.GraftOptions{Redaction: true})
 	if err != nil {
 		return nil, false
 	}

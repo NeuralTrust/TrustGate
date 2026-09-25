@@ -58,10 +58,11 @@ type rawTool struct {
 // toolPatches edits the tools array of original entry by entry: unchanged
 // tools keep their bytes, changed ones take their re-encoded form, removed
 // ones go and new ones are appended. Tools the canonical model does not
-// carry stay where they are. Top-level keys the tool change touched in the
-// re-encode (a tool_choice that named a removed tool) are recorded in top.
-// When the entries cannot be matched by name, the whole tools value is
-// replaced by the re-encoded one.
+// carry stay only when GraftOptions.KeepUnmodelledTool keeps them. Top-level
+// keys the tool change touched in the re-encode (a tool_choice that named a
+// removed tool) are recorded in top. When the entries cannot be matched by
+// name, the whole tools value is replaced by the re-encoded one, which
+// carries no unmodelled tool.
 func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch, bool) {
 	encRoot, err := rawRoot(g.encoded)
 	if err != nil {
@@ -71,9 +72,7 @@ func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch,
 		return nil, false
 	}
 	topKey, path := "tools", []string{"tools"}
-	if _, ok := rawFieldOf(g.original, root, "toolConfig"); ok {
-		topKey, path = "toolConfig", []string{"toolConfig", "tools"}
-	} else if _, ok := rawFieldOf(g.encoded, encRoot, "toolConfig"); ok {
+	if g.bedrock {
 		topKey, path = "toolConfig", []string{"toolConfig", "tools"}
 	}
 	origArr, hasOrig := rawAt(g.original, root, path)
@@ -112,7 +111,7 @@ func (g *grafter) otherTopEdits(encRoot rawSpan, top map[string]topEdit) bool {
 	keys := maps.Clone(was)
 	maps.Copy(keys, now)
 	for key := range keys {
-		if graftedKeys[key] {
+		if graftedKeys[key] || (g.bedrock && key == "toolConfig") {
 			continue
 		}
 		v, present := now[key]
@@ -193,6 +192,9 @@ func (g *grafter) toolEntryPatches(origArr, encArr rawSpan) ([]rawPatch, bool) {
 	for _, rt := range origTools {
 		was, modelled := before[rt.name]
 		if rt.name == "" || !modelled {
+			if !g.keepUnmodelled(g.original, origItems[rt.item]) {
+				drop[rt.item] = true
+			}
 			continue
 		}
 		now, kept := after[rt.name]
@@ -212,7 +214,8 @@ func (g *grafter) toolEntryPatches(origArr, encArr rawSpan) ([]rawPatch, bool) {
 }
 
 // rawToolEntries reads the entries of a tools array. A Bedrock cachePoint
-// entry belongs to the tool before it.
+// entry belongs to the tool before it; one with no tool before it is left
+// alone.
 func rawToolEntries(b []byte, arr rawSpan) ([]rawSpan, []rawTool, bool) {
 	items, err := rawItems(b, arr)
 	if err != nil {
@@ -224,15 +227,49 @@ func rawToolEntries(b []byte, arr rawSpan) ([]rawSpan, []rawTool, bool) {
 			tools = append(tools, rawTool{item: i})
 			continue
 		}
-		if _, isCachePoint := rawFieldOf(b, item, "cachePoint"); isCachePoint && len(tools) > 0 {
-			if _, isSpec := rawFieldOf(b, item, "toolSpec"); !isSpec {
+		fields, err := rawFields(b, item)
+		if err != nil {
+			return nil, nil, false
+		}
+		if len(fields) == 1 && fields[0].key == "cachePoint" {
+			if len(tools) > 0 {
 				tools[len(tools)-1].trailers = append(tools[len(tools)-1].trailers, i)
-				continue
 			}
+			continue
 		}
 		tools = append(tools, rawTool{name: rawToolName(b, item), item: i})
 	}
 	return items, tools, true
+}
+
+// keepUnmodelled applies GraftOptions.KeepUnmodelledTool to a tools entry
+// the canonical request does not carry. With no option the entry goes: a
+// filter that cannot see a tool must not let it through.
+func (g *grafter) keepUnmodelled(b []byte, item rawSpan) bool {
+	if g.opts.KeepUnmodelledTool == nil {
+		return false
+	}
+	return g.opts.KeepUnmodelledTool(rawToolKind(b, item))
+}
+
+func rawToolKind(b []byte, item rawSpan) string {
+	if b[item.start] != '{' {
+		return ""
+	}
+	fields, err := rawFields(b, item)
+	if err != nil {
+		return ""
+	}
+	for _, f := range fields {
+		if f.key == "type" {
+			kind, _ := rawString(b, f.value)
+			return kind
+		}
+	}
+	if len(fields) == 1 {
+		return fields[0].key
+	}
+	return ""
 }
 
 func rawToolName(b []byte, item rawSpan) string {

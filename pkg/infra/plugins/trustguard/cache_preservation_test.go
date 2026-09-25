@@ -64,3 +64,20 @@ func TestRewriteResponseKeepsCacheUsage(t *testing.T) {
 	assert.Equal(t, 60, after.Usage.CacheWrite1hInputTokens)
 	assert.Equal(t, before.Usage.InputTokens, after.Usage.InputTokens)
 }
+
+func TestRewriteRequestReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testing.T) {
+	t.Parallel()
+	body := `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"card 4111 1111 1111 1111"},` +
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"the card is 4111 1111 1111 1111","signature":"s"},{"type":"text","text":"ok"}]},` +
+		`{"role":"user","content":"go"}]}`
+	reg := adapter.NewRegistry()
+	creq, err := reg.DecodeRequestFor([]byte(body), adapter.FormatAnthropic)
+	require.NoError(t, err)
+	masked := strings.ReplaceAll(joinRequestText(creq), "4111 1111 1111 1111", "[CARD]")
+
+	out, ok := rewriteRequest(reg, adapter.FormatAnthropic, []byte(body), creq, masked)
+
+	require.True(t, ok)
+	assert.NotContains(t, string(out), "4111")
+	assert.NotContains(t, string(out), `"thinking"`)
+}

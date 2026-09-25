@@ -122,7 +122,9 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		return okResult(), nil
 	}
 
-	body, err := adapter.GraftChangedFields(ad, in.Request.Body, baseline, canonical)
+	body, err := adapter.GraftChangedFieldsWith(ad, in.Request.Body, baseline, canonical, adapter.GraftOptions{
+		KeepUnmodelledTool: func(string) bool { return true },
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_injection: graft: %w", err)
 	}

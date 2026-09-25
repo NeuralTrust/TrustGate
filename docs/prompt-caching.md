@@ -147,26 +147,85 @@ Some shapes cannot survive translation. None of them fails the request:
 ## Plugins
 
 A plugin that rewrites the request decodes the body, edits it, and hands the
-result to `adapter.GraftChangedFields`. The body that goes upstream is the
-client's own body, with only the edited parts replaced:
+result to `adapter.GraftChangedFieldsWith`. The body that goes upstream is
+the client's own body, with only the edited parts replaced:
 
-- **Text.** Only the string values that changed are rewritten. When a
-  message's text spans several blocks, the edit is mapped back onto its
-  blocks by their newline count. If the edit added or removed lines, only
-  that message's content is re-encoded. Every other message, the system
+- **Text.** The edited text is diffed against the text it replaces, and each
+  changed run is written into the block that holds it, by character offset.
+  A run that crosses a block boundary or touches the joiner between blocks
+  re-encodes only that message's content. Every other message, the system
   prompt, the tools and all cache markers keep their bytes.
 - **Tools.** Kept tools keep their bytes, removed ones go, and injected ones
-  are appended. Tools the gateway does not model (built-in tools such as
-  Responses `web_search`) stay where they are.
+  are appended. See the fail-closed rules for tools the gateway does not
+  model.
 - **Everything else** stays as sent: key order, fields the canonical model
   does not carry (Codex `reasoning`, `include`, `store`, `parallel_tool_calls`,
   tool `strict`, Anthropic `thinking`), and whitespace.
 - **No change**, no edit: when nothing matches, the body goes upstream
   byte-identical.
 
-The graft checks itself: the grafted body must decode to the edited request.
-When it cannot be placed (the plugin added or removed messages or changed
-another field) or the check fails, the plugin falls back to a full re-encode.
+### Redaction guarantee
+
+`trustguard` (mask), `bedrock_guardrail` (anonymize) and `regex_replace`
+graft with `Redaction`. Every piece of text the edit removed is searched for,
+line by line and decoded (JSON escapes cannot hide it), in each string of the
+grafted body, object keys included. If a piece appears in a string that the
+full re-encode would not also send, the graft is dropped and the plugin sends
+the full re-encode. So a masked value never reaches the upstream through a
+field the canonical model does not carry (a `thinking` or
+`redacted_thinking` block, a `document`, `search_result` or web search
+result, `citations`, Responses `reasoning.summary`, `prompt.variables` or
+tool call outputs, Chat `prediction`, `refusal`, `name`, `user`, `metadata`
+or file parts, Gemini `thought` parts, `labels`, `inlineData` or code
+execution parts, Bedrock `guardContent`, `reasoningContent`, `document` or
+`promptVariables`, Cohere `documents`).
+
+Other plugins search only for pieces of four bytes or more. Blank pieces are
+never searched for.
+
+What the guarantee does not cover:
+
+- Text the canonical model carries outside prompt text (tool call
+  arguments, tool descriptions and schemas, Anthropic `metadata.user_id`,
+  Responses `text.format`) is not masked by these plugins, grafted or not.
+  The full re-encode sends it too.
+- A value that only appears in a field the canonical model does not carry is
+  never seen by the plugin, so nothing is masked and the body is forwarded
+  as sent. Before grafting, a plugin that masked something else in the same
+  request dropped such fields with the re-encode; now they stay.
+
+### Fail-closed rules
+
+The graft falls back to the full re-encode, never to a partial body, when:
+
+- the body is not valid JSON, is over 8 MiB, or has more than 250,000 JSON
+  values;
+- an object repeats a key, exactly or in a case variant that encoding/json
+  folds into the same field (`content` and `Content`, `messages` and
+  `Messages`). A body with such keys is re-encoded even when the plugin
+  changed nothing, so the upstream sees the copy the plugin inspected;
+- the plugin added or removed messages, or changed a field other than the
+  prompt text and the tools;
+- the edit differs from the original text in more than 512 words;
+- the edited system text crosses a block boundary;
+- the grafted body does not decode to the edited request;
+- removed text survives, as described above.
+
+`tool_allowlist` and `per_tool_rate_limiter` drop every tools entry the
+gateway does not model (Responses `mcp`, `web_search`, `file_search`,
+`computer_use_preview`, `code_interpreter`, `local_shell`; Anthropic
+`mcp_toolset`; Bedrock `systemTool`) whenever they strip a tool, as the full
+re-encode did before grafting. `tool_allowlist` keeps one only when
+`allow_tools` names its `type` exactly (for Gemini and Bedrock, its only key,
+such as `googleSearch` or `systemTool`) and no deny pattern matches it;
+patterns such as `*` never keep one. Gemini tool groups are always replaced
+whole, so `googleSearch` and `codeExecution` go with any tool change.
+`tool_injection` keeps them.
+
+Tools declared outside the tools array (Chat `functions` and
+`function_call`, Anthropic `mcp_servers`) and a `tool_choice` or Gemini
+`allowedFunctionNames` that names a removed tool are not filtered. ENG-1637
+tracks them.
 
 | Plugin | Changes | Effect on the cached prefix |
 |---|---|---|
@@ -185,11 +244,9 @@ responses are not rewritten.
 
 ### Known limits
 
-- A plugin edit that removes one line and adds another keeps the newline
-  count and maps onto the wrong block. The text is still correct, but the
-  block boundary (and a marker on it) moves by one line.
 - Adding text to a message that had none (an assistant turn with only tool
   calls) cannot be placed. The request falls back to a full re-encode.
-- `tool_allowlist` and `per_tool_rate_limiter` do not look at tools the
-  gateway does not model, so a built-in tool with no name passes an
-  allowlist.
+- A graft decodes the body twice (once to map its text, once to check the
+  result), so it costs about three to four decodes of the body. For an
+  8000-message, 1 MB Chat body that is 150 to 230 ms against about 50 ms for
+  the decode and re-encode it replaces.

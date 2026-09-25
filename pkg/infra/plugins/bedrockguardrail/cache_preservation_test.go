@@ -62,3 +62,17 @@ func TestRewriteRequestAnonymizesOnlyTheMaskedMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestRewriteRequestReencodesWhenAnUnmodelledCopyKeepsTheMaskedText(t *testing.T) {
+	t.Parallel()
+	const email = "carol@example.com"
+	body := `{"messages":[{"role":"user","content":[{"text":"my email is ` + email + `"},{"guardContent":{"text":{"text":"` + email + `"}}}]}]}`
+	reg := adapter.NewRegistry()
+	creq, err := reg.DecodeRequestFor([]byte(body), adapter.FormatBedrock)
+	require.NoError(t, err)
+	text, idx := lastUserText(creq)
+	require.GreaterOrEqual(t, idx, 0)
+	out, ok := rewriteRequest(reg, adapter.FormatBedrock, []byte(body), creq, idx, strings.ReplaceAll(text, email, "{EMAIL}"))
+	require.True(t, ok)
+	assert.NotContains(t, string(out), email)
+}
