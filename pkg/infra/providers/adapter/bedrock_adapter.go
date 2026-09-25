@@ -703,10 +703,18 @@ func converseInferenceConfigFrom(req *CanonicalRequest) *ConverseInferenceConfig
 // spelling, so it withholds the tools instead — the only way to guarantee the
 // model calls nothing. The exception is a conversation that already carries
 // tool calls or results: Bedrock rejects those blocks without a toolConfig, so
-// the tools stay declared and the choice relaxes to auto.
+// the tools stay declared and the choice relaxes to auto, and a request with
+// no tools at all declares a placeholder tool no caller implements.
 func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 	if len(req.Tools) == 0 {
-		return nil
+		if !conversationUsesTools(req.Messages) {
+			return nil
+		}
+		return &ConverseToolConfig{Tools: []ConverseTool{{ToolSpec: &ConverseToolSpec{
+			Name:        converseToolPlaceholder,
+			Description: "No tools are available for this request. Do not call this tool.",
+			InputSchema: ConverseToolInputSchema{JSON: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		}}}}
 	}
 	choice := req.ToolChoice
 	if choice != nil && choice.Type == "none" {
@@ -737,6 +745,11 @@ func converseToolConfigFrom(req *CanonicalRequest) *ConverseToolConfig {
 	cfg.ToolChoice = converseToolChoiceFrom(choice)
 	return cfg
 }
+
+// converseToolPlaceholder names the tool declared for a conversation that
+// carries tool blocks but no tools, which Bedrock refuses without a
+// toolConfig.
+const converseToolPlaceholder = "no_tools_available"
 
 func conversationUsesTools(msgs []CanonicalMessage) bool {
 	for _, m := range msgs {

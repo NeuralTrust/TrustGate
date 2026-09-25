@@ -104,7 +104,8 @@ type UnmodelledTool struct {
 	// counts once per key, and the entries of Chat's legacy functions and
 	// Anthropic's mcp_servers lists are "functions" and "mcp_servers".
 	Kind string
-	// Name is the entry's name, when it has one.
+	// Name is the entry's name, when it has one. An Anthropic mcp_toolset
+	// is named by the mcp_server_name of the server it exposes.
 	Name string
 }
 
@@ -184,7 +185,7 @@ func ServerToolTypes(ad RequestAdapter, body []byte) map[string][]string {
 	}
 	var out map[string][]string
 	for _, t := range list.tools {
-		if t.name == "" || t.kind == "" || t.kind == "custom" {
+		if t.name == "" || t.kind == "" || t.kind == "custom" || t.kind == mcpToolsetKind {
 			continue
 		}
 		if out == nil {
@@ -265,6 +266,9 @@ func rawExtraTools(ad RequestAdapter, b []byte, root rawSpan) (rawToolList, bool
 	return rawToolList{arr: arr, items: items, tools: tools}, true
 }
 
+// markUnmodelled marks the entries modelled does not carry. An mcp_toolset
+// entry is never modelled, and its name, which is a server's, is not
+// counted against the tools of that name.
 func markUnmodelled(tools []rawTool, modelled []CanonicalTool) {
 	want := map[string]int{}
 	for _, t := range modelled {
@@ -272,11 +276,13 @@ func markUnmodelled(tools []rawTool, modelled []CanonicalTool) {
 	}
 	have := map[string]int{}
 	for _, t := range tools {
-		have[t.name]++
+		if t.kind != mcpToolsetKind {
+			have[t.name]++
+		}
 	}
 	for i := range tools {
 		t := &tools[i]
-		t.unmodelled = t.name == "" || have[t.name] > want[t.name]
+		t.unmodelled = t.name == "" || t.kind == mcpToolsetKind || have[t.name] > want[t.name]
 	}
 }
 
@@ -381,6 +387,11 @@ func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch,
 	if !ok {
 		return nil, false
 	}
+	choice, ok := g.choicePatches(root, top)
+	if !ok {
+		return nil, false
+	}
+	patches = append(patches, choice...)
 	var kept [][]byte
 	for _, rt := range orig.tools {
 		if rt.unmodelled && g.keepUnmodelled(rt) {
@@ -419,8 +430,9 @@ func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch,
 
 // extraToolPatches drops the entries of the second tools list (legacy
 // functions, mcp_servers) that KeepUnmodelledTool refuses, and the whole key
-// when none stays. A legacy function_call naming a dropped function goes with
-// it. With no option the list is left alone.
+// when none stays. A legacy function_call goes when it names a dropped
+// function or no function stays, since Chat refuses it without functions.
+// With no option the list is left alone.
 func (g *grafter) extraToolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch, bool) {
 	if g.opts.KeepUnmodelledTool == nil {
 		return nil, true
@@ -441,16 +453,20 @@ func (g *grafter) extraToolPatches(root rawSpan, top map[string]topEdit) ([]rawP
 		return nil, true
 	}
 	key := extraToolList(g.ad)
+	keptAny := slices.Contains(drop, false)
 	if key == "functions" {
 		call, found, _ := rawLookup(g.original, root, []string{"function_call"})
-		if found && g.original[call.start] == '{' {
+		switch {
+		case found && !keptAny:
+			top["function_call"] = topEdit{remove: true}
+		case found && g.original[call.start] == '{':
 			name, named, ok := rawLookup(g.original, call, []string{"name"})
 			if !ok || (named && dropped[rawStringOr(g.original, name)]) {
 				top["function_call"] = topEdit{remove: true}
 			}
 		}
 	}
-	if !slices.Contains(drop, false) {
+	if !keptAny {
 		top[key] = topEdit{remove: true}
 		return nil, true
 	}
@@ -659,7 +675,11 @@ func rawToolEntries(b []byte, arr rawSpan, gemini bool) ([]rawSpan, []rawTool, b
 			tools = geminiParts(tools, i, fields)
 			continue
 		}
-		tools = append(tools, rawTool{name: rawToolName(b, fields), kind: rawToolKind(b, fields), item: i})
+		t := rawTool{name: rawToolName(b, fields), kind: rawToolKind(b, fields), item: i}
+		if t.kind == mcpToolsetKind {
+			t.name = rawMCPServerName(b, fields)
+		}
+		tools = append(tools, t)
 	}
 	return items, tools, true
 }
@@ -710,6 +730,20 @@ func rawToolName(b []byte, fields []rawField) string {
 				return name
 			}
 			break
+		}
+	}
+	return ""
+}
+
+// mcpToolsetKind is the type of an Anthropic tools entry that exposes the
+// tools of the mcp_servers entry its mcp_server_name names.
+const mcpToolsetKind = "mcp_toolset"
+
+func rawMCPServerName(b []byte, fields []rawField) string {
+	for _, f := range fields {
+		if strings.EqualFold(f.key, "mcp_server_name") {
+			name, _ := rawString(b, f.value)
+			return name
 		}
 	}
 	return ""
