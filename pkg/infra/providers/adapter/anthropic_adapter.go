@@ -411,9 +411,6 @@ func (j *anthropicTextJoin) String() string {
 	return strings.Join(j.parts, "\n")
 }
 
-// anthropicTextBlocks emits text as text blocks, splitting it at the marker's
-// boundary when it can still be found. It reports whether the marker was
-// placed; when it was not, the caller puts it on the segment's last block.
 func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropicContentBlock, bool) {
 	if text == "" {
 		return nil, false
@@ -492,8 +489,6 @@ func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
 	return anthropicContentBlock{Type: "image", Source: raw}, nil
 }
 
-// anthropicMessageBlocks returns nil when the message goes out as a plain
-// string.
 func anthropicMessageBlocks(m CanonicalMessage) ([]anthropicContentBlock, error) {
 	images := m.Images
 	if m.Role != "user" {

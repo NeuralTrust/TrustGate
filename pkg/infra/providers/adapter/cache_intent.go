@@ -195,8 +195,6 @@ func cacheBreakpointsInOrder(req *CanonicalRequest) []*CanonicalCacheBreakpoint 
 	return marks
 }
 
-// dropEarliestCacheBreakpoint clears the first breakpoint in segments unless it
-// is the only one left, so every section keeps its last boundary.
 func dropEarliestCacheBreakpoint[T any](segments []T, cache func(*T) **CanonicalCacheBreakpoint) bool {
 	first, count := -1, 0
 	for i := range segments {
