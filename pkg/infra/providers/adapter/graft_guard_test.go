@@ -618,7 +618,8 @@ func TestHasAmbiguousKeysReadsAnySizeAndDepth(t *testing.T) {
 		"after a nested":    {`{"a":{"b":1,"c":2},"A":3}`, true},
 		"many keys":         {`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"ſ":0,"s":1}`, true},
 		"deep":              {strings.Repeat(`{"x":`, 5000) + `{"a":1,"a":2}` + strings.Repeat("}", 5000), true},
-		"invalid":           {`{"a":1,"a":2`, false},
+		"unbalanced":        {`}]{"a":1}`, false},
+		"unterminated":      {`{"a":"b`, false},
 	} {
 		assert.Equal(t, tc.want, HasAmbiguousKeys([]byte(tc.body)), name)
 	}

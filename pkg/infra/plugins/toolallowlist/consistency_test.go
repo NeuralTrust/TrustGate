@@ -85,6 +85,18 @@ func TestPlugin_Execute_KeepsToolChoicesConsistent(t *testing.T) {
 			want:  geminiF + `,"tool_config":{"function_calling_config":{"mode":"AUTO"}}}`,
 		},
 		{
+			name: "gemini forced mode once no declaration stays", format: "google",
+			body:  `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"g"}]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}}`,
+			allow: []any{"googleSearch"},
+			want:  `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}}`,
+		},
+		{
+			name: "gemini forced mode while a declaration stays", format: "google",
+			body:  gemini + `,"toolConfig":{"functionCallingConfig":{"mode":"VALIDATED"}}}`,
+			allow: []any{"f"},
+			want:  geminiF + `,"toolConfig":{"functionCallingConfig":{"mode":"VALIDATED"}}}`,
+		},
+		{
 			name: "chat function_call goes with the last legacy function", format: "openai",
 			body:  `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"functions":[{"name":"g","parameters":{"type":"object"}}],"function_call":"auto"}`,
 			allow: []any{"f"},

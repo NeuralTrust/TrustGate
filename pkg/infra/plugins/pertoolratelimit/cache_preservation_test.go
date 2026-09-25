@@ -37,13 +37,13 @@ func TestStripToolsKeepsOtherToolsAndMarkers(t *testing.T) {
 
 	canonical, err := reg.DecodeRequestFor(body(toolA+","+toolB+","+toolC), adapter.FormatAnthropic)
 	require.NoError(t, err)
-	res, err := p.stripTools(body(toolA+","+toolB+","+toolC), string(adapter.FormatAnthropic), canonical, map[string]struct{}{"b": {}})
+	res, err := p.stripTools(body(toolA+","+toolB+","+toolC), string(adapter.FormatAnthropic), canonical, toolStrip{tools: map[string]struct{}{"b": {}}})
 	require.NoError(t, err)
 	assert.Equal(t, string(body(toolA+","+toolC)), string(res.RequestBody))
 
 	canonical, err = reg.DecodeRequestFor(body(toolA+","+toolB+","+toolC), adapter.FormatAnthropic)
 	require.NoError(t, err)
-	res, err = p.stripTools(body(toolA+","+toolB+","+toolC), string(adapter.FormatAnthropic), canonical, map[string]struct{}{"c": {}})
+	res, err = p.stripTools(body(toolA+","+toolB+","+toolC), string(adapter.FormatAnthropic), canonical, toolStrip{tools: map[string]struct{}{"c": {}}})
 	require.NoError(t, err)
 	decoded, err := reg.DecodeRequestFor(res.RequestBody, adapter.FormatAnthropic)
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestStripToolsDropsToolsTheCanonicalDoesNotModel(t *testing.T) {
 	reg := adapter.NewRegistry()
 	canonical, err := reg.DecodeRequestFor(body, adapter.FormatOpenAIResponses)
 	require.NoError(t, err)
-	res, err := New(nil, reg).stripTools(body, string(adapter.FormatOpenAIResponses), canonical, map[string]struct{}{"b": {}})
+	res, err := New(nil, reg).stripTools(body, string(adapter.FormatOpenAIResponses), canonical, toolStrip{tools: map[string]struct{}{"b": {}}})
 	require.NoError(t, err)
 	assert.Equal(t, `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"a"}]}`, string(res.RequestBody))
 }
@@ -90,7 +90,7 @@ func TestStripToolsRewritesAToolChoiceNamingAStrippedTool(t *testing.T) {
 	reg := adapter.NewRegistry()
 	canonical, err := reg.DecodeRequestFor(body, adapter.FormatAnthropic)
 	require.NoError(t, err)
-	res, err := New(nil, reg).stripTools(body, string(adapter.FormatAnthropic), canonical, map[string]struct{}{"b": {}})
+	res, err := New(nil, reg).stripTools(body, string(adapter.FormatAnthropic), canonical, toolStrip{tools: map[string]struct{}{"b": {}}})
 	require.NoError(t, err)
 	assert.Equal(t, `{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"a","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"}}`, string(res.RequestBody))
 }

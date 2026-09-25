@@ -15,6 +15,7 @@
 package toolallowlist
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func TestPlugin_Execute_NeverForwardsAnAmbiguousBody(t *testing.T) {
 
 	t.Run("allowed tools in an ambiguous body are re-encoded", func(t *testing.T) {
 		t.Parallel()
-		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok"}],"metadata":{"a":1,"A":2}}`
+		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok"}],"Input":"hi"}`
 		res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"ok"}}, reqFor("openai_responses", body))
 		require.NoError(t, err)
 		require.NotEmpty(t, res.RequestBody)
@@ -59,7 +60,7 @@ func TestPlugin_Execute_NeverForwardsAnAmbiguousBody(t *testing.T) {
 	})
 	t.Run("observe leaves it alone", func(t *testing.T) {
 		t.Parallel()
-		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok"}],"metadata":{"a":1,"A":2}}`
+		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok"}],"Input":"hi"}`
 		res, err := run(New(adapter.NewRegistry()), policy.ModeObserve, map[string]any{"allow_tools": []any{"ok"}}, reqFor("openai_responses", body))
 		require.NoError(t, err)
 		assert.Nil(t, res.RequestBody)
@@ -215,4 +216,50 @@ func TestPlugin_Execute_RewritesAToolChoiceNamingARemovedTool(t *testing.T) {
 	res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"f"}}, reqFor("anthropic", body))
 	require.NoError(t, err)
 	assert.Equal(t, `{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"f","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"}}`, string(res.RequestBody))
+}
+
+func TestPlugin_Execute_ForwardsOnlyTheToolsItJudged(t *testing.T) {
+	t.Parallel()
+	const (
+		chatFn  = `{"type":"function","function":{"name":"%s","parameters":{"type":"object"}}}`
+		respFn  = `{"type":"function","name":"%s","parameters":{"type":"object"}}`
+		antFn   = `{"name":"%s","input_schema":{"type":"object"}}`
+		chat    = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],`
+		resp    = `{"model":"gpt-5","input":"hi",`
+		ant     = `{"model":"c","max_tokens":10,"messages":[{"role":"user","content":"hi"}],`
+		bedrock = `{"messages":[{"role":"user","content":[{"text":"hi"}]}],`
+		gemini  = `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],`
+	)
+	tool := func(shape, name string) string { return fmt.Sprintf(shape, name) }
+	cases := []struct{ name, format, body string }{
+		{"chat tools then TOOLS", "openai", chat + `"tools":[` + tool(chatFn, "rm_rf") + `],"TOOLS":[` + tool(chatFn, "get_weather") + `]}`},
+		{"chat repeated tools", "openai", chat + `"tools":[` + tool(chatFn, "rm_rf") + `],"tools":[` + tool(chatFn, "get_weather") + `]}`},
+		{"chat function Name", "openai", chat + `"tools":[{"type":"function","function":{"name":"rm_rf","Name":"get_weather","parameters":{"type":"object"}}}]}`},
+		{"responses tools then Tools", "openai_responses", resp + `"tools":[` + tool(respFn, "rm_rf") + `],"Tools":[` + tool(respFn, "get_weather") + `]}`},
+		{"anthropic tools then Tools", "anthropic", ant + `"tools":[` + tool(antFn, "rm_rf") + `],"Tools":[` + tool(antFn, "get_weather") + `]}`},
+		{"bedrock toolConfig then toolconfig", "bedrock", bedrock + `"toolConfig":{"tools":[{"toolSpec":{"name":"rm_rf","inputSchema":{"json":{"type":"object"}}}}]},"toolconfig":{"tools":[{"toolSpec":{"name":"get_weather","inputSchema":{"json":{"type":"object"}}}}]}}`},
+		{"gemini tools then Tools", "google", gemini + `"tools":[{"functionDeclarations":[{"name":"rm_rf"}]}],"Tools":[{"functionDeclarations":[{"name":"get_weather"}]}]}`},
+		{"chat legacy functions beside tools", "openai", chat + `"tools":[` + tool(chatFn, "get_weather") + `],"functions":[{"name":"rm_rf","parameters":{"type":"object"}}],"function_call":{"name":"rm_rf"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"get_weather"}}, reqFor(tc.format, tc.body))
+			require.NoError(t, err)
+			require.False(t, res.StopUpstream, string(res.Body))
+			require.NotEmpty(t, res.RequestBody, "the body the plugin judged must be the one sent")
+			assert.NotContains(t, string(res.RequestBody), "rm_rf")
+			assert.Contains(t, string(res.RequestBody), "get_weather")
+			assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+		})
+	}
+
+	t.Run("chat legacy functions alone", func(t *testing.T) {
+		t.Parallel()
+		body := chat + `"functions":[{"name":"rm_rf","parameters":{"type":"object"}}]}`
+		res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"get_weather"}}, reqFor("openai", body))
+		require.NoError(t, err)
+		assert.True(t, res.StopUpstream)
+		assert.Contains(t, string(res.Body), "functions:rm_rf")
+	})
 }

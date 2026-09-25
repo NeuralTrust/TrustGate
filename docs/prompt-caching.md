@@ -238,8 +238,13 @@ kept or dropped on its own; both `functionDeclarations` and
 `function_declarations` are decoded. Chat's legacy `functions` and
 Anthropic's `mcp_servers` are a second tools list the adapters do not decode,
 and their entries count as unmodelled too. `per_tool_rate_limiter` drops the
-tools entries whenever it withdraws a tool, as the full re-encode did before
-grafting, and leaves the second lists alone. `tool_injection` keeps them all.
+tools entries whenever it withdraws a modelled tool, as the full re-encode did
+before grafting. It limits a legacy function by its name like any tool,
+withdrawing it at the request whatever the behavior (the response rewrite
+does not model a legacy `function_call`), and counts a legacy call once a
+`function` message answers it. `tool_injection` keeps them all, except a
+legacy function or a second client copy named like an injected tool, which
+`on_conflict` settles as it does a clashing tool.
 
 `tool_allowlist` evaluates each such entry on every request, whether or not
 it removes a modelled tool, and counts a refused one as removed:
@@ -274,16 +279,22 @@ re-encoded one and the kept built-ins are appended to it. When
 its `toolConfig` too.
 
 A `tool_choice` that names a tool `tool_allowlist` or `per_tool_rate_limiter`
-removed becomes `auto`. A Gemini `allowedFunctionNames` or a Responses
-`tool_choice` naming a built-in that was dropped is not rewritten; ENG-1637
-tracks them.
+removed becomes `auto`, as does a Responses `tool_choice` naming a dropped
+built-in. A Gemini `allowedFunctionNames` list loses the removed names, and
+once none is left, or no function declaration stays under an `ANY` or
+`VALIDATED` mode, the mode relaxes to `AUTO`.
 
-The tool plugins never forward a body whose keys the decoder folds into one
-(`tools` and `Tools`, a repeated `model`, `toolConfig.tools` and
-`toolConfig.Tools`): the tools they judged are the decoded copy, and the
-upstream may read the other. `tool_allowlist` treats the tools of such a body
-as unreadable and refuses them, and every plugin that lets the request
-through sends its own encoding of it instead of the body.
+The gateway refuses a chat request whose body repeats a key, at any depth,
+or holds two keys that differ only in case where the decoder folds them into
+one struct field (`tools` and `TOOLS`, `content` and `Content`,
+`function.name` and `function.Name`), with 400 `invalid_request_body`, before
+any plugin runs: the plugins would judge the copy the decoder reads, and the
+upstream may read the other. Keys that differ in case stay allowed inside
+the objects the formats carry as free-form maps (JSON schemas, tool call
+arguments, `metadata`, `labels`, MCP `headers`), where both copies reach the
+decoder and the upstream alike. Embeddings, files, images and audio requests
+are not checked. The tool plugins still never forward such a body when they
+run outside the proxy: they send their own encoding of it instead.
 
 | Plugin | Changes | Effect on the cached prefix |
 |---|---|---|

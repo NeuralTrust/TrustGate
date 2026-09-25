@@ -105,14 +105,21 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 	}
 	baseline := canonical.Clone()
 
-	tools, outcomes, err := applyInjections(canonical.Tools, cfg.InjectTools, cfg.onConflict())
+	entries, dropLegacy, skipped, err := resolveLegacyConflicts(cfg.InjectTools, legacyFunctions(ad, in.Request.Body, canonical), cfg.onConflict())
 	if err != nil {
-		if pe, ok := appplugins.AsPluginError(err); ok {
-			setExtras(in.Event, rejectData(string(policy.StagePreRequest), reservedName(pe)))
-		}
-		return nil, err
+		return nil, rejected(in, err)
+	}
+	tools, outcomes, err := applyInjections(canonical.Tools, entries, cfg.onConflict())
+	if err != nil {
+		return nil, rejected(in, err)
 	}
 	canonical.Tools = tools
+	for i := range outcomes {
+		if dropLegacy[outcomes[i].Name] {
+			outcomes[i].Outcome = outcomeReplaced
+		}
+	}
+	outcomes = append(outcomes, skipped...)
 
 	if len(outcomes) > 0 {
 		setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
@@ -126,12 +133,37 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 	}
 
 	body, err := adapter.GraftChangedFieldsWith(ad, in.Request.Body, baseline, canonical, adapter.GraftOptions{
-		KeepUnmodelledTool: func(adapter.UnmodelledTool) bool { return true },
+		KeepUnmodelledTool: func(u adapter.UnmodelledTool) bool {
+			return u.Kind != adapter.LegacyFunctionKind || !dropLegacy[u.Name]
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_injection: graft: %w", err)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func rejected(in appplugins.ExecInput, err error) error {
+	if pe, ok := appplugins.AsPluginError(err); ok {
+		setExtras(in.Event, rejectData(string(policy.StagePreRequest), reservedName(pe)))
+	}
+	return err
+}
+
+// legacyFunctions returns the names of the legacy Chat functions body
+// declares, which canonical does not model.
+func legacyFunctions(ad adapter.RequestAdapter, body []byte, canonical *adapter.CanonicalRequest) map[string]bool {
+	unmodelled, _ := adapter.UnmodelledTools(ad, body, canonical)
+	var out map[string]bool
+	for _, u := range unmodelled {
+		if u.Kind == adapter.LegacyFunctionKind && u.Name != "" {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[u.Name] = true
+		}
+	}
+	return out
 }
 
 func injectionChanged(outcomes []injectOutcome) bool {

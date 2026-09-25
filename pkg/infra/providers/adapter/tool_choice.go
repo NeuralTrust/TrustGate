@@ -22,7 +22,7 @@ import "strings"
 // auto and its allowed_tools list keeps only the tools that stay, falling
 // back to auto when none does. A Gemini allowedFunctionNames list drops the
 // removed names; once none is left the list goes and the mode relaxes to
-// AUTO.
+// AUTO, as does a forced mode once no function declaration stays.
 func (g *grafter) choicePatches(root rawSpan, top map[string]topEdit) ([]rawPatch, bool) {
 	switch g.ad.(type) {
 	case *OpenAIResponsesAdapter:
@@ -125,8 +125,11 @@ func (g *grafter) geminiChoicePatches(root rawSpan) ([]rawPatch, bool) {
 		return nil, ok
 	}
 	names, found, ok := rawFieldAlias(b, calling.value, "allowedFunctionNames", "allowed_function_names")
-	if !ok || !found || b[names.value.start] != '[' {
-		return nil, ok
+	if !ok {
+		return nil, false
+	}
+	if !found || b[names.value.start] != '[' {
+		return g.geminiForcedModePatches(calling.value)
 	}
 	items, err := rawItems(b, names.value)
 	if err != nil {
@@ -149,6 +152,26 @@ func (g *grafter) geminiChoicePatches(root rawSpan) ([]rawPatch, bool) {
 		})
 	case dropped:
 		return rawListEdits(items, names.value.end-1, drop, nil, nil), true
+	}
+	return nil, true
+}
+
+// geminiForcedModePatches relaxes a mode that forces a function call, ANY
+// or VALIDATED, to AUTO once no function declaration stays: Gemini refuses
+// such a mode without one.
+func (g *grafter) geminiForcedModePatches(calling rawSpan) ([]rawPatch, bool) {
+	for _, t := range g.mutated.Tools {
+		if t.Name != "" {
+			return nil, true
+		}
+	}
+	mode, found, ok := rawFieldAlias(g.original, calling, "mode")
+	if !ok || !found {
+		return nil, ok
+	}
+	switch v, _ := rawString(g.original, mode.value); strings.ToUpper(v) {
+	case "ANY", "VALIDATED":
+		return rawObjectEdits(g.original, calling, map[string]topEdit{mode.key: {value: []byte(`"AUTO"`)}})
 	}
 	return nil, true
 }

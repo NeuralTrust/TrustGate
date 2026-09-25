@@ -209,7 +209,7 @@ func toolsPath(ad RequestAdapter) (string, []string) {
 func extraToolList(ad RequestAdapter) string {
 	switch ad.(type) {
 	case *OpenAIAdapter, *MistralAdapter, *OpenRouterAdapter:
-		return "functions"
+		return LegacyFunctionKind
 	case *AnthropicAdapter:
 		return "mcp_servers"
 	}
@@ -454,7 +454,7 @@ func (g *grafter) extraToolPatches(root rawSpan, top map[string]topEdit) ([]rawP
 	}
 	key := extraToolList(g.ad)
 	keptAny := slices.Contains(drop, false)
-	if key == "functions" {
+	if key == LegacyFunctionKind {
 		call, found, _ := rawLookup(g.original, root, []string{"function_call"})
 		switch {
 		case found && !keptAny:
