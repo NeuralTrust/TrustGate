@@ -37,10 +37,14 @@ func TestAdvertisedProtocolVersionsAreAllNegotiable(t *testing.T) {
 	// including the tools/call results it relays verbatim from upstreams — to
 	// satisfy that revision's envelope. 2026-07-28 is on the list because
 	// stampResultEnvelope meets that obligation for both kinds of result; the
-	// tests below hold it to it.
-	require.Equal(t, []string{"2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
+	// tests below hold it to it. 2025-11-25 is on it because current clients
+	// offer it in initialize, and one left off it was answered with a revision
+	// it could not speak.
+	require.Equal(t, []string{"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
 	require.Equal(t, latestProtocolVersion, advertisedProtocolVersions[0],
-		"the preferred revision must be the one initialize falls back to")
+		"server/discover lists the preferred revision first")
+	require.True(t, supportedProtocolVersions[handshakeProtocolVersion],
+		"initialize falls back to the newest revision that has it, which must be negotiable")
 	for _, version := range advertisedProtocolVersions {
 		require.Truef(t, supportedProtocolVersions[version],
 			"server/discover advertises %q but initialize cannot negotiate it", version)
