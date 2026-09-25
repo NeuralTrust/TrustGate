@@ -31,6 +31,11 @@ const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
 
+// defaultStreamBlockMessage is the response-leg wording. The buffered default
+// says "request blocked", which is right where it is used and wrong on a cut
+// stream: the client sees "request" for a response that was stopped halfway.
+const defaultStreamBlockMessage = "response blocked by content policy"
+
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
 // StreamSettings reports whether these policy settings ask for per-block
@@ -186,7 +191,7 @@ func blockMessage(cfg Settings) string {
 	if msg := strings.TrimSpace(cfg.Action.Message); msg != "" {
 		return msg
 	}
-	return defaultBlockMessage
+	return defaultStreamBlockMessage
 }
 
 // streamID correlates every block of one response. An empty id is not a missing
