@@ -33,10 +33,16 @@ var (
 	anthropicServerToolFamilies = []string{"web_search_", "web_fetch_", "code_execution_", "bash_", "text_editor_", "computer_"}
 )
 
+const (
+	mcpServersKind = "mcp_servers"
+	mcpToolsetKind = "mcp_toolset"
+)
+
 // isBuiltinTool reports whether kind names a tool the provider behind ad
 // runs itself. Anthropic versions its server tools by date, as in
-// web_search_20250305, and connects remote MCP servers through mcp_servers;
-// a Bedrock system tool is systemTool:<name>.
+// web_search_20250305, and connects remote MCP servers through mcp_servers,
+// whose tools an mcp_toolset entry exposes; a Bedrock system tool is
+// systemTool:<name>.
 func isBuiltinTool(ad adapter.RequestAdapter, kind string) bool {
 	switch ad.(type) {
 	case *adapter.OpenAIResponsesAdapter:
@@ -47,7 +53,7 @@ func isBuiltinTool(ad adapter.RequestAdapter, kind string) bool {
 		name, ok := strings.CutPrefix(kind, "systemTool:")
 		return ok && name != ""
 	case *adapter.AnthropicAdapter:
-		if kind == "mcp_servers" {
+		if kind == mcpServersKind || kind == mcpToolsetKind {
 			return true
 		}
 		for _, family := range anthropicServerToolFamilies {

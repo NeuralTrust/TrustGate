@@ -176,7 +176,7 @@ func TestIsBuiltinTool(t *testing.T) {
 	for format, kinds := range map[adapter.Format]map[string]bool{
 		adapter.FormatOpenAIResponses: {"mcp": true, "web_search_preview": true, "function": false, "mcp_toolset": false, "": false},
 		adapter.FormatOpenAI:          {"mcp": false, "web_search": false},
-		adapter.FormatAnthropic:       {"web_search_20250305": true, "code_execution_20250825": true, "bash_20250124": true, "text_editor_20250728": true, "bash": false, "bash_latest": false, "mcp_servers": true},
+		adapter.FormatAnthropic:       {"web_search_20250305": true, "code_execution_20250825": true, "bash_20250124": true, "text_editor_20250728": true, "bash": false, "bash_latest": false, "mcp_servers": true, "mcp_toolset": true},
 		adapter.FormatGemini:          {"googleSearch": true, "url_context": true, "functionDeclarations": false},
 		adapter.FormatBedrock:         {"systemTool:nova_grounding": true, "systemTool": false, "systemTool:": false, "toolSpec": false},
 	} {

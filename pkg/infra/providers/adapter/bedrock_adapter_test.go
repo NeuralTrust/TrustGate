@@ -372,6 +372,27 @@ func TestBedrock_EncodeRequest_NoneKeepsToolsWhenConversationUsesThem(t *testing
 	assert.Nil(t, wire.ToolConfig.ToolChoice, "none relaxes to the default choice")
 }
 
+func TestBedrock_EncodeRequest_DeclaresAPlaceholderForToolHistoryWithNoTools(t *testing.T) {
+	history := []CanonicalMessage{
+		{Role: "user", Content: "weather?"},
+		{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Madrid"}`}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
+	}
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: history})
+	require.NoError(t, err)
+	wire := decodeConverse(t, out)
+	require.NotNil(t, wire.ToolConfig, "toolUse/toolResult blocks are invalid without a toolConfig")
+	require.Len(t, wire.ToolConfig.Tools, 1)
+	require.NotNil(t, wire.ToolConfig.Tools[0].ToolSpec)
+	assert.Equal(t, converseToolPlaceholder, wire.ToolConfig.Tools[0].ToolSpec.Name)
+	assert.Nil(t, wire.ToolConfig.ToolChoice)
+
+	out, err = (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: history[:1]})
+	require.NoError(t, err)
+	assert.Nil(t, decodeConverse(t, out).ToolConfig, "a conversation with no tool blocks needs no toolConfig")
+}
+
 func TestBedrock_DecodeResponse(t *testing.T) {
 	body := `{
 		"output": {"message": {"role": "assistant", "content": [
