@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,7 @@ import (
 
 const (
 	promptCacheRetentionField = "prompt_cache_retention"
+	unrecognizedArgument      = "Unrecognized request argument"
 
 	retentionMemoTTL     = time.Hour
 	retentionMemoEntries = 1024
@@ -39,11 +41,12 @@ const (
 // prompt_cache_retention, so the gateway stops sending them a key it mapped
 // itself instead of paying a failed round trip on every request (ENG-1618 D5).
 type retentionMemo struct {
-	ttl     time.Duration
-	max     int64
-	now     func() time.Time
-	entries sync.Map
-	size    atomic.Int64
+	ttl       time.Duration
+	max       int64
+	now       func() time.Time
+	entries   sync.Map
+	size      atomic.Int64
+	saturated atomic.Bool
 }
 
 func newRetentionMemo() *retentionMemo {
@@ -83,6 +86,10 @@ func (m *retentionMemo) remember(url string) {
 	}
 	if _, ok := m.entries.LoadAndDelete(url); ok {
 		m.size.Add(-1)
+	}
+	if m.saturated.CompareAndSwap(false, true) {
+		slog.Info("Azure prompt_cache_retention memo is full; deployments it cannot hold pay the retry until entries expire",
+			slog.Int64("entries", m.max))
 	}
 }
 
@@ -126,9 +133,30 @@ func (c *client) retentionRetryBody(ctx context.Context, config *providers.Confi
 	return out, true
 }
 
+// rejectsRetention reports whether err is Azure's 400 for
+// prompt_cache_retention. The OpenAI error param names the field when Azure
+// fills it; otherwise an "Unrecognized request argument" message, and only
+// then any mention of the field in the body, decides.
 func rejectsRetention(err error) bool {
 	be, ok := registry.IsBackendError(err)
-	return ok && be.StatusCode == http.StatusBadRequest && bytes.Contains(be.Body, []byte(promptCacheRetentionField))
+	if !ok || be.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Param   string `json:"param"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(be.Body, &envelope) == nil {
+		if param := envelope.Error.Param; param != "" {
+			return param == promptCacheRetentionField
+		}
+		if msg := envelope.Error.Message; strings.Contains(msg, unrecognizedArgument) {
+			return strings.Contains(msg, promptCacheRetentionField)
+		}
+	}
+	return bytes.Contains(be.Body, []byte(promptCacheRetentionField))
 }
 
 func withoutRetention(reqBody []byte) ([]byte, bool) {

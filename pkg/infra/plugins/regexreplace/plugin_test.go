@@ -17,6 +17,7 @@ package regexreplace
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -399,7 +400,7 @@ func TestExecuteGuardPassThroughs(t *testing.T) {
 func TestRequestRewritePreservesNonTextFields(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	body := []byte(`{"model":"gpt-4o","temperature":0.7,"top_p":0.9,"stop":["END"],"n":2,"tools":[{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"my secret code"}]}`)
+	body := []byte(`{"model":"gpt-4o","temperature":0.7,"top_p":0.9,"stop":["END"],"seed":42,"n":2,"tools":[{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"my secret code"}]}`)
 	set := settings(targetRequest, maskRule("secret", "[REDACTED]"))
 	event, _ := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, openAIProvider, body), nil, event)
@@ -411,16 +412,26 @@ func TestRequestRewritePreservesNonTextFields(t *testing.T) {
 	if res == nil || len(res.RequestBody) == 0 {
 		t.Fatalf("expected rewritten request body, got %+v", res)
 	}
-	for _, want := range []string{"gpt-4o", "temperature", "top_p", "stop", "get_weather", "[REDACTED]"} {
-		if !bytes.Contains(res.RequestBody, []byte(want)) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(res.RequestBody, &fields); err != nil {
+		t.Fatalf("rewritten body is not a JSON object: %v: %s", err, res.RequestBody)
+	}
+	for _, want := range []string{"model", "temperature", "top_p", "stop", "seed", "tools", "messages"} {
+		if _, ok := fields[want]; !ok {
 			t.Fatalf("rewritten body missing modeled field %q: %s", want, res.RequestBody)
 		}
 	}
-	if bytes.Contains(res.RequestBody, []byte("my secret code")) {
-		t.Fatalf("rewritten body still contains original secret: %s", res.RequestBody)
-	}
-	if bytes.Contains(res.RequestBody, []byte(`"n":`)) {
+	if _, ok := fields["n"]; ok {
 		t.Fatalf("canonical re-encode is expected to drop unmodeled fields; n unexpectedly survived: %s", res.RequestBody)
+	}
+	var messages []struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(fields["messages"], &messages); err != nil || len(messages) != 1 {
+		t.Fatalf("unexpected messages %s: %v", fields["messages"], err)
+	}
+	if messages[0].Content != "my [REDACTED] code" {
+		t.Fatalf("rewritten content = %q, want the secret masked", messages[0].Content)
 	}
 }
 

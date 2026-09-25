@@ -840,6 +840,7 @@ func TestRetentionMemo_ExpiresAndStaysBounded(t *testing.T) {
 	m.remember("b")
 	m.remember("c")
 	assert.False(t, m.rejected("c"), "a full memo keeps the entries it has")
+	assert.True(t, m.saturated.Load(), "a full memo reports saturation once")
 	assert.True(t, m.rejected("a"))
 	assert.True(t, m.rejected("b"))
 	assert.EqualValues(t, 2, m.size.Load())
@@ -855,4 +856,42 @@ func TestRetentionMemo_ExpiresAndStaysBounded(t *testing.T) {
 	var nilMemo *retentionMemo
 	nilMemo.remember("a")
 	assert.False(t, nilMemo.rejected("a"))
+}
+
+func TestRejectsRetention(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{name: "param names the field", status: http.StatusBadRequest, body: azureRetentionError, want: true},
+		{
+			name:   "param names another field that mentions retention in the message",
+			status: http.StatusBadRequest,
+			body:   `{"error":{"message":"prompt_cache_retention is fine, max_tokens is not","param":"max_tokens"}}`,
+		},
+		{
+			name:   "unrecognized argument without param",
+			status: http.StatusBadRequest,
+			body:   `{"error":{"message":"Unrecognized request argument supplied: prompt_cache_retention","param":null}}`,
+			want:   true,
+		},
+		{
+			name:   "unrecognized argument for another field",
+			status: http.StatusBadRequest,
+			body:   `{"error":{"message":"Unrecognized request argument supplied: foo","param":null,"details":"prompt_cache_retention"}}`,
+		},
+		{name: "non-JSON body falls back to substring", status: http.StatusBadRequest, body: `bad prompt_cache_retention`, want: true},
+		{name: "400 without the field", status: http.StatusBadRequest, body: `{"error":{"message":"max_tokens is too large"}}`},
+		{name: "500 naming the field", status: http.StatusInternalServerError, body: azureRetentionError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := &registry.BackendError{StatusCode: tt.status, Body: []byte(tt.body)}
+			assert.Equal(t, tt.want, rejectsRetention(err))
+		})
+	}
 }
