@@ -24,7 +24,7 @@ Anthropic, OpenAI Chat and OpenAI Responses MUST round-trip intent (decode → e
 | OpenAI Chat | parts-level `cache_control` (OpenRouter-style) | `prompt_cache_key`, `prompt_cache_retention`, `prompt_cache_options` |
 | OpenAI Responses | `prompt_cache_breakpoint` on an input part | same three keys |
 
-A decoder that merges several text blocks of a segment into one string MUST record where the marked block ended as a newline index: the ordinal of the `"\n"` joiner that followed it among the newlines of the merged text, and the segment's total newline count. The Anthropic encoder MUST split the text at that newline into two text blocks, marker on the first, so the marker never covers content that followed its block. Without a boundary the encoder attaches the breakpoint to the last block it emits for the segment (after ENG-1608 images). Several markers in one segment collapse to one: the last position, with the longest TTL. Encoders for other targets ignore the boundary until their slice.
+A decoder that merges several text blocks of a segment into one string MUST record where the marked block ended as a newline index: the ordinal of the `"\n"` joiner that followed it among the newlines of the merged text, and the segment's total newline count. The Anthropic encoder MUST split the text at that newline into two text blocks, marker on the first, so the marker never covers content that followed its block. Without a boundary the encoder attaches the breakpoint to the last block it emits for the segment (after ENG-1608 images). A marker on an image block records which image it sat on; encoders that emit images keep it there, and a target that cannot mark that image drops it rather than moving it onto the text that followed. Several markers in one segment collapse to one: the last position, with the longest TTL. Encoders for other targets ignore the boundary until their slice.
 
 The encoder MUST split only when the text still has the recorded newline count, so a plugin that changes the text length but keeps its lines (masking) still splits at the joiner. If the count changed, or a split would leave a blank block, the marker moves to the end of the segment. When top-level automatic caching is on and an explicit marker ends up on the last block of the last message with a different TTL, the encoder MUST drop it if the gateway put it there (fallback, merged TTL, reorder or plugin-added marker), since Anthropic rejects the pair with 400. A marker the client itself sent on its last block with that TTL MUST pass unchanged, as on passthrough.
 
@@ -66,6 +66,14 @@ Markers on block types the canonical model drops (`thinking`, `redacted_thinking
 - WHEN encoded as Anthropic
 - THEN `cache_control` is on the text block, the last emitted
 
+#### Scenario: Marker on an image
+
+- GIVEN a user message `[{"describe"}, {image, cache_control}, {"volatile"}]`
+- WHEN encoded as Anthropic or OpenAI Chat, which emit images before text
+- THEN `cache_control` stays on the image block, with the image's own TTL, and the text carries none
+- AND for OpenAI Responses, whose encoder sends no images, the marker is dropped rather than moved onto the volatile text
+- AND if a plugin removed or added an image, the marker is dropped
+
 #### Scenario: Responses options
 
 - GIVEN a Responses body with `prompt_cache_key=k1` and `prompt_cache_retention=24h`
@@ -80,12 +88,15 @@ When source and target differ, intent MUST map where the target has an equivalen
 |---|---|---|---|
 | Anthropic | mapped, TTL kept | dropped | mapped |
 | Bedrock | `cachePoint` (see bedrock-prompt-caching) | dropped | dropped |
-| OpenAI / Azure / xAI Chat | dropped deliberately (OpenAI rejects parts-level `cache_control`) | Key, Retention and `prompt_cache_options` mapped | dropped |
-| OpenAI Responses, GPT-5.6+ | `prompt_cache_breakpoint` on system and messages | mapped | dropped |
-| OpenAI Responses, other models | dropped | mapped | dropped |
+| OpenAI Chat (provider `openai`) | dropped deliberately (OpenAI rejects parts-level `cache_control`) | Key always; `prompt_cache_options` only on GPT-5.6+; Retention only before GPT-5.6 | dropped |
+| Azure Chat or Responses (provider `azure`) | dropped (the model is usually a deployment name, so the GPT-5.6 gate cannot be trusted) | Key only; Retention returns with the S3 400 fallback (task 6.4) | dropped |
+| OpenAI Responses (provider `openai`), GPT-5.6+ | `prompt_cache_breakpoint` on system, user and tool-output messages; assistant and image markers dropped before the cap | Key and `prompt_cache_options` mapped, Retention dropped | dropped |
+| OpenAI Responses (provider `openai`), other models | dropped | Key and Retention mapped, `prompt_cache_options` dropped | dropped |
 | OpenRouter | parts-level `cache_control` (the only Chat target that gets it), TTL kept | dropped | top-level `cache_control` |
 | Mistral | dropped | Key → `prompt_cache_key` | dropped |
-| Gemini / Vertex, Cohere | dropped | dropped | dropped |
+| Gemini / Vertex, Cohere, xAI Chat (caches by the `x-grok-conv-id` header), and any other provider on `FormatOpenAI` (Cerebras, openai_compatible) | dropped | dropped | dropped |
+
+The OpenAI-family rows are chosen by the provider that serves the target, not by the wire format alone: Cerebras and openai_compatible share `FormatOpenAI` with OpenAI and get none of its keys. When no breakpoint is left after mapping, `prompt_cache_options.mode: "explicit"` is removed (it would turn off the provider's implicit breakpoint and leave nothing cached), and `prompt_cache_options` is omitted if nothing else is in it.
 
 #### Scenario: Anthropic client to OpenAI upstream (cross-format matrix cell)
 
@@ -96,9 +107,22 @@ When source and target differ, intent MUST map where the target has an equivalen
 
 #### Scenario: Breakpoints dropped for OpenAI Chat and older Responses models
 
-- GIVEN the same request routed to OpenAI Chat, Azure, xAI, or Responses with `gpt-4o`
+- GIVEN the same request routed to OpenAI Chat, Azure, xAI, Cerebras, openai_compatible, or Responses with `gpt-4o`
 - WHEN translated
-- THEN no per-block marker is sent, request-level key/retention/options are still mapped, and the request succeeds
+- THEN no per-block marker is sent and the request succeeds
+- AND OpenAI and Responses get the key with Retention before GPT-5.6 or `prompt_cache_options` from GPT-5.6, Azure gets the key only, and xAI, Cerebras and openai_compatible get no cache key
+
+#### Scenario: Explicit mode without breakpoints
+
+- GIVEN a Responses request on `gpt-5.6` with one input breakpoint and `prompt_cache_options: {"mode":"explicit"}`
+- WHEN routed to OpenAI Chat, which takes no breakpoint
+- THEN the body has `prompt_cache_key` and no `prompt_cache_options`
+
+#### Scenario: Assistant breakpoints do not take Responses slots
+
+- GIVEN an Anthropic request on `gpt-5.6` with markers on system, two user turns and two assistant turns
+- WHEN routed to OpenAI Responses (3 writes without explicit mode)
+- THEN system and both user parts carry `prompt_cache_breakpoint` and the assistant items carry none
 
 #### Scenario: OpenAI client to Anthropic upstream
 

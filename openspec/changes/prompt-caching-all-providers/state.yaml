@@ -46,5 +46,5 @@ progress_s2a:
   notes: normalizeCacheIntent on the cross-format AdaptRequest path only; anthropic + bedrock profile rows; Anthropic decode/encode of system/tool/message/tool_result/top-level markers; anthropic system text no longer trimmed (groq prefix drift fixed)
 progress_s2b:
   status: applied (5.1-5.5 done; 5.6 V1 done, V2-V5 pending)
-  notes: shared cacheTextJoin/cachedTextParts in cache_intent.go; Chat and Responses decode/encode intent faithfully; profile gated by isGPT56OrLater (options only 5.6+, retention only <5.6); xai Chat gets no cache keys (header-based); Azure deployments with non-gpt names get key+retention only
+  notes: shared cacheTextJoin/cachedTextParts in cache_intent.go; Chat and Responses decode/encode intent faithfully; profile gated by isGPT56OrLater (options only 5.6+, retention only <5.6); profile gated on the target provider (AdaptRequestForProvider): openai gets the keys, azure prompt_cache_key only until 6.4, xai/cerebras/openai_compatible nothing; Responses drops assistant and image markers before the cap; mode explicit removed when no breakpoint is left; image markers stay on the image for Anthropic and Chat
   open: OpenAI/Azure Chat accept prompt_cache_breakpoint on GPT-5.6+ (Azure docs 2026-08) - D3 drops them; follow-up. Model gate reads the pre-EnforceModel model (default model injected later is not seen).

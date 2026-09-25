@@ -299,7 +299,8 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
-					text.markEnd(anthropicCacheBreakpoint(b.CacheControl), last)
+					text.addImage()
+					text.markImage(anthropicCacheBreakpoint(b.CacheControl), last)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
@@ -429,10 +430,17 @@ func anthropicMessageBlocks(m CanonicalMessage) ([]anthropicContentBlock, error)
 		}
 		blocks = append(blocks, b)
 	}
-	text, placed := anthropicTextBlocks(m.Content, m.Cache)
+	cache := m.Cache
+	if cache.onImage() {
+		if at, ok := cachedImageIndex(cache, len(images)); ok {
+			blocks[at].CacheControl = anthropicCacheControlFrom(cache)
+		}
+		cache = nil
+	}
+	text, placed := anthropicTextBlocks(m.Content, cache)
 	blocks = append(blocks, text...)
-	if !placed {
-		blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
+	if !placed && cache != nil {
+		blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(cache)
 	}
 	return blocks, nil
 }

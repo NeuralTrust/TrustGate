@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,7 +92,7 @@ func TestNormalizeCacheIntent_KeepsTheLastBreakpointsWithinTheLimit(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			normalizeCacheIntent(tt.req, FormatAnthropic)
+			normalizeCacheIntent(tt.req, FormatAnthropic, formatProvider(FormatAnthropic))
 			assert.Equal(t, tt.wantTools, toolTTLs(tt.req.Tools))
 			assert.Equal(t, tt.wantMsgs, messageTTLs(tt.req.Messages))
 			assert.NotNil(t, tt.req.SystemCache)
@@ -104,7 +105,7 @@ func TestNormalizeCacheIntent_AutoCountsTowardTheLimit(t *testing.T) {
 
 	req := cachedRequest(1, 3, "")
 	req.CacheOptions = &CanonicalCacheOptions{Auto: bp("")}
-	normalizeCacheIntent(req, FormatAnthropic)
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
 
 	assert.Equal(t, []any{nil, nil, CacheTTL("")}, messageTTLs(req.Messages))
 	require.NotNil(t, req.CacheOptions)
@@ -137,7 +138,7 @@ func TestNormalizeCacheIntent_OneHourNeverFollowsAShorterTTL(t *testing.T) {
 				Tools:       []CanonicalTool{{Name: "t", Cache: bp(tt.toolTTL)}},
 				Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp(tt.messageTTL)}},
 			}
-			normalizeCacheIntent(req, tt.target)
+			normalizeCacheIntent(req, tt.target, formatProvider(tt.target))
 			assert.Equal(t, tt.want, [3]CacheTTL{req.Tools[0].Cache.TTL, req.SystemCache.TTL, req.Messages[0].Cache.TTL})
 		})
 	}
@@ -151,7 +152,7 @@ func TestNormalizeCacheIntent_TargetsWithoutCachingDropAllIntent(t *testing.T) {
 			t.Parallel()
 			req := cachedRequest(1, 2, CacheTTL1h)
 			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: json.RawMessage(`{}`), Auto: bp("")}
-			normalizeCacheIntent(req, target)
+			normalizeCacheIntent(req, target, formatProvider(target))
 
 			assert.Nil(t, req.SystemCache)
 			assert.Nil(t, req.CacheOptions)
@@ -166,7 +167,7 @@ func TestNormalizeCacheIntent_BedrockDropsAutoAndRequestOptions(t *testing.T) {
 
 	req := cachedRequest(0, 1, CacheTTL1h)
 	req.CacheOptions = &CanonicalCacheOptions{Key: "k", Auto: bp("")}
-	normalizeCacheIntent(req, FormatBedrock)
+	normalizeCacheIntent(req, FormatBedrock, formatProvider(FormatBedrock))
 
 	assert.Nil(t, req.CacheOptions)
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
@@ -176,10 +177,10 @@ func TestNormalizeCacheIntent_BedrockDropsAutoAndRequestOptions(t *testing.T) {
 func TestNormalizeCacheIntent_NoIntentIsANoOp(t *testing.T) {
 	t.Parallel()
 
-	normalizeCacheIntent(nil, FormatAnthropic)
+	normalizeCacheIntent(nil, FormatAnthropic, formatProvider(FormatAnthropic))
 	req := &CanonicalRequest{System: "s", Messages: []CanonicalMessage{{Role: "user", Content: "hi"}}, Tools: []CanonicalTool{{Name: "t"}}}
 	want := *req
-	normalizeCacheIntent(req, FormatAnthropic)
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
 	assert.Equal(t, want, *req)
 }
 
@@ -259,7 +260,7 @@ func TestNormalizeCacheIntent_DroppedBreakpointsDoNotDowngradeTheRest(t *testing
 			{Role: "user", Content: "c", Cache: bp(CacheTTL1h)},
 		},
 	}
-	normalizeCacheIntent(req, FormatAnthropic)
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
 
 	assert.Equal(t, []any{nil, CacheTTL1h, CacheTTL1h}, messageTTLs(req.Messages))
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
@@ -275,7 +276,7 @@ func TestNormalizeCacheIntent_KeepsTheTextBoundary(t *testing.T) {
 		SystemCache: &sys,
 		Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp("")}},
 	}
-	normalizeCacheIntent(req, FormatAnthropic)
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic))
 	assert.Equal(t, &boundary, req.SystemCache)
 }
 
@@ -294,27 +295,38 @@ func TestIsGPT56OrLater(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]bool{
-		"gpt-5.6":               true,
-		"gpt-5.6-mini":          true,
-		"gpt-5.6-2026-08-01":    true,
-		"openai/gpt-5.7":        true,
-		"GPT-5.10":              true,
-		"gpt-6":                 true,
-		"gpt-6.1-codex":         true,
-		"gpt-5.5":               false,
-		"gpt-5":                 false,
-		"gpt-5-mini":            false,
-		"gpt-5.1-codex":         false,
-		"gpt-4o":                false,
-		"gpt-4.1":               false,
-		"gpt-oss-120b":          false,
-		"o3":                    false,
-		"claude-sonnet-4-5":     false,
-		"":                      false,
-		"openai/gpt-5.5-turbo":  false,
-		"my-gpt-5.6-deployment": false,
-		"gpt-35-turbo":          false,
-		"gpt-50":                false,
+		"gpt-5.6":                             true,
+		"gpt-5.6-mini":                        true,
+		"gpt-5.6-2026-08-01":                  true,
+		"openai/gpt-5.7":                      true,
+		"GPT-5.10":                            true,
+		"gpt-6":                               true,
+		"gpt-6.1-codex":                       true,
+		"gpt-5.5":                             false,
+		"gpt-5":                               false,
+		"gpt-5-mini":                          false,
+		"gpt-5.1-codex":                       false,
+		"gpt-4o":                              false,
+		"gpt-4.1":                             false,
+		"gpt-oss-120b":                        false,
+		"o3":                                  false,
+		"claude-sonnet-4-5":                   false,
+		"":                                    false,
+		"openai/gpt-5.5-turbo":                false,
+		"my-gpt-5.6-deployment":               false,
+		"gpt-35-turbo":                        false,
+		"gpt-35-turbo-16k":                    false,
+		"gpt-10":                              true,
+		"gpt-10.1-mini":                       true,
+		"gpt-12-2027-01-01":                   true,
+		"gpt-50":                              true,
+		"gpt-10o":                             false,
+		"gpt-05":                              false,
+		"gpt-100":                             false,
+		"ft:gpt-5.6-mini:acme:support:abc123": true,
+		"FT:GPT-5.6:acme::abc":                true,
+		"ft:gpt-4o-mini:acme::abc":            false,
+		"gpt-5.6:free":                        true,
 	}
 	for model, want := range tests {
 		t.Run(model, func(t *testing.T) {
@@ -324,29 +336,33 @@ func TestIsGPT56OrLater(t *testing.T) {
 	}
 }
 
-func TestNormalizeCacheIntent_OpenAIChatTargetsKeepOnlyRequestKeys(t *testing.T) {
+func TestNormalizeCacheIntent_OpenAIFamilyKeysFollowTheProvider(t *testing.T) {
 	t.Parallel()
 
-	options := json.RawMessage(`{"mode":"explicit","ttl":"30m"}`)
 	tests := []struct {
-		name   string
-		target Format
-		model  string
-		want   *CanonicalCacheOptions
+		name     string
+		target   Format
+		provider string
+		model    string
+		want     *CanonicalCacheOptions
 	}{
-		{name: "openai before gpt-5.6 keeps retention", target: FormatOpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
-		{name: "openai gpt-5.6 keeps options", target: FormatOpenAI, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k", Mode: "explicit", Options: options}},
-		{name: "azure follows the model", target: FormatAzure, model: "gpt-4.1", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
-		{name: "responses before gpt-5.6", target: FormatOpenAIResponses, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
-		{name: "xai keys its cache by header", target: FormatXAI, model: "grok-4", want: nil},
+		{name: "openai before gpt-5.6 keeps retention", target: FormatOpenAI, provider: provider.OpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "openai gpt-5.6 keeps options", target: FormatOpenAI, provider: provider.OpenAI, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k", Options: json.RawMessage(`{"ttl":"30m"}`)}},
+		{name: "responses before gpt-5.6", target: FormatOpenAIResponses, provider: provider.OpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "azure chat sends only the key", target: FormatAzure, provider: provider.Azure, model: "gpt-4.1", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "azure deployment named like gpt-5.6 sends only the key", target: FormatAzure, provider: provider.Azure, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "azure responses sends only the key", target: FormatOpenAIResponses, provider: provider.Azure, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "cerebras shares the openai format but gets nothing", target: FormatOpenAI, provider: provider.Cerebras, model: "gpt-oss-120b", want: nil},
+		{name: "openai_compatible gets nothing", target: FormatOpenAI, provider: provider.OpenAICompatible, model: "gpt-5.6", want: nil},
+		{name: "xai keys its cache by header", target: FormatXAI, provider: provider.XAI, model: "grok-4", want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			req := cachedRequest(1, 2, CacheTTL1h)
 			req.Model = tt.model
-			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: options, Auto: bp("")}
-			normalizeCacheIntent(req, tt.target)
+			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Mode: "explicit", Options: json.RawMessage(`{"mode":"explicit","ttl":"30m"}`), Auto: bp("")}
+			normalizeCacheIntent(req, tt.target, tt.provider)
 
 			assert.Equal(t, tt.want, req.CacheOptions)
 			assert.Nil(t, req.SystemCache)
@@ -354,6 +370,111 @@ func TestNormalizeCacheIntent_OpenAIChatTargetsKeepOnlyRequestKeys(t *testing.T)
 			assert.Equal(t, []any{nil, nil}, messageTTLs(req.Messages))
 		})
 	}
+}
+
+func TestNormalizeCacheIntent_ExplicitModeNeedsABreakpoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		target   Format
+		options  string
+		messages int
+		want     *CanonicalCacheOptions
+	}{
+		{name: "kept while a breakpoint is sent", target: FormatOpenAIResponses, options: `{"mode":"explicit"}`, messages: 1, want: &CanonicalCacheOptions{Mode: "explicit", Options: json.RawMessage(`{"mode":"explicit"}`)}},
+		{name: "dropped with the options it was alone in", target: FormatOpenAI, options: `{"mode":"explicit"}`, messages: 1, want: nil},
+		{name: "dropped when the request has no breakpoint", target: FormatOpenAIResponses, options: `{"mode":"explicit"}`, want: nil},
+		{name: "other options stay", target: FormatOpenAI, options: `{"mode":"explicit","foo":1}`, messages: 1, want: &CanonicalCacheOptions{Options: json.RawMessage(`{"foo":1}`)}},
+		{name: "implicit mode stays", target: FormatOpenAI, options: `{"mode":"implicit"}`, want: &CanonicalCacheOptions{Mode: "implicit", Options: json.RawMessage(`{"mode":"implicit"}`)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := &CanonicalRequest{Model: "gpt-5.6"}
+			for range tt.messages {
+				req.Messages = append(req.Messages, CanonicalMessage{Role: "user", Content: "m", Cache: bp("")})
+			}
+			req.CacheOptions = openAICacheOptions("", "", json.RawMessage(tt.options))
+			normalizeCacheIntent(req, tt.target, provider.OpenAI)
+
+			assert.Equal(t, tt.want, req.CacheOptions)
+		})
+	}
+}
+
+func TestNormalizeCacheIntent_ResponsesClearsAssistantBreakpointsBeforeTheCap(t *testing.T) {
+	t.Parallel()
+
+	req := &CanonicalRequest{
+		Model:       "gpt-5.6",
+		System:      "sys",
+		SystemCache: bp(""),
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "u1", Cache: bp("")},
+			{Role: "assistant", Content: "a1", Cache: bp("")},
+			{Role: "user", Content: "u2", Cache: bp("")},
+			{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "f"}}, Cache: bp("")},
+			{Role: "tool", ToolCallID: "c1", Content: "out", Cache: bp("")},
+		},
+	}
+	normalizeCacheIntent(req, FormatOpenAIResponses, provider.OpenAI)
+
+	assert.NotNil(t, req.SystemCache)
+	assert.Equal(t, []any{nil, nil, CacheTTL(""), nil, CacheTTL("")}, messageTTLs(req.Messages))
+}
+
+func TestNormalizeCacheIntent_ImageMarkers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		target Format
+		want   []any
+	}{
+		{target: FormatAnthropic, want: []any{CacheTTL("")}},
+		{target: FormatBedrock, want: []any{CacheTTL("")}},
+		{target: FormatOpenAIResponses, want: []any{nil}},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.target), func(t *testing.T) {
+			t.Parallel()
+			req := &CanonicalRequest{
+				Model: "gpt-5.6",
+				Messages: []CanonicalMessage{{
+					Role:    "user",
+					Content: "volatile",
+					Images:  []CanonicalImage{{URL: "https://example.com/a.png"}},
+					Cache:   &CanonicalCacheBreakpoint{image: 1, images: 1},
+				}},
+			}
+			normalizeCacheIntent(req, tt.target, formatProvider(tt.target))
+
+			assert.Equal(t, tt.want, messageTTLs(req.Messages))
+		})
+	}
+}
+
+func TestCacheTextJoin_ImageMarkerKeepsItsOwnTTL(t *testing.T) {
+	t.Parallel()
+
+	var text cacheTextJoin
+	text.add("stable")
+	text.markText(bp(CacheTTL1h), false)
+	text.addImage()
+	text.markImage(bp(CacheTTL5m), false)
+	text.addImage()
+	text.add("volatile")
+
+	cache := text.breakpoint()
+	at, ok := cachedImageIndex(cache, 2)
+	assert.True(t, ok)
+	assert.Equal(t, 0, at)
+	assert.Equal(t, CacheTTL5m, cache.TTL)
+	_, ok = cachedImageIndex(cache, 1)
+	assert.False(t, ok, "a plugin that removed an image loses the marker")
+
+	text.markText(bp(""), true)
+	assert.False(t, text.breakpoint().onImage(), "a later text marker wins")
 }
 
 func TestNormalizeCacheIntent_ResponsesBreakpointsNeedGPT56(t *testing.T) {
@@ -378,7 +499,7 @@ func TestNormalizeCacheIntent_ResponsesBreakpointsNeedGPT56(t *testing.T) {
 			if tt.mode != "" {
 				req.CacheOptions = &CanonicalCacheOptions{Mode: tt.mode, Options: json.RawMessage(`{"mode":"explicit"}`)}
 			}
-			normalizeCacheIntent(req, FormatOpenAIResponses)
+			normalizeCacheIntent(req, FormatOpenAIResponses, formatProvider(FormatOpenAIResponses))
 
 			assert.Equal(t, tt.wantSystem, req.SystemCache != nil)
 			assert.Equal(t, []any{nil}, toolTTLs(req.Tools))

@@ -449,6 +449,52 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 	}
 }
 
+func TestProviderInvoke_CacheKeysFollowTheTargetProvider(t *testing.T) {
+	const responsesBody = `{"model":"gpt-4o-mini","instructions":"terse","input":"hi","prompt_cache_key":"k","prompt_cache_retention":"24h"}`
+
+	tests := []struct {
+		provider string
+		want     map[string]any
+	}{
+		{provider: "openai", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
+		{provider: "azure", want: map[string]any{"prompt_cache_key": "k"}},
+		{provider: "cerebras"},
+		{provider: "openai_compatible"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(openaiResponseBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, tc.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(responsesBody), SourceFormat: string(adapter.FormatOpenAIResponses)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget(tc.provider), req)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(sent, &got))
+			cache := map[string]any{}
+			for k, v := range got {
+				if strings.HasPrefix(k, "prompt_cache") {
+					cache[k] = v
+				}
+			}
+			if tc.want == nil {
+				assert.Empty(t, cache)
+				return
+			}
+			assert.Equal(t, tc.want, cache)
+		})
+	}
+}
+
 func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 	const novaModel = "eu.amazon.nova-pro-v1:0"
 	const novaResponseBody = `{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`
