@@ -24,11 +24,11 @@ Anthropic, OpenAI Chat and OpenAI Responses MUST round-trip intent (decode → e
 | OpenAI Chat | parts-level `cache_control` (OpenRouter-style) | `prompt_cache_key`, `prompt_cache_retention`, `prompt_cache_options` |
 | OpenAI Responses | `prompt_cache_breakpoint` on an input part | same three keys |
 
-A decoder that merges several text blocks of a segment into one string MUST record where the marked block ended (`Offset`: bytes up to and including that block, without the `"\n"` joiner). The Anthropic encoder MUST split the text at that offset into two text blocks, marker on the first, so the marker never covers content that followed its block. Without an offset the encoder attaches the breakpoint to the last block it emits for the segment (after ENG-1608 images). Several markers in one segment collapse to one: the last position, with the longest TTL. Encoders for other targets ignore `Offset` until their slice.
+A decoder that merges several text blocks of a segment into one string MUST record where the marked block ended as a newline index: the ordinal of the `"\n"` joiner that followed it among the newlines of the merged text, and the segment's total newline count. The Anthropic encoder MUST split the text at that newline into two text blocks, marker on the first, so the marker never covers content that followed its block. Without a boundary the encoder attaches the breakpoint to the last block it emits for the segment (after ENG-1608 images). Several markers in one segment collapse to one: the last position, with the longest TTL. Encoders for other targets ignore the boundary until their slice.
 
-If the offset no longer lands on a joiner (a plugin changed the text) or a split would leave a blank block, the marker moves to the end of the segment. When top-level automatic caching is on and an explicit marker would end up on the last block of the last message with a different TTL, the encoder MUST drop the explicit marker (Anthropic rejects the pair with 400).
+The encoder MUST split only when the text still has the recorded newline count, so a plugin that changes the text length but keeps its lines (masking) still splits at the joiner. If the count changed, or a split would leave a blank block, the marker moves to the end of the segment. When top-level automatic caching is on and an explicit marker ends up on the last block of the last message with a different TTL, the encoder MUST drop it if the gateway put it there (fallback, merged TTL, reorder or plugin-added marker), since Anthropic rejects the pair with 400. A marker the client itself sent on its last block with that TTL MUST pass unchanged, as on passthrough.
 
-Markers on block types the canonical model drops (`thinking`, `redacted_thinking`, `document`, server tool blocks) are dropped with the block. A whitespace-only string `system` decodes to `""`; non-blank system text stays byte-exact.
+Markers on block types the canonical model drops (`thinking`, `redacted_thinking`, `document`, server tool blocks) are dropped with the block. A whitespace-only string `system` decodes to `""`; non-blank system text stays byte-exact. Blank system blocks are skipped: a marker on one moves to the text block before it, and a marker on a leading blank block is dropped.
 
 #### Scenario: Anthropic round-trip, buffered and streaming request
 
@@ -47,6 +47,18 @@ Markers on block types the canonical model drops (`thinking`, `redacted_thinking
 - GIVEN top-level `cache_control` (5m) and a user message `[{"stable", 1h}, {"volatile"}]`
 - WHEN re-encoded as Anthropic
 - THEN the 1h marker stays on "stable" and the request is accepted (200)
+
+#### Scenario: Masking shifts the boundary
+
+- GIVEN a user message `[{"doc john@example.com", cache_control}, {"today\nWhat?"}]` and a plugin that masks the email as `[E]`
+- WHEN re-encoded as Anthropic
+- THEN the message is `[{"doc [E]", cache_control}, {"today\nWhat?"}]`; if the plugin had added or removed a newline, the marker would sit on the single merged block instead
+
+#### Scenario: Client conflict with automatic caching
+
+- GIVEN top-level `cache_control` (5m) and a last user block with `cache_control` 1h, sent by the client
+- WHEN re-encoded as Anthropic
+- THEN the marker is kept and Anthropic answers as it would on passthrough
 
 #### Scenario: Image before text
 

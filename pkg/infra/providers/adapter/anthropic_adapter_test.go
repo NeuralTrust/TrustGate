@@ -1179,84 +1179,232 @@ func TestAnthropicRequest_CacheMarkerKeepsItsBlockBoundary(t *testing.T) {
 	}
 }
 
-func TestAnthropicRequest_ExplicitMarkerNeverConflictsWithAutomaticCaching(t *testing.T) {
+func reencodeAnthropicEdited(t *testing.T, body string, edit func(*CanonicalRequest)) anthropicRawBody {
+	t.Helper()
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	if edit != nil {
+		edit(cr)
+	}
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRawBody
+	require.NoError(t, json.Unmarshal(out, &got))
+	return got
+}
+
+func TestAnthropicRequest_CacheBoundarySurvivesTextRewrites(t *testing.T) {
 	t.Parallel()
 
-	stable := `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`
-	got := reencodeAnthropic(t, `{"model":"claude-haiku-4-5","max_tokens":5,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":`+stable+`}]}`)
-	assert.JSONEq(t, `{"type":"ephemeral"}`, string(got.CacheControl))
-	require.Len(t, got.Messages, 1)
-	assert.JSONEq(t, stable, string(got.Messages[0].Content), "the 1h marker stays off the last block")
+	const blocks = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"text","text":"today\nWhat?"}]`
+	const toolTurn = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`
+	body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + blocks + `,"messages":[` +
+		`{"role":"user","content":` + blocks + `},` +
+		`{"role":"assistant","content":` + toolTurn + `},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}]}`
+
+	split := func(head, tail string) string {
+		h, _ := json.Marshal(head)
+		tl, _ := json.Marshal(tail)
+		return `[{"type":"text","text":` + string(h) + `,"cache_control":{"type":"ephemeral"}},{"type":"text","text":` + string(tl) + `}]`
+	}
+	whole := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `,"cache_control":{"type":"ephemeral"}}]`
+	}
+	onText := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `,"cache_control":{"type":"ephemeral"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`
+	}
+	onToolUse := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `},{"type":"tool_use","id":"t1","name":"f","input":{},"cache_control":{"type":"ephemeral"}}]`
+	}
 
 	tests := []struct {
-		name    string
-		auto    *CanonicalCacheBreakpoint
-		message CanonicalMessage
-		want    string
+		name          string
+		old, new      string
+		wantText      string
+		wantAssistant string
 	}{
 		{
-			name:    "a boundary a plugin moved falls back to the end",
-			message: CanonicalMessage{Role: "user", Content: "stable, redacted\nvolatile", Cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 6}},
-			want:    `[{"type":"text","text":"stable, redacted\nvolatile","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+			name:          "shorter mask relocates the split",
+			old:           "john@example.com",
+			new:           "[E]",
+			wantText:      split("doc [E]\nline2", "today\nWhat?"),
+			wantAssistant: onText("doc [E]\nline2"),
 		},
 		{
-			name:    "the fallback is dropped when automatic caching uses another TTL",
-			auto:    bp(""),
-			message: CanonicalMessage{Role: "user", Content: "stable, redacted\nvolatile", Cache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 6}},
-			want:    `[{"type":"text","text":"stable, redacted\nvolatile"}]`,
+			name:          "longer mask relocates the split",
+			old:           "john@example.com",
+			new:           "[REDACTED_EMAIL_ADDRESS_0001]",
+			wantText:      split("doc [REDACTED_EMAIL_ADDRESS_0001]\nline2", "today\nWhat?"),
+			wantAssistant: onText("doc [REDACTED_EMAIL_ADDRESS_0001]\nline2"),
 		},
 		{
-			name:    "a marker with the automatic TTL stays on the last block",
-			auto:    bp(CacheTTL5m),
-			message: CanonicalMessage{Role: "user", Content: "tail", Cache: bp("")},
-			want:    `[{"type":"text","text":"tail","cache_control":{"type":"ephemeral"}}]`,
+			name:          "an added newline falls back to the end of the segment",
+			old:           "john@example.com",
+			new:           "john\n[E]",
+			wantText:      whole("doc john\n[E]\nline2\ntoday\nWhat?"),
+			wantAssistant: onToolUse("doc john\n[E]\nline2"),
 		},
 		{
-			name:    "a trailing tool result with another TTL loses its marker",
-			auto:    bp(""),
-			message: CanonicalMessage{Role: "tool", ToolCallID: "t1", Content: "ok", Cache: bp(CacheTTL1h)},
-			want:    `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+			name:          "a removed newline falls back to the end of the segment",
+			old:           "\nline2",
+			new:           " line2",
+			wantText:      whole("doc john@example.com line2\ntoday\nWhat?"),
+			wantAssistant: onToolUse("doc john@example.com line2"),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			req := &CanonicalRequest{Model: "claude-haiku-4-5", Messages: []CanonicalMessage{tt.message}}
-			if tt.auto != nil {
-				req.CacheOptions = &CanonicalCacheOptions{Auto: tt.auto}
-			}
-			out, err := (&AnthropicAdapter{}).EncodeRequest(req)
-			require.NoError(t, err)
-			var got anthropicRawBody
-			require.NoError(t, json.Unmarshal(out, &got))
-			require.Len(t, got.Messages, 1)
-			assert.JSONEq(t, tt.want, string(got.Messages[0].Content))
+			got := reencodeAnthropicEdited(t, body, func(cr *CanonicalRequest) {
+				cr.System = strings.Replace(cr.System, tt.old, tt.new, 1)
+				for i := range cr.Messages {
+					cr.Messages[i].Content = strings.Replace(cr.Messages[i].Content, tt.old, tt.new, 1)
+				}
+			})
+			assert.JSONEq(t, tt.wantText, string(got.System))
+			require.Len(t, got.Messages, 3)
+			assert.JSONEq(t, tt.wantText, string(got.Messages[0].Content))
+			assert.JSONEq(t, tt.wantAssistant, string(got.Messages[1].Content))
 		})
 	}
 }
 
-func TestAnthropicSplitAtCacheOffset_RefusesUnsafeSplits(t *testing.T) {
+func TestAnthropicRequest_AutomaticCachingConflicts(t *testing.T) {
 	t.Parallel()
 
+	const auto = `"cache_control":{"type":"ephemeral"},`
 	tests := []struct {
-		name   string
-		text   string
-		offset int
-		ok     bool
+		name    string
+		content string
+		edit    func(*CanonicalRequest)
+		want    string
 	}{
-		{name: "intact boundary", text: "a\nb", offset: 1, ok: true},
-		{name: "end of text", text: "a\nb", offset: 3, ok: true},
-		{name: "no offset", text: "a\nb", offset: 0},
-		{name: "past the end", text: "a\nb", offset: 4},
-		{name: "not the joiner", text: "ab\nc", offset: 1},
-		{name: "blank tail", text: "a\n ", offset: 1},
-		{name: "blank head", text: " \nb", offset: 1},
+		{
+			name:    "a 1h marker before the last block stays in place",
+			content: `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`,
+		},
+		{
+			name:    "a client conflict on the last text block passes unchanged",
+			content: `[{"type":"text","text":"a"},{"type":"text","text":"b","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+			want:    `[{"type":"text","text":"a\nb","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:    "a client conflict on the last tool result passes unchanged",
+			content: `[{"type":"tool_result","tool_use_id":"t1","content":"ok","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:    "a marker that fell back to the last block is dropped",
+			content: `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Content = strings.Replace(cr.Messages[len(cr.Messages)-1].Content, "volatile tail", "volatile\ntail", 1)
+			},
+			want: `[{"type":"text","text":"stable\nvolatile\ntail"}]`,
+		},
+		{
+			name:    "a TTL raised by merging markers is dropped from the last block",
+			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"b","cache_control":{"type":"ephemeral"}}]`,
+			want:    `[{"type":"text","text":"a\nb"}]`,
+		},
+		{
+			name:    "a marker with the automatic TTL stays on the last block",
+			content: `[{"type":"text","text":"tail"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Cache = bp(CacheTTL5m)
+			},
+			want: `[{"type":"text","text":"tail","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+		},
+		{
+			name:    "a conflicting marker a plugin added is dropped",
+			content: `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Cache = bp(CacheTTL1h)
+			},
+			want: `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, _, ok := anthropicSplitAtCacheOffset(tt.text, &CanonicalCacheBreakpoint{Offset: tt.offset})
+			body := `{"model":"claude-haiku-4-5","max_tokens":5,` + auto + `"messages":[` +
+				`{"role":"user","content":"q"},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},` +
+				`{"role":"user","content":` + tt.content + `}]}`
+			got := reencodeAnthropicEdited(t, body, tt.edit)
+			assert.JSONEq(t, `{"type":"ephemeral"}`, string(got.CacheControl))
+			require.Len(t, got.Messages, 3)
+			want := tt.want
+			if want == "" {
+				want = tt.content
+			}
+			assert.JSONEq(t, want, string(got.Messages[2].Content))
+		})
+	}
+}
+
+func TestAnthropicRequest_BlankSystemBlocks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		system     string
+		wantSystem string
+	}{
+		{
+			name:       "a marker on a blank first block is dropped",
+			system:     `[{"type":"text","text":" \n","cache_control":{"type":"ephemeral"}},{"type":"text","text":"A"},{"type":"text","text":"B"}]`,
+			wantSystem: `"A\nB"`,
+		},
+		{
+			name:       "a marker on a later blank block moves to the text before it",
+			system:     `[{"type":"text","text":"A"},{"type":"text","text":" ","cache_control":{"type":"ephemeral"}},{"type":"text","text":"B"}]`,
+			wantSystem: `[{"type":"text","text":"A","cache_control":{"type":"ephemeral"}},{"type":"text","text":"B"}]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := reencodeAnthropic(t, `{"model":"claude-haiku-4-5","max_tokens":5,"system":`+tt.system+`,"messages":[{"role":"user","content":"hi"}]}`)
+			assert.JSONEq(t, tt.wantSystem, string(got.System))
+		})
+	}
+}
+
+func TestAnthropicSplitAtCacheBoundary_RefusesUnsafeSplits(t *testing.T) {
+	t.Parallel()
+
+	at := func(newline, newlines int) *CanonicalCacheBreakpoint {
+		return &CanonicalCacheBreakpoint{inText: true, newline: newline, newlines: newlines}
+	}
+	tests := []struct {
+		name       string
+		text       string
+		bp         *CanonicalCacheBreakpoint
+		head, tail string
+		ok         bool
+	}{
+		{name: "first joiner", text: "a\nb\nc", bp: at(0, 2), head: "a", tail: "b\nc", ok: true},
+		{name: "second joiner", text: "a\nb\nc", bp: at(1, 2), head: "a\nb", tail: "c", ok: true},
+		{name: "last text block", text: "a\nb", bp: at(1, 1), head: "a\nb", ok: true},
+		{name: "end of segment", text: "a\nb", bp: &CanonicalCacheBreakpoint{}},
+		{name: "nil", text: "a\nb"},
+		{name: "newline count changed", text: "a\nb\nc", bp: at(0, 1)},
+		{name: "index past the count", text: "a\nb", bp: at(2, 1)},
+		{name: "blank tail", text: "a\n ", bp: at(0, 1)},
+		{name: "blank head", text: " \nb", bp: at(0, 1)},
+		{name: "blank last block", text: " ", bp: at(0, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			head, tail, ok := anthropicSplitAtCacheBoundary(tt.text, tt.bp)
 			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.head, head)
+			assert.Equal(t, tt.tail, tail)
 		})
 	}
 }
