@@ -982,7 +982,7 @@ func TestAdaptRequest_OpenAIChatTargetsDropBreakpoints(t *testing.T) {
 		want     string
 	}{
 		{target: FormatOpenAI, provider: provider.OpenAI, want: `"prompt_cache_key":"k1","prompt_cache_retention":"24h"}`},
-		{target: FormatAzure, provider: provider.Azure, want: `"prompt_cache_key":"k1"}`},
+		{target: FormatAzure, provider: provider.Azure, want: `"prompt_cache_key":"k1","prompt_cache_retention":"24h"}`},
 		{target: FormatXAI, provider: provider.XAI},
 		{target: FormatOpenAI, provider: provider.Cerebras},
 		{target: FormatOpenAI, provider: provider.OpenAICompatible},
@@ -1100,7 +1100,7 @@ func TestAdaptRequest_SameWireCacheFieldsPassThroughUnchanged(t *testing.T) {
 	t.Parallel()
 
 	reg := NewRegistry()
-	for _, target := range []Format{FormatOpenAI, FormatAzure, FormatXAI} {
+	for _, target := range []Format{FormatOpenAI, FormatAzure, FormatXAI, FormatGroq, FormatOpenRouter, FormatDeepSeek} {
 		out, err := reg.AdaptRequest([]byte(chatCachedRequest), FormatOpenAI, target)
 		require.NoError(t, err)
 		assert.Equal(t, chatCachedRequest, string(out))

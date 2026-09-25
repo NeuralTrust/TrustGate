@@ -187,11 +187,11 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 6 (S3): request passthrough and pass-through fixes
 
-- [ ] 6.1 `format.go`/`registry.go`: `ShouldPassthroughRequest`; `AdaptRequest` uses it; responses keep `ShouldPassthroughSameWireFormat`.
-- [ ] 6.2 `pkg/app/proxy/provider.go:326`: request predicate.
-- [ ] 6.3 `cache_intent.go`: OpenRouter and Mistral rows.
-- [ ] 6.4 `providers/azure/client.go`: on 400 naming `prompt_cache_retention`, retry once key-only (D5); with the fallback in place, add retention back to the Azure profile row (S2b sends the key only).
-- [ ] 6.5 Tests: openai→groq/openrouter byte-equal request; routing keys; `groq_adapter_test.go:179-215`, `openrouter_adapter_test.go:192-245` green; Mistral key; Responses→Azure Chat key+retention and 400 fallback.
+- [x] 6.1 `format.go`/`registry.go`: `ShouldPassthroughRequest`; `AdaptRequest` uses it; responses keep `ShouldPassthroughSameWireFormat`.
+- [x] 6.2 `pkg/app/proxy/provider.go:326`: request predicate.
+- [x] 6.3 `cache_intent.go`: OpenRouter and Mistral rows.
+- [x] 6.4 `providers/azure/client.go`: on 400 naming `prompt_cache_retention`, retry once key-only (D5); with the fallback in place, add retention back to the Azure profile row (S2b sends the key only).
+- [x] 6.5 Tests: openai→groq/openrouter byte-equal request; routing keys; `groq_adapter_test.go:179-215`, `openrouter_adapter_test.go:192-245` green; Mistral key; Responses→Azure Chat key+retention and 400 fallback.
 - [ ] 6.6 V1 (adapter, `pkg/app/proxy`, azure); V2; V3; V4 **Groq, OpenRouter (Claude + OpenAI upstreams), Mistral, Azure**; V5.
 
 ## Phase 7 (S4a): Bedrock cachePoint wire and SDK

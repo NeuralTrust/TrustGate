@@ -90,10 +90,10 @@ When source and target differ, intent MUST map where the target has an equivalen
 | Anthropic | mapped, TTL kept | dropped | mapped |
 | Bedrock | `cachePoint` (see bedrock-prompt-caching) | dropped | dropped |
 | OpenAI Chat (provider `openai`) | dropped deliberately (OpenAI rejects parts-level `cache_control`) | Key always; `prompt_cache_options` only on GPT-5.6+; Retention only before GPT-5.6 | dropped |
-| Azure Chat or Responses (provider `azure`) | dropped (the model is usually a deployment name, so the GPT-5.6 gate cannot be trusted) | Key only; Retention returns with the S3 400 fallback (task 6.4) | dropped |
+| Azure Chat or Responses (provider `azure`) | dropped (the model is usually a deployment name, so the GPT-5.6 gate cannot be trusted) | Key, plus Retention unless the model name reads GPT-5.6+; a 400 naming `prompt_cache_retention` is retried once key-only | dropped |
 | OpenAI Responses (provider `openai`), GPT-5.6+ | `prompt_cache_breakpoint` on system, user and tool-output messages; assistant and image markers dropped before the cap | Key and `prompt_cache_options` mapped, Retention dropped | dropped |
 | OpenAI Responses (provider `openai`), other models | dropped | Key and Retention mapped, `prompt_cache_options` dropped | dropped |
-| OpenRouter | parts-level `cache_control` (the only Chat target that gets it), TTL kept | dropped | top-level `cache_control` |
+| OpenRouter | parts-level `cache_control` on system and messages (the only Chat target that gets it) for `anthropic/*` (TTL kept), `google/gemini*`, `qwen/*` and `openai/` GPT-5.6+ (5m); none for other models; tool and image markers dropped | dropped | top-level `cache_control` for `anthropic/*` only |
 | Mistral | dropped | Key → `prompt_cache_key` | dropped |
 | Gemini / Vertex, Cohere, xAI Chat (caches by the `x-grok-conv-id` header), and any other provider on `FormatOpenAI` (Cerebras, openai_compatible) | dropped | dropped | dropped |
 
@@ -111,7 +111,7 @@ The OpenAI-family rows are chosen by the provider that serves the target, not by
 - GIVEN the same request routed to OpenAI Chat, Azure, xAI, Cerebras, openai_compatible, or Responses with `gpt-4o`
 - WHEN translated
 - THEN no per-block marker is sent and the request succeeds
-- AND OpenAI and Responses get the key with Retention before GPT-5.6 or `prompt_cache_options` from GPT-5.6, Azure gets the key only, and xAI, Cerebras and openai_compatible get no cache key
+- AND OpenAI and Responses get the key with Retention before GPT-5.6 or `prompt_cache_options` from GPT-5.6, Azure gets the key with Retention (retried key-only on a 400 naming it), and xAI, Cerebras and openai_compatible get no cache key
 
 #### Scenario: Explicit mode without breakpoints
 

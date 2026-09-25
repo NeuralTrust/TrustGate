@@ -318,7 +318,7 @@ func (p *providerInvoker) prepare(
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
 
 	body := req.Body
-	if crossFormat {
+	if !adapter.ShouldPassthroughRequest(sourceFormat, targetFormat) {
 		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), req.DefaultModel, capability)
 		if err != nil {
 			var contentErr *adapter.UnsupportedContentError

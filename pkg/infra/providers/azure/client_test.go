@@ -16,6 +16,9 @@ package azure
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -641,4 +644,105 @@ func TestRawPost_BackendErrorPassthrough(t *testing.T) {
 	be, ok := registry.IsBackendError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusInternalServerError, be.StatusCode)
+}
+
+func TestCompletions_RetriesWithoutRetentionWhenAzureRejectsIt(t *testing.T) {
+	const retentionError = `{"error":{"message":"Unrecognized request argument supplied: prompt_cache_retention","type":"invalid_request_error","param":"prompt_cache_retention"}}`
+	const body = `{"model":"dep","prompt_cache_key":"k1","prompt_cache_retention":"24h","messages":[{"role":"user","content":"hi"}]}`
+
+	tests := []struct {
+		name       string
+		body       string
+		status     int
+		errBody    string
+		wantBodies []string
+		wantErr    bool
+	}{
+		{
+			name:       "retention rejected retries key-only once",
+			body:       body,
+			status:     http.StatusBadRequest,
+			errBody:    retentionError,
+			wantBodies: []string{body, `{"model":"dep","prompt_cache_key":"k1","messages":[{"role":"user","content":"hi"}]}`},
+		},
+		{
+			name:       "other 400 is returned as is",
+			body:       body,
+			status:     http.StatusBadRequest,
+			errBody:    `{"error":{"message":"max_tokens is too large"}}`,
+			wantBodies: []string{body},
+			wantErr:    true,
+		},
+		{
+			name:       "500 naming the field is not retried",
+			body:       body,
+			status:     http.StatusInternalServerError,
+			errBody:    retentionError,
+			wantBodies: []string{body},
+			wantErr:    true,
+		},
+		{
+			name:       "body without retention is not retried",
+			body:       `{"model":"dep","messages":[{"role":"user","content":"hi"}]}`,
+			status:     http.StatusBadRequest,
+			errBody:    retentionError,
+			wantBodies: []string{`{"model":"dep","messages":[{"role":"user","content":"hi"}]}`},
+			wantErr:    true,
+		},
+	}
+
+	for _, stream := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s stream=%v", tt.name, stream), func(t *testing.T) {
+				var got []string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					b, _ := io.ReadAll(r.Body)
+					got = append(got, string(b))
+					if len(got) == 1 {
+						w.WriteHeader(tt.status)
+						_, _ = w.Write([]byte(tt.errBody))
+						return
+					}
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = w.Write([]byte("data: {\"id\":\"az-1\"}\n\ndata: [DONE]\n\n"))
+						return
+					}
+					_, _ = w.Write([]byte(`{"id":"az-1"}`))
+				}))
+				t.Cleanup(srv.Close)
+
+				cfg := &providers.Config{Credentials: providers.Credentials{
+					ApiKey: "k",
+					Azure:  &providers.Azure{Endpoint: srv.URL, AuthMode: providers.AzureAuthModeAPIKey},
+				}}
+				c := &client{pool: providers.NewHTTPClientPool()}
+
+				var err error
+				if stream {
+					var seq iter.Seq2[[]byte, error]
+					seq, err = c.CompletionsStream(context.Background(), cfg, []byte(tt.body))
+					if err == nil {
+						for _, serr := range seq {
+							require.NoError(t, serr)
+						}
+					}
+				} else {
+					_, err = c.Completions(context.Background(), cfg, []byte(tt.body))
+				}
+
+				if tt.wantErr {
+					be, ok := registry.IsBackendError(err)
+					require.True(t, ok, "%v", err)
+					assert.Equal(t, tt.status, be.StatusCode)
+				} else {
+					require.NoError(t, err)
+				}
+				require.Len(t, got, len(tt.wantBodies))
+				for i := range got {
+					assert.JSONEq(t, tt.wantBodies[i], got[i])
+				}
+			})
+		}
+	}
 }
