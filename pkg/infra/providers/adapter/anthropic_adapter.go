@@ -288,20 +288,17 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		return []CanonicalMessage{{Role: role, Content: contentToString(content)}}
 	}
 	var out []CanonicalMessage
+	var text anthropicTextJoin
 	switch role {
 	case "user":
-		var textParts []string
 		var images []CanonicalImage
 		var toolMessages []CanonicalMessage
-		var cache *CanonicalCacheBreakpoint
 		for _, b := range blocks {
-			if b.Type != "tool_result" {
-				cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
-			}
 			switch b.Type {
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
+					text.mark(b.CacheControl, true)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
@@ -315,40 +312,40 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 					Cache:      anthropicCacheBreakpoint(b.CacheControl),
 				})
 			case "text":
-				textParts = append(textParts, b.Text)
+				text.add(b.Text)
+				text.mark(b.CacheControl, false)
 			}
 		}
 		out = append(out, toolMessages...)
-		if len(textParts) > 0 || len(images) > 0 {
+		if len(text.parts) > 0 || len(images) > 0 {
 			out = append(out, CanonicalMessage{
 				Role:    "user",
-				Content: strings.Join(textParts, "\n"),
+				Content: text.String(),
 				Images:  images,
-				Cache:   cache,
+				Cache:   text.cache,
 			})
 		}
 	case "assistant":
-		var textParts []string
 		var toolCalls []CanonicalToolCall
-		var cache *CanonicalCacheBreakpoint
 		for _, b := range blocks {
-			cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
 			switch b.Type {
 			case "text":
-				textParts = append(textParts, b.Text)
+				text.add(b.Text)
+				text.mark(b.CacheControl, false)
 			case "tool_use":
 				toolCalls = append(toolCalls, CanonicalToolCall{
 					ID:        b.ID,
 					Name:      b.Name,
 					Arguments: string(b.Input),
 				})
+				text.mark(b.CacheControl, true)
 			}
 		}
 		out = append(out, CanonicalMessage{
 			Role:      "assistant",
-			Content:   strings.Join(textParts, "\n"),
+			Content:   text.String(),
 			ToolCalls: toolCalls,
-			Cache:     cache,
+			Cache:     text.cache,
 		})
 	default:
 		out = append(out, CanonicalMessage{
@@ -357,6 +354,74 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		})
 	}
 	return out
+}
+
+// anthropicTextJoin merges the text blocks of one segment with "\n" and keeps
+// a single cache marker for it, remembering the block boundary it sat on.
+// Markers on block types the canonical model drops (thinking, documents,
+// server tool blocks) are dropped with the block.
+type anthropicTextJoin struct {
+	parts []string
+	size  int
+	cache *CanonicalCacheBreakpoint
+}
+
+func (j *anthropicTextJoin) add(text string) {
+	if len(j.parts) > 0 {
+		j.size++
+	}
+	j.parts = append(j.parts, text)
+	j.size += len(text)
+}
+
+func (j *anthropicTextJoin) mark(cc *anthropicCacheControl, atEnd bool) {
+	bp := anthropicCacheBreakpoint(cc)
+	if bp == nil {
+		return
+	}
+	if !atEnd {
+		bp.Offset = j.size
+	}
+	j.cache = laterCacheBreakpoint(j.cache, bp)
+}
+
+func (j *anthropicTextJoin) String() string {
+	return strings.Join(j.parts, "\n")
+}
+
+// anthropicTextBlocks emits text as text blocks, splitting it at the marker's
+// offset when the boundary is still intact. It reports whether the marker was
+// placed; when it was not, the caller puts it on the segment's last block.
+func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropicContentBlock, bool) {
+	if text == "" {
+		return nil, false
+	}
+	head, tail, ok := anthropicSplitAtCacheOffset(text, bp)
+	if !ok {
+		return []anthropicContentBlock{{Type: "text", Text: text}}, false
+	}
+	blocks := []anthropicContentBlock{{Type: "text", Text: head, CacheControl: anthropicCacheControlFrom(bp)}}
+	if tail != "" {
+		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: tail})
+	}
+	return blocks, true
+}
+
+// anthropicSplitAtCacheOffset refuses a split whose boundary a plugin may have
+// moved (the byte at the offset is no longer the "\n" joiner) or that would
+// leave a blank block, which Anthropic rejects.
+func anthropicSplitAtCacheOffset(text string, bp *CanonicalCacheBreakpoint) (head, tail string, ok bool) {
+	if bp == nil || bp.Offset <= 0 || bp.Offset > len(text) {
+		return "", "", false
+	}
+	if bp.Offset == len(text) {
+		return text, "", true
+	}
+	head, tail = text[:bp.Offset], text[bp.Offset+1:]
+	if text[bp.Offset] != '\n' || strings.TrimSpace(head) == "" || strings.TrimSpace(tail) == "" {
+		return "", "", false
+	}
+	return head, tail, true
 }
 
 func anthropicImageToCanonical(raw json.RawMessage) (CanonicalImage, bool) {
@@ -395,15 +460,17 @@ func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
 	return anthropicContentBlock{Type: "image", Source: raw}, nil
 }
 
-func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
+// anthropicMessageBlocks returns nil when the message goes out as a plain
+// string.
+func anthropicMessageBlocks(m CanonicalMessage) ([]anthropicContentBlock, error) {
 	images := m.Images
 	if m.Role != "user" {
 		images = nil
 	}
 	if len(images) == 0 && (m.Cache == nil || m.Content == "") {
-		return stringToContent(m.Content), nil
+		return nil, nil
 	}
-	blocks := make([]anthropicContentBlock, 0, len(images)+1)
+	blocks := make([]anthropicContentBlock, 0, len(images)+2)
 	for _, img := range images {
 		b, err := anthropicImageBlock(img)
 		if err != nil {
@@ -411,11 +478,100 @@ func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
 		}
 		blocks = append(blocks, b)
 	}
-	if m.Content != "" {
-		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
+	text, placed := anthropicTextBlocks(m.Content, m.Cache)
+	blocks = append(blocks, text...)
+	if !placed {
+		blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
 	}
-	blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
-	return json.Marshal(blocks)
+	return blocks, nil
+}
+
+// anthropicMessages collapses consecutive canonical Role="tool" messages into
+// one Anthropic "user" message with tool_result blocks, and sends assistant
+// tool calls as text + tool_use blocks so Anthropic can match each tool_result
+// to the previous message's tool_use.
+func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]anthropicMessage, error) {
+	type turn struct {
+		role   string
+		text   string
+		blocks []anthropicContentBlock
+	}
+	turns := make([]turn, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		switch {
+		case m.Role == "tool":
+			var blocks []anthropicContentBlock
+			for ; i < len(msgs) && msgs[i].Role == "tool"; i++ {
+				content, _ := json.Marshal(msgs[i].Content)
+				blocks = append(blocks, anthropicContentBlock{
+					Type:         "tool_result",
+					ToolUseID:    msgs[i].ToolCallID,
+					Content:      content,
+					CacheControl: anthropicCacheControlFrom(msgs[i].Cache),
+				})
+			}
+			i--
+			turns = append(turns, turn{role: "user", blocks: blocks})
+		case m.Role == "assistant" && len(m.ToolCalls) > 0:
+			blocks, placed := anthropicTextBlocks(m.Content, m.Cache)
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, anthropicContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: anthropicToolInput(tc.Arguments),
+				})
+			}
+			if !placed {
+				blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
+			}
+			turns = append(turns, turn{role: "assistant", blocks: blocks})
+		default:
+			blocks, err := anthropicMessageBlocks(m)
+			if err != nil {
+				return nil, err
+			}
+			turns = append(turns, turn{role: m.Role, text: m.Content, blocks: blocks})
+		}
+	}
+	if len(turns) > 0 && opts != nil {
+		dropCacheControlConflictingWithAuto(turns[len(turns)-1].blocks, opts.Auto)
+	}
+
+	out := make([]anthropicMessage, 0, len(turns))
+	for _, t := range turns {
+		content := stringToContent(t.text)
+		if t.blocks != nil {
+			raw, err := json.Marshal(t.blocks)
+			if err != nil {
+				return nil, fmt.Errorf("encode anthropic %s message: %w", t.role, err)
+			}
+			content = raw
+		}
+		out = append(out, anthropicMessage{Role: t.role, Content: content})
+	}
+	return out, nil
+}
+
+// dropCacheControlConflictingWithAuto removes an explicit marker on the last
+// block when top-level automatic caching would put a different TTL on that
+// same block: Anthropic answers 400 to that combination.
+func dropCacheControlConflictingWithAuto(blocks []anthropicContentBlock, auto *CanonicalCacheBreakpoint) {
+	if auto == nil || len(blocks) == 0 {
+		return
+	}
+	last := &blocks[len(blocks)-1]
+	if last.CacheControl != nil && anthropicEffectiveTTL(CacheTTL(last.CacheControl.TTL)) != anthropicEffectiveTTL(auto.TTL) {
+		last.CacheControl = nil
+	}
+}
+
+func anthropicEffectiveTTL(ttl CacheTTL) CacheTTL {
+	if ttl == "" {
+		return CacheTTL5m
+	}
+	return ttl
 }
 
 // Request: Decode (Anthropic → Canonical)
@@ -503,64 +659,11 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 		out.MaxTokens = defaultAnthropicMaxTokens
 	}
 
-	// Messages: collapse canonical Role="tool" messages into one Anthropic "user" message with tool_result blocks
-	for i := 0; i < len(req.Messages); i++ {
-		m := req.Messages[i]
-		if m.Role == "tool" {
-			var toolResultBlocks []anthropicContentBlock
-			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
-				content, _ := json.Marshal(req.Messages[i].Content)
-				toolResultBlocks = append(toolResultBlocks, anthropicContentBlock{
-					Type:         "tool_result",
-					ToolUseID:    req.Messages[i].ToolCallID,
-					Content:      content,
-					CacheControl: anthropicCacheControlFrom(req.Messages[i].Cache),
-				})
-				i++
-			}
-			i-- // loop will i++ again
-			raw, _ := json.Marshal(toolResultBlocks)
-			out.Messages = append(out.Messages, anthropicMessage{
-				Role:    "user",
-				Content: raw,
-			})
-			continue
-		}
-		// Assistant messages with tool_calls must send content as array of blocks (text + tool_use)
-		// so Anthropic can match tool_result blocks to the previous message's tool_use.
-		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			var blocks []anthropicContentBlock
-			if m.Content != "" {
-				blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
-			}
-			for _, tc := range m.ToolCalls {
-				blocks = append(blocks, anthropicContentBlock{
-					Type:  "tool_use",
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: anthropicToolInput(tc.Arguments),
-				})
-			}
-			blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
-			raw, err := json.Marshal(blocks)
-			if err != nil {
-				return nil, fmt.Errorf("encode anthropic assistant message: %w", err)
-			}
-			out.Messages = append(out.Messages, anthropicMessage{
-				Role:    "assistant",
-				Content: raw,
-			})
-			continue
-		}
-		content, err := anthropicMessageContent(m)
-		if err != nil {
-			return nil, err
-		}
-		out.Messages = append(out.Messages, anthropicMessage{
-			Role:    m.Role,
-			Content: content,
-		})
+	messages, err := anthropicMessages(req.Messages, req.CacheOptions)
+	if err != nil {
+		return nil, err
 	}
+	out.Messages = messages
 
 	// Tools: use flat format (name, input_schema, description at top level) — matches working Anthropic requests
 	for i, t := range req.Tools {
@@ -877,23 +980,25 @@ func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return "", nil
+		}
 		return s, nil
 	}
 	var blocks []anthropicContentBlock
 	if json.Unmarshal(raw, &blocks) != nil {
 		return contentToString(raw), nil
 	}
-	parts := make([]string, 0, len(blocks))
-	var cache *CanonicalCacheBreakpoint
+	var text anthropicTextJoin
 	for _, b := range blocks {
 		if b.Type == "" || b.Type == "text" {
 			if strings.TrimSpace(b.Text) != "" {
-				parts = append(parts, b.Text)
+				text.add(b.Text)
 			}
-			cache = longerCacheBreakpoint(cache, anthropicCacheBreakpoint(b.CacheControl))
+			text.mark(b.CacheControl, false)
 		}
 	}
-	return strings.Join(parts, "\n"), cache
+	return text.String(), text.cache
 }
 
 func anthropicSystemRaw(system string, cache *CanonicalCacheBreakpoint) json.RawMessage {
@@ -902,7 +1007,11 @@ func anthropicSystemRaw(system string, cache *CanonicalCacheBreakpoint) json.Raw
 	}
 	var v any = system
 	if cache != nil {
-		v = []anthropicContentBlock{{Type: "text", Text: system, CacheControl: anthropicCacheControlFrom(cache)}}
+		blocks, placed := anthropicTextBlocks(system, cache)
+		if !placed {
+			blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(cache)
+		}
+		v = blocks
 	}
 	raw, err := json.Marshal(v)
 	if err != nil {

@@ -158,6 +158,20 @@ func TestApplyInjections(t *testing.T) {
 			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
 		},
 		{
+			name: "gateway wins keeps the client's cache marker on the replaced tool",
+			tools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "client", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
+			},
+			entries:  []injectDef{injectFn("safety_check", "gateway")},
+			conflict: conflictGatewayWins,
+			wantTools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "gateway", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
+			},
+			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
+		},
+		{
 			name:     "client name collision client wins drops",
 			tools:    []adapter.CanonicalTool{{Name: "safety_check", Description: "client"}},
 			entries:  []injectDef{injectFn("safety_check", "gateway")},

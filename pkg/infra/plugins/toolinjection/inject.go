@@ -64,6 +64,7 @@ func applyInjections(
 		}
 		switch conflict {
 		case conflictGatewayWins:
+			ct.Cache = tools[idx].Cache
 			tools[idx] = ct
 			outcomes = append(outcomes, injectOutcome{Name: ct.Name, Outcome: outcomeReplaced})
 		case conflictClientWins:

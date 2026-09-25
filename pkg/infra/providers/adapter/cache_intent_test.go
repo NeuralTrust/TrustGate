@@ -245,3 +245,34 @@ func TestAdaptRequest_AnthropicSystemTextIsByteStableAcrossClientFormats(t *test
 	assert.Equal(t, system, systemOf(fromAnthropic))
 	assert.Equal(t, systemOf(fromOpenAI), systemOf(fromAnthropic))
 }
+
+func TestNormalizeCacheIntent_DroppedBreakpointsDoNotDowngradeTheRest(t *testing.T) {
+	t.Parallel()
+
+	req := &CanonicalRequest{
+		System:      "s",
+		SystemCache: bp(CacheTTL1h),
+		Tools:       []CanonicalTool{{Name: "t", Cache: bp(CacheTTL1h)}},
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "a", Cache: bp(CacheTTL5m)},
+			{Role: "assistant", Content: "b", Cache: bp(CacheTTL1h)},
+			{Role: "user", Content: "c", Cache: bp(CacheTTL1h)},
+		},
+	}
+	normalizeCacheIntent(req, FormatAnthropic)
+
+	assert.Equal(t, []any{nil, CacheTTL1h, CacheTTL1h}, messageTTLs(req.Messages))
+	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
+}
+
+func TestNormalizeCacheIntent_KeepsTheBoundaryOffset(t *testing.T) {
+	t.Parallel()
+
+	req := &CanonicalRequest{
+		System:      "a\nb",
+		SystemCache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 1},
+		Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp("")}},
+	}
+	normalizeCacheIntent(req, FormatAnthropic)
+	assert.Equal(t, &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 1}, req.SystemCache)
+}

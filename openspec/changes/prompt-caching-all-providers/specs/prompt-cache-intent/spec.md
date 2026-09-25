@@ -24,13 +24,29 @@ Anthropic, OpenAI Chat and OpenAI Responses MUST round-trip intent (decode → e
 | OpenAI Chat | parts-level `cache_control` (OpenRouter-style) | `prompt_cache_key`, `prompt_cache_retention`, `prompt_cache_options` |
 | OpenAI Responses | `prompt_cache_breakpoint` on an input part | same three keys |
 
-The encoder MUST attach a breakpoint to the last block it emits for the segment (after ENG-1608 images). Several system breakpoints collapse to one at the end of system.
+A decoder that merges several text blocks of a segment into one string MUST record where the marked block ended (`Offset`: bytes up to and including that block, without the `"\n"` joiner). The Anthropic encoder MUST split the text at that offset into two text blocks, marker on the first, so the marker never covers content that followed its block. Without an offset the encoder attaches the breakpoint to the last block it emits for the segment (after ENG-1608 images). Several markers in one segment collapse to one: the last position, with the longest TTL. Encoders for other targets ignore `Offset` until their slice.
+
+If the offset no longer lands on a joiner (a plugin changed the text) or a split would leave a blank block, the marker moves to the end of the segment. When top-level automatic caching is on and an explicit marker would end up on the last block of the last message with a different TTL, the encoder MUST drop the explicit marker (Anthropic rejects the pair with 400).
+
+Markers on block types the canonical model drops (`thinking`, `redacted_thinking`, `document`, server tool blocks) are dropped with the block. A whitespace-only string `system` decodes to `""`; non-blank system text stays byte-exact.
 
 #### Scenario: Anthropic round-trip, buffered and streaming request
 
 - GIVEN a `/v1/messages` body with `cache_control` (1h) on the last system block, the last tool and the last user block
 - WHEN decoded and re-encoded as Anthropic, with `stream` false and true
 - THEN the three markers and TTLs are present at the same positions
+
+#### Scenario: Marker before volatile text
+
+- GIVEN a system `[{"Static", cache_control}, {"Current time: …"}]` and a user message `[{"Big document", cache_control}, {"Question?"}]`
+- WHEN decoded and re-encoded as Anthropic
+- THEN both segments are emitted as the original two blocks, byte for byte, with the marker on the first
+
+#### Scenario: Automatic caching next to a 1h marker
+
+- GIVEN top-level `cache_control` (5m) and a user message `[{"stable", 1h}, {"volatile"}]`
+- WHEN re-encoded as Anthropic
+- THEN the 1h marker stays on "stable" and the request is accepted (200)
 
 #### Scenario: Image before text
 
@@ -86,7 +102,7 @@ When source and target differ, intent MUST map where the target has an equivalen
 
 ### Requirement: Precedence and limits
 
-Client markers MUST always win over any gateway default. For targets with a maximum (Anthropic and Bedrock: 4), the encoder MUST keep order tools → system → messages and, when over the limit, drop the earliest message breakpoints first, keeping the last breakpoint of each section. A 1h breakpoint that follows a 5m breakpoint in that order MUST be downgraded to 5m.
+Client markers MUST always win over any gateway default. For targets with a maximum (Anthropic and Bedrock: 4), the encoder MUST keep order tools → system → messages → automatic and, when over the limit, drop the earliest message breakpoints first, then the earliest tool breakpoints, always keeping the last breakpoint of each section; system and automatic are never dropped, so one breakpoint per section always fits. The cap runs first. Then a 1h breakpoint that follows a 5m or default breakpoint in that order MUST be downgraded to 5m, so a dropped breakpoint never downgrades the ones that stay.
 
 #### Scenario: Six breakpoints to Anthropic
 
@@ -99,6 +115,12 @@ Client markers MUST always win over any gateway default. For targets with a maxi
 - GIVEN system 5m and last message 1h
 - WHEN encoded for Anthropic or Bedrock
 - THEN the message breakpoint is emitted as 5m
+
+#### Scenario: Cap before downgrade
+
+- GIVEN tool 1h, system 1h and messages 5m, 1h, 1h
+- WHEN encoded for Anthropic
+- THEN the 5m message breakpoint is dropped and the rest stay 1h
 
 #### Scenario: Same-format passthrough untouched
 
