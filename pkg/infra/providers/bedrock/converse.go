@@ -61,7 +61,12 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 		p.messages = append(p.messages, msg)
 	}
 	for _, s := range req.System {
-		p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberText{Value: s.Text})
+		if s.CachePoint == nil || s.Text != "" {
+			p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberText{Value: s.Text})
+		}
+		if s.CachePoint != nil {
+			p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberCachePoint{Value: sdkCachePoint(s.CachePoint)})
+		}
 	}
 	p.tools = sdkToolConfig(req.ToolConfig)
 	return p, nil
@@ -69,10 +74,17 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 
 // foldSystemIntoFirstTurn moves the system instructions into the first user
 // turn, the way the old prompt templates carried them for models that have no
-// system slot. It reports whether there was anything to fold.
+// system slot. It reports whether there was anything to fold. A system with a
+// cachePoint is moved block by block and not merged into the turn's text, so
+// the cachePoint still ends the system prefix.
 func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	if len(p.system) == 0 {
 		return false
+	}
+	if lead := foldedCachedSystem(p.system); lead != nil {
+		p.system = nil
+		p.prependToFirstTurn(lead)
+		return true
 	}
 	var sb strings.Builder
 	for _, block := range p.system {
@@ -88,23 +100,50 @@ func (p *converseParams) foldSystemIntoFirstTurn() bool {
 		return false
 	}
 	lead := &bedrockTypes.ContentBlockMemberText{Value: sb.String()}
-	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser {
-		first := &p.messages[0]
-		if len(first.Content) > 0 {
-			if text, ok := first.Content[0].(*bedrockTypes.ContentBlockMemberText); ok {
-				lead.Value += "\n\n" + text.Value
-				first.Content[0] = lead
-				return true
+	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser && len(p.messages[0].Content) > 0 {
+		if text, ok := p.messages[0].Content[0].(*bedrockTypes.ContentBlockMemberText); ok {
+			lead.Value += "\n\n" + text.Value
+			p.messages[0].Content[0] = lead
+			return true
+		}
+	}
+	p.prependToFirstTurn([]bedrockTypes.ContentBlock{lead})
+	return true
+}
+
+func foldedCachedSystem(system []bedrockTypes.SystemContentBlock) []bedrockTypes.ContentBlock {
+	var (
+		lead   []bedrockTypes.ContentBlock
+		cached bool
+	)
+	for _, block := range system {
+		switch b := block.(type) {
+		case *bedrockTypes.SystemContentBlockMemberText:
+			if b.Value != "" {
+				lead = append(lead, &bedrockTypes.ContentBlockMemberText{Value: b.Value})
+			}
+		case *bedrockTypes.SystemContentBlockMemberCachePoint:
+			if len(lead) > 0 {
+				lead = append(lead, &bedrockTypes.ContentBlockMemberCachePoint{Value: b.Value})
+				cached = true
 			}
 		}
-		first.Content = append([]bedrockTypes.ContentBlock{lead}, first.Content...)
-		return true
+	}
+	if !cached {
+		return nil
+	}
+	return lead
+}
+
+func (p *converseParams) prependToFirstTurn(lead []bedrockTypes.ContentBlock) {
+	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser {
+		p.messages[0].Content = append(lead, p.messages[0].Content...)
+		return
 	}
 	p.messages = append([]bedrockTypes.Message{{
 		Role:    bedrockTypes.ConversationRoleUser,
-		Content: []bedrockTypes.ContentBlock{lead},
+		Content: lead,
 	}}, p.messages...)
-	return true
 }
 
 // systemUnsupported reports whether Bedrock rejected the request because the
@@ -194,6 +233,8 @@ func sdkMessage(m adapter.ConverseMessage) (bedrockTypes.Message, error) {
 
 func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock, error) {
 	switch {
+	case b.CachePoint != nil:
+		return &bedrockTypes.ContentBlockMemberCachePoint{Value: sdkCachePoint(b.CachePoint)}, nil
 	case b.ToolUse != nil:
 		input, err := sdkDocument(b.ToolUse.Input)
 		if err != nil {
@@ -215,6 +256,16 @@ func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock,
 	default:
 		return nil, nil
 	}
+}
+
+// sdkCachePoint sets Ttl only for 1h; without it Bedrock applies the 5m
+// default.
+func sdkCachePoint(cp *adapter.ConverseCachePoint) bedrockTypes.CachePointBlock {
+	block := bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}
+	if cp.TTL == string(bedrockTypes.CacheTTLOneHour) {
+		block.Ttl = bedrockTypes.CacheTTLOneHour
+	}
+	return block
 }
 
 func sdkImage(img *adapter.ConverseImageBlock) bedrockTypes.ContentBlock {
@@ -300,6 +351,10 @@ func sdkToolConfig(tc *adapter.ConverseToolConfig) *bedrockTypes.ToolConfigurati
 	}
 	out := &bedrockTypes.ToolConfiguration{Tools: make([]bedrockTypes.Tool, 0, len(tc.Tools))}
 	for _, t := range tc.Tools {
+		if t.CachePoint != nil {
+			out.Tools = append(out.Tools, &bedrockTypes.ToolMemberCachePoint{Value: sdkCachePoint(t.CachePoint)})
+			continue
+		}
 		if t.ToolSpec == nil {
 			continue
 		}

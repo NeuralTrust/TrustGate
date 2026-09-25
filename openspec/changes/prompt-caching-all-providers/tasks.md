@@ -196,13 +196,13 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 7 (S4a): Bedrock cachePoint wire and SDK
 
-- [ ] 7.1 `bedrock_adapter.go`: `ConverseCachePoint`; `CachePoint` on content/system/tool; system `Text` omitempty.
-- [ ] 7.2 Same file: encode after tool, after system, last block of marked message; decode back to `Cache`.
-- [ ] 7.2b Same file: a marker on an image (`cachedImageIndex`) puts `cachePoint` right after that image block; then flip `images: true` in the Bedrock `cacheProfileFor` entry (S2b keeps it false, so Bedrock gets the text marker behind the image or none).
-- [ ] 7.3 `bedrock/converse.go`: SDK members (system, content first case, tool); `Ttl` only for 1h.
-- [ ] 7.4 `converse.go` `foldSystemIntoFirstTurn`: prepend `[text, cachePoint]`, no merge.
-- [ ] 7.5 Tests: positions, merge order, fold; rebase vs 1608 conflict map.
-- [ ] 7.6 V1 (adapter, bedrock); V2; V3; V4 **Bedrock** (implicit, 5m, 1h); V5.
+- [x] 7.1 `bedrock_adapter.go`: `ConverseCachePoint`; `CachePoint` on content/system/tool; system `Text` omitempty.
+- [x] 7.2 Same file: encode after tool, after system, last block of marked message; decode back to `Cache`.
+- [x] 7.2b Same file: a marker on an image (`cachedImageIndex`) puts `cachePoint` right after that image block; then flip `images: true` in the Bedrock `cacheProfileFor` entry (S2b keeps it false, so Bedrock gets the text marker behind the image or none).
+- [x] 7.3 `bedrock/converse.go`: SDK members (system, content first case, tool); `Ttl` only for 1h.
+- [x] 7.4 `converse.go` `foldSystemIntoFirstTurn`: prepend `[text, cachePoint]`, no merge.
+- [x] 7.5 Tests: positions, merge order, fold; rebase vs 1608 conflict map.
+- [ ] 7.6 V1 (adapter, bedrock); V2; V3; V4 **Bedrock** (implicit, 5m, 1h); V5. V1 done (gofmt, vet incl. `-tags bedrock_live`, golangci-lint adapter+bedrock, race tests providers/proxy/plugins, `go test ./pkg/...`); V2-V5 pending (AWS credentials expired).
 
 ## Phase 8 (S4b): Bedrock capability table and retry
 

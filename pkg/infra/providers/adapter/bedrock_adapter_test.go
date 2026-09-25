@@ -1053,3 +1053,262 @@ func TestBedrock_DecodeRequest_Image(t *testing.T) {
 		})
 	}
 }
+
+func converseSections(t *testing.T, body []byte) (system, tools string, messages []string) {
+	t.Helper()
+	var req struct {
+		System     json.RawMessage `json:"system"`
+		ToolConfig struct {
+			Tools json.RawMessage `json:"tools"`
+		} `json:"toolConfig"`
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &req))
+	for _, m := range req.Messages {
+		messages = append(messages, string(m.Content))
+	}
+	return string(req.System), string(req.ToolConfig.Tools), messages
+}
+
+func TestBedrock_CachePointFromAnthropicClient(t *testing.T) {
+	t.Parallel()
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "buffered", true: "stream"}[stream], func(t *testing.T) {
+			t.Parallel()
+
+			body := `{"model":"anthropic.claude-sonnet-4-6","max_tokens":64,"stream":` + map[bool]string{false: "false", true: "true"}[stream] + `,
+				"tools":[
+					{"name":"a","input_schema":{"type":"object"}},
+					{"name":"b","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","ttl":"1h"}}
+				],
+				"system":[
+					{"type":"text","text":"stable rules","cache_control":{"type":"ephemeral","ttl":"1h"}},
+					{"type":"text","text":"today is monday"}
+				],
+				"messages":[
+					{"role":"user","content":[
+						{"type":"text","text":"long document","cache_control":{"type":"ephemeral"}},
+						{"type":"text","text":"question"}
+					]}
+				]}`
+			out, err := NewRegistry().AdaptRequest([]byte(body), FormatAnthropic, FormatBedrock)
+			require.NoError(t, err)
+
+			system, tools, messages := converseSections(t, out)
+			assert.JSONEq(t, `[
+				{"toolSpec":{"name":"a","inputSchema":{"json":{"type":"object"}}}},
+				{"toolSpec":{"name":"b","inputSchema":{"json":{"type":"object"}}}},
+				{"cachePoint":{"type":"default","ttl":"1h"}}
+			]`, tools)
+			assert.JSONEq(t, `[
+				{"text":"stable rules"},
+				{"cachePoint":{"type":"default","ttl":"1h"}},
+				{"text":"today is monday"}
+			]`, system)
+			require.Len(t, messages, 1)
+			assert.JSONEq(t, `[
+				{"text":"long document"},
+				{"cachePoint":{"type":"default"}},
+				{"text":"question"}
+			]`, messages[0])
+		})
+	}
+}
+
+func TestBedrock_CachePointPositions(t *testing.T) {
+	t.Parallel()
+
+	image := CanonicalImage{MediaType: "image/png", Data: "iVBORw0KGgo="}
+	tests := []struct {
+		name string
+		msgs []CanonicalMessage
+		want []string
+	}{
+		{
+			name: "end of a text turn",
+			msgs: []CanonicalMessage{{Role: "user", Content: "hi", Cache: bp("")}},
+			want: []string{`[{"text":"hi"},{"cachePoint":{"type":"default"}}]`},
+		},
+		{
+			name: "after the marked image",
+			msgs: []CanonicalMessage{{Role: "user", Content: "what is it", Images: []CanonicalImage{image, image}, Cache: &CanonicalCacheBreakpoint{image: 1, images: 2}}},
+			want: []string{`[
+				{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},
+				{"cachePoint":{"type":"default"}},
+				{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},
+				{"text":"what is it"}
+			]`},
+		},
+		{
+			name: "image marker whose image is gone is dropped",
+			msgs: []CanonicalMessage{{Role: "user", Content: "what is it", Images: []CanonicalImage{image}, Cache: &CanonicalCacheBreakpoint{image: 2, images: 2}}},
+			want: []string{`[{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},{"text":"what is it"}]`},
+		},
+		{
+			name: "after the tool call of an assistant turn",
+			msgs: []CanonicalMessage{{Role: "assistant", Content: "checking", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "f", Arguments: "{}"}}, Cache: bp("")}},
+			want: []string{`[
+				{"text":"checking"},
+				{"toolUse":{"toolUseId":"c1","name":"f","input":{}}},
+				{"cachePoint":{"type":"default"}}
+			]`},
+		},
+		{
+			name: "tool results merge with the next user turn in order",
+			msgs: []CanonicalMessage{
+				{Role: "tool", ToolCallID: "c1", Content: "one", Cache: bp(CacheTTL1h)},
+				{Role: "tool", ToolCallID: "c2", Content: "two"},
+				{Role: "user", Content: "go on", Cache: bp("")},
+			},
+			want: []string{`[
+				{"toolResult":{"toolUseId":"c1","content":[{"text":"one"}]}},
+				{"cachePoint":{"type":"default","ttl":"1h"}},
+				{"toolResult":{"toolUseId":"c2","content":[{"text":"two"}]}},
+				{"text":"go on"},
+				{"cachePoint":{"type":"default"}}
+			]`},
+		},
+		{
+			name: "empty turn gets no lone cachePoint",
+			msgs: []CanonicalMessage{{Role: "assistant", Cache: bp("")}, {Role: "user", Content: "hi"}},
+			want: []string{`[{"text":"hi"}]`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{Messages: tt.msgs})
+			require.NoError(t, err)
+
+			_, _, messages := converseSections(t, out)
+			require.Len(t, messages, len(tt.want))
+			for i := range tt.want {
+				assert.JSONEq(t, tt.want[i], messages[i])
+			}
+		})
+	}
+}
+
+func TestBedrock_SystemCachePoint(t *testing.T) {
+	t.Parallel()
+
+	out, err := (&BedrockAdapter{}).EncodeRequest(&CanonicalRequest{
+		System:      "rules",
+		SystemCache: bp(CacheTTL5m),
+		Messages: []CanonicalMessage{
+			{Role: "system", Content: "late rules", Cache: bp("")},
+			{Role: "system"},
+			{Role: "user", Content: "hi"},
+		},
+	})
+	require.NoError(t, err)
+
+	system, _, _ := converseSections(t, out)
+	assert.JSONEq(t, `[
+		{"text":"rules"},
+		{"cachePoint":{"type":"default"}},
+		{"text":"late rules"},
+		{"cachePoint":{"type":"default"}}
+	]`, system)
+}
+
+func TestBedrock_CachePointsCappedAndTTLOrdered(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"anthropic.claude-sonnet-4-6","max_tokens":64,
+		"system":[{"type":"text","text":"rules","cache_control":{"type":"ephemeral"}}],
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"u1","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
+			{"role":"assistant","content":[{"type":"text","text":"a1","cache_control":{"type":"ephemeral"}}]},
+			{"role":"user","content":[{"type":"text","text":"u2","cache_control":{"type":"ephemeral"}}]},
+			{"role":"assistant","content":[{"type":"text","text":"a2","cache_control":{"type":"ephemeral"}}]},
+			{"role":"user","content":[{"type":"text","text":"u3","cache_control":{"type":"ephemeral","ttl":"1h"}}]}
+		]}`
+	out, err := NewRegistry().AdaptRequest([]byte(body), FormatAnthropic, FormatBedrock)
+	require.NoError(t, err)
+
+	assert.Equal(t, 4, bytes.Count(out, []byte(`"cachePoint"`)))
+	assert.NotContains(t, string(out), `"ttl"`)
+	system, _, messages := converseSections(t, out)
+	assert.Contains(t, system, "cachePoint")
+	assert.NotContains(t, messages[0], "cachePoint")
+	assert.NotContains(t, messages[1], "cachePoint")
+}
+
+func TestBedrock_NoCachePointWithoutBreakpoints(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"m","prompt_cache_key":"k","prompt_cache_retention":"24h","messages":[{"role":"system","content":"rules"},{"role":"user","content":"hi"}]}`
+	out, err := NewRegistry().AdaptRequest([]byte(body), FormatOpenAI, FormatBedrock)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(out), "cachePoint")
+	assert.NotContains(t, string(out), "prompt_cache")
+}
+
+func TestBedrock_CachePointRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	body := `{
+		"system":[{"text":"rules"},{"cachePoint":{"type":"default","ttl":"1h"}}],
+		"messages":[
+			{"role":"user","content":[
+				{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}},
+				{"cachePoint":{"type":"default","ttl":"1h"}},
+				{"text":"doc"}
+			]},
+			{"role":"assistant","content":[{"toolUse":{"toolUseId":"c1","name":"f","input":{}}},{"cachePoint":{"type":"default"}}]},
+			{"role":"user","content":[
+				{"toolResult":{"toolUseId":"c1","content":[{"text":"out"}]}},
+				{"cachePoint":{"type":"default"}},
+				{"text":"stable"},
+				{"cachePoint":{"type":"default"}},
+				{"text":"volatile"}
+			]}
+		],
+		"toolConfig":{"tools":[
+			{"toolSpec":{"name":"f","inputSchema":{"json":{"type":"object"}}}},
+			{"cachePoint":{"type":"default"}}
+		]}
+	}`
+	a := &BedrockAdapter{}
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	require.NotNil(t, cr.SystemCache)
+	assert.Equal(t, CacheTTL1h, cr.SystemCache.TTL)
+	require.NotNil(t, cr.Tools[0].Cache)
+	assert.Equal(t, "stable\nvolatile", cr.Messages[len(cr.Messages)-1].Content)
+
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.JSONEq(t, body, string(out))
+}
+
+func TestBedrock_DecodeRequest_CachePointBoundaries(t *testing.T) {
+	t.Parallel()
+
+	a := &BedrockAdapter{}
+	cr, err := a.DecodeRequest([]byte(`{
+		"system":[{"cachePoint":{"type":"default"}},{"text":"stable"},{"cachePoint":{"type":"default"}},{"text":"volatile"}],
+		"messages":[{"role":"user","content":[{"cachePoint":{"type":"default"}},{"text":"hi"}]}],
+		"toolConfig":{"tools":[{"cachePoint":{"type":"default"}},{"toolSpec":{"name":"f","inputSchema":{"json":{}}}}]}
+	}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "stable\n\nvolatile", cr.System)
+	assert.Nil(t, cr.Messages[0].Cache)
+	assert.Nil(t, cr.Tools[0].Cache)
+
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	system, _, _ := converseSections(t, out)
+	assert.JSONEq(t, `[{"text":"stable"},{"cachePoint":{"type":"default"}},{"text":"\nvolatile"}]`, system)
+
+	anthropic, err := (&AnthropicAdapter{}).EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.Contains(t, string(anthropic), `{"type":"text","text":"stable","cache_control":{"type":"ephemeral"}}`)
+}

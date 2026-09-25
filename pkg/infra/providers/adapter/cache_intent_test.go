@@ -438,7 +438,7 @@ func TestNormalizeCacheIntent_ImageMarkers(t *testing.T) {
 		want   []any
 	}{
 		{target: FormatAnthropic, want: []any{CacheTTL("")}},
-		{target: FormatBedrock, want: []any{nil}},
+		{target: FormatBedrock, want: []any{CacheTTL("")}},
 		{target: FormatOpenAIResponses, want: []any{nil}},
 	}
 	for _, tt := range tests {
