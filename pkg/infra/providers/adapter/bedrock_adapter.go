@@ -75,8 +75,22 @@ type ConverseImageSource struct {
 
 // ConverseSystemBlock is one system instruction.
 type ConverseSystemBlock struct {
-	Text       string              `json:"text,omitempty"`
-	CachePoint *ConverseCachePoint `json:"cachePoint,omitempty"`
+	Text         string                `json:"text,omitempty"`
+	GuardContent *ConverseGuardContent `json:"guardContent,omitempty"`
+	CachePoint   *ConverseCachePoint   `json:"cachePoint,omitempty"`
+}
+
+// ConverseGuardContent is content a guardrail assesses: text, with the
+// qualifiers of the contextual grounding filter, or an image.
+type ConverseGuardContent struct {
+	Text  *ConverseGuardText  `json:"text,omitempty"`
+	Image *ConverseImageBlock `json:"image,omitempty"`
+}
+
+// ConverseGuardText is the text of a guardContent block.
+type ConverseGuardText struct {
+	Text       string   `json:"text"`
+	Qualifiers []string `json:"qualifiers,omitempty"`
 }
 
 // ConverseToolUse is a tool call requested by the model.
@@ -352,20 +366,34 @@ func converseCachePointFrom(bp *CanonicalCacheBreakpoint) *ConverseCachePoint {
 
 // converseSystemText joins the system blocks with "\n\n", spelled as an empty
 // part between two "\n" joiners so a cachePoint keeps the newline index of the
-// block it followed. A cachePoint before any text caches nothing and is
-// dropped.
+// block it followed. Guarded text joins as plain text: the gateway sends no
+// guardrailConfig.
 func converseSystemText(blocks []ConverseSystemBlock) (string, *CanonicalCacheBreakpoint) {
-	var text cacheTextJoin
+	var (
+		text   cacheTextJoin
+		marked bool
+	)
 	for _, b := range blocks {
-		if b.CachePoint == nil || b.Text != "" {
-			if len(text.parts) > 0 {
-				text.add("")
+		if b.CachePoint != nil {
+			if marked {
+				bp := converseCacheBreakpoint(b.CachePoint)
+				bp.joinerTail = 1
+				text.markText(bp, false)
 			}
-			text.add(b.Text)
+			continue
 		}
-		if b.CachePoint != nil && len(text.parts) > 0 {
-			text.markText(converseCacheBreakpoint(b.CachePoint), false)
+		part := b.Text
+		if part == "" && b.GuardContent != nil && b.GuardContent.Text != nil {
+			part = b.GuardContent.Text.Text
 		}
+		marked = part != ""
+		if !marked {
+			continue
+		}
+		if len(text.parts) > 0 {
+			text.add("")
+		}
+		text.add(part)
 	}
 	return text.String(), text.breakpoint()
 }
@@ -482,6 +510,7 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		Messages: make([]ConverseMessage, 0, len(req.Messages)),
 		System:   converseSystemBlocks(nil, req.System, req.SystemCache),
 	}
+	var lastCache *CanonicalCacheBreakpoint
 	for _, m := range req.Messages {
 		// Converse has no system turn; instructions found in the conversation
 		// join the dedicated field rather than being dropped.
@@ -493,16 +522,39 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(msg.Content) > 0 {
+			lastCache = m.Cache
+		}
 		out.Messages = appendConverseMessage(out.Messages, msg)
+	}
+	if o := req.CacheOptions; o != nil && o.Auto != nil {
+		addConverseAutoCachePoint(out.Messages, lastCache, o.Auto)
 	}
 	out.InferenceConfig = converseInferenceConfigFrom(req)
 	out.ToolConfig = converseToolConfigFrom(req)
 	return json.Marshal(out)
 }
 
-// converseSystemBlocks appends text to system, with a cachePoint after the
-// block the breakpoint sat on, or after the whole text when that boundary is
-// lost.
+// addConverseAutoCachePoint maps automatic caching onto a cachePoint after the
+// last block of the last message, where Anthropic puts it. Bedrock rejects two
+// cachePoints in a row, so an explicit one already there is kept once: with
+// the client's TTL when the client sent it on its last block, otherwise with
+// the automatic TTL, the way the Anthropic encoder settles that pair.
+func addConverseAutoCachePoint(msgs []ConverseMessage, last, auto *CanonicalCacheBreakpoint) {
+	n := len(msgs)
+	if n == 0 {
+		return
+	}
+	content := msgs[n-1].Content
+	if k := len(content); k > 0 && content[k-1].CachePoint != nil {
+		if last == nil || !last.clientLast {
+			content[k-1].CachePoint = converseCachePointFrom(auto)
+		}
+		return
+	}
+	msgs[n-1].Content = append(content, ConverseContentBlock{CachePoint: converseCachePointFrom(auto)})
+}
+
 func converseSystemBlocks(system []ConverseSystemBlock, text string, bp *CanonicalCacheBreakpoint) []ConverseSystemBlock {
 	if text == "" {
 		return system

@@ -88,7 +88,7 @@ When source and target differ, intent MUST map where the target has an equivalen
 | Target | Breakpoints | Key / Retention | Auto |
 |---|---|---|---|
 | Anthropic | mapped, TTL kept | dropped | mapped |
-| Bedrock | `cachePoint` (see bedrock-prompt-caching) | dropped | dropped |
+| Bedrock | `cachePoint` (see bedrock-prompt-caching) | dropped | `cachePoint` after the last block of the last message |
 | OpenAI Chat (provider `openai`) | dropped deliberately (OpenAI rejects parts-level `cache_control`) | Key always; `prompt_cache_options` only on GPT-5.6+; Retention only before GPT-5.6 | dropped |
 | Azure Chat or Responses (provider `azure`) | dropped (the model is usually a deployment name, so the GPT-5.6 gate cannot be trusted) | Key, plus Retention unless the model name reads GPT-5.6+; a 400 naming `prompt_cache_retention` is retried once key-only | dropped |
 | OpenAI Responses (provider `openai`), GPT-5.6+ | `prompt_cache_breakpoint` on system, user and tool-output messages; assistant and image markers dropped before the cap | Key and `prompt_cache_options` mapped, Retention dropped | dropped |

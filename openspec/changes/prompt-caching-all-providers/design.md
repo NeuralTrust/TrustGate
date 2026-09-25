@@ -127,7 +127,7 @@ Step 1 also clears, for Responses, markers on assistant messages (with or withou
 | Target (`Format`) | tools | system | msgs | max | 1h | key | ret | opts | auto |
 |---|---|---|---|---|---|---|---|---|---|
 | anthropic | ✓ | ✓ | ✓ | 4 | ✓ | – | – | – | ✓ |
-| bedrock | ✓ | ✓ | ✓ | 4 | ✓ (SDK strips per model) | – | – | – | – |
+| bedrock | ✓ | ✓ | ✓ | 4 | ✓ (SDK strips per model) | – | – | – | ✓ (cachePoint ending the last message) |
 | openai_responses, provider openai, model GPT-5.6+ | – | ✓ | user and tool only | 4 if Mode=explicit, else 3 | n/a | ✓ | – | ✓ | – |
 | openai_responses, provider openai, other models | – | – | – | – | – | ✓ | ✓ | – | – |
 | openai, provider openai, GPT-5.6+ | – | – | – | – | – | ✓ | – | ✓ | – |

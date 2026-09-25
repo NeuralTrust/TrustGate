@@ -202,6 +202,7 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 - [x] 7.3 `bedrock/converse.go`: SDK members (system, content first case, tool); `Ttl` only for 1h.
 - [x] 7.4 `converse.go` `foldSystemIntoFirstTurn`: prepend `[text, cachePoint]`, no merge.
 - [x] 7.5 Tests: positions, merge order, fold; rebase vs 1608 conflict map.
+- [x] 7.5b Review fixes: SDK drops a cachePoint unless it follows kept content (untranslated blocks); system `guardContent` translated to the SDK member; Bedrock system `"\n\n"` joiner split away whole (byte-stable re-encode, also to Anthropic); automatic caching → trailing `cachePoint` (profile `auto`); system-role message markers ordered right after `SystemCache`.
 - [ ] 7.6 V1 (adapter, bedrock); V2; V3; V4 **Bedrock** (implicit, 5m, 1h); V5. V1 done (gofmt, vet incl. `-tags bedrock_live`, golangci-lint adapter+bedrock, race tests providers/proxy/plugins, `go test ./pkg/...`); V2-V5 pending (AWS credentials expired).
 
 ## Phase 8 (S4b): Bedrock capability table and retry

@@ -61,11 +61,17 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 		p.messages = append(p.messages, msg)
 	}
 	for _, s := range req.System {
-		if s.CachePoint == nil || s.Text != "" {
+		switch {
+		case s.CachePoint != nil:
+			if cachePointAllowed(p.system) {
+				p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberCachePoint{Value: sdkCachePoint(s.CachePoint)})
+			}
+		case s.GuardContent != nil:
+			if guard := sdkGuardContent(s.GuardContent); guard != nil {
+				p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberGuardContent{Value: guard})
+			}
+		case s.Text != "":
 			p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberText{Value: s.Text})
-		}
-		if s.CachePoint != nil {
-			p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberCachePoint{Value: sdkCachePoint(s.CachePoint)})
 		}
 	}
 	p.tools = sdkToolConfig(req.ToolConfig)
@@ -75,13 +81,13 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 // foldSystemIntoFirstTurn moves the system instructions into the first user
 // turn, the way the old prompt templates carried them for models that have no
 // system slot. It reports whether there was anything to fold. A system with a
-// cachePoint is moved block by block and not merged into the turn's text, so
-// the cachePoint still ends the system prefix.
+// cachePoint or guarded content is moved block by block and not merged into
+// the turn's text, so the cachePoint still ends the system prefix.
 func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	if len(p.system) == 0 {
 		return false
 	}
-	if lead := foldedCachedSystem(p.system); lead != nil {
+	if lead := foldedSystemBlocks(p.system); lead != nil {
 		p.system = nil
 		p.prependToFirstTurn(lead)
 		return true
@@ -111,10 +117,13 @@ func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	return true
 }
 
-func foldedCachedSystem(system []bedrockTypes.SystemContentBlock) []bedrockTypes.ContentBlock {
+// foldedSystemBlocks returns the system as turn blocks when it holds more than
+// plain text (a cachePoint or guarded content), and nil when merging the text
+// loses nothing.
+func foldedSystemBlocks(system []bedrockTypes.SystemContentBlock) []bedrockTypes.ContentBlock {
 	var (
-		lead   []bedrockTypes.ContentBlock
-		cached bool
+		lead     []bedrockTypes.ContentBlock
+		keepEach bool
 	)
 	for _, block := range system {
 		switch b := block.(type) {
@@ -122,14 +131,17 @@ func foldedCachedSystem(system []bedrockTypes.SystemContentBlock) []bedrockTypes
 			if b.Value != "" {
 				lead = append(lead, &bedrockTypes.ContentBlockMemberText{Value: b.Value})
 			}
+		case *bedrockTypes.SystemContentBlockMemberGuardContent:
+			lead = append(lead, &bedrockTypes.ContentBlockMemberGuardContent{Value: b.Value})
+			keepEach = true
 		case *bedrockTypes.SystemContentBlockMemberCachePoint:
-			if len(lead) > 0 {
+			if cachePointAllowed(lead) {
 				lead = append(lead, &bedrockTypes.ContentBlockMemberCachePoint{Value: b.Value})
-				cached = true
+				keepEach = true
 			}
 		}
 	}
-	if !cached {
+	if !keepEach {
 		return nil
 	}
 	return lead
@@ -224,11 +236,33 @@ func sdkMessage(m adapter.ConverseMessage) (bedrockTypes.Message, error) {
 		if err != nil {
 			return bedrockTypes.Message{}, err
 		}
-		if block != nil {
-			msg.Content = append(msg.Content, block)
+		if block == nil {
+			continue
 		}
+		if _, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok && !cachePointAllowed(msg.Content) {
+			continue
+		}
+		msg.Content = append(msg.Content, block)
 	}
 	return msg, nil
+}
+
+// cachePointAllowed reports whether a cachePoint may follow the blocks kept so
+// far. Bedrock rejects one that opens a list or follows another cachePoint,
+// which a valid client body turns into when the block it marked has no SDK
+// translation here (documents, videos, S3 images, citations).
+func cachePointAllowed[T any](kept []T) bool {
+	if len(kept) == 0 {
+		return false
+	}
+	switch any(kept[len(kept)-1]).(type) {
+	case *bedrockTypes.ContentBlockMemberCachePoint,
+		*bedrockTypes.SystemContentBlockMemberCachePoint,
+		*bedrockTypes.ToolMemberCachePoint:
+		return false
+	default:
+		return true
+	}
 }
 
 func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock, error) {
@@ -266,6 +300,24 @@ func sdkCachePoint(cp *adapter.ConverseCachePoint) bedrockTypes.CachePointBlock 
 		block.Ttl = bedrockTypes.CacheTTLOneHour
 	}
 	return block
+}
+
+func sdkGuardContent(g *adapter.ConverseGuardContent) bedrockTypes.GuardrailConverseContentBlock {
+	switch {
+	case g.Text != nil && g.Text.Text != "":
+		text := bedrockTypes.GuardrailConverseTextBlock{Text: aws.String(g.Text.Text)}
+		for _, q := range g.Text.Qualifiers {
+			text.Qualifiers = append(text.Qualifiers, bedrockTypes.GuardrailConverseContentQualifier(q))
+		}
+		return &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: text}
+	case g.Image != nil && len(g.Image.Source.Bytes) > 0:
+		return &bedrockTypes.GuardrailConverseContentBlockMemberImage{Value: bedrockTypes.GuardrailConverseImageBlock{
+			Format: bedrockTypes.GuardrailConverseImageFormat(g.Image.Format),
+			Source: &bedrockTypes.GuardrailConverseImageSourceMemberBytes{Value: g.Image.Source.Bytes},
+		}}
+	default:
+		return nil
+	}
 }
 
 func sdkImage(img *adapter.ConverseImageBlock) bedrockTypes.ContentBlock {
@@ -352,7 +404,9 @@ func sdkToolConfig(tc *adapter.ConverseToolConfig) *bedrockTypes.ToolConfigurati
 	out := &bedrockTypes.ToolConfiguration{Tools: make([]bedrockTypes.Tool, 0, len(tc.Tools))}
 	for _, t := range tc.Tools {
 		if t.CachePoint != nil {
-			out.Tools = append(out.Tools, &bedrockTypes.ToolMemberCachePoint{Value: sdkCachePoint(t.CachePoint)})
+			if cachePointAllowed(out.Tools) {
+				out.Tools = append(out.Tools, &bedrockTypes.ToolMemberCachePoint{Value: sdkCachePoint(t.CachePoint)})
+			}
 			continue
 		}
 		if t.ToolSpec == nil {

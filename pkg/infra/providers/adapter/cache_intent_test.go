@@ -163,14 +163,14 @@ func TestNormalizeCacheIntent_TargetsWithoutCachingDropAllIntent(t *testing.T) {
 	}
 }
 
-func TestNormalizeCacheIntent_BedrockDropsAutoAndRequestOptions(t *testing.T) {
+func TestNormalizeCacheIntent_BedrockKeepsAutoAndDropsRequestOptions(t *testing.T) {
 	t.Parallel()
 
 	req := cachedRequest(0, 1, CacheTTL1h)
-	req.CacheOptions = &CanonicalCacheOptions{Key: "k", Auto: bp("")}
+	req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Auto: bp("")}
 	normalizeCacheIntent(req, FormatBedrock, formatProvider(FormatBedrock), "")
 
-	assert.Nil(t, req.CacheOptions)
+	assert.Equal(t, &CanonicalCacheOptions{Auto: bp("")}, req.CacheOptions)
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
 	assert.Equal(t, []any{CacheTTL1h}, messageTTLs(req.Messages))
 }
@@ -681,4 +681,18 @@ func TestAdaptRequest_MistralCarriesTheCacheKey(t *testing.T) {
 	out, err := reg.AdaptRequestForProvider([]byte(`{"model":"mistral-large-latest","messages":[{"role":"user","content":"hi"}]}`), FormatOpenAI, FormatMistral, provider.Mistral, "")
 	require.NoError(t, err)
 	assert.NotContains(t, string(out), "prompt_cache")
+}
+
+func TestNormalizeCacheIntent_BedrockOrdersSystemMessagesWithSystem(t *testing.T) {
+	t.Parallel()
+
+	req := &CanonicalRequest{Messages: []CanonicalMessage{
+		{Role: "user", Content: "u", Cache: bp(CacheTTL1h)},
+		{Role: "system", Content: "s", Cache: bp(CacheTTL5m)},
+		{Role: "assistant", Content: "a"},
+		{Role: "user", Content: "u2"},
+	}}
+	normalizeCacheIntent(req, FormatBedrock, formatProvider(FormatBedrock), "")
+
+	assert.Equal(t, []any{CacheTTL5m, CacheTTL5m, nil, nil}, messageTTLs(req.Messages))
 }

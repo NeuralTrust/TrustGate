@@ -62,6 +62,10 @@ type CanonicalCacheBreakpoint struct {
 	// different count at encode time means a plugin added or removed lines
 	// and the boundary can no longer be found.
 	newlines int
+	// joinerTail counts the "\n" after the boundary newline that belong to a
+	// wider joiner (Bedrock system blocks join with "\n\n"), so the split drops
+	// the whole joiner and re-encodes byte for byte.
+	joinerTail int
 	// clientLast reports that the client sent this marker, with this TTL, on
 	// the last block of the segment.
 	clientLast bool
@@ -151,7 +155,11 @@ type cacheProfile struct {
 	// output.
 	inputOnly bool
 	// images reports that a breakpoint can stay on an image block.
-	images                        bool
+	images bool
+	// liftsSystemMessages reports that the encoder moves system-role messages
+	// into the system section, so their breakpoints are ordered right after
+	// SystemCache rather than among the messages.
+	liftsSystemMessages           bool
 	max                           int
 	key, retention, options, auto bool
 	// implicitSlot reports that the provider spends one of the max writes on
@@ -165,7 +173,7 @@ func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 	case FormatAnthropic:
 		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4, auto: true}
 	case FormatBedrock:
-		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4}
+		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, images: true, max: 4, auto: true, liftsSystemMessages: true}
 	case FormatOpenAIResponses, FormatOpenAI, FormatAzure:
 		return openAICacheProfile(target, providerName, model)
 	case FormatOpenRouter:
@@ -308,7 +316,7 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName, de
 		p.max--
 	}
 
-	for n := len(cacheBreakpointsInOrder(req)); p.max > 0 && n > p.max; n-- {
+	for n := len(cacheBreakpointsInOrder(req, false)); p.max > 0 && n > p.max; n-- {
 		if !dropEarliestCacheBreakpoint(req.Messages, func(m *CanonicalMessage) **CanonicalCacheBreakpoint { return &m.Cache }) &&
 			!dropEarliestCacheBreakpoint(req.Tools, func(t *CanonicalTool) **CanonicalCacheBreakpoint { return &t.Cache }) {
 			break
@@ -316,13 +324,13 @@ func normalizeCacheIntent(req *CanonicalRequest, target Format, providerName, de
 	}
 
 	short := false
-	for _, bp := range cacheBreakpointsInOrder(req) {
+	for _, bp := range cacheBreakpointsInOrder(req, p.liftsSystemMessages) {
 		if bp.TTL == CacheTTL1h && (short || !p.ttl1h) {
 			bp.TTL = CacheTTL5m
 		}
 		short = short || bp.TTL != CacheTTL1h
 	}
-	if len(cacheBreakpointsInOrder(req)) == 0 {
+	if len(cacheBreakpointsInOrder(req, false)) == 0 {
 		dropExplicitCacheMode(req)
 	}
 }
@@ -396,7 +404,7 @@ func dropDisallowedCacheIntent(req *CanonicalRequest, p cacheProfile) {
 	}
 }
 
-func cacheBreakpointsInOrder(req *CanonicalRequest) []*CanonicalCacheBreakpoint {
+func cacheBreakpointsInOrder(req *CanonicalRequest, liftSystem bool) []*CanonicalCacheBreakpoint {
 	var marks []*CanonicalCacheBreakpoint
 	for i := range req.Tools {
 		if req.Tools[i].Cache != nil {
@@ -406,9 +414,15 @@ func cacheBreakpointsInOrder(req *CanonicalRequest) []*CanonicalCacheBreakpoint 
 	if req.SystemCache != nil {
 		marks = append(marks, req.SystemCache)
 	}
+	lifted := func(m *CanonicalMessage) bool { return liftSystem && m.Role == "system" }
 	for i := range req.Messages {
-		if req.Messages[i].Cache != nil {
-			marks = append(marks, req.Messages[i].Cache)
+		if m := &req.Messages[i]; m.Cache != nil && lifted(m) {
+			marks = append(marks, m.Cache)
+		}
+	}
+	for i := range req.Messages {
+		if m := &req.Messages[i]; m.Cache != nil && !lifted(m) {
+			marks = append(marks, m.Cache)
 		}
 	}
 	if req.CacheOptions != nil && req.CacheOptions.Auto != nil {
@@ -573,6 +587,9 @@ func splitAtCacheBoundary(text string, bp *CanonicalCacheBreakpoint) (head, tail
 		at += strings.IndexByte(text[at:], '\n') + 1
 	}
 	head, tail = text[:at-1], text[at:]
+	for range bp.joinerTail {
+		tail = strings.TrimPrefix(tail, "\n")
+	}
 	if strings.TrimSpace(head) == "" || strings.TrimSpace(tail) == "" {
 		return "", "", false
 	}
