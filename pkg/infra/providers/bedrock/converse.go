@@ -39,6 +39,8 @@ type converseParams struct {
 	system    []bedrockTypes.SystemContentBlock
 	inference *bedrockTypes.InferenceConfiguration
 	tools     *bedrockTypes.ToolConfiguration
+
+	cachePointsRejected bool
 }
 
 // decodeConverseBody reads the adapter's Converse wire JSON. Keys the body
@@ -169,18 +171,19 @@ func systemUnsupported(err error) bool {
 	return strings.Contains(apiErr.ErrorMessage(), "support system messages")
 }
 
-// systemFoldMemo remembers the models that rejected a system prompt, so the
-// fold happens up front instead of costing a failed round trip per request.
-type systemFoldMemo struct {
+// modelMemo remembers models that needed a repair (the system fold, or no
+// cachePoint), so the repair happens up front instead of costing a failed
+// round trip per request.
+type modelMemo struct {
 	models sync.Map
 }
 
-func (m *systemFoldMemo) known(model string) bool {
+func (m *modelMemo) known(model string) bool {
 	_, ok := m.models.Load(model)
 	return ok
 }
 
-func (m *systemFoldMemo) remember(model string) {
+func (m *modelMemo) remember(model string) {
 	m.models.Store(model, struct{}{})
 }
 
@@ -190,7 +193,7 @@ func (m *systemFoldMemo) remember(model string) {
 // validates a ConverseStream request before the stream opens, so the error
 // surfaces the same way.
 func converseWithSystemFallback[T any](
-	memo *systemFoldMemo,
+	memo *modelMemo,
 	model string,
 	params *converseParams,
 	call func(*converseParams) (T, error),
@@ -204,6 +207,151 @@ func converseWithSystemFallback[T any](
 	}
 	memo.remember(model)
 	return call(params)
+}
+
+// cachePointRejected reports whether Bedrock refused the request over its
+// cache checkpoints. Only a ValidationException that names caching counts, so
+// throttling or an unrelated validation error never costs the tenant a
+// cache-less retry.
+func cachePointRejected(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationException" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(apiErr.ErrorMessage()), "cache")
+}
+
+// converseWithCachePointFallback runs call, and when Bedrock rejects the
+// cachePoints, retries once without them. The model is remembered only once a
+// request without cachePoints succeeds, so a validation error the cachePoints
+// did not cause cannot switch caching off. The success may come from a later
+// call when the retry hit another repairable error, such as the system fold
+// wrapped around this function.
+func converseWithCachePointFallback[T any](
+	memo *modelMemo,
+	model string,
+	params *converseParams,
+	call func(*converseParams) (T, error),
+) (T, error) {
+	if memo.known(model) {
+		params.stripCachePoints()
+	}
+	out, err := call(params)
+	if err == nil {
+		if params.cachePointsRejected {
+			memo.remember(model)
+		}
+		return out, nil
+	}
+	if !cachePointRejected(err) || !params.stripCachePoints() {
+		return out, err
+	}
+	params.cachePointsRejected = true
+	out, err = call(params)
+	if err == nil {
+		memo.remember(model)
+	}
+	return out, err
+}
+
+// applyCacheCapability removes what the model cannot take before the first
+// call: every cachePoint for a model without explicit caching, the tools
+// cachePoints for one that only caches system and messages, and the 1h ttl
+// for a 5m-only model. Downgrading every ttl to 5m keeps the 1h-before-5m
+// order Bedrock requires.
+func (p *converseParams) applyCacheCapability(c cacheCapability) {
+	if !c.explicit {
+		p.stripCachePoints()
+		return
+	}
+	if !c.tools {
+		p.stripToolCachePoints()
+	}
+	if !c.ttl1h {
+		p.clearCacheTTL()
+	}
+}
+
+// stripCachePoints removes every cachePoint and reports whether there was
+// one. It builds new slices, so inputs built from the params earlier keep
+// what they sent.
+func (p *converseParams) stripCachePoints() bool {
+	stripped := p.stripToolCachePoints()
+	system := make([]bedrockTypes.SystemContentBlock, 0, len(p.system))
+	for _, block := range p.system {
+		if _, ok := block.(*bedrockTypes.SystemContentBlockMemberCachePoint); ok {
+			stripped = true
+			continue
+		}
+		system = append(system, block)
+	}
+	if len(system) != len(p.system) {
+		p.system = system
+	}
+	messages := make([]bedrockTypes.Message, len(p.messages))
+	for i, msg := range p.messages {
+		content := make([]bedrockTypes.ContentBlock, 0, len(msg.Content))
+		for _, block := range msg.Content {
+			if _, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok {
+				continue
+			}
+			content = append(content, block)
+		}
+		if len(content) != len(msg.Content) {
+			stripped = true
+			msg.Content = content
+		}
+		messages[i] = msg
+	}
+	p.messages = messages
+	return stripped
+}
+
+func (p *converseParams) stripToolCachePoints() bool {
+	if p.tools == nil {
+		return false
+	}
+	tools := make([]bedrockTypes.Tool, 0, len(p.tools.Tools))
+	for _, tool := range p.tools.Tools {
+		if _, ok := tool.(*bedrockTypes.ToolMemberCachePoint); ok {
+			continue
+		}
+		tools = append(tools, tool)
+	}
+	if len(tools) == len(p.tools.Tools) {
+		return false
+	}
+	cfg := *p.tools
+	cfg.Tools = tools
+	p.tools = &cfg
+	return true
+}
+
+func (p *converseParams) clearCacheTTL() {
+	for i, block := range p.system {
+		if cp, ok := block.(*bedrockTypes.SystemContentBlockMemberCachePoint); ok && cp.Value.Ttl != "" {
+			p.system[i] = &bedrockTypes.SystemContentBlockMemberCachePoint{Value: defaultCachePoint()}
+		}
+	}
+	for _, msg := range p.messages {
+		for i, block := range msg.Content {
+			if cp, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok && cp.Value.Ttl != "" {
+				msg.Content[i] = &bedrockTypes.ContentBlockMemberCachePoint{Value: defaultCachePoint()}
+			}
+		}
+	}
+	if p.tools == nil {
+		return
+	}
+	for i, tool := range p.tools.Tools {
+		if cp, ok := tool.(*bedrockTypes.ToolMemberCachePoint); ok && cp.Value.Ttl != "" {
+			p.tools.Tools[i] = &bedrockTypes.ToolMemberCachePoint{Value: defaultCachePoint()}
+		}
+	}
+}
+
+func defaultCachePoint() bedrockTypes.CachePointBlock {
+	return bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}
 }
 
 func (p *converseParams) input(model string) *bedrockruntime.ConverseInput {
@@ -295,7 +443,7 @@ func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock,
 // sdkCachePoint sets Ttl only for 1h; without it Bedrock applies the 5m
 // default.
 func sdkCachePoint(cp *adapter.ConverseCachePoint) bedrockTypes.CachePointBlock {
-	block := bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}
+	block := defaultCachePoint()
 	if cp.TTL == string(bedrockTypes.CacheTTLOneHour) {
 		block.Ttl = bedrockTypes.CacheTTLOneHour
 	}
