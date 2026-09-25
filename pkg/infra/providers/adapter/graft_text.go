@@ -16,7 +16,6 @@ package adapter
 
 import (
 	"maps"
-	"slices"
 	"strconv"
 	"strings"
 )
@@ -26,18 +25,55 @@ import (
 // the body is decoded again, so the decoder itself reports which values make
 // up the system text and each message, and with which joiners.
 type textProbe struct {
-	leaves []probeLeaf
+	*leafIndex
 	fields []probeTemplate
 }
 
-// probeLeaf is one probed string value. spans[i] is the span of the value
-// at path[:i+1], so any container of the leaf is found without walking the
-// body again.
+// leafIndex holds the probe leaves of a body in document order and the tree
+// of values above them, so any container of a leaf is found without walking
+// the body again and without a copy of its path per leaf.
+type leafIndex struct {
+	leaves []probeLeaf
+	nodes  []probeNode
+}
+
+// probeLeaf is one probed string value; node is its entry in the tree.
 type probeLeaf struct {
-	path  []string
-	spans []rawSpan
+	node  int
 	span  rawSpan
 	value string
+}
+
+// probeNode is one value below the root: step is its key or index in its
+// parent, and depth the length of its path. The root's children have parent
+// -1 and depth 1.
+type probeNode struct {
+	step   string
+	span   rawSpan
+	parent int
+	depth  int
+}
+
+func (x *leafIndex) ancestorAt(n, depth int) int {
+	for n >= 0 && x.nodes[n].depth > depth {
+		n = x.nodes[n].parent
+	}
+	return n
+}
+
+func (x *leafIndex) commonAncestor(a, b int) int {
+	if a < 0 || b < 0 {
+		return -1
+	}
+	a = x.ancestorAt(a, x.nodes[b].depth)
+	b = x.ancestorAt(b, x.nodes[a].depth)
+	for a != b && a >= 0 && b >= 0 {
+		a, b = x.nodes[a].parent, x.nodes[b].parent
+	}
+	if a != b {
+		return -1
+	}
+	return a
 }
 
 type probeTemplate []probeItem
@@ -48,14 +84,15 @@ type probeItem struct {
 }
 
 func probeText(ad RequestAdapter, body []byte, root rawSpan) (*textProbe, bool) {
-	leaves, ok := indexLeaves(body, root)
+	idx, ok := indexLeaves(body, root)
 	if !ok {
 		return nil, false
 	}
-	return probeLeaves(ad, body, leaves)
+	return probeLeaves(ad, body, idx)
 }
 
-func probeLeaves(ad RequestAdapter, body []byte, leaves []probeLeaf) (*textProbe, bool) {
+func probeLeaves(ad RequestAdapter, body []byte, idx *leafIndex) (*textProbe, bool) {
+	leaves := idx.leaves
 	patches := make([]rawPatch, len(leaves))
 	for i, l := range leaves {
 		if strings.ContainsRune(l.value, probeOpen) || strings.ContainsRune(l.value, probeClose) {
@@ -71,7 +108,7 @@ func probeLeaves(ad RequestAdapter, body []byte, leaves []probeLeaf) (*textProbe
 	if err != nil || decoded == nil {
 		return nil, false
 	}
-	p := &textProbe{leaves: leaves, fields: make([]probeTemplate, 0, len(decoded.Messages)+1)}
+	p := &textProbe{leafIndex: idx, fields: make([]probeTemplate, 0, len(decoded.Messages)+1)}
 	texts := []string{decoded.System}
 	for _, m := range decoded.Messages {
 		texts = append(texts, m.Content)
@@ -87,22 +124,24 @@ func probeLeaves(ad RequestAdapter, body []byte, leaves []probeLeaf) (*textProbe
 }
 
 // indexLeaves walks a valid JSON body once and returns its probe leaves in
-// document order. It refuses bodies with duplicate keys or more than
-// maxGraftValues values.
-func indexLeaves(b []byte, root rawSpan) ([]probeLeaf, bool) {
-	x := leafIndexer{b: b}
+// document order. It refuses bodies with duplicate keys or over the caps
+// rawWithinCaps checks, since each level rescans the values below it.
+func indexLeaves(b []byte, root rawSpan) (*leafIndex, bool) {
+	if !rawWithinCaps(b[root.start:root.end]) {
+		return nil, false
+	}
+	x := leafIndexer{b: b, cur: -1}
 	if !x.walk(root, "") {
 		return nil, false
 	}
-	return x.leaves, true
+	return &x.leafIndex, true
 }
 
 type leafIndexer struct {
+	leafIndex
 	b      []byte
-	path   []string
-	spans  []rawSpan
+	cur    int
 	values int
-	leaves []probeLeaf
 }
 
 func (x *leafIndexer) walk(s rawSpan, key string) bool {
@@ -119,7 +158,7 @@ func (x *leafIndexer) walk(s rawSpan, key string) bool {
 			return false
 		}
 		if strings.TrimSpace(value) != "" {
-			x.leaves = append(x.leaves, probeLeaf{path: slices.Clone(x.path), spans: slices.Clone(x.spans), span: s, value: value})
+			x.leaves = append(x.leaves, probeLeaf{node: x.cur, span: s, value: value})
 		}
 	case '{':
 		fields, err := rawFields(x.b, s)
@@ -146,11 +185,15 @@ func (x *leafIndexer) walk(s rawSpan, key string) bool {
 }
 
 func (x *leafIndexer) child(s rawSpan, step, key string) bool {
-	x.path = append(x.path, step)
-	x.spans = append(x.spans, s)
+	depth := 1
+	if x.cur >= 0 {
+		depth = x.nodes[x.cur].depth + 1
+	}
+	x.nodes = append(x.nodes, probeNode{step: step, span: s, parent: x.cur, depth: depth})
+	parent := x.cur
+	x.cur = len(x.nodes) - 1
 	ok := x.walk(s, key)
-	x.path = x.path[:len(x.path)-1]
-	x.spans = x.spans[:len(x.spans)-1]
+	x.cur = parent
 	return ok
 }
 
@@ -258,8 +301,8 @@ func (t probeTemplate) place(leaves []probeLeaf, hunks []textHunk) (map[int]stri
 	return values, true
 }
 
-func (g *grafter) textPatches(leaves []probeLeaf) ([]rawPatch, bool) {
-	p, ok := probeLeaves(g.ad, g.original, leaves)
+func (g *grafter) textPatches(idx *leafIndex) ([]rawPatch, bool) {
+	p, ok := probeLeaves(g.ad, g.original, idx)
 	if !ok || len(p.fields) != len(g.baseline.Messages)+1 {
 		return nil, false
 	}
@@ -285,7 +328,6 @@ func (g *grafter) textPatches(leaves []probeLeaf) ([]rawPatch, bool) {
 		if !ok {
 			return nil, false
 		}
-		g.notePieces(before, hunks)
 		if t.render(p.leaves) == before {
 			if placed, ok := t.place(p.leaves, hunks); ok && t.renderWith(p.leaves, placed) == after {
 				maps.Copy(values, placed)
@@ -333,12 +375,12 @@ func (g *grafter) reencodedContents(p *textProbe, owners map[int][]int, fields [
 	}
 	patches := make([]rawPatch, 0, len(fields))
 	for _, f := range fields {
-		path, at, ok := exclusiveContainer(p, owners, f)
+		step, at, ok := exclusiveContainer(p, owners, f)
 		if !ok {
 			return nil, false
 		}
-		encPath, from, ok := exclusiveContainer(pe, encOwners, f)
-		if !ok || path[len(path)-1] != encPath[len(encPath)-1] {
+		encStep, from, ok := exclusiveContainer(pe, encOwners, f)
+		if !ok || step != encStep {
 			return nil, false
 		}
 		patches = append(patches, rawPatch{at: at, with: g.encoded[from.start:from.end]})
@@ -346,27 +388,25 @@ func (g *grafter) reencodedContents(p *textProbe, owners map[int][]int, fields [
 	return patches, true
 }
 
-// exclusiveContainer returns the path and span of the deepest value that
-// holds every leaf of field and only leaves owned by it. Leaves are in
-// document order, so the leaves under one container are contiguous.
-func exclusiveContainer(p *textProbe, owners map[int][]int, field int) ([]string, rawSpan, bool) {
+// exclusiveContainer returns the key or index and the span of the deepest
+// value that holds every leaf of field and only leaves owned by it. Leaves
+// are in document order, so the leaves under one container are contiguous.
+func exclusiveContainer(p *textProbe, owners map[int][]int, field int) (string, rawSpan, bool) {
 	refs := p.fields[field].refs()
 	if len(refs) == 0 {
-		return nil, rawSpan{}, false
+		return "", rawSpan{}, false
 	}
 	lo, hi := refs[0], refs[0]
-	prefix := p.leaves[refs[0]].path
+	top := p.leaves[refs[0]].node
 	for _, ref := range refs[1:] {
-		prefix = commonPrefix(prefix, p.leaves[ref].path)
+		top = p.commonAncestor(top, p.leaves[ref].node)
 		lo, hi = min(lo, ref), max(hi, ref)
 	}
-	if len(prefix) < 2 {
-		return nil, rawSpan{}, false
+	if top < 0 || p.nodes[top].depth < 2 {
+		return "", rawSpan{}, false
 	}
-	under := func(i int) bool {
-		path := p.leaves[i].path
-		return len(path) >= len(prefix) && slices.Equal(path[:len(prefix)], prefix)
-	}
+	depth := p.nodes[top].depth
+	under := func(i int) bool { return p.ancestorAt(p.leaves[i].node, depth) == top }
 	for lo > 0 && under(lo-1) {
 		lo--
 	}
@@ -375,16 +415,8 @@ func exclusiveContainer(p *textProbe, owners map[int][]int, field int) ([]string
 	}
 	for ref := lo; ref <= hi; ref++ {
 		if fs := owners[ref]; len(fs) != 1 || fs[0] != field {
-			return nil, rawSpan{}, false
+			return "", rawSpan{}, false
 		}
 	}
-	return prefix, p.leaves[refs[0]].spans[len(prefix)-1], true
-}
-
-func commonPrefix(a, b []string) []string {
-	n := 0
-	for n < len(a) && n < len(b) && a[n] == b[n] {
-		n++
-	}
-	return a[:n]
+	return p.nodes[top].step, p.nodes[top].span, true
 }

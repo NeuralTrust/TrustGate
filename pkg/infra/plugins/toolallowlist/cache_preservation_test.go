@@ -92,3 +92,98 @@ func TestPlugin_Execute_DropsToolsTheCanonicalDoesNotModel(t *testing.T) {
 		})
 	}
 }
+
+func TestPlugin_Execute_EvaluatesUnmodelledToolsOnTheirOwn(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		format string
+		allow  []any
+		body   string
+		want   string
+	}{
+		{
+			name:   "a refused mcp tool goes though every function is allowed",
+			format: "openai_responses",
+			allow:  []any{"ok_*"},
+			body:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"mcp","server_label":"x","server_url":"https://x.example/mcp"}]}`,
+			want:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"}]}`,
+		},
+		{
+			name:   "only unmodelled tools",
+			format: "openai_responses",
+			allow:  []any{"web_search"},
+			body:   `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"},{"type":"mcp","server_label":"x","server_url":"https://x.example/mcp"}]}`,
+			want:   `{"model":"gpt-5","input":"hi","tools":[{"type":"web_search"}]}`,
+		},
+		{
+			name:   "a kind that is not a built-in is refused even when named",
+			format: "openai_responses",
+			allow:  []any{"ok_*", "mcp_toolset"},
+			body:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"mcp_toolset","server":"x"}]}`,
+			want:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"}]}`,
+		},
+		{
+			name:   "a built-in sharing a function's name",
+			format: "openai_responses",
+			allow:  []any{"ok_*"},
+			body:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"mcp","name":"ok_a","server_url":"https://x.example/mcp"}]}`,
+			want:   `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"}]}`,
+		},
+		{
+			name:   "gemini keeps an allowed built-in beside its declarations",
+			format: "google",
+			allow:  []any{"ok_*", "googleSearch"},
+			body:   `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"ok_a"},{"name":"bad_b"}]},{"googleSearch":{}},{"codeExecution":{}}]}`,
+			want:   `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"ok_a"}]},{"googleSearch":{}}]}`,
+		},
+		{
+			name:   "bedrock system tool",
+			format: "bedrock",
+			allow:  []any{"ok_*"},
+			body:   `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"ok_a","inputSchema":{"json":{"type":"object"}}}},{"systemTool":{"name":"nova_grounding"}}]}}`,
+			want:   `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"ok_a","inputSchema":{"json":{"type":"object"}}}}]}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": tc.allow}, reqFor(tc.format, tc.body))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(res.RequestBody))
+		})
+	}
+
+	t.Run("nothing left is rejected", func(t *testing.T) {
+		t.Parallel()
+		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"mcp","server_label":"x","server_url":"https://x.example/mcp"}]}`
+		res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"*"}}, reqFor("openai_responses", body))
+		require.NoError(t, err)
+		assert.True(t, res.StopUpstream)
+	})
+	t.Run("allowed built-ins pass untouched", func(t *testing.T) {
+		t.Parallel()
+		body := `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"ok_a"},{"type":"web_search"}]}`
+		res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"ok_*", "web_search"}}, reqFor("openai_responses", body))
+		require.NoError(t, err)
+		assert.Nil(t, res.RequestBody)
+	})
+}
+
+func TestIsBuiltinTool(t *testing.T) {
+	t.Parallel()
+	reg := adapter.NewRegistry()
+	for format, kinds := range map[adapter.Format]map[string]bool{
+		adapter.FormatOpenAIResponses: {"mcp": true, "web_search_preview": true, "function": false, "mcp_toolset": false, "": false},
+		adapter.FormatOpenAI:          {"mcp": false, "web_search": false},
+		adapter.FormatAnthropic:       {"web_search_20250305": true, "code_execution_20250825": true, "bash_20250124": true, "text_editor_20250728": true, "bash": false, "bash_latest": false},
+		adapter.FormatGemini:          {"googleSearch": true, "url_context": true, "functionDeclarations": false},
+		adapter.FormatBedrock:         {"systemTool": true, "toolSpec": false},
+	} {
+		ad, err := reg.GetAdapter(format)
+		require.NoError(t, err)
+		for kind, want := range kinds {
+			assert.Equal(t, want, isBuiltinTool(ad, kind), "%s %q", format, kind)
+		}
+	}
+}

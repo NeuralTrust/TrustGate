@@ -146,9 +146,39 @@ Some shapes cannot survive translation. None of them fails the request:
 
 ## Plugins
 
-A plugin that rewrites the request decodes the body, edits it, and hands the
-result to `adapter.GraftChangedFieldsWith`. The body that goes upstream is
-the client's own body, with only the edited parts replaced:
+Plugins that rewrite the request take one of two paths.
+
+**Redaction re-encodes.** `trustguard` (mask), `bedrock_guardrail`
+(anonymize) and `regex_replace` send the edited request encoded in full
+(`EncodeRequest`) whenever they change text. The encoders keep the cache
+markers the canonical request carries (system, message, tool and automatic
+markers, with their TTLs), so the prefix stays cached up to the first masked
+span. Fields the canonical model does not carry are dropped, on purpose: a
+copy of the masked value can sit in any of them (a `thinking` or
+`redacted_thinking` block, a `document`, `search_result` or web search
+result, `citations`, Responses `reasoning.summary`, `prompt.variables` or
+tool call outputs, Chat `prediction`, `refusal`, `name`, `user`, `metadata`
+or file parts, Gemini `thought` parts, `labels`, `inlineData` or code
+execution parts, Bedrock `guardContent`, `reasoningContent`, `document` or
+`promptVariables`, Cohere `documents`), and no text search can prove that
+none holds one in another spelling, split or encoding. Codex bodies lose
+`reasoning`, `include` and `store` this way, as they did before grafting.
+When nothing is masked, the body goes upstream byte-identical.
+
+What redaction does not cover:
+
+- Text the canonical model carries outside prompt text (tool call
+  arguments, tool descriptions and schemas, Anthropic `metadata.user_id`,
+  Responses `text.format`) is not masked by these plugins. The re-encode
+  sends it as is.
+- A value that only appears in a field the canonical model does not carry is
+  never seen by the plugin. If the plugin masks nothing, the body is
+  forwarded as sent, that field included.
+
+**Tool plugins and compression graft.** `tool_injection`, `tool_allowlist`,
+`per_tool_rate_limiter` and `prompt_compression` hand the edit to
+`adapter.GraftChangedFieldsWith`. The body that goes upstream is the
+client's own body, with only the edited parts replaced:
 
 - **Text.** The edited text is diffed against the text it replaces, and each
   changed run is written into the block that holds it, by character offset.
@@ -161,66 +191,58 @@ the client's own body, with only the edited parts replaced:
 - **Everything else** stays as sent: key order, fields the canonical model
   does not carry (Codex `reasoning`, `include`, `store`, `parallel_tool_calls`,
   tool `strict`, Anthropic `thinking`), and whitespace.
-- **No change**, no edit: when nothing matches, the body goes upstream
-  byte-identical.
+- **No change**, no edit: the body goes upstream byte-identical.
 
-### Redaction guarantee
-
-`trustguard` (mask), `bedrock_guardrail` (anonymize) and `regex_replace`
-graft with `Redaction`. Every piece of text the edit removed is searched for,
-line by line and decoded (JSON escapes cannot hide it), in each string of the
-grafted body, object keys included. If a piece appears in a string that the
-full re-encode would not also send, the graft is dropped and the plugin sends
-the full re-encode. So a masked value never reaches the upstream through a
-field the canonical model does not carry (a `thinking` or
-`redacted_thinking` block, a `document`, `search_result` or web search
-result, `citations`, Responses `reasoning.summary`, `prompt.variables` or
-tool call outputs, Chat `prediction`, `refusal`, `name`, `user`, `metadata`
-or file parts, Gemini `thought` parts, `labels`, `inlineData` or code
-execution parts, Bedrock `guardContent`, `reasoningContent`, `document` or
-`promptVariables`, Cohere `documents`).
-
-Other plugins search only for pieces of four bytes or more. Blank pieces are
-never searched for.
-
-What the guarantee does not cover:
-
-- Text the canonical model carries outside prompt text (tool call
-  arguments, tool descriptions and schemas, Anthropic `metadata.user_id`,
-  Responses `text.format`) is not masked by these plugins, grafted or not.
-  The full re-encode sends it too.
-- A value that only appears in a field the canonical model does not carry is
-  never seen by the plugin, so nothing is masked and the body is forwarded
-  as sent. Before grafting, a plugin that masked something else in the same
-  request dropped such fields with the re-encode; now they stay.
+None of these edits hides anything from the upstream: the tool plugins do
+not change text, and compression only drops filler whitespace and
+reformats JSON the upstream sees anyway. So the graft does not look for
+copies of removed text elsewhere in the body.
 
 ### Fail-closed rules
 
 The graft falls back to the full re-encode, never to a partial body, when:
 
-- the body is not valid JSON, is over 8 MiB, or has more than 250,000 JSON
-  values;
+- the body is not valid JSON, is over 8 MiB, has more than 250,000 JSON
+  values, nests more than 64 containers deep, or has so much of its bytes
+  deep in the tree that indexing it would rescan more than 16 times its
+  size. These checks run in one pass before any other work;
 - an object repeats a key, exactly or in a case variant that encoding/json
   folds into the same field (`content` and `Content`, `messages` and
   `Messages`). A body with such keys is re-encoded even when the plugin
-  changed nothing, so the upstream sees the copy the plugin inspected;
+  changed nothing, so the upstream sees the copy the plugin inspected. This
+  check reads the whole body in one pass at any size or depth, so it also
+  runs on bodies over the caps;
 - the plugin added or removed messages, or changed a field other than the
   prompt text and the tools;
 - the edit differs from the original text in more than 512 words;
 - the edited system text crosses a block boundary;
-- the grafted body does not decode to the edited request;
-- removed text survives, as described above.
+- the grafted body does not decode to the edited request.
 
-`tool_allowlist` and `per_tool_rate_limiter` drop every tools entry the
-gateway does not model (Responses `mcp`, `web_search`, `file_search`,
-`computer_use_preview`, `code_interpreter`, `local_shell`; Anthropic
-`mcp_toolset`; Bedrock `systemTool`) whenever they strip a tool, as the full
-re-encode did before grafting. `tool_allowlist` keeps one only when
-`allow_tools` names its `type` exactly (for Gemini and Bedrock, its only key,
-such as `googleSearch` or `systemTool`) and no deny pattern matches it;
-patterns such as `*` never keep one. Gemini tool groups are always replaced
-whole, so `googleSearch` and `codeExecution` go with any tool change.
-`tool_injection` keeps them.
+A tools entry the gateway does not model is one the adapter skips when it
+decodes (Responses `mcp`, `web_search`, `file_search`,
+`computer_use_preview`, `code_interpreter`, `local_shell`,
+`image_generation`; Gemini `googleSearch`, `codeExecution`, `urlContext`
+and snake_case `function_declarations`; Bedrock `systemTool`), or one that
+shares its name with more entries than the decoded request has tools of that
+name. `per_tool_rate_limiter` drops every such entry whenever it withdraws a
+tool, as the full re-encode did before grafting. `tool_injection` keeps
+them.
+
+`tool_allowlist` evaluates each such entry on every request, whether or not
+it removes a modelled tool, and counts a refused one as removed. It keeps
+one only when its kind (its `type`, or for Gemini and Bedrock its only key)
+is a built-in tool of the wire format, `allow_tools` names that kind
+exactly, and no deny pattern matches it. The built-ins are the Responses
+and Gemini tools above (`googleSearch`, `googleSearchRetrieval`,
+`codeExecution`, `urlContext`, in either spelling), Bedrock `systemTool`, and
+Anthropic dated server tools (`web_search_*`, `web_fetch_*`,
+`code_execution_*`, `bash_*`, `text_editor_*`, `computer_*`, such as
+`web_search_20250305`). Any other kind, such as `mcp_toolset` or a nameless
+entry, is always refused, and patterns such as `*` never keep one. Anthropic
+server tools carry a `name`, so the adapter models them and `allow_tools`
+patterns match that name. When a Gemini or Bedrock tool change cannot be
+placed entry by entry, the tools value is replaced by the re-encoded one and
+the kept built-ins are appended to it.
 
 Tools declared outside the tools array (Chat `functions` and
 `function_call`, Anthropic `mcp_servers`) and a `tool_choice` or Gemini
@@ -229,9 +251,9 @@ tracks them.
 
 | Plugin | Changes | Effect on the cached prefix |
 |---|---|---|
-| `regex_replace` | matched text in system and messages; response text | Only the matched strings change. A match inside the cached prefix changes it on every request the same way, so the prefix stays stable. |
-| `bedrock_guardrail`, anonymize | the last user message | Earlier messages and the system prompt keep their bytes. |
-| `trustguard`, mask | masked spans in system and messages | Only the masked spans change. |
+| `regex_replace` | matched text in system and messages; response text | The body is re-encoded once a rule matches: cache markers survive and unmodelled fields go. A match inside the cached prefix changes it on every request the same way, so the prefix stays stable. |
+| `bedrock_guardrail`, anonymize | the last user message | The body is re-encoded: cache markers survive, unmodelled fields go, and the prefix is stable up to the masked message. |
+| `trustguard`, mask | masked spans in system and messages | The body is re-encoded: cache markers survive, unmodelled fields go, and the prefix is stable up to the first masked span. |
 | `prompt_compression` | whitespace and JSON in messages | Skips any body with cache markers, multimodal parts or unmodelled message fields. |
 | `tool_injection` | appends gateway tools, or replaces a client tool with `gateway_wins` | The appended tools come after the client's, so the client's tool prefix is unchanged. A replaced tool keeps the client's marker. Injected tools carry no marker. |
 | `tool_allowlist` | removes tools | The tool block changes whenever the kept set changes. A marker on a removed tool moves to the nearest kept tool before it. |

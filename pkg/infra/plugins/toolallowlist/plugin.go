@@ -87,12 +87,35 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
 		return undecodable(in)
 	}
-	if err != nil || canonical == nil || len(canonical.Tools) == 0 {
+	if err != nil || canonical == nil {
+		return okResult(), nil
+	}
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return okResult(), nil
+	}
+	unmodelled, readable := adapter.UnmodelledToolKinds(ad, in.Request.Body, canonical)
+	if !readable {
+		unmodelled = []string{""}
+	}
+	if len(canonical.Tools) == 0 && len(unmodelled) == 0 {
 		return okResult(), nil
 	}
 
-	requested := toolNames(canonical.Tools)
+	requested := append(toolNames(canonical.Tools), namedKinds(unmodelled)...)
 	kept, removed, keptCount, removedCount := filter(canonical.Tools, cfg)
+	for _, kind := range unmodelled {
+		list := &removed
+		if allowsUnmodelled(ad, kind, cfg) {
+			keptCount++
+			list = &kept
+		} else {
+			removedCount++
+		}
+		if kind != "" {
+			*list = append(*list, kind)
+		}
+	}
 	data := ToolAllowlistData{
 		Provider:       in.Request.Provider,
 		ToolsRequested: requested,
@@ -117,7 +140,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 
 	if keptCount > 0 {
-		return p.stripTools(in.Request.Body, format, canonical, cfg)
+		return stripTools(ad, in.Request.Body, canonical, cfg)
 	}
 
 	switch cfg.OnEmptyAfterFilter {
@@ -130,22 +153,13 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 }
 
-func (p *Plugin) stripTools(
-	originalBody []byte,
-	format string,
-	canonical *adapter.CanonicalRequest,
-	cfg *config,
-) (*appplugins.Result, error) {
-	ad, err := p.registry.GetAdapter(adapter.Format(format))
-	if err != nil {
-		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
-	}
+func stripTools(ad adapter.ProviderAdapter, originalBody []byte, canonical *adapter.CanonicalRequest, cfg *config) (*appplugins.Result, error) {
 	baseline := canonical.Clone()
 	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
 		return keepTool(t.Name, cfg)
 	})
 	body, err := adapter.GraftChangedFieldsWith(ad, originalBody, baseline, canonical, adapter.GraftOptions{
-		KeepUnmodelledTool: func(kind string) bool { return allowsUnmodelled(kind, cfg) },
+		KeepUnmodelledTool: func(kind string) bool { return allowsUnmodelled(ad, kind, cfg) },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
@@ -216,15 +230,27 @@ func keepTool(name string, cfg *config) bool {
 	return true
 }
 
-// allowsUnmodelled keeps a built-in or server tool the canonical request
-// does not model only when allow_tools names its type exactly and no deny
-// pattern matches it; patterns never reach such a tool.
-func allowsUnmodelled(kind string, cfg *config) bool {
-	if kind == "" || !slices.Contains(cfg.AllowTools, kind) {
+// allowsUnmodelled keeps a tool the canonical request does not model only
+// when its kind is a built-in tool of the wire format, allow_tools names that
+// kind exactly and no deny pattern matches it. Patterns never reach such a
+// tool, and any other kind is refused, since the plugin cannot see what it
+// would expose.
+func allowsUnmodelled(ad adapter.RequestAdapter, kind string, cfg *config) bool {
+	if !isBuiltinTool(ad, kind) || !slices.Contains(cfg.AllowTools, kind) {
 		return false
 	}
 	_, denied := matchAny(cfg.DenyTools, kind)
 	return !denied
+}
+
+func namedKinds(kinds []string) []string {
+	out := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func filter(tools []adapter.CanonicalTool, cfg *config) (kept, removed []string, keptCount, removedCount int) {

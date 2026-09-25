@@ -29,7 +29,8 @@ import (
 const leakSecret = "bob@corp.example"
 
 // leakBodies carry the secret in the text a masking plugin edits and again
-// in a field the canonical request does not model.
+// in a field the canonical request does not model. A graft would keep that
+// copy, which is why redaction plugins encode the request in full.
 var leakBodies = []struct {
 	name   string
 	format Format
@@ -83,12 +84,29 @@ func maskLeakSecret(req *CanonicalRequest) {
 
 func carriesDecoded(t *testing.T, body []byte, s string) bool {
 	t.Helper()
-	found := false
-	require.NoError(t, forEachString(body, func(v string) bool {
-		found = strings.Contains(v, s)
-		return !found
-	}))
-	return found
+	var v any
+	require.NoError(t, json.Unmarshal(body, &v))
+	var walk func(any) bool
+	walk = func(v any) bool {
+		switch v := v.(type) {
+		case string:
+			return strings.Contains(v, s)
+		case []any:
+			for _, e := range v {
+				if walk(e) {
+					return true
+				}
+			}
+		case map[string]any:
+			for k, e := range v {
+				if strings.Contains(k, s) || walk(e) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v)
 }
 
 func graftWith(t *testing.T, format Format, body string, opts GraftOptions, edit func(*CanonicalRequest)) (out, encoded []byte) {
@@ -107,47 +125,16 @@ func graftWith(t *testing.T, format Format, body string, opts GraftOptions, edit
 	return out, encoded
 }
 
-func TestGraftChangedFieldsNeverForwardsRemovedText(t *testing.T) {
+func TestEncodeRequestDropsUnmodelledCopiesOfMaskedText(t *testing.T) {
 	t.Parallel()
 	for _, tc := range leakBodies {
-		for _, redaction := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/redaction=%v", tc.name, redaction), func(t *testing.T) {
-				t.Parallel()
-				body := strings.ReplaceAll(tc.body, "S", leakSecret)
-				out, encoded := graftWith(t, tc.format, body, GraftOptions{Redaction: redaction}, maskLeakSecret)
-				require.False(t, carriesDecoded(t, encoded, leakSecret), "the full re-encode carries the secret: %s", encoded)
-				assert.False(t, carriesDecoded(t, out, leakSecret), string(out))
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := strings.ReplaceAll(tc.body, "S", leakSecret)
+			_, encoded := graftWith(t, tc.format, body, GraftOptions{}, maskLeakSecret)
+			assert.False(t, carriesDecoded(t, encoded, leakSecret), string(encoded))
+		})
 	}
-}
-
-func TestGraftChangedFieldsGraftsWhenNoCopyIsLeft(t *testing.T) {
-	t.Parallel()
-	body := `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":[{"type":"text","text":"Stable","cache_control":{"type":"ephemeral"}},{"type":"text","text":"reach ` + leakSecret + `"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"plan","signature":"s"},{"type":"text","text":"ok"}]},{"role":"user","content":"go"}]}`
-	out, _ := graftWith(t, FormatAnthropic, body, GraftOptions{Redaction: true}, maskLeakSecret)
-	assert.Equal(t, strings.ReplaceAll(body, leakSecret, "[EMAIL]"), string(out))
-}
-
-func TestGraftChangedFieldsRedactionSearchesShortPieces(t *testing.T) {
-	t.Parallel()
-	body := `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"hi Al"},{"role":"assistant","content":[{"type":"thinking","thinking":"Al asked","signature":"s"},{"type":"text","text":"ok"}]},{"role":"user","content":"go"}]}`
-	mask := func(r *CanonicalRequest) { r.Messages[0].Content = "hi [NAME]" }
-
-	out, _ := graftWith(t, FormatAnthropic, body, GraftOptions{}, mask)
-	assert.Contains(t, string(out), `"thinking":"Al asked"`, "pieces under four bytes are not searched by default")
-
-	out, encoded := graftWith(t, FormatAnthropic, body, GraftOptions{Redaction: true}, mask)
-	assert.Equal(t, string(encoded), string(out))
-}
-
-func TestGraftChangedFieldsSearchesEachLineOfARemovalAcrossBlocks(t *testing.T) {
-	t.Parallel()
-	body := `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":[{"type":"text","text":"card 4111 1111"},{"type":"text","text":"2222 3333 end"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"saw 4111 1111","signature":"s"},{"type":"text","text":"ok"}]},{"role":"user","content":"go"}]}`
-	out, encoded := graftWith(t, FormatAnthropic, body, GraftOptions{Redaction: true}, func(r *CanonicalRequest) {
-		r.Messages[0].Content = strings.Replace(r.Messages[0].Content, "4111 1111\n2222 3333", "[CARD]", 1)
-	})
-	assert.Equal(t, string(encoded), string(out))
 }
 
 func TestGraftChangedFieldsRefusesDuplicateKeys(t *testing.T) {
@@ -163,7 +150,7 @@ func TestGraftChangedFieldsRefusesDuplicateKeys(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			out, encoded := graftWith(t, FormatOpenAI, body, GraftOptions{Redaction: true}, maskLeakSecret)
+			out, encoded := graftWith(t, FormatOpenAI, body, GraftOptions{}, maskLeakSecret)
 			assert.Equal(t, string(encoded), string(out))
 		})
 	}
@@ -171,7 +158,7 @@ func TestGraftChangedFieldsRefusesDuplicateKeys(t *testing.T) {
 	t.Run("unchanged body is normalised", func(t *testing.T) {
 		t.Parallel()
 		body := `{"model":"m","messages":[{"role":"user","content":"a ` + leakSecret + `"}],"messages":[{"role":"user","content":"hello"}]}`
-		out, encoded := graftWith(t, FormatOpenAI, body, GraftOptions{Redaction: true}, maskLeakSecret)
+		out, encoded := graftWith(t, FormatOpenAI, body, GraftOptions{}, maskLeakSecret)
 		assert.Equal(t, string(encoded), string(out))
 	})
 }
@@ -240,8 +227,57 @@ func TestGraftChangedFieldsUnmodelledTools(t *testing.T) {
 		t.Parallel()
 		body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"},{"name":"b"}]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":8}}`
 		out, _ := graftWith(t, FormatGemini, body, GraftOptions{KeepUnmodelledTool: func(string) bool { return true }}, keepOnly("a"))
+		assert.Equal(t, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":8}}`, string(out))
+
+		out, _ = graftWith(t, FormatGemini, body, GraftOptions{}, keepOnly("a"))
 		assert.Equal(t, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":8}}`, string(out))
 	})
+	t.Run("a refused kind goes though no modelled tool changed", func(t *testing.T) {
+		t.Parallel()
+		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "web_search" }}
+		out, _ := graftWith(t, FormatOpenAIResponses, responses, opts, func(*CanonicalRequest) {})
+		assert.Equal(t, `{"model":"m","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a"},{"type":"function","name":"b"}]}`, string(out))
+
+		out, _ = graftWith(t, FormatOpenAIResponses, responses, GraftOptions{KeepUnmodelledTool: func(string) bool { return true }}, func(*CanonicalRequest) {})
+		assert.Equal(t, responses, string(out))
+	})
+	t.Run("only unmodelled tools left", func(t *testing.T) {
+		t.Parallel()
+		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "web_search" }}
+		out, _ := graftWith(t, FormatOpenAIResponses, responses, opts, keepOnly())
+		assert.Equal(t, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, string(out))
+	})
+}
+
+func TestUnmodelledToolKinds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		format Format
+		body   string
+		want   []string
+	}{
+		{"none", FormatOpenAIResponses, `{"model":"m","input":"hi","tools":[{"type":"function","name":"a"}]}`, nil},
+		{"no tools", FormatOpenAIResponses, `{"model":"m","input":"hi"}`, nil},
+		{"builtins", FormatOpenAIResponses, `{"model":"m","input":"hi","tools":[{"type":"mcp","server_label":"x"},{"type":"function","name":"a"},{"type":"local_shell"}]}`, []string{"mcp", "local_shell"}},
+		{"a key the decoder folds", FormatOpenAIResponses, `{"model":"m","input":"hi","Tools":[{"type":"function","name":"a"},{"type":"mcp","server_label":"x"}]}`, []string{"mcp"}},
+		{"a builtin named like a modelled tool", FormatOpenAIResponses, `{"model":"m","input":"hi","tools":[{"type":"function","name":"a"},{"type":"mcp","name":"a","server_label":"x"}]}`, []string{"function", "mcp"}},
+		{"anthropic server tools are modelled by name", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"bash_20250124","name":"bash"}]}`, nil},
+		{"gemini", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]},{"googleSearch":{}},{"function_declarations":[{"name":"b"}]},{"functionDeclarations":[],"codeExecution":{}}]}`, []string{"googleSearch", "function_declarations", ""}},
+		{"bedrock", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"a","inputSchema":{"json":{}}}},{"cachePoint":{"type":"default"}},{"systemTool":{"name":"nova_grounding"}}]}}`, []string{"systemTool"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ad, err := NewRegistry().GetAdapter(tc.format)
+			require.NoError(t, err)
+			req, err := ad.DecodeRequest([]byte(tc.body))
+			require.NoError(t, err)
+			got, ok := UnmodelledToolKinds(ad, []byte(tc.body), req)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestGraftChangedFieldsPlacesEditsByOffset(t *testing.T) {
@@ -504,6 +540,96 @@ func TestGraftChangedFieldsLargeBodyStaysLinear(t *testing.T) {
 		t.Logf("%s: bytes=%d graft=%v decode+encode=%v", name, len(body), graft, reencode)
 		assert.Less(t, graft, 5*reencode, name)
 	}
+}
+
+func deepBody(depth int, inner string) []byte {
+	x := strings.Repeat("[", depth) + inner + strings.Repeat("]", depth)
+	return []byte(`{"model":"m","max_tokens":5,"x":` + x + `,"messages":[{"role":"user","content":"hi ` + leakSecret + `"}]}`)
+}
+
+// TestGraftChangedFieldsDeepBodiesStayLinear bounds bodies whose raw walk
+// would rescan each value once per level above it: they fall back to the
+// full re-encode after a linear pre-check.
+func TestGraftChangedFieldsDeepBodiesStayLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	cases := map[string][]byte{
+		"depth 4000 over a 6 MiB string": deepBody(4000, `"`+strings.Repeat("a", 6<<20)+`"`),
+		"depth 60 over a 6 MiB string":   deepBody(60, `"`+strings.Repeat("a", 6<<20)+`"`),
+		"depth 62 over 3M values":        deepBody(62, strings.TrimSuffix(strings.Repeat("0,", 3<<20), ",")),
+	}
+	ad, err := NewRegistry().GetAdapter(FormatAnthropic)
+	require.NoError(t, err)
+	best := func(f func()) time.Duration {
+		d := time.Duration(1 << 62)
+		for range 3 {
+			st := time.Now()
+			f()
+			d = min(d, time.Since(st))
+		}
+		return d
+	}
+	for name, body := range cases {
+		req, err := ad.DecodeRequest(body)
+		require.NoError(t, err, name)
+		baseline := req.Clone()
+		maskLeakSecret(req)
+		encoded, err := ad.EncodeRequest(req)
+		require.NoError(t, err)
+		reencode := best(func() {
+			_, _ = ad.DecodeRequest(body)
+			_, _ = ad.EncodeRequest(req)
+		})
+		var out []byte
+		graft := best(func() {
+			out, err = GraftChangedFields(ad, body, baseline, req)
+			require.NoError(t, err)
+		})
+		t.Logf("%s: graft=%v decode+encode=%v", name, graft, reencode)
+		assert.Equal(t, string(encoded), string(out), name)
+		assert.Less(t, graft, 5*reencode, name)
+	}
+}
+
+func TestRawWithinCaps(t *testing.T) {
+	t.Parallel()
+	assert.True(t, rawWithinCaps([]byte(`{"a":[{"b":"c\\\"]"}]}`)))
+	assert.True(t, rawWithinCaps([]byte(strings.Repeat("[", maxGraftDepth)+strings.Repeat("]", maxGraftDepth))))
+	assert.False(t, rawWithinCaps([]byte(strings.Repeat("[", maxGraftDepth+1)+strings.Repeat("]", maxGraftDepth+1))))
+	assert.False(t, rawWithinCaps(deepBody(40, `"`+strings.Repeat("a", 1<<20)+`"`)))
+	assert.False(t, rawWithinCaps([]byte("["+strings.TrimSuffix(strings.Repeat("0,", maxGraftValues+1), ",")+"]")))
+}
+
+func TestHasAmbiguousKeysReadsAnySizeAndDepth(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		body string
+		want bool
+	}{
+		"flat":              {`{"a":1,"b":{"a":2},"c":[{"a":3}]}`, false},
+		"strings like keys": {`{"a":"b","c":["a","a"],"d":{"x":"a","y":"a"}}`, false},
+		"escaped key":       {`{"a\u0062":1,"ab":2}`, true},
+		"fold":              {`{"k":1,"K":2}`, true},
+		"after a nested":    {`{"a":{"b":1,"c":2},"A":3}`, true},
+		"many keys":         {`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"ſ":0,"s":1}`, true},
+		"deep":              {strings.Repeat(`{"x":`, 5000) + `{"a":1,"a":2}` + strings.Repeat("}", 5000), true},
+		"invalid":           {`{"a":1,"a":2`, false},
+	} {
+		assert.Equal(t, tc.want, hasAmbiguousKeys([]byte(tc.body)), name)
+	}
+}
+
+func TestGraftChangedFieldsNormalisesUnchangedBodiesOverTheSizeCap(t *testing.T) {
+	t.Parallel()
+	pad := strings.Repeat("a", maxGraftBody)
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"metadata":{"pad":"` + pad + `"},"messages":[{"role":"user","content":"decoy"}]}`
+	out, encoded := graftWith(t, FormatOpenAI, body, GraftOptions{}, func(*CanonicalRequest) {})
+	assert.Equal(t, string(encoded), string(out))
+
+	body = `{"model":"m","messages":[{"role":"user","content":"hi"}],"metadata":{"pad":"` + pad + `"}}`
+	out, _ = graftWith(t, FormatOpenAI, body, GraftOptions{}, func(*CanonicalRequest) {})
+	assert.Equal(t, body, string(out))
 }
 
 func BenchmarkGraftChangedFields(b *testing.B) {

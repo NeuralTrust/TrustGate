@@ -102,7 +102,7 @@ func (p *Plugin) executeRequest(ctx context.Context, in appplugins.ExecInput, cf
 		p.debug(ctx, "decode request failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
-	body, changed, err := rewriteRequest(p.registry, format, in.Request.Body, creq, cfg.compiled)
+	body, changed, err := rewriteRequest(p.registry, format, creq, cfg.compiled)
 	if err != nil {
 		p.debug(ctx, "rewrite request failed", slog.Any("error", err))
 		return passThrough(), nil

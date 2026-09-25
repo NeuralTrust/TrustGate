@@ -79,16 +79,24 @@ func rawValueEnd(b []byte, i int) (int, error) {
 	return j, nil
 }
 
+// rawStringEnd returns the end of the string starting at i: the first quote
+// after it that an even run of backslashes precedes.
 func rawStringEnd(b []byte, i int) (int, error) {
-	for j := i + 1; j < len(b); j++ {
-		switch b[j] {
-		case '\\':
-			j++
-		case '"':
-			return j + 1, nil
+	for j := i + 1; ; {
+		k := bytes.IndexByte(b[j:], '"')
+		if k < 0 {
+			return 0, errRawJSON
 		}
+		q := j + k
+		escapes := 0
+		for p := q - 1; p > i && b[p] == '\\'; p-- {
+			escapes++
+		}
+		if escapes%2 == 0 {
+			return q + 1, nil
+		}
+		j = q + 1
 	}
-	return 0, errRawJSON
 }
 
 func rawContainerEnd(b []byte, i int) (int, error) {
@@ -218,17 +226,124 @@ func rawItems(b []byte, s rawSpan) ([]rawSpan, error) {
 	return items, nil
 }
 
+// rawFieldOf returns the value of key in the object at s, matching keys as
+// encoding/json matches struct fields. rawFields refuses keys that fold into
+// one, so at most one key matches.
 func rawFieldOf(b []byte, s rawSpan, key string) (rawSpan, bool) {
 	fields, err := rawFields(b, s)
 	if err != nil {
 		return rawSpan{}, false
 	}
 	for _, f := range fields {
-		if f.key == key {
+		if strings.EqualFold(f.key, key) {
 			return f.value, true
 		}
 	}
 	return rawSpan{}, false
+}
+
+// rawWithinCaps reports whether the raw walks can index the valid JSON body
+// b at a cost linear in its size. They rescan a value once for each level
+// that holds it, so the body must nest at most maxGraftDepth containers,
+// hold at most maxGraftValues values, and keep the sum of the depth of its
+// bytes under maxGraftRescan times its size.
+func rawWithinCaps(b []byte) bool {
+	budget := maxGraftRescan * max(len(b), 64<<10)
+	depth, values, work := 0, 0, 0
+	for i := 0; i < len(b); i++ {
+		switch b[i] {
+		case '{', '[':
+			if depth++; depth > maxGraftDepth {
+				return false
+			}
+			values++
+		case '}', ']':
+			depth--
+		case ',':
+			values++
+		case '"':
+			end, err := rawStringEnd(b, i)
+			if err != nil {
+				return false
+			}
+			work += depth * (end - i - 1)
+			i = end - 1
+		}
+		if work += depth; work > budget || values > maxGraftValues {
+			return false
+		}
+	}
+	return true
+}
+
+// hasAmbiguousKeys reports a valid JSON body with an object whose keys
+// encoding/json folds into one, where the decoder may have read another copy
+// than the upstream will. It reads the body in one pass, at any size or
+// depth.
+func hasAmbiguousKeys(b []byte) bool {
+	if !json.Valid(b) {
+		return false
+	}
+	var stack []keyFrame
+	for i := 0; i < len(b); i++ {
+		switch b[i] {
+		case '{':
+			stack = append(stack, keyFrame{object: true, atKey: true})
+		case '[':
+			stack = append(stack, keyFrame{})
+		case '}', ']':
+			stack = stack[:len(stack)-1]
+		case ',':
+			if n := len(stack); n > 0 && stack[n-1].object {
+				stack[n-1].atKey = true
+			}
+		case '"':
+			end, err := rawStringEnd(b, i)
+			if err != nil {
+				return false
+			}
+			if n := len(stack); n > 0 && stack[n-1].atKey {
+				key, ok := rawString(b, rawSpan{i, end})
+				if !ok || stack[n-1].repeats(key) {
+					return true
+				}
+				stack[n-1].atKey = false
+			}
+			i = end - 1
+		}
+	}
+	return false
+}
+
+type keyFrame struct {
+	object, atKey bool
+	keys          []string
+	folded        map[string]struct{}
+}
+
+func (f *keyFrame) repeats(key string) bool {
+	if f.folded == nil {
+		for _, k := range f.keys {
+			if strings.EqualFold(k, key) {
+				return true
+			}
+		}
+		if f.keys = append(f.keys, key); len(f.keys) <= 8 {
+			return false
+		}
+		f.folded = make(map[string]struct{}, 2*len(f.keys))
+		for _, k := range f.keys {
+			f.folded[foldKey(k)] = struct{}{}
+		}
+		f.keys = nil
+		return false
+	}
+	k := foldKey(key)
+	if _, dup := f.folded[k]; dup {
+		return true
+	}
+	f.folded[k] = struct{}{}
+	return false
 }
 
 func rawAt(b []byte, s rawSpan, path []string) (rawSpan, bool) {
@@ -266,29 +381,6 @@ func rawString(b []byte, s rawSpan) (string, bool) {
 		return "", false
 	}
 	return v, true
-}
-
-// forEachString calls fn with every decoded string of a valid JSON body,
-// object keys included, until fn returns false.
-func forEachString(b []byte, fn func(string) bool) error {
-	for i := 0; i < len(b); i++ {
-		if b[i] != '"' {
-			continue
-		}
-		end, err := rawStringEnd(b, i)
-		if err != nil {
-			return err
-		}
-		s, ok := rawString(b, rawSpan{i, end})
-		if !ok {
-			return errRawJSON
-		}
-		if !fn(s) {
-			return nil
-		}
-		i = end - 1
-	}
-	return nil
 }
 
 func marshalRawString(s string) []byte {
