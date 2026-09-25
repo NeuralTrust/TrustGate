@@ -84,8 +84,6 @@ func (bp *CanonicalCacheBreakpoint) onImage() bool {
 	return bp != nil && bp.image > 0
 }
 
-// withoutImages returns the marker a target that sends no images keeps: the
-// text marker behind an image marker, or bp itself when it is not on an image.
 func (bp *CanonicalCacheBreakpoint) withoutImages() *CanonicalCacheBreakpoint {
 	if bp.onImage() {
 		return bp.text
@@ -93,8 +91,6 @@ func (bp *CanonicalCacheBreakpoint) withoutImages() *CanonicalCacheBreakpoint {
 	return bp
 }
 
-// cachedImageIndex returns the index of the image a marker sat on when the
-// segment still has the images it was decoded with.
 func cachedImageIndex(bp *CanonicalCacheBreakpoint, images int) (int, bool) {
 	if !bp.onImage() || bp.images != images {
 		return 0, false
@@ -117,8 +113,6 @@ func (o *CanonicalCacheOptions) empty() bool {
 	return o.Key == "" && o.Retention == "" && o.Mode == "" && len(o.Options) == 0 && o.Auto == nil
 }
 
-// openAICacheOptions keeps options verbatim and parses its mode. It returns
-// nil when none of the three is set.
 func openAICacheOptions(key, retention string, options json.RawMessage) *CanonicalCacheOptions {
 	o := &CanonicalCacheOptions{Key: key, Retention: retention}
 	if len(options) > 0 && string(options) != "null" {
@@ -203,8 +197,6 @@ func openAICacheProfile(target Format, providerName, model string) cacheProfile 
 	return p
 }
 
-// formatProvider names the provider a target format stands for when the
-// caller does not know the actual one.
 func formatProvider(target Format) string {
 	if target == FormatOpenAIResponses {
 		return provider.OpenAI
@@ -521,9 +513,6 @@ func (j *cacheTextJoin) String() string {
 	return strings.Join(j.parts, "\n")
 }
 
-// cachedTextParts splits text back into the block the marker sat on and the
-// text after it. placed reports that the marker belongs on parts[0]; when it
-// is false the caller puts the marker on the last part it emits.
 func cachedTextParts(text string, bp *CanonicalCacheBreakpoint) (parts []string, placed bool) {
 	if text == "" {
 		return nil, false
