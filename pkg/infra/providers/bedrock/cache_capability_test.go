@@ -16,6 +16,8 @@ package bedrock
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -57,7 +59,16 @@ func TestCacheCapabilityFor(t *testing.T) {
 		{"meta.llama3-3-70b-instruct-v1:0", cacheCapability{}},
 		{"amazon.titan-text-express-v1", cacheCapability{}},
 		{"arn:aws:bedrock:eu-west-1:065069198444:application-inference-profile/hfeskwe5y945", cacheCapability{}},
-		{"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6", cacheCapability{}},
+		{"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6", claudeCache1h},
+		{"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0", claudeCache5m},
+		{"arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6", claudeCache1h},
+		{"arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/us-gov.anthropic.claude-3-7-sonnet-20250219-v1:0", claudeCache5m},
+		{"arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.amazon.nova-2-lite-v1:0", novaCache},
+		{"arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-3-70b-instruct-v1:0", cacheCapability{}},
+		{"arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc123", cacheCapability{}},
+		{"arn:aws:bedrock:us-east-1:123456789012:custom-model/anthropic.claude-sonnet-4-6/abc123", cacheCapability{}},
+		{"arn:aws:bedrock:us-east-1::foundation-model/", cacheCapability{}},
+		{"arn:aws:bedrock:us-east-1", cacheCapability{}},
 		{"", cacheCapability{}},
 	}
 	for _, tt := range tests {
@@ -215,8 +226,8 @@ func TestCompletions_RetriesWithoutCachePointOnValidationException(t *testing.T)
 	inputs = nil
 	_, err = c.Completions(context.Background(), &providers.Config{}, []byte(claudeCachedBody))
 	require.NoError(t, err)
-	require.Len(t, inputs, 1, "the model is remembered: the next request skips cachePoint")
-	assert.Zero(t, sentPoints(inputs[0]).total())
+	require.Len(t, inputs, 2, "nothing is remembered: the next request tries its cachePoints again")
+	assert.Equal(t, 1, sentPoints(inputs[0]).total())
 }
 
 func TestCompletions_NoCachePointRetryOnOtherErrors(t *testing.T) {
@@ -243,12 +254,11 @@ func TestCompletions_NoCachePointRetryOnOtherErrors(t *testing.T) {
 			require.Error(t, err)
 			require.Len(t, inputs, 1)
 			assert.Equal(t, 1, sentPoints(inputs[0]).total())
-			assert.False(t, c.cacheStrip.known("us.anthropic.claude-sonnet-4-6"))
 		})
 	}
 }
 
-func TestCompletions_CachePointMemoOnlyAfterSuccess(t *testing.T) {
+func TestCompletions_CachePointRetryHappensOnce(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
@@ -265,7 +275,6 @@ func TestCompletions_CachePointMemoOnlyAfterSuccess(t *testing.T) {
 	_, err := c.Completions(context.Background(), &providers.Config{}, []byte(claudeCachedBody))
 	require.Error(t, err)
 	assert.Equal(t, 2, calls, "one retry without cachePoint")
-	assert.False(t, c.cacheStrip.known("us.anthropic.claude-sonnet-4-6"), "the retry failed, so caching stays on")
 }
 
 func TestCompletions_CachePointAndSystemFallbacksInEitherOrder(t *testing.T) {
@@ -319,12 +328,14 @@ func TestCompletions_CachePointAndSystemFallbacksInEitherOrder(t *testing.T) {
 			assert.Empty(t, last.System)
 			assert.Zero(t, sentPoints(last).total())
 			assert.True(t, c.systemFold.known(model))
-			assert.True(t, c.cacheStrip.known(model))
 
 			inputs = nil
 			_, err = c.Completions(context.Background(), &providers.Config{}, body)
 			require.NoError(t, err)
-			assert.Len(t, inputs, 1, "both repairs are remembered")
+			require.Len(t, inputs, 2, "only the system fold is remembered")
+			assert.Empty(t, inputs[0].System)
+			assert.Equal(t, 1, sentPoints(inputs[0]).total(), "the folded system keeps its cachePoint")
+			assert.Zero(t, sentPoints(inputs[1]).total())
 		})
 	}
 }
@@ -352,7 +363,8 @@ func TestCompletionsStream_RetriesWithoutCachePoint(t *testing.T) {
 	inputs = nil
 	_, err = c.CompletionsStream(context.Background(), &providers.Config{}, []byte(claudeCachedBody))
 	require.NoError(t, err)
-	assert.Len(t, inputs, 1)
+	require.Len(t, inputs, 2)
+	assert.Equal(t, 1, cachePointsOf(inputs[0].System, inputs[0].Messages, inputs[0].ToolConfig).total())
 }
 
 func TestCompletionsStream_GatesCachePointByModel(t *testing.T) {
@@ -372,4 +384,111 @@ func TestCompletionsStream_GatesCachePointByModel(t *testing.T) {
 	require.NotNil(t, sent)
 	assert.Zero(t, cachePointsOf(sent.System, sent.Messages, sent.ToolConfig).total())
 	assert.Len(t, sent.System, 1)
+}
+
+func TestCachePointRejected(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code, message string
+		want          bool
+	}{
+		{"ValidationException", "A maximum of 4 blocks with cache_control may be provided. Found 5.", true},
+		{"ValidationException", "The model returned the following errors: Malformed input request: extraneous key [cachePoint] is not permitted, please reformat your input and try again.", true},
+		{"ValidationException", "This model doesn't support the cachePoint field. Remove cachePoint from your request and try again.", true},
+		{"ValidationException", "cache_control with ttl='1h' must not come after ttl='5m'", true},
+		{"ValidationException", "A cache point must follow a content block.", true},
+		{"ValidationException", "Too many cache checkpoints in the request.", true},
+		{"ValidationException", "The ttl 1h is not supported for prompt caching on this model.", true},
+		{"ValidationException", "The provided model identifier is invalid.", false},
+		{"ValidationException", "cache unavailable", false},
+		{"ValidationException", "Invalid ttl for guardrail trace.", false},
+		{"ValidationException", "messages: text field is blank", false},
+		{"ThrottlingException", "Too many requests with cachePoint, please wait.", false},
+		{"ServiceUnavailableException", "cache_control backend unavailable", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			t.Parallel()
+			err := &smithy.GenericAPIError{Code: tt.code, Message: tt.message}
+			assert.Equal(t, tt.want, cachePointRejected(err))
+		})
+	}
+	assert.False(t, cachePointRejected(errors.New("cachePoint")), "not an API error")
+}
+
+func TestCompletions_MalformedCacheRequestDoesNotDisableCachingForTheModel(t *testing.T) {
+	t.Parallel()
+
+	const model = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	valid := `{"model":"` + model + `","system":[{"text":"rules"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`
+	tests := []struct {
+		name   string
+		body   string
+		reject func(sentCachePoints) error
+	}{
+		{
+			name: "more than four cachePoints",
+			body: `{"model":"` + model + `","system":[{"text":"a"},{"cachePoint":{"type":"default"}},{"text":"b"},{"cachePoint":{"type":"default"}},{"text":"c"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"user","content":[{"text":"d"},{"cachePoint":{"type":"default"}},{"text":"e"},{"cachePoint":{"type":"default"}}]}]}`,
+			reject: func(sent sentCachePoints) error {
+				if sent.total() > 4 {
+					return &smithy.GenericAPIError{Code: "ValidationException", Message: "A maximum of 4 blocks with cache_control may be provided. Found 5."}
+				}
+				return nil
+			},
+		},
+		{
+			name: "1h ttl after 5m",
+			body: `{"model":"` + model + `","system":[{"text":"a"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"user","content":[{"text":"d"},{"cachePoint":{"type":"default","ttl":"1h"}}]}]}`,
+			reject: func(sent sentCachePoints) error {
+				if len(sent.system) > 0 && len(sent.messages) > 0 && sent.system[0].Ttl == "" && sent.messages[0].Ttl == bedrockTypes.CacheTTLOneHour {
+					return &smithy.GenericAPIError{Code: "ValidationException", Message: "cache_control with ttl='1h' must not come after ttl='5m'"}
+				}
+				return nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s stream=%v", tt.name, stream), func(t *testing.T) {
+				t.Parallel()
+				var sent []sentCachePoints
+				record := func(p sentCachePoints) error {
+					sent = append(sent, p)
+					return tt.reject(p)
+				}
+				c := &client{
+					converse: func(_ context.Context, in *bedrockruntime.ConverseInput) (*bedrockruntime.ConverseOutput, error) {
+						if err := record(sentPoints(in)); err != nil {
+							return nil, err
+						}
+						return helloOutput(), nil
+					},
+					converseStream: func(_ context.Context, in *bedrockruntime.ConverseStreamInput) (*bedrockruntime.ConverseStreamOutput, error) {
+						if err := record(cachePointsOf(in.System, in.Messages, in.ToolConfig)); err != nil {
+							return nil, err
+						}
+						return &bedrockruntime.ConverseStreamOutput{}, nil
+					},
+				}
+				send := func(body string) error {
+					if stream {
+						_, err := c.CompletionsStream(context.Background(), &providers.Config{}, []byte(body))
+						return err
+					}
+					_, err := c.Completions(context.Background(), &providers.Config{}, []byte(body))
+					return err
+				}
+
+				require.NoError(t, send(tt.body))
+				require.Len(t, sent, 2, "the malformed request is retried once without cachePoints")
+				assert.Zero(t, sent[1].total())
+
+				sent = nil
+				require.NoError(t, send(valid))
+				require.Len(t, sent, 1)
+				assert.Equal(t, 1, sent[0].total(), "the next valid request keeps its cachePoint")
+			})
+		}
+	}
 }
