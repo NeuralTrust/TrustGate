@@ -15,7 +15,6 @@
 package pertoolratelimit
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -294,56 +293,16 @@ func (p *Plugin) stripTools(
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
 	}
-	fullEncoded, err := ad.EncodeRequest(canonical)
+	baseline := canonical.Clone()
+	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
+		_, drop := strip[t.Name]
+		return !drop
+	})
+	body, err := adapter.GraftChangedFields(ad, originalBody, baseline, canonical)
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
-	}
-	kept := make([]adapter.CanonicalTool, 0, len(canonical.Tools))
-	for i := range canonical.Tools {
-		if _, drop := strip[canonical.Tools[i].Name]; drop {
-			continue
-		}
-		kept = append(kept, canonical.Tools[i])
-	}
-	canonical.Tools = kept
-	strippedEncoded, err := ad.EncodeRequest(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
-	}
-	body, err := graftChangedFields(originalBody, fullEncoded, strippedEncoded)
-	if err != nil {
-		body = strippedEncoded
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
-}
-
-func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, error) {
-	var orig, full, stripped map[string]json.RawMessage
-	if err := json.Unmarshal(original, &orig); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(fullEncoded, &full); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
-		return nil, err
-	}
-	for key, fullValue := range full {
-		strippedValue, ok := stripped[key]
-		if !ok {
-			delete(orig, key)
-			continue
-		}
-		if !bytes.Equal(fullValue, strippedValue) {
-			orig[key] = strippedValue
-		}
-	}
-	for key, strippedValue := range stripped {
-		if _, ok := full[key]; !ok {
-			orig[key] = strippedValue
-		}
-	}
-	return json.Marshal(orig)
 }
 
 func (p *Plugin) preResponse(

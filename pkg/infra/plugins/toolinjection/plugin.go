@@ -15,7 +15,6 @@
 package toolinjection
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -104,7 +103,7 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 	if err != nil {
 		return okResult(), nil
 	}
-	baseline, baselineErr := ad.EncodeRequest(canonical)
+	baseline := canonical.Clone()
 
 	tools, outcomes, err := applyInjections(canonical.Tools, cfg.InjectTools, cfg.onConflict())
 	if err != nil {
@@ -123,25 +122,9 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		return okResult(), nil
 	}
 
-	return p.encodeAndGraft(ad, in.Request.Body, baseline, baselineErr, canonical)
-}
-
-func (p *Plugin) encodeAndGraft(
-	ad adapter.ProviderAdapter,
-	originalBody, baseline []byte,
-	baselineErr error,
-	mutated *adapter.CanonicalRequest,
-) (*appplugins.Result, error) {
-	encoded, err := ad.EncodeRequest(mutated)
+	body, err := adapter.GraftChangedFields(ad, in.Request.Body, baseline, canonical)
 	if err != nil {
 		return nil, fmt.Errorf("tool_injection: graft: %w", err)
-	}
-	if baselineErr != nil {
-		return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: encoded}, nil
-	}
-	body, err := graftChangedFields(originalBody, baseline, encoded)
-	if err != nil {
-		body = encoded
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
@@ -168,35 +151,6 @@ func reservedName(pe *appplugins.PluginError) string {
 		return ""
 	}
 	return decoded.Error.Name
-}
-
-func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, error) {
-	var orig, full, stripped map[string]json.RawMessage
-	if err := json.Unmarshal(original, &orig); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(fullEncoded, &full); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
-		return nil, err
-	}
-	for key, fullValue := range full {
-		strippedValue, ok := stripped[key]
-		if !ok {
-			delete(orig, key)
-			continue
-		}
-		if !bytes.Equal(fullValue, strippedValue) {
-			orig[key] = strippedValue
-		}
-	}
-	for key, strippedValue := range stripped {
-		if _, ok := full[key]; !ok {
-			orig[key] = strippedValue
-		}
-	}
-	return json.Marshal(orig)
 }
 
 func wireFormat(req *infracontext.RequestContext) string {

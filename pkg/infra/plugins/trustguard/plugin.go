@@ -275,9 +275,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if strings.TrimSpace(joinRequestText(creq)) == "" && len(extractPayloadAttachments(in.Request.Body)) == 0 {
 				return passThrough(), nil
 			}
-			reg := p.registry
+			reg, original := p.registry, in.Request.Body
 			tgt.apply = func(masked string) ([]byte, bool) {
-				return rewriteRequest(reg, format, creq, masked)
+				return rewriteRequest(reg, format, original, creq, masked)
 			}
 			raw, err := llmRequestPayloadWithAttachments(creq, extractPayloadAttachments(in.Request.Body))
 			if err != nil {

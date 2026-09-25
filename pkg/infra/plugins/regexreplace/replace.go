@@ -24,11 +24,12 @@ func applyRules(rules []compiledRule, input string) (string, bool) {
 	return out, out != input
 }
 
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, rules []compiledRule) ([]byte, bool, error) {
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, rules []compiledRule) ([]byte, bool, error) {
 	adp, err := reg.GetAdapter(format)
 	if err != nil {
 		return nil, false, err
 	}
+	baseline := creq.Clone()
 	changed := false
 	if creq.System != "" {
 		if out, did := applyRules(rules, creq.System); did {
@@ -48,7 +49,7 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 	if !changed {
 		return nil, false, nil
 	}
-	body, err := adp.EncodeRequest(creq)
+	body, err := adapter.GraftChangedFields(adp, original, baseline, creq)
 	if err != nil {
 		return nil, false, err
 	}

@@ -15,7 +15,6 @@
 package toolallowlist
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -140,24 +139,13 @@ func (p *Plugin) stripTools(
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
 	}
-	fullEncoded, err := ad.EncodeRequest(canonical)
+	baseline := canonical.Clone()
+	canonical.Tools = adapter.FilterTools(canonical.Tools, func(t adapter.CanonicalTool) bool {
+		return keepTool(t.Name, cfg)
+	})
+	body, err := adapter.GraftChangedFields(ad, originalBody, baseline, canonical)
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
-	}
-	kept := make([]adapter.CanonicalTool, 0, len(canonical.Tools))
-	for i := range canonical.Tools {
-		if keepTool(canonical.Tools[i].Name, cfg) {
-			kept = append(kept, canonical.Tools[i])
-		}
-	}
-	canonical.Tools = kept
-	strippedEncoded, err := ad.EncodeRequest(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("tool_allowlist: strip: %w", err)
-	}
-	body, err := graftChangedFields(originalBody, fullEncoded, strippedEncoded)
-	if err != nil {
-		body = strippedEncoded
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 }
@@ -285,38 +273,6 @@ func matchToolPattern(pattern, name string) bool {
 	n := strings.ReplaceAll(name, "/", sentinel)
 	ok, err := path.Match(p, n)
 	return err == nil && ok
-}
-
-func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, error) {
-	var orig, full, stripped map[string]json.RawMessage
-	if err := json.Unmarshal(original, &orig); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(fullEncoded, &full); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
-		return nil, err
-	}
-	for key, fullValue := range full {
-		strippedValue, ok := stripped[key]
-		if !ok {
-			delete(orig, key)
-			continue
-		}
-		if !bytes.Equal(fullValue, strippedValue) {
-			orig[key] = strippedValue
-		}
-	}
-	for key, strippedValue := range stripped {
-		if _, ok := full[key]; !ok {
-			orig[key] = strippedValue
-		}
-	}
-	if tools, ok := stripped["tools"]; ok {
-		orig["tools"] = tools
-	}
-	return json.Marshal(orig)
 }
 
 func wireFormat(req *infracontext.RequestContext) string {
