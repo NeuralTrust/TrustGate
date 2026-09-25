@@ -513,7 +513,7 @@ var largeBodyEdits = map[string]func(*CanonicalRequest){
 // message (about 1 MB) body by the decode and re-encode a plugin would run
 // without it; a quadratic step shows up as a ratio in the hundreds.
 func TestGraftChangedFieldsLargeBodyStaysLinear(t *testing.T) {
-	if testing.Short() {
+	if raceEnabled || testing.Short() {
 		t.Skip("timing test")
 	}
 	body := largeChatBody(8000)
@@ -555,7 +555,7 @@ func deepBody(depth int, inner string) []byte {
 // would rescan each value once per level above it: they fall back to the
 // full re-encode after a linear pre-check.
 func TestGraftChangedFieldsDeepBodiesStayLinear(t *testing.T) {
-	if testing.Short() {
+	if raceEnabled || testing.Short() {
 		t.Skip("timing test")
 	}
 	cases := map[string][]byte{
