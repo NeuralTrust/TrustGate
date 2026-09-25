@@ -14,7 +14,10 @@
 
 package bedrockguardrail
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 type Data struct {
 	GuardrailID    string `json:"guardrail_id,omitempty"`
@@ -30,6 +33,9 @@ type Data struct {
 	LatencyMS      int64  `json:"latency_ms,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {
