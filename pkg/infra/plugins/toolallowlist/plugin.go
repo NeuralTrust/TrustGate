@@ -391,14 +391,17 @@ func allowsUnmodelled(ad adapter.RequestAdapter, u adapter.UnmodelledTool, cfg *
 	if !isBuiltinTool(ad, u.Kind) || (u.Kind == mcpToolsetKind && u.Name == "") {
 		return false
 	}
-	ids := []string{u.Kind}
+	kinds := builtinKindSpellings(ad, u.Kind)
+	ids := slices.Clone(kinds)
 	if u.Name != "" {
 		ids = append(ids, u.Name)
 	}
 	if matchesAny(cfg.DenyTools, ids) {
 		return false
 	}
-	return len(cfg.AllowTools) == 0 || slices.Contains(cfg.AllowTools, u.Kind)
+	return len(cfg.AllowTools) == 0 || slices.ContainsFunc(kinds, func(k string) bool {
+		return slices.Contains(cfg.AllowTools, k)
+	})
 }
 
 // unmodelledLabel names an unmodelled entry in the event and the refusal:
