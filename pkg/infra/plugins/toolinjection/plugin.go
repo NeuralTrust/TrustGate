@@ -118,12 +118,15 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
 	}
 
-	if !injectionChanged(outcomes) {
+	// A body with keys the decoder folds into one is re-encoded even when
+	// nothing was injected: the conflicts were judged on the tools decoded,
+	// which the upstream may not read.
+	if !injectionChanged(outcomes) && !adapter.HasAmbiguousKeys(in.Request.Body) {
 		return okResult(), nil
 	}
 
 	body, err := adapter.GraftChangedFieldsWith(ad, in.Request.Body, baseline, canonical, adapter.GraftOptions{
-		KeepUnmodelledTool: func(string) bool { return true },
+		KeepUnmodelledTool: func(adapter.UnmodelledTool) bool { return true },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tool_injection: graft: %w", err)

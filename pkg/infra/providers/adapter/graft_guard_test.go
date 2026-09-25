@@ -205,7 +205,7 @@ func TestGraftChangedFieldsUnmodelledTools(t *testing.T) {
 	})
 	t.Run("kept by kind", func(t *testing.T) {
 		t.Parallel()
-		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "web_search" }}
+		opts := GraftOptions{KeepUnmodelledTool: func(u UnmodelledTool) bool { return u.Kind == "web_search" }}
 		out, _ := graftWith(t, FormatOpenAIResponses, responses, opts, keepOnly("b"))
 		assert.Equal(t, `{"model":"m","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"b"}]}`, string(out))
 	})
@@ -219,14 +219,14 @@ func TestGraftChangedFieldsUnmodelledTools(t *testing.T) {
 		out, _ := graftWith(t, FormatBedrock, body, GraftOptions{}, keepOnly("a"))
 		assert.Equal(t, `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[`+cp+`,`+spec("a")+`,`+cp+`]}}`, string(out))
 
-		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "systemTool" }}
+		opts := GraftOptions{KeepUnmodelledTool: func(u UnmodelledTool) bool { return u.Kind == "systemTool:nova_grounding" }}
 		out, _ = graftWith(t, FormatBedrock, body, opts, keepOnly("a"))
 		assert.Equal(t, `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[`+cp+`,`+spec("a")+`,{"systemTool":{"name":"nova_grounding"}},`+cp+`]}}`, string(out))
 	})
 	t.Run("gemini groups are replaced whole", func(t *testing.T) {
 		t.Parallel()
 		body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"},{"name":"b"}]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":8}}`
-		out, _ := graftWith(t, FormatGemini, body, GraftOptions{KeepUnmodelledTool: func(string) bool { return true }}, keepOnly("a"))
+		out, _ := graftWith(t, FormatGemini, body, GraftOptions{KeepUnmodelledTool: func(UnmodelledTool) bool { return true }}, keepOnly("a"))
 		assert.Equal(t, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":8}}`, string(out))
 
 		out, _ = graftWith(t, FormatGemini, body, GraftOptions{}, keepOnly("a"))
@@ -234,22 +234,22 @@ func TestGraftChangedFieldsUnmodelledTools(t *testing.T) {
 	})
 	t.Run("a refused kind goes though no modelled tool changed", func(t *testing.T) {
 		t.Parallel()
-		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "web_search" }}
+		opts := GraftOptions{KeepUnmodelledTool: func(u UnmodelledTool) bool { return u.Kind == "web_search" }}
 		out, _ := graftWith(t, FormatOpenAIResponses, responses, opts, func(*CanonicalRequest) {})
 		assert.Equal(t, `{"model":"m","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"a"},{"type":"function","name":"b"}]}`, string(out))
 
-		out, _ = graftWith(t, FormatOpenAIResponses, responses, GraftOptions{KeepUnmodelledTool: func(string) bool { return true }}, func(*CanonicalRequest) {})
+		out, _ = graftWith(t, FormatOpenAIResponses, responses, GraftOptions{KeepUnmodelledTool: func(UnmodelledTool) bool { return true }}, func(*CanonicalRequest) {})
 		assert.Equal(t, responses, string(out))
 	})
 	t.Run("only unmodelled tools left", func(t *testing.T) {
 		t.Parallel()
-		opts := GraftOptions{KeepUnmodelledTool: func(kind string) bool { return kind == "web_search" }}
+		opts := GraftOptions{KeepUnmodelledTool: func(u UnmodelledTool) bool { return u.Kind == "web_search" }}
 		out, _ := graftWith(t, FormatOpenAIResponses, responses, opts, keepOnly())
 		assert.Equal(t, `{"model":"m","input":"hi","tools":[{"type":"web_search"}]}`, string(out))
 	})
 }
 
-func TestUnmodelledToolKinds(t *testing.T) {
+func TestUnmodelledTools(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name   string
@@ -263,8 +263,8 @@ func TestUnmodelledToolKinds(t *testing.T) {
 		{"a key the decoder folds", FormatOpenAIResponses, `{"model":"m","input":"hi","Tools":[{"type":"function","name":"a"},{"type":"mcp","server_label":"x"}]}`, []string{"mcp"}},
 		{"a builtin named like a modelled tool", FormatOpenAIResponses, `{"model":"m","input":"hi","tools":[{"type":"function","name":"a"},{"type":"mcp","name":"a","server_label":"x"}]}`, []string{"function", "mcp"}},
 		{"anthropic server tools are modelled by name", FormatAnthropic, `{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"bash_20250124","name":"bash"}]}`, nil},
-		{"gemini", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]},{"googleSearch":{}},{"function_declarations":[{"name":"b"}]},{"functionDeclarations":[],"codeExecution":{}}]}`, []string{"googleSearch", "function_declarations", ""}},
-		{"bedrock", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"a","inputSchema":{"json":{}}}},{"cachePoint":{"type":"default"}},{"systemTool":{"name":"nova_grounding"}}]}}`, []string{"systemTool"}},
+		{"gemini", FormatGemini, `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[{"name":"a"}]},{"googleSearch":{}},{"function_declarations":[{"name":"b"}]},{"functionDeclarations":[],"codeExecution":{}}]}`, []string{"googleSearch", "codeExecution"}},
+		{"bedrock", FormatBedrock, `{"messages":[{"role":"user","content":[{"text":"hi"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"a","inputSchema":{"json":{}}}},{"cachePoint":{"type":"default"}},{"systemTool":{"name":"nova_grounding"}}]}}`, []string{"systemTool:nova_grounding"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,9 +273,13 @@ func TestUnmodelledToolKinds(t *testing.T) {
 			require.NoError(t, err)
 			req, err := ad.DecodeRequest([]byte(tc.body))
 			require.NoError(t, err)
-			got, ok := UnmodelledToolKinds(ad, []byte(tc.body), req)
+			got, ok := UnmodelledTools(ad, []byte(tc.body), req)
 			require.True(t, ok)
-			assert.Equal(t, tc.want, got)
+			var kinds []string
+			for _, u := range got {
+				kinds = append(kinds, u.Kind)
+			}
+			assert.Equal(t, tc.want, kinds)
 		})
 	}
 }
@@ -616,7 +620,7 @@ func TestHasAmbiguousKeysReadsAnySizeAndDepth(t *testing.T) {
 		"deep":              {strings.Repeat(`{"x":`, 5000) + `{"a":1,"a":2}` + strings.Repeat("}", 5000), true},
 		"invalid":           {`{"a":1,"a":2`, false},
 	} {
-		assert.Equal(t, tc.want, hasAmbiguousKeys([]byte(tc.body)), name)
+		assert.Equal(t, tc.want, HasAmbiguousKeys([]byte(tc.body)), name)
 	}
 }
 

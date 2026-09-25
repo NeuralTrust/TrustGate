@@ -15,11 +15,15 @@
 package adapter
 
 import (
+	"math"
 	"unicode"
 	"unicode/utf8"
 )
 
-const maxDiffEdits = 512
+const (
+	maxDiffEdits  = 512
+	maxDiffTokens = 1 << 22
+)
 
 // textHunk replaces before[start:end] with insert.
 type textHunk struct {
@@ -31,7 +35,8 @@ type textHunk struct {
 // without overlap. It trims the common prefix and suffix, diffs what is left
 // by words, and trims each changed run again by characters, so a masked
 // value comes out as its own hunk. It refuses when the texts differ in more
-// than maxDiffEdits words.
+// than maxDiffEdits words, when what is left holds more than maxDiffTokens
+// words and separators, or when the diff runs out of its comparison budget.
 func diffText(before, after string) ([]textHunk, bool) {
 	if before == after {
 		return nil, true
@@ -40,6 +45,13 @@ func diffText(before, after string) ([]textHunk, bool) {
 	a, b := before[p:len(before)-s], after[p:len(after)-s]
 	if a == "" || b == "" {
 		return []textHunk{{start: p, end: p + len(a), insert: b}}, true
+	}
+	if len(a) > math.MaxInt32 || len(b) > math.MaxInt32 {
+		return nil, false
+	}
+	na := countTokens(a)
+	if na > maxDiffTokens || na+countTokens(b) > maxDiffTokens {
+		return nil, false
 	}
 	ta, tb := tokenize(a), tokenize(b)
 	matches, ok := myersMatches(a, ta, b, tb, maxDiffEdits)
@@ -68,7 +80,9 @@ func diffText(before, after string) ([]textHunk, bool) {
 	return hunks, true
 }
 
-type token struct{ start, end int }
+// token is a word or a single other rune of a text of at most
+// math.MaxInt32 bytes.
+type token struct{ start, end int32 }
 
 func tokenSpan(ts []token, s string, from, to int) string {
 	if from == to {
@@ -79,29 +93,62 @@ func tokenSpan(ts []token, s string, from, to int) string {
 
 func tokenOffset(ts []token, s string, i int) int {
 	if i < len(ts) {
-		return ts[i].start
+		return int(ts[i].start)
 	}
 	return len(s)
 }
 
+func countTokens(s string) int {
+	n := 0
+	for i := 0; i < len(s); n++ {
+		i = tokenEnd(s, i)
+	}
+	return n
+}
+
 func tokenize(s string) []token {
-	var out []token
+	out := make([]token, 0, countTokens(s))
 	for i := 0; i < len(s); {
-		r, n := utf8.DecodeRuneInString(s[i:])
-		j := i + n
-		if isWordRune(r) {
-			for j < len(s) {
-				r2, n2 := utf8.DecodeRuneInString(s[j:])
-				if !isWordRune(r2) {
-					break
-				}
-				j += n2
-			}
-		}
-		out = append(out, token{i, j})
+		j := tokenEnd(s, i)
+		out = append(out, token{int32(i), int32(j)}) // #nosec G115 -- diffText refuses texts over math.MaxInt32 bytes
 		i = j
 	}
 	return out
+}
+
+// tokenEnd returns the end of the token at i: a run of word runes, or one
+// other rune.
+func tokenEnd(s string, i int) int {
+	if c := s[i]; c < utf8.RuneSelf {
+		if !asciiWord(c) {
+			return i + 1
+		}
+		i++
+	} else {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if i += n; !isWordRune(r) {
+			return i
+		}
+	}
+	for i < len(s) {
+		if c := s[i]; c < utf8.RuneSelf {
+			if !asciiWord(c) {
+				return i
+			}
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if !isWordRune(r) {
+			return i
+		}
+		i += n
+	}
+	return i
+}
+
+func asciiWord(c byte) bool {
+	return c == '_' || ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
 }
 
 func isWordRune(r rune) bool {
@@ -135,11 +182,18 @@ func runeBoundary(s string, i int) bool {
 
 // myersMatches returns the index pairs of a longest common subsequence of
 // the tokens of a and b, found with Myers' O((N+M)D) algorithm, or false
-// when more than maxD insertions and deletions are needed.
+// when more than maxD insertions and deletions are needed. Repetitive text
+// makes every diagonal match at length, so the token comparisons are also
+// capped at a small multiple of N+M, which plain text with maxD edits stays
+// well under.
 func myersMatches(a string, ta []token, b string, tb []token, maxD int) ([][2]int, bool) {
 	n, m := len(ta), len(tb)
-	eq := func(x, y int) bool { return a[ta[x].start:ta[x].end] == b[tb[y].start:tb[y].end] }
+	eq := func(x, y int) bool {
+		p, q := ta[x], tb[y]
+		return p.end-p.start == q.end-q.start && a[p.start:p.end] == b[q.start:q.end]
+	}
 	maxD = min(maxD, n+m)
+	budget := 2*(n+m) + 4*(maxD+1)*(maxD+1)
 	off := maxD + 1
 	v := make([]int, 2*maxD+3)
 	var trace [][]int
@@ -153,9 +207,13 @@ func myersMatches(a string, ta []token, b string, tb []token, maxD int) ([][2]in
 				x = v[off+k-1] + 1
 			}
 			y := x - k
+			start := x
 			for x < n && y < m && eq(x, y) {
 				x++
 				y++
+			}
+			if budget -= 1 + x - start; budget < 0 {
+				return nil, false
 			}
 			v[off+k] = x
 			if x >= n && y >= m {

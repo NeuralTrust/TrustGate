@@ -38,6 +38,44 @@ type openaiResponsesRequest struct {
 	PromptCacheKey       string            `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string            `json:"prompt_cache_retention,omitempty"`
 	PromptCacheOptions   json.RawMessage   `json:"prompt_cache_options,omitempty"`
+	Store                json.RawMessage   `json:"store,omitempty"`
+	PreviousResponseID   json.RawMessage   `json:"previous_response_id,omitempty"`
+	Include              json.RawMessage   `json:"include,omitempty"`
+	Reasoning            json.RawMessage   `json:"reasoning,omitempty"`
+}
+
+// responsesCarriedKeys are the Responses keys a re-encode carries through
+// RequestExtensions: they hold no prompt text, and dropping them changes what
+// the upstream keeps or links. Without store the upstream stores a response
+// the client asked it not to keep. metadata, which may hold personal data, is
+// left out.
+var responsesCarriedKeys = []string{"store", "previous_response_id", "include", "reasoning"}
+
+func (r *openaiResponsesRequest) carried() []*json.RawMessage {
+	return []*json.RawMessage{&r.Store, &r.PreviousResponseID, &r.Include, &r.Reasoning}
+}
+
+// carryRequestKeys records in req the raw values of keys, one per slot, that
+// the client set to something other than null.
+func carryRequestKeys(req *CanonicalRequest, keys []string, slots []*json.RawMessage) {
+	for i, slot := range slots {
+		if len(*slot) == 0 || isEmptyOrNull(*slot) {
+			continue
+		}
+		if req.RequestExtensions == nil {
+			req.RequestExtensions = make(map[string]json.RawMessage, len(slots))
+		}
+		req.RequestExtensions[keys[i]] = *slot
+	}
+}
+
+// carriedRequestKeys fills each slot with the value req carries for its key.
+func carriedRequestKeys(req *CanonicalRequest, keys []string, slots []*json.RawMessage) {
+	for i, slot := range slots {
+		if v, ok := req.RequestExtensions[keys[i]]; ok && json.Valid(v) {
+			*slot = v
+		}
+	}
 }
 
 type openaiTextFormat struct {
@@ -181,6 +219,7 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 		TopP:         req.TopP,
 		CacheOptions: openAICacheOptions(req.PromptCacheKey, req.PromptCacheRetention, req.PromptCacheOptions),
 	}
+	carryRequestKeys(cr, responsesCarriedKeys, req.carried())
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
@@ -535,6 +574,7 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention
 		out.PromptCacheOptions = o.openAIOptions()
 	}
+	carriedRequestKeys(req, responsesCarriedKeys, out.carried())
 
 	// Pre-pass: ensure every tool call has a stable call_id so that
 	// function_call and function_call_output items can be linked even when

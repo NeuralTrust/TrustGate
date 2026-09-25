@@ -210,7 +210,7 @@ func (p *Plugin) preRequest(
 		}
 	}
 	if len(canonical.Tools) == 0 {
-		return okResult(), nil
+		return p.forward(in.Request.Body, format, canonical)
 	}
 
 	strip := make(map[string]struct{})
@@ -238,9 +238,27 @@ func (p *Plugin) preRequest(
 		strip[tool] = struct{}{}
 	}
 	if len(strip) == 0 {
-		return okResult(), nil
+		return p.forward(in.Request.Body, format, canonical)
 	}
 	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+// forward lets a request the limits leave alone through as it came. A body
+// with keys the decoder folds into one is re-encoded instead: the tools and
+// calls counted are the ones decoded, which the upstream may not read.
+func (p *Plugin) forward(body []byte, format string, canonical *adapter.CanonicalRequest) (*appplugins.Result, error) {
+	if !adapter.HasAmbiguousKeys(body) {
+		return okResult(), nil
+	}
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: encode: %w", err)
+	}
+	encoded, err := ad.EncodeRequest(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: encode: %w", err)
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: encoded}, nil
 }
 
 func (p *Plugin) spentBefore(
@@ -298,6 +316,7 @@ func (p *Plugin) stripTools(
 		_, drop := strip[t.Name]
 		return !drop
 	})
+	adapter.DropDanglingToolChoice(canonical)
 	body, err := adapter.GraftChangedFields(ad, originalBody, baseline, canonical)
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
