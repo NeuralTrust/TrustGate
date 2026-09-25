@@ -17,6 +17,7 @@ package azure
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"iter"
@@ -35,6 +36,8 @@ import (
 const (
 	defaultAPIVersion = "2024-10-21"
 	azureTokenScope   = "https://ai.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
+
+	promptCacheRetentionField = "prompt_cache_retention"
 )
 
 type client struct {
@@ -90,7 +93,11 @@ func (c *client) Completions(
 
 	url := c.buildURL(config, model)
 
-	return c.rawPost(ctx, url, auth, reqBody)
+	resp, err := c.rawPost(ctx, url, auth, reqBody)
+	if retryBody, ok := retentionFallbackBody(reqBody, err); ok {
+		resp, err = c.rawPost(ctx, url, auth, retryBody)
+	}
+	return resp, err
 }
 
 func (c *client) Embeddings(
@@ -302,6 +309,14 @@ func (c *client) CompletionsStream(
 
 	url := c.buildURL(config, model)
 
+	seq, err := c.postStream(ctx, url, auth, reqBody)
+	if retryBody, ok := retentionFallbackBody(reqBody, err); ok {
+		seq, err = c.postStream(ctx, url, auth, retryBody)
+	}
+	return seq, err
+}
+
+func (c *client) postStream(ctx context.Context, url string, auth authHeader, reqBody []byte) (iter.Seq2[[]byte, error], error) {
 	httpClient := c.pool.GetStream(providers.ProviderAzure)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -322,6 +337,29 @@ func (c *client) CompletionsStream(
 	}
 
 	return providers.StreamResponse(ctx, resp.Body), nil
+}
+
+// retentionFallbackBody returns reqBody without prompt_cache_retention when
+// Azure answered 400 naming that field: the gateway cannot tell from a
+// deployment name whether the model takes it (ENG-1618 D5).
+func retentionFallbackBody(reqBody []byte, err error) ([]byte, bool) {
+	be, ok := registry.IsBackendError(err)
+	if !ok || be.StatusCode != http.StatusBadRequest || !bytes.Contains(be.Body, []byte(promptCacheRetentionField)) {
+		return nil, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(reqBody, &fields) != nil {
+		return nil, false
+	}
+	if _, has := fields[promptCacheRetentionField]; !has {
+		return nil, false
+	}
+	delete(fields, promptCacheRetentionField)
+	out, mErr := json.Marshal(fields)
+	if mErr != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 func (h authHeader) apply(req *http.Request) {

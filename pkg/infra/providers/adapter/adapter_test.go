@@ -977,11 +977,11 @@ func TestAdaptRequest_Images(t *testing.T) {
 			wantErr: ErrUnsupportedContent,
 		},
 		{
-			name:        "openai to openrouter keeps image_url and detail",
+			name:        "openai to openrouter passes parts through in client order",
 			source:      FormatOpenAI,
 			target:      FormatOpenRouter,
 			input:       `{"model":"gpt-4","messages":[{"role":"user","content":[{"type":"text","text":"cat?"},{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}}]}]}`,
-			wantContent: `[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}},{"type":"text","text":"cat?"}]`,
+			wantContent: `[{"type":"text","text":"cat?"},{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg","detail":"high"}}]`,
 		},
 		{
 			name:        "anthropic to bedrock",

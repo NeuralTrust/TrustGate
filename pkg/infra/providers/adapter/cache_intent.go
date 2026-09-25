@@ -170,6 +170,10 @@ func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 		return cacheProfile{tools: true, system: true, messages: true, ttl1h: true, max: 4}
 	case FormatOpenAIResponses, FormatOpenAI, FormatAzure:
 		return openAICacheProfile(target, providerName, model)
+	case FormatOpenRouter:
+		return openRouterCacheProfile(model)
+	case FormatMistral:
+		return cacheProfile{key: true}
 	default:
 		return cacheProfile{}
 	}
@@ -179,22 +183,45 @@ func cacheProfileFor(target Format, providerName, model string) cacheProfile {
 // Cerebras and openai_compatible share FormatOpenAI and reject or ignore
 // them. GPT-5.6 and later take breakpoints and prompt_cache_options and no
 // longer take prompt_cache_retention; earlier models answer 400 to the first
-// two. An Azure model is usually a deployment name, so Azure gets only
-// prompt_cache_key until a 400 fallback for retention exists (ENG-1618 S3).
+// two. An Azure model is usually a deployment name the GPT-5.6 gate cannot
+// read, so Azure gets retention unless the name says 5.6 or later, and its
+// client retries key-only when Azure rejects it.
 func openAICacheProfile(target Format, providerName, model string) cacheProfile {
+	explicit := isGPT56OrLater(model)
 	switch providerName {
 	case provider.OpenAI:
 	case provider.Azure:
-		return cacheProfile{key: true}
+		return cacheProfile{key: true, retention: !explicit}
 	default:
 		return cacheProfile{}
 	}
-	explicit := isGPT56OrLater(model)
 	p := cacheProfile{key: true, retention: !explicit, options: explicit}
 	if target == FormatOpenAIResponses && explicit {
 		p.system, p.messages, p.inputOnly, p.max, p.implicitSlot = true, true, true, 4, true
 	}
 	return p
+}
+
+// openRouterCacheProfile sends parts cache_control only to model families
+// OpenRouter documents breakpoints for: Anthropic (1h TTL and top-level
+// automatic caching too), Gemini and Qwen (5m fixed), and GPT-5.6 and later,
+// whose markers OpenRouter turns into prompt_cache_breakpoint. OpenRouter
+// takes no tool markers.
+func openRouterCacheProfile(model string) cacheProfile {
+	model = strings.ToLower(model)
+	vendor, name, _ := strings.Cut(model, "/")
+	breakpoints := cacheProfile{system: true, messages: true, max: 4}
+	switch {
+	case vendor == "anthropic":
+		breakpoints.ttl1h, breakpoints.auto = true, true
+		return breakpoints
+	case vendor == "google" && strings.HasPrefix(name, "gemini"),
+		vendor == "qwen",
+		vendor == "openai" && isGPT56OrLater(name):
+		return breakpoints
+	default:
+		return cacheProfile{}
+	}
 }
 
 func formatProvider(target Format) string {

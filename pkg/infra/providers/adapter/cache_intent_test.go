@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
@@ -351,9 +352,12 @@ func TestNormalizeCacheIntent_OpenAIFamilyKeysFollowTheProvider(t *testing.T) {
 		{name: "openai before gpt-5.6 keeps retention", target: FormatOpenAI, provider: provider.OpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
 		{name: "openai gpt-5.6 keeps options", target: FormatOpenAI, provider: provider.OpenAI, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k", Options: json.RawMessage(`{"ttl":"30m"}`)}},
 		{name: "responses before gpt-5.6", target: FormatOpenAIResponses, provider: provider.OpenAI, model: "gpt-4o", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
-		{name: "azure chat sends only the key", target: FormatAzure, provider: provider.Azure, model: "gpt-4.1", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "azure chat keeps retention", target: FormatAzure, provider: provider.Azure, model: "gpt-4.1", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
+		{name: "azure deployment name keeps retention", target: FormatAzure, provider: provider.Azure, model: "prod-chat", want: &CanonicalCacheOptions{Key: "k", Retention: "24h"}},
 		{name: "azure deployment named like gpt-5.6 sends only the key", target: FormatAzure, provider: provider.Azure, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k"}},
-		{name: "azure responses sends only the key", target: FormatOpenAIResponses, provider: provider.Azure, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "azure responses sends only the key on gpt-5.6", target: FormatOpenAIResponses, provider: provider.Azure, model: "gpt-5.6", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "mistral sends only the key", target: FormatMistral, provider: provider.Mistral, model: "mistral-large-latest", want: &CanonicalCacheOptions{Key: "k"}},
+		{name: "openrouter non-caching model gets nothing", target: FormatOpenRouter, provider: provider.OpenRouter, model: "meta-llama/llama-3.3-70b-instruct", want: nil},
 		{name: "cerebras shares the openai format but gets nothing", target: FormatOpenAI, provider: provider.Cerebras, model: "gpt-oss-120b", want: nil},
 		{name: "openai_compatible gets nothing", target: FormatOpenAI, provider: provider.OpenAICompatible, model: "gpt-5.6", want: nil},
 		{name: "xai keys its cache by header", target: FormatXAI, provider: provider.XAI, model: "grok-4", want: nil},
@@ -578,4 +582,103 @@ func TestCacheTextJoin_ExtendKeepsTheMarkerOnItsBlock(t *testing.T) {
 	blank.add("")
 	empty.extend(&blank)
 	assert.Empty(t, empty.parts)
+}
+
+func TestNormalizeCacheIntent_OpenRouterBreakpointsFollowTheModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model     string
+		breakable bool
+		ttl       CacheTTL
+		auto      bool
+	}{
+		{model: "anthropic/claude-sonnet-4.5", breakable: true, ttl: CacheTTL1h, auto: true},
+		{model: "Anthropic/Claude-Opus-4", breakable: true, ttl: CacheTTL1h, auto: true},
+		{model: "google/gemini-2.5-pro", breakable: true, ttl: CacheTTL5m},
+		{model: "qwen/qwen3-max", breakable: true, ttl: CacheTTL5m},
+		{model: "openai/gpt-5.6", breakable: true, ttl: CacheTTL5m},
+		{model: "openai/gpt-4o"},
+		{model: "google/gemma-3-27b-it"},
+		{model: "openrouter/auto"},
+		{model: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			t.Parallel()
+			req := cachedRequest(1, 1, CacheTTL1h)
+			req.Model = tt.model
+			req.CacheOptions = &CanonicalCacheOptions{Key: "k", Retention: "24h", Auto: bp(CacheTTL1h)}
+			normalizeCacheIntent(req, FormatOpenRouter, provider.OpenRouter, "")
+
+			assert.Equal(t, []any{nil}, toolTTLs(req.Tools), "OpenRouter takes no tool markers")
+			if !tt.breakable {
+				assert.Nil(t, req.SystemCache)
+				assert.Equal(t, []any{nil}, messageTTLs(req.Messages))
+				assert.Nil(t, req.CacheOptions)
+				return
+			}
+			assert.Equal(t, tt.ttl, ttlOf(req.SystemCache))
+			assert.Equal(t, []any{tt.ttl}, messageTTLs(req.Messages))
+			if tt.auto {
+				require.NotNil(t, req.CacheOptions)
+				assert.Equal(t, &CanonicalCacheOptions{Auto: bp(CacheTTL1h)}, req.CacheOptions)
+				return
+			}
+			assert.Nil(t, req.CacheOptions)
+		})
+	}
+}
+
+func TestAdaptRequest_AnthropicMarkersReachOpenRouterParts(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"anthropic/claude-sonnet-4.5","max_tokens":64,"cache_control":{"type":"ephemeral"},` +
+		`"system":[{"type":"text","text":"Long prefix.","cache_control":{"type":"ephemeral","ttl":"1h"}}],` +
+		`"tools":[{"name":"t","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}],` +
+		`"messages":[{"role":"user","content":[{"type":"text","text":"Doc","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]}]}`)
+
+	out, err := NewRegistry().AdaptRequestForProvider(body, FormatAnthropic, FormatOpenRouter, provider.OpenRouter, "")
+	require.NoError(t, err)
+	var got struct {
+		CacheControl json.RawMessage `json:"cache_control"`
+		Messages     []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+		Tools []map[string]json.RawMessage `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.JSONEq(t, `{"type":"ephemeral"}`, string(got.CacheControl))
+	require.Len(t, got.Messages, 2)
+	assert.JSONEq(t, `[{"type":"text","text":"Long prefix.","cache_control":{"type":"ephemeral","ttl":"1h"}}]`, string(got.Messages[0].Content))
+	assert.JSONEq(t, `[{"type":"text","text":"Doc","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]`, string(got.Messages[1].Content))
+	require.Len(t, got.Tools, 1)
+	assert.NotContains(t, got.Tools[0], "cache_control")
+	assert.NotContains(t, string(out), "prompt_cache")
+}
+
+func TestAdaptRequest_MistralCarriesTheCacheKey(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	sources := map[Format]string{
+		FormatOpenAI:          `{"model":"mistral-large-latest","prompt_cache_key":"tenant-42","prompt_cache_retention":"24h","messages":[{"role":"system","content":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"hi"}]%s}`,
+		FormatOpenAIResponses: `{"model":"mistral-large-latest","prompt_cache_key":"tenant-42","prompt_cache_retention":"24h","input":"hi"%s}`,
+	}
+	for source, tmpl := range sources {
+		for _, stream := range []string{"", `,"stream":true`} {
+			out, err := reg.AdaptRequestForProvider([]byte(fmt.Sprintf(tmpl, stream)), source, FormatMistral, provider.Mistral, "")
+			require.NoError(t, err)
+			var got map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &got))
+			assert.JSONEq(t, `"tenant-42"`, string(got["prompt_cache_key"]), "%s stream=%q", source, stream)
+			assert.NotContains(t, got, "prompt_cache_retention")
+			assert.NotContains(t, string(out), "cache_control")
+		}
+	}
+
+	out, err := reg.AdaptRequestForProvider([]byte(`{"model":"mistral-large-latest","messages":[{"role":"user","content":"hi"}]}`), FormatOpenAI, FormatMistral, provider.Mistral, "")
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "prompt_cache")
 }
