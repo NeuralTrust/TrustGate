@@ -15,9 +15,10 @@
 package adapter
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"fmt"
 	"strconv"
 )
 
@@ -72,12 +73,18 @@ func (a *MistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 // withMistralRandomSeed sets the seed under random_seed, Mistral's name for
 // it: the API answers 422 extra_forbidden to a seed field.
 func withMistralRandomSeed(body []byte, seed int64) ([]byte, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return nil, err
+	trimmed := bytes.TrimRight(body, " \t\r\n")
+	if len(trimmed) < 2 || trimmed[len(trimmed)-1] != '}' {
+		return nil, fmt.Errorf("mistral: request body is not a JSON object")
 	}
-	fields["random_seed"] = json.RawMessage(strconv.FormatInt(seed, 10))
-	return json.Marshal(fields)
+	field := `"random_seed":` + strconv.FormatInt(seed, 10)
+	if !bytes.Equal(bytes.TrimSpace(trimmed[:len(trimmed)-1]), []byte("{")) {
+		field = "," + field
+	}
+	out := make([]byte, 0, len(trimmed)+len(field))
+	out = append(out, trimmed[:len(trimmed)-1]...)
+	out = append(out, field...)
+	return append(out, '}'), nil
 }
 
 // ---------------------------------------------------------------------------
