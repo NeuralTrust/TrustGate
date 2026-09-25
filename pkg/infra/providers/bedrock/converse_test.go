@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -748,4 +749,32 @@ func TestFoldSystemIntoFirstTurn_KeepsGuardContent(t *testing.T) {
 		&bedrockTypes.ContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: bedrockTypes.GuardrailConverseTextBlock{Text: aws.String("policy")}}},
 		&bedrockTypes.ContentBlockMemberText{Value: "hi"},
 	}, params.messages[0].Content)
+}
+
+func TestFoldSystemIntoFirstTurn_LeavesEarlierInputsAlone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"merged into the first text", `{"system":[{"text":"rules"}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`},
+		{"prepended block by block", `{"system":[{"text":"rules"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`},
+		{"prepended before a tool result", `{"system":[{"text":"rules"}],"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"c1","content":[{"text":"ok"}]}}]}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			params, err := decodeConverseBody([]byte(tt.body))
+			require.NoError(t, err)
+			before := params.input("m")
+			system := slices.Clone(before.System)
+			first := slices.Clone(before.Messages[0].Content)
+
+			require.True(t, params.foldSystemIntoFirstTurn())
+			assert.Equal(t, system, before.System)
+			assert.Equal(t, first, before.Messages[0].Content)
+			assert.NotEqual(t, first, params.messages[0].Content)
+		})
+	}
 }

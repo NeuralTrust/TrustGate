@@ -46,7 +46,7 @@ A `cachePoint` MUST only follow a kept block that is not itself a `cachePoint`, 
 
 ### Requirement: Model capability table
 
-A table in code MUST list, by model-family prefix (after stripping region or global inference-profile prefixes), whether explicit caching, 1h TTL and a `cachePoint` in `tools` are supported; a model without tools support keeps its system and messages `cachePoint`s. The table follows the AWS supported-models table and the Nova model cards read 2026-09-25. Unlisted models, ARNs and unknown IDs MUST get no `cachePoint`. Minimum token counts MUST NOT be enforced.
+A table in code MUST list, by model-family prefix (after stripping region or global inference-profile prefixes), whether explicit caching, 1h TTL and a `cachePoint` in `tools` are supported; a model without tools support keeps its system and messages `cachePoint`s. The Claude entries follow the AWS supported-models table and the Nova entries the Nova model cards, both read 2026-09-25. A `foundation-model/` or system `inference-profile/` ARN MUST resolve through the ID after its last `/`. Unlisted models, other ARNs (application inference profiles, provisioned and custom models) and unknown IDs MUST get no `cachePoint`. Minimum token counts MUST NOT be enforced.
 
 #### Scenario: Unsupported family
 
@@ -57,6 +57,12 @@ A table in code MUST list, by model-family prefix (after stripping region or glo
 
 - GIVEN `global.anthropic.claude-sonnet-4-6`
 - THEN it resolves to the Claude family entry
+
+#### Scenario: ARN
+
+- GIVEN `arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6`
+- THEN it resolves to the Claude family entry
+- AND an `application-inference-profile/` ARN gets no `cachePoint`
 
 #### Scenario: Nova tools
 
@@ -70,14 +76,20 @@ A table in code MUST list, by model-family prefix (after stripping region or glo
 
 ### Requirement: ValidationException fallback
 
-When Bedrock rejects a request that contains `cachePoint` with a `ValidationException`, the gateway MUST retry once without any `cachePoint`, mirroring the system-prompt fallback, and MUST remember the model so later requests skip `cachePoint`. Errors other than `ValidationException` MUST NOT trigger the retry.
+When Bedrock rejects a request that contains `cachePoint` with a `ValidationException` that names a cache checkpoint (`cachePoint`, `cache point`, `cache_control`, `cache checkpoint`, or a `ttl` together with caching; case-insensitive), the gateway MUST retry that request once without any `cachePoint`, mirroring the system-prompt fallback. The gateway MUST NOT remember the model: the client is shared by every tenant, a listed model rejects `cachePoint` only over what one request carried (more than four, a 1h ttl after a 5m one, a misplaced checkpoint), and unlisted models never send one. Native Bedrock passthrough bodies are not normalised; their own errors get the same per-request retry. Errors other than `ValidationException`, and validation messages that do not name a checkpoint, MUST NOT trigger the retry.
 
 #### Scenario: Retry succeeds
 
 - GIVEN an upstream that returns `ValidationException` when `cachePoint` is present
 - WHEN a request with breakpoints is sent, buffered or streaming
 - THEN a second call without `cachePoint` is made and its response is returned
-- AND the next request to that model sends no `cachePoint` first
+- AND the next request to that model still sends its `cachePoint`s first
+
+#### Scenario: One tenant's malformed body
+
+- GIVEN a native Bedrock body with five `cachePoint`s and Bedrock answering "A maximum of 4 blocks with cache_control may be provided. Found 5."
+- WHEN it is retried without `cachePoint` and a valid request for the same model follows
+- THEN the valid request sends its `cachePoint`s on the first call
 
 #### Scenario: Throttling not retried
 

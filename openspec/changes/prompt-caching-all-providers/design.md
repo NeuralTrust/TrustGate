@@ -198,7 +198,7 @@ type cacheCapability struct{ explicit, ttl1h bool }
 func cacheCapabilityFor(model string) cacheCapability // longest-prefix match on bedrockCacheFamilies
 func (p *converseParams) applyCacheCapability(c cacheCapability) // strip all or clear Ttl
 func (p *converseParams) stripCachePoints() bool
-func converseWithCachePointFallback[T any](memo *modelMemo, model string, p *converseParams, call func(*converseParams) (T, error)) (T, error)
+func converseWithCachePointFallback[T any](p *converseParams, call func(*converseParams) (T, error)) (T, error)
 ```
 
 `bedrockCacheFamilies` (per the AWS table and the Nova model cards, re-read 2026-09-25 in S4b; `cacheCapability` also carries `tools`):
@@ -206,12 +206,14 @@ func converseWithCachePointFallback[T any](memo *modelMemo, model string, p *con
 - Explicit, 5m only, system/messages/tools: `anthropic.claude-3-7-sonnet`, `anthropic.claude-3-5-sonnet-20241022-v2`.
 - Explicit, 5m only, system/messages (no tools): `amazon.nova-{micro, lite, pro, premier}`, `amazon.nova-2-lite`.
 - A family matches on an ID boundary (`-`, `:` or end), so `claude-sonnet-4-…` (Sonnet 4) and `claude-opus-4-1` resolve to none.
+- `foundation-model/` and system `inference-profile/` ARNs resolve through the ID after the last `/`; application inference profiles, provisioned and custom models resolve to none.
 - Minimum token counts are not enforced.
 
 Retry, fold and wiring:
-- The retry fires on a `ValidationException` only when `stripCachePoints()` removed something. The model is remembered **only if the retry succeeds**, so an unrelated validation error does not disable caching.
-- `systemFoldMemo` is renamed `modelMemo` and reused.
-- Wiring in `client.go:86` and `:251` nests the calls: `converseWithSystemFallback(&c.systemFold, …, func(p) { return converseWithCachePointFallback(&c.cacheStrip, model, p, call) })`.
+- The retry fires on a `ValidationException` whose message names a checkpoint (`cachepoint`, `cache point`, `cache_control`, `cache checkpoint`, or `ttl` with `cach`), and only when `stripCachePoints()` removed something. It is per request: no cachePoint memo. The client is process-wide and a memo keyed by model let one tenant's malformed body (five checkpoints, 1h after 5m) switch caching off for every tenant; unlisted models are stripped up front, so a memo had nothing left to save.
+- `systemFoldMemo` stays as it was.
+- Wiring in `client.go:86` and `:251` nests the calls: `converseWithSystemFallback(&c.systemFold, …, func(p) { return converseWithCachePointFallback(p, call) })`.
+- `foldSystemIntoFirstTurn` and `stripCachePoints` write into fresh slices, so an input sent by an earlier attempt is never mutated.
 - `foldSystemIntoFirstTurn`: when the system has a cache point, it prepends `[text(system), cachePoint]` and does **not** merge into the first user text. That also covers Mistral 7B, even though the table already strips cache points for it.
 
 ### Plugins (S5)

@@ -59,8 +59,7 @@ type client struct {
 	invoke         invokeModelFn
 	converse       converseFn
 	converseStream converseStreamFn
-	systemFold     modelMemo
-	cacheStrip     modelMemo
+	systemFold     systemFoldMemo
 }
 
 func NewBedrockClient() providers.Client {
@@ -102,8 +101,8 @@ func (c *client) Completions(
 }
 
 // converseWithFallbacks nests the cachePoint fallback inside the system fold,
-// so a model that rejects both is repaired in either order and each memo
-// records only its own repair.
+// so a model that rejects both is repaired in either order and only the fold
+// is remembered.
 func converseWithFallbacks[T any](
 	c *client,
 	model string,
@@ -111,7 +110,7 @@ func converseWithFallbacks[T any](
 	call func(*converseParams) (T, error),
 ) (T, error) {
 	return converseWithSystemFallback(&c.systemFold, model, params, func(p *converseParams) (T, error) {
-		return converseWithCachePointFallback(&c.cacheStrip, model, p, call)
+		return converseWithCachePointFallback(p, call)
 	})
 }
 

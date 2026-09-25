@@ -31,9 +31,11 @@ var (
 	novaCache     = cacheCapability{explicit: true}
 )
 
-// bedrockCacheFamilies follows the AWS "Supported models, Regions, and
-// explicit caching limits" table and the Nova model cards, read 2026-09-25
-// (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+// bedrockCacheFamilies takes the Claude entries, Fable and Mythos included,
+// from the AWS "Supported models, Regions, and explicit caching limits" table
+// (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+// and the Nova entries, with their missing tools cachePoint and 1h ttl, from
+// the Nova model cards; both read 2026-09-25.
 // Minimum tokens per checkpoint (512 to 4,096 for Claude, 1K for Nova) are
 // not enforced: a short prefix is still accepted, just not cached. GPT-5.6 on
 // Bedrock caches through the Responses API only and is not a Converse entry.
@@ -67,11 +69,15 @@ var inferenceProfilePrefixes = []string{
 
 // cacheCapabilityFor resolves a model ID to the longest listed family prefix
 // that ends on an ID boundary, after one inference-profile prefix is
-// stripped. ARNs (application inference profiles, provisioned throughput)
-// hide the model and, like unlisted IDs, get no cachePoint.
+// stripped. A foundation-model or system inference-profile ARN resolves
+// through the ID it ends with; any other ARN hides the model and, like an
+// unlisted ID, gets no cachePoint.
 func cacheCapabilityFor(model string) cacheCapability {
 	id := strings.ToLower(strings.TrimSpace(model))
 	if strings.HasPrefix(id, "arn:") {
+		id = arnModelID(id)
+	}
+	if id == "" {
 		return cacheCapability{}
 	}
 	for _, prefix := range inferenceProfilePrefixes {
@@ -90,6 +96,21 @@ func cacheCapabilityFor(model string) cacheCapability {
 		}
 	}
 	return best
+}
+
+// arnModelID returns the model or system inference-profile ID a Bedrock ARN
+// names, and "" for application inference profiles, provisioned throughput
+// and custom models, whose ARN does not say which model they run.
+func arnModelID(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return ""
+	}
+	kind, _, ok := strings.Cut(parts[5], "/")
+	if !ok || (kind != "foundation-model" && kind != "inference-profile") {
+		return ""
+	}
+	return parts[5][strings.LastIndex(parts[5], "/")+1:]
 }
 
 func familyMatches(id, family string) bool {

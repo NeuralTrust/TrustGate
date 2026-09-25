@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -39,8 +40,6 @@ type converseParams struct {
 	system    []bedrockTypes.SystemContentBlock
 	inference *bedrockTypes.InferenceConfiguration
 	tools     *bedrockTypes.ToolConfiguration
-
-	cachePointsRejected bool
 }
 
 // decodeConverseBody reads the adapter's Converse wire JSON. Keys the body
@@ -84,11 +83,14 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 // turn, the way the old prompt templates carried them for models that have no
 // system slot. It reports whether there was anything to fold. A system with a
 // cachePoint or guarded content is moved block by block and not merged into
-// the turn's text, so the cachePoint still ends the system prefix.
+// the turn's text, so the cachePoint still ends the system prefix. It writes
+// into fresh slices, so an input built from the params earlier keeps what it
+// sent.
 func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	if len(p.system) == 0 {
 		return false
 	}
+	p.messages = slices.Clone(p.messages)
 	if lead := foldedSystemBlocks(p.system); lead != nil {
 		p.system = nil
 		p.prependToFirstTurn(lead)
@@ -111,7 +113,9 @@ func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser && len(p.messages[0].Content) > 0 {
 		if text, ok := p.messages[0].Content[0].(*bedrockTypes.ContentBlockMemberText); ok {
 			lead.Value += "\n\n" + text.Value
-			p.messages[0].Content[0] = lead
+			content := slices.Clone(p.messages[0].Content)
+			content[0] = lead
+			p.messages[0].Content = content
 			return true
 		}
 	}
@@ -151,7 +155,7 @@ func foldedSystemBlocks(system []bedrockTypes.SystemContentBlock) []bedrockTypes
 
 func (p *converseParams) prependToFirstTurn(lead []bedrockTypes.ContentBlock) {
 	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser {
-		p.messages[0].Content = append(lead, p.messages[0].Content...)
+		p.messages[0].Content = slices.Concat(lead, p.messages[0].Content)
 		return
 	}
 	p.messages = append([]bedrockTypes.Message{{
@@ -171,19 +175,18 @@ func systemUnsupported(err error) bool {
 	return strings.Contains(apiErr.ErrorMessage(), "support system messages")
 }
 
-// modelMemo remembers models that needed a repair (the system fold, or no
-// cachePoint), so the repair happens up front instead of costing a failed
-// round trip per request.
-type modelMemo struct {
+// systemFoldMemo remembers the models that rejected a system prompt, so the
+// fold happens up front instead of costing a failed round trip per request.
+type systemFoldMemo struct {
 	models sync.Map
 }
 
-func (m *modelMemo) known(model string) bool {
+func (m *systemFoldMemo) known(model string) bool {
 	_, ok := m.models.Load(model)
 	return ok
 }
 
-func (m *modelMemo) remember(model string) {
+func (m *systemFoldMemo) remember(model string) {
 	m.models.Store(model, struct{}{})
 }
 
@@ -193,7 +196,7 @@ func (m *modelMemo) remember(model string) {
 // validates a ConverseStream request before the stream opens, so the error
 // surfaces the same way.
 func converseWithSystemFallback[T any](
-	memo *modelMemo,
+	memo *systemFoldMemo,
 	model string,
 	params *converseParams,
 	call func(*converseParams) (T, error),
@@ -209,49 +212,45 @@ func converseWithSystemFallback[T any](
 	return call(params)
 }
 
+// cacheRejectionMarkers are the ways a Bedrock ValidationException names a
+// cache checkpoint: its own field (cachePoint) or the Anthropic wording it
+// passes through for Claude (cache_control).
+var cacheRejectionMarkers = []string{"cachepoint", "cache point", "cache_control", "cache checkpoint"}
+
 // cachePointRejected reports whether Bedrock refused the request over its
-// cache checkpoints. Only a ValidationException that names caching counts, so
-// throttling or an unrelated validation error never costs the tenant a
-// cache-less retry.
+// cache checkpoints: a ValidationException that names one, or that rejects a
+// ttl while talking about caching. Throttling, and a validation error that
+// only happens to contain "cache", never cost the tenant a cache-less retry.
 func cachePointRejected(err error) bool {
 	var apiErr smithy.APIError
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationException" {
 		return false
 	}
-	return strings.Contains(strings.ToLower(apiErr.ErrorMessage()), "cache")
+	msg := strings.ToLower(apiErr.ErrorMessage())
+	for _, marker := range cacheRejectionMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return strings.Contains(msg, "ttl") && strings.Contains(msg, "cach")
 }
 
 // converseWithCachePointFallback runs call, and when Bedrock rejects the
-// cachePoints, retries once without them. The model is remembered only once a
-// request without cachePoints succeeds, so a validation error the cachePoints
-// did not cause cannot switch caching off. The success may come from a later
-// call when the retry hit another repairable error, such as the system fold
-// wrapped around this function.
+// cachePoints, retries that one request once without them. Nothing is
+// remembered: models outside the capability table never send a cachePoint,
+// and a listed model rejects one over what a single request carried (more
+// than four, a 1h ttl after a 5m one, a misplaced checkpoint). The client is
+// shared by every tenant, so a memo keyed by model would let one malformed
+// body switch caching off for all of them.
 func converseWithCachePointFallback[T any](
-	memo *modelMemo,
-	model string,
 	params *converseParams,
 	call func(*converseParams) (T, error),
 ) (T, error) {
-	if memo.known(model) {
-		params.stripCachePoints()
-	}
 	out, err := call(params)
-	if err == nil {
-		if params.cachePointsRejected {
-			memo.remember(model)
-		}
-		return out, nil
-	}
-	if !cachePointRejected(err) || !params.stripCachePoints() {
+	if err == nil || !cachePointRejected(err) || !params.stripCachePoints() {
 		return out, err
 	}
-	params.cachePointsRejected = true
-	out, err = call(params)
-	if err == nil {
-		memo.remember(model)
-	}
-	return out, err
+	return call(params)
 }
 
 // applyCacheCapability removes what the model cannot take before the first
@@ -273,8 +272,8 @@ func (p *converseParams) applyCacheCapability(c cacheCapability) {
 }
 
 // stripCachePoints removes every cachePoint and reports whether there was
-// one. It builds new slices, so inputs built from the params earlier keep
-// what they sent.
+// one. It never writes into a slice the params already held, so an input
+// built from them earlier keeps what it sent.
 func (p *converseParams) stripCachePoints() bool {
 	stripped := p.stripToolCachePoints()
 	system := make([]bedrockTypes.SystemContentBlock, 0, len(p.system))

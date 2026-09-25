@@ -208,9 +208,9 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 ## Phase 8 (S4b): Bedrock capability table and retry
 
 - [x] 8.1 `bedrock/cache_capability.go` (new): `bedrockCacheFamilies`, `cacheCapabilityFor` (strip region prefixes, longest prefix; ARNs/unknown → none).
-- [x] 8.2 `converse.go`: `applyCacheCapability`, `stripCachePoints`, `converseWithCachePointFallback`; rename `systemFoldMemo`→`modelMemo`.
-- [x] 8.3 `bedrock/client.go:86,:251`: nested fallback with `cacheStrip` memo.
-- [x] 8.4 Tests: profile prefix, Mistral 7B, 1h on 3.7 cleared; retry on ValidationException only, not Throttling; memo only after success.
+- [x] 8.2 `converse.go`: `applyCacheCapability`, `stripCachePoints`, `converseWithCachePointFallback` (per request, no memo); `systemFoldMemo` unchanged.
+- [x] 8.3 `bedrock/client.go:86,:251`: nested fallback, system fold outside.
+- [x] 8.4 Tests: profile prefix, ARNs, Mistral 7B, 1h on 3.7 cleared; retry on checkpoint-naming ValidationException only (message table), not Throttling; a malformed request (5 checkpoints, 1h after 5m) never disables caching for the next valid one; fold leaves earlier inputs alone.
 - [ ] 8.5 V1 (bedrock; `bedrock_live`); V2; V3; V4 **Bedrock** (all three variants); V5. *(V1 done: gofmt, vet incl. `bedrock_live`, golangci-lint 0 issues, race tests providers+proxy, `go test ./pkg/...`; V2-V5 pending: AWS credentials expired, no live calls.)*
 
 ## Phase 9 (S5): plugins keep cache intent
