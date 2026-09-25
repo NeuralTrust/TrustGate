@@ -190,6 +190,7 @@ func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, p
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
+	dropChatOptionsTargetRejects(canonical, target)
 	normalizeCacheIntent(canonical, target, providerName, defaultModel)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
@@ -351,6 +352,23 @@ func dropStreamProviderExtensionsForCrossFormat(source, target Format, chunk *Ca
 	}
 	if source != target {
 		chunk.ProviderExtensions = nil
+	}
+}
+
+// dropChatOptionsTargetRejects clears the OpenAI Chat seed,
+// parallel_tool_calls and json_schema options on targets that fail on them.
+// Groq Llama models answer tool_use_failed to parallel tool calls, so Groq
+// never gets the caller's value and NormalizeGroqRequest sends false with
+// tools. DeepSeek documents none of them and takes text or json_object only.
+func dropChatOptionsTargetRejects(req *CanonicalRequest, target Format) {
+	switch target {
+	case FormatGroq:
+		req.ParallelToolCalls = nil
+	case FormatDeepSeek:
+		req.Seed, req.ParallelToolCalls = nil, nil
+		if rf := req.ResponseFormat; rf != nil && rf.Type == responseFormatJSONSchema {
+			req.ResponseFormat = nil
+		}
 	}
 }
 

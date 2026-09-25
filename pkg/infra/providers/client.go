@@ -48,10 +48,10 @@ type Config struct {
 	SystemPrompt  string         `json:"system_prompt,omitempty"`
 	Instructions  []string       `json:"instructions,omitempty"`
 	Options       map[string]any `json:"options,omitempty"`
-	// CacheRetentionMapped reports that the gateway wrote
-	// prompt_cache_retention into the body while translating the request, so
-	// a client may drop it when the provider rejects it. A key the caller
-	// sent on a passthrough is never dropped.
+	// CacheRetentionMapped reports that the gateway re-encoded the body from
+	// the caller's wire format, so any prompt_cache_retention in it was
+	// mapped by the gateway and a client may drop it when the provider
+	// rejects it. A key the caller sent on a passthrough is never dropped.
 	CacheRetentionMapped bool `json:"-"`
 }
 

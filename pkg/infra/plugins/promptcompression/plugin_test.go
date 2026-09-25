@@ -378,6 +378,18 @@ func TestExecuteSetsCompressionHeaders(t *testing.T) {
 		assert.NotContains(t, res.Headers, headerSaved)
 	})
 
+	t.Run("modeled chat options survive compression", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","seed":42,"messages":[{"role":"user","content":"` + verbose + `"}]}`)
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.Equal(t, []string{"compressed"}, res.Headers[headerDecision])
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(res.RequestBody, &fields))
+		assert.JSONEq(t, `42`, string(fields["seed"]))
+	})
+
 	t.Run("lossy shapes report the skip reason", func(t *testing.T) {
 		t.Parallel()
 		body := []byte(`{"model":"gpt-4o","n":2,"messages":[{"role":"user","content":"` + verbose + `"}]}`)

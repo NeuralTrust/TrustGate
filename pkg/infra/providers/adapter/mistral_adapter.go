@@ -17,6 +17,8 @@ package adapter
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"strconv"
 )
 
 type MistralAdapter struct {
@@ -57,7 +59,25 @@ func (a *MistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		}
 	}
 
-	return a.openai.EncodeRequest(req)
+	seed := req.Seed
+	req.Seed = nil
+	out, err := a.openai.EncodeRequest(req)
+	req.Seed = seed
+	if err != nil || seed == nil {
+		return out, err
+	}
+	return withMistralRandomSeed(out, *seed)
+}
+
+// withMistralRandomSeed sets the seed under random_seed, Mistral's name for
+// it: the API answers 422 extra_forbidden to a seed field.
+func withMistralRandomSeed(body []byte, seed int64) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	fields["random_seed"] = json.RawMessage(strconv.FormatInt(seed, 10))
+	return json.Marshal(fields)
 }
 
 // ---------------------------------------------------------------------------

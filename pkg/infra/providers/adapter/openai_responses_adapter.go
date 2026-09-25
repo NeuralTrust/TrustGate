@@ -191,7 +191,7 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	if req.Text != nil && req.Text.Format != nil {
-		cr.ResponseFormat = &CanonicalRespFormat{Type: req.Text.Format.Type}
+		cr.ResponseFormat = decodeResponsesTextFormat(req.Text.Format)
 	}
 
 	cr.Tools = decodeResponsesTools(req.Tools)
@@ -528,10 +528,8 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 		out.MaxOutputTokens = &req.MaxTokens
 	}
 
-	if req.ResponseFormat != nil {
-		out.Text = &openaiTextFormat{
-			Format: &openaiRespFormat{Type: req.ResponseFormat.Type},
-		}
+	if format, ok := encodeResponsesTextFormat(req.ResponseFormat); ok {
+		out.Text = &openaiTextFormat{Format: format}
 	}
 	if o := req.CacheOptions; o != nil {
 		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention
@@ -844,4 +842,28 @@ func responsesArgumentsDelta(index int, delta string) [][]byte {
 		OutputIndex: index,
 	})
 	return SSEEvent("response.function_call_arguments.delta", data)
+}
+
+func decodeResponsesTextFormat(f *openaiRespFormat) *CanonicalRespFormat {
+	out := &CanonicalRespFormat{Type: f.Type}
+	if f.Type == responseFormatJSONSchema && len(f.Schema) > 0 {
+		out.JSONSchema, _ = json.Marshal(f.openaiJSONSchema)
+	}
+	return out
+}
+
+// encodeResponsesTextFormat reports false for a json_schema format whose
+// schema is missing or unreadable, which the Responses API rejects.
+func encodeResponsesTextFormat(f *CanonicalRespFormat) (*openaiRespFormat, bool) {
+	if f == nil {
+		return nil, false
+	}
+	out := &openaiRespFormat{Type: f.Type}
+	if f.Type != responseFormatJSONSchema {
+		return out, true
+	}
+	if json.Unmarshal(f.JSONSchema, &out.openaiJSONSchema) != nil || len(out.Schema) == 0 {
+		return nil, false
+	}
+	return out, true
 }

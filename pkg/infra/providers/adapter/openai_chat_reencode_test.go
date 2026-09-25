@@ -219,14 +219,18 @@ func TestAdaptRequest_OpenAIChatKeepsSeedSchemaAndParallelToolCalls(t *testing.T
 		`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`
 
 	reg := NewRegistry()
-	for _, target := range []Format{FormatGroq, FormatOpenRouter} {
-		out, err := reg.AdaptRequestForProvider([]byte(body), FormatOpenAI, target, string(target), "")
+	for _, target := range []struct {
+		format   Format
+		parallel string
+	}{{FormatGroq, `false`}, {FormatOpenRouter, `true`}} {
+		out, err := reg.AdaptRequestForProvider([]byte(body), FormatOpenAI, target.format, string(target.format), "")
 		require.NoError(t, err)
+		out = NormalizeRequestForProvider(string(target.format), target.format, out)
 		var got map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(out, &got))
-		assert.JSONEq(t, `42`, string(got["seed"]), "%s", target)
-		assert.JSONEq(t, `true`, string(got["parallel_tool_calls"]), "%s", target)
-		assert.JSONEq(t, `{"type":"json_schema","json_schema":`+schema+`}`, string(got["response_format"]), "%s", target)
+		assert.JSONEq(t, `42`, string(got["seed"]), "%s", target.format)
+		assert.JSONEq(t, target.parallel, string(got["parallel_tool_calls"]), "%s", target.format)
+		assert.JSONEq(t, `{"type":"json_schema","json_schema":`+schema+`}`, string(got["response_format"]), "%s", target.format)
 	}
 
 	out, err := reg.AdaptRequestForProvider([]byte(`{"model":"m","parallel_tool_calls":false,"messages":[{"role":"user","content":"hi"}]}`), FormatOpenAI, FormatOpenRouter, provider.OpenRouter, "")

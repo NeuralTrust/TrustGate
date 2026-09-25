@@ -15,8 +15,11 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -150,13 +153,34 @@ func encodeOpenAIToolCall(tc CanonicalToolCall) openaiToolCall {
 	}
 }
 
+// openaiRespFormat is the Responses API text.format, which carries the
+// json_schema fields inline instead of under a json_schema object.
 type openaiRespFormat struct {
 	Type string `json:"type"`
+	openaiJSONSchema
+}
+
+type openaiJSONSchema struct {
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 type openaiChatRespFormat struct {
 	Type       string          `json:"type"`
 	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
+}
+
+const responseFormatJSONSchema = "json_schema"
+
+// encodeChatResponseFormat returns nil for a json_schema format without its
+// schema, which OpenAI-compatible targets reject.
+func encodeChatResponseFormat(f *CanonicalRespFormat) *openaiChatRespFormat {
+	if f == nil || (f.Type == responseFormatJSONSchema && len(f.JSONSchema) == 0) {
+		return nil
+	}
+	return &openaiChatRespFormat{Type: f.Type, JSONSchema: f.JSONSchema}
 }
 
 type openaiResponse struct {
@@ -320,11 +344,20 @@ func (f *openaiStreamToolCallFn) name() string {
 // Request: Decode (Chat Completions → Canonical)
 // ---------------------------------------------------------------------------
 
+// openaiRequestIn reads seed and parallel_tool_calls raw so a value of the
+// wrong type drops that field instead of failing the whole request.
+type openaiRequestIn struct {
+	openaiRequest
+	Seed              json.RawMessage `json:"seed"`
+	ParallelToolCalls json.RawMessage `json:"parallel_tool_calls"`
+}
+
 func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
-	var req openaiRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var in openaiRequestIn
+	if err := json.Unmarshal(body, &in); err != nil {
 		return nil, err
 	}
+	req := in.openaiRequest
 
 	cr := &CanonicalRequest{
 		Model:       req.Model,
@@ -348,7 +381,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	if req.ResponseFormat != nil {
 		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type, JSONSchema: req.ResponseFormat.JSONSchema}
 	}
-	cr.Seed, cr.ParallelToolCalls = req.Seed, req.ParallelToolCalls
+	cr.Seed, cr.ParallelToolCalls = decodeChatSeed(in.Seed), decodeOptionalBool(in.ParallelToolCalls)
 
 	var system cacheTextJoin
 	for _, m := range req.Messages {
@@ -404,6 +437,32 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	return cr, nil
+}
+
+// decodeChatSeed returns seed as an integer, taking integral floats such as
+// 42.0 that JSON encoders emit for numbers, and nil for anything else.
+func decodeChatSeed(raw json.RawMessage) *int64 {
+	text := string(bytes.TrimSpace(raw))
+	if text == "" || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) {
+		return nil
+	}
+	if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return &n
+	}
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil || f != math.Trunc(f) || f < math.MinInt64 || f >= math.MaxInt64 {
+		return nil
+	}
+	n := int64(f)
+	return &n
+}
+
+func decodeOptionalBool(raw json.RawMessage) *bool {
+	var b *bool
+	if json.Unmarshal(raw, &b) != nil {
+		return nil
+	}
+	return b
 }
 
 // ---------------------------------------------------------------------------
@@ -465,9 +524,7 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 		out.Stop, _ = json.Marshal(req.Stop)
 	}
 
-	if req.ResponseFormat != nil {
-		out.ResponseFormat = &openaiChatRespFormat{Type: req.ResponseFormat.Type, JSONSchema: req.ResponseFormat.JSONSchema}
-	}
+	out.ResponseFormat = encodeChatResponseFormat(req.ResponseFormat)
 	out.Seed = req.Seed
 
 	if req.System != "" {
