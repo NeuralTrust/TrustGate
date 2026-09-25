@@ -124,7 +124,7 @@ func probeLeaves(ad RequestAdapter, body []byte, idx *leafIndex) (*textProbe, bo
 }
 
 // indexLeaves walks a valid JSON body once and returns its probe leaves in
-// document order. It refuses bodies with duplicate keys or over the caps
+// document order. It refuses bodies with repeated keys or over the caps
 // rawWithinCaps checks, since each level rescans the values below it.
 func indexLeaves(b []byte, root rawSpan) (*leafIndex, bool) {
 	if !rawWithinCaps(b[root.start:root.end]) {

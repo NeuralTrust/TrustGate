@@ -44,11 +44,12 @@ var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
 	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
-	// ErrAmbiguousRequestBody refuses a chat request whose body repeats a
-	// key or folds two keys into one struct field (adapter.HasAmbiguousKeys):
-	// the plugins would judge the copy the decoder reads, and the upstream
-	// may read the other.
-	ErrAmbiguousRequestBody = errors.New("request body repeats a key or has keys that differ only in case")
+	// ErrAmbiguousRequestBody refuses a chat request whose body
+	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts
+	// with a byte order mark, repeats a key, or has two keys the decoder
+	// reads as one struct field. The plugins would judge what the decoder
+	// reads, and the upstream may read another body or another copy.
+	ErrAmbiguousRequestBody = errors.New("request body is not valid JSON, repeats a key, or has keys that differ only in case where the gateway decodes it")
 )
 
 type ForwardInput struct {
@@ -192,15 +193,16 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	return f.invokeWithFailover(ctx, in.Consumer, dto, stream, route)
 }
 
-// ambiguousChatBody reports a chat request, the kind the plugins inspect
-// through the canonical decode, whose body the decoder may read otherwise
-// than the upstream. Other capabilities carry no prompt or tools and keep
-// their bodies as sent.
+// ambiguousChatBody reports a chat request whose body the decoder may read
+// otherwise than the upstream. It runs before routing and before any plugin.
+// Only chat bodies are checked: the tool and prompt plugins judge them
+// through the canonical decode, whose struct shapes HasAmbiguousKeys knows.
 func ambiguousChatBody(req *infracontext.RequestContext) bool {
 	if req == nil || len(req.Body) == 0 {
 		return false
 	}
-	return adapter.IsChatRequest(req.ProxyCapability, sourceFormatFromRequest(req)) && adapter.HasAmbiguousKeys(req.Body)
+	format := sourceFormatFromRequest(req)
+	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
 }
 
 func (f *forwarder) invokeWithFailover(

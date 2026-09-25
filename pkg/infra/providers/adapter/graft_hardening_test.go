@@ -50,7 +50,7 @@ func TestUnmodelledToolsRefusesRepeatedKeys(t *testing.T) {
 			require.NoError(t, err)
 			_, ok := UnmodelledTools(ad, []byte(tc.body), req)
 			assert.False(t, ok)
-			assert.True(t, HasAmbiguousKeys([]byte(tc.body)))
+			assert.True(t, HasAmbiguousKeys(tc.format, []byte(tc.body)))
 		})
 	}
 }

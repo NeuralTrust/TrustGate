@@ -64,7 +64,7 @@ func applyInjections(
 		}
 		switch conflict {
 		case conflictGatewayWins:
-			ct.Cache = tools[idx].Cache
+			ct.Cache = copiesCache(tools, idx)
 			tools[idx] = ct
 			tools = dropLaterCopies(tools, idx)
 			outcomes = append(outcomes, injectOutcome{Name: ct.Name, Outcome: outcomeReplaced})
@@ -75,6 +75,22 @@ func applyInjections(
 		}
 	}
 	return tools, outcomes, nil
+}
+
+// copiesCache returns the cache marker of the client's tool at idx or, when
+// it has none, of the last later copy of it that has one: the replacement
+// takes it over, so dropping a copy never drops the breakpoint it carried.
+func copiesCache(tools []adapter.CanonicalTool, idx int) *adapter.CanonicalCacheBreakpoint {
+	if tools[idx].Cache != nil {
+		return tools[idx].Cache
+	}
+	var cache *adapter.CanonicalCacheBreakpoint
+	for _, t := range tools[idx+1:] {
+		if t.Name == tools[idx].Name && t.Cache != nil {
+			cache = t.Cache
+		}
+	}
+	return cache
 }
 
 // dropLaterCopies removes the tools after idx that share its name, so a

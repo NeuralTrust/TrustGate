@@ -55,7 +55,7 @@ func TestPlugin_Execute_NeverForwardsAnAmbiguousBody(t *testing.T) {
 		res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"ok"}}, reqFor("openai_responses", body))
 		require.NoError(t, err)
 		require.NotEmpty(t, res.RequestBody)
-		assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+		assert.False(t, adapter.HasAmbiguousKeys(adapter.FormatOpenAIResponses, res.RequestBody), string(res.RequestBody))
 		assert.Contains(t, string(res.RequestBody), `"name":"ok"`)
 	})
 	t.Run("observe leaves it alone", func(t *testing.T) {
@@ -203,7 +203,7 @@ func TestPlugin_Execute_CountsAnUnnamedServerToolOnce(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := parseConfig(map[string]any{"allow_tools": []any{"f"}})
 	require.NoError(t, err)
-	kept, removed, keptCount, removedCount := newToolFilter(ad, []byte(body), canonical, cfg).split()
+	kept, removed, keptCount, removedCount := newToolFilter(ad, adapter.FormatAnthropic, []byte(body), canonical, cfg).split()
 	assert.Equal(t, []string{"f"}, kept)
 	assert.Equal(t, []string{"web_search_20250305"}, removed)
 	assert.Equal(t, 1, keptCount)
@@ -250,7 +250,7 @@ func TestPlugin_Execute_ForwardsOnlyTheToolsItJudged(t *testing.T) {
 			require.NotEmpty(t, res.RequestBody, "the body the plugin judged must be the one sent")
 			assert.NotContains(t, string(res.RequestBody), "rm_rf")
 			assert.Contains(t, string(res.RequestBody), "get_weather")
-			assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+			assert.False(t, adapter.HasAmbiguousKeys(adapter.Format(tc.format), res.RequestBody), string(res.RequestBody))
 		})
 	}
 

@@ -22,28 +22,28 @@ import (
 type CohereAdapter struct{}
 
 type cohereRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	Messages    []cohereMessage        `json:"messages"`
-	MaxTokens   *int                   `json:"max_tokens,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"p,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	Tools       []cohereTool           `json:"tools,omitempty"`
-	ToolChoice  *cohereToolChoice      `json:"tool_choice,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Messages    []cohereMessage   `json:"messages"`
+	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Temperature *float64          `json:"temperature,omitempty"`
+	TopP        *float64          `json:"p,omitempty"`
+	Stream      *bool             `json:"stream,omitempty"`
+	Tools       []cohereTool      `json:"tools,omitempty"`
+	ToolChoice  *cohereToolChoice `json:"tool_choice,omitempty"`
+	StopSeqs    []string          `json:"stop_sequences,omitempty"`
 }
 
 type cohereMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
-	ToolPlan   string          `json:"tool_plan,omitempty"`
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
+	ToolPlan   string           `json:"tool_plan,omitempty"`
 	ToolCalls  []cohereToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type cohereTool struct {
-	Type     string              `json:"type"`
-	Function cohereToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function cohereToolFunction `json:"function"`
 }
 
 type cohereToolFunction struct {
@@ -52,9 +52,41 @@ type cohereToolFunction struct {
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
+// cohereToolChoice is the v2 tool_choice, the string "REQUIRED" or "NONE".
+// The object form with a type and a name is still read.
 type cohereToolChoice struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
+}
+
+func (c *cohereToolChoice) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*c = cohereToolChoice{Type: strings.ToLower(s)}
+		return nil
+	}
+	type plain cohereToolChoice
+	return json.Unmarshal(b, (*plain)(c))
+}
+
+func (c cohereToolChoice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(strings.ToUpper(c.Type))
+}
+
+// cohereToolChoiceFrom returns the v2 choice for tc: REQUIRED for any
+// forced call, since v2 cannot name the tool, NONE for none, and nil for
+// auto, which is the default.
+func cohereToolChoiceFrom(tc *CanonicalToolChoice) *cohereToolChoice {
+	if tc == nil {
+		return nil
+	}
+	switch strings.ToLower(tc.Type) {
+	case "required", "any", "tool":
+		return &cohereToolChoice{Type: "required"}
+	case "none":
+		return &cohereToolChoice{Type: "none"}
+	}
+	return nil
 }
 
 type cohereToolCall struct {
@@ -76,10 +108,10 @@ type cohereResponse struct {
 }
 
 type cohereAssistantMessage struct {
-	Role      string                  `json:"role"`
-	Content   []cohereContentBlock    `json:"content,omitempty"`
-	ToolPlan  string                  `json:"tool_plan,omitempty"`
-	ToolCalls []cohereToolCall        `json:"tool_calls,omitempty"`
+	Role      string               `json:"role"`
+	Content   []cohereContentBlock `json:"content,omitempty"`
+	ToolPlan  string               `json:"tool_plan,omitempty"`
+	ToolCalls []cohereToolCall     `json:"tool_calls,omitempty"`
 }
 
 type cohereContentBlock struct {
@@ -336,12 +368,7 @@ func (a *CohereAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			},
 		})
 	}
-	if req.ToolChoice != nil {
-		out.ToolChoice = &cohereToolChoice{
-			Type: req.ToolChoice.Type,
-			Name: req.ToolChoice.Name,
-		}
-	}
+	out.ToolChoice = cohereToolChoiceFrom(req.ToolChoice)
 	return json.Marshal(out)
 }
 

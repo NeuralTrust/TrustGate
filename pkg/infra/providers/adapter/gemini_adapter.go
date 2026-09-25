@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
 	"slices"
@@ -47,6 +48,25 @@ type geminiRequest struct {
 	Tools             []geminiToolGroup `json:"tools,omitempty"`
 }
 
+// UnmarshalJSON also reads the snake_case spelling of each field, which the
+// API accepts too; the camelCase one wins when a body has both, which
+// HasAmbiguousKeys refuses.
+func (r *geminiRequest) UnmarshalJSON(b []byte) error {
+	type plain geminiRequest
+	var in struct {
+		plain
+		SystemInstruction *geminiContent   `json:"system_instruction"`
+		GenerationConfig  *geminiGenConfig `json:"generation_config"`
+	}
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	*r = geminiRequest(in.plain)
+	r.SystemInstruction = cmp.Or(r.SystemInstruction, in.SystemInstruction)
+	r.GenerationConfig = cmp.Or(r.GenerationConfig, in.GenerationConfig)
+	return nil
+}
+
 type geminiContent struct {
 	Role  string       `json:"role,omitempty"`
 	Parts []geminiPart `json:"parts"`
@@ -58,6 +78,26 @@ type geminiPart struct {
 	FunctionCall     *geminiFunctionCall `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
 	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
+}
+
+// UnmarshalJSON also reads the snake_case function_call and
+// function_response parts.
+func (p *geminiPart) UnmarshalJSON(b []byte) error {
+	type plain geminiPart
+	var in struct {
+		plain
+		FunctionCall     *geminiFunctionCall `json:"function_call"`
+		FunctionResponse *geminiFuncResponse `json:"function_response"`
+		ThoughtSignature string              `json:"thought_signature"`
+	}
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	*p = geminiPart(in.plain)
+	p.FunctionCall = cmp.Or(p.FunctionCall, in.FunctionCall)
+	p.FunctionResponse = cmp.Or(p.FunctionResponse, in.FunctionResponse)
+	p.ThoughtSignature = cmp.Or(p.ThoughtSignature, in.ThoughtSignature)
+	return nil
 }
 
 type geminiFunctionCall struct {
@@ -178,6 +218,27 @@ type geminiGenConfig struct {
 	TopP             *float64 `json:"topP,omitempty"`
 	TopK             *int     `json:"topK,omitempty"`
 	ResponseMimeType string   `json:"responseMimeType,omitempty"`
+}
+
+// UnmarshalJSON also reads the snake_case spelling of each field.
+func (c *geminiGenConfig) UnmarshalJSON(b []byte) error {
+	type plain geminiGenConfig
+	var in struct {
+		plain
+		MaxOutputTokens  *int     `json:"max_output_tokens"`
+		TopP             *float64 `json:"top_p"`
+		TopK             *int     `json:"top_k"`
+		ResponseMimeType string   `json:"response_mime_type"`
+	}
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	*c = geminiGenConfig(in.plain)
+	c.MaxOutputTokens = cmp.Or(c.MaxOutputTokens, in.MaxOutputTokens)
+	c.TopP = cmp.Or(c.TopP, in.TopP)
+	c.TopK = cmp.Or(c.TopK, in.TopK)
+	c.ResponseMimeType = cmp.Or(c.ResponseMimeType, in.ResponseMimeType)
+	return nil
 }
 
 type geminiToolGroup struct {

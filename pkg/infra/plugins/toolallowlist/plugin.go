@@ -94,7 +94,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if err != nil {
 		return okResult(), nil
 	}
-	f := newToolFilter(ad, in.Request.Body, canonical, cfg)
+	f := newToolFilter(ad, adapter.Format(format), in.Request.Body, canonical, cfg)
 	if len(f.named) == 0 && len(f.unmodelled) == 0 {
 		return f.forward(in.Mode)
 	}
@@ -153,14 +153,14 @@ type toolFilter struct {
 	// mcp_toolset is refused: the two go together, since Anthropic refuses
 	// a toolset without its server and a server no toolset exposes.
 	refusedMCP map[string]bool
-	// ambiguous marks a body with keys the decoder folds into one: what it
+	// ambiguous marks a body adapter.HasAmbiguousKeys reports: what it
 	// decoded may not be what the upstream reads, so the plugin never
 	// forwards the body itself.
 	ambiguous bool
 }
 
-func newToolFilter(ad adapter.ProviderAdapter, body []byte, canonical *adapter.CanonicalRequest, cfg *config) *toolFilter {
-	f := &toolFilter{ad: ad, body: body, canonical: canonical, cfg: cfg, ambiguous: adapter.HasAmbiguousKeys(body)}
+func newToolFilter(ad adapter.ProviderAdapter, format adapter.Format, body []byte, canonical *adapter.CanonicalRequest, cfg *config) *toolFilter {
+	f := &toolFilter{ad: ad, body: body, canonical: canonical, cfg: cfg, ambiguous: adapter.HasAmbiguousKeys(format, body)}
 	unmodelled, readable := adapter.UnmodelledTools(ad, body, canonical)
 	if !readable {
 		unmodelled = []adapter.UnmodelledTool{{}}

@@ -81,3 +81,21 @@ func preRequestInput(settings map[string]any, body string) appplugins.ExecInput 
 		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(body)},
 	}
 }
+
+func TestApplyInjectionsKeepsTheCacheMarkerOfADroppedCopy(t *testing.T) {
+	t.Parallel()
+	marker := &adapter.CanonicalCacheBreakpoint{TTL: "1h"}
+	tools := []adapter.CanonicalTool{
+		{Name: "safety_check", Description: "client one"},
+		{Name: "other"},
+		{Name: "safety_check", Description: "client two", Cache: marker},
+	}
+	entries := []injectDef{{Type: "function", Function: fnDef{Name: "safety_check", Description: "gateway"}}}
+
+	out, _, err := applyInjections(tools, entries, conflictGatewayWins)
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "gateway", out[0].Description)
+	assert.Same(t, marker, out[0].Cache)
+	assert.Nil(t, out[1].Cache)
+}

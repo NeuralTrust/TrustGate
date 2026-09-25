@@ -169,14 +169,15 @@ func rawFields(b []byte, s rawSpan) ([]rawField, error) {
 	return fields, nil
 }
 
-// hasDuplicateKey reports keys that encoding/json would treat as one field:
-// it keeps the last of equal keys and matches struct fields ignoring case,
-// so a decoy copy could hide the value the decoder reads.
+// hasDuplicateKey reports a key the object repeats: the decoder keeps the
+// last copy and another parser may keep the first. Keys that differ only in
+// case are left to the lookups, which match keys as the decoder matches
+// struct fields.
 func hasDuplicateKey(fields []rawField) bool {
 	if len(fields) <= 8 {
 		for i := range fields {
 			for j := i + 1; j < len(fields); j++ {
-				if strings.EqualFold(fields[i].key, fields[j].key) {
+				if fields[i].key == fields[j].key {
 					return true
 				}
 			}
@@ -185,11 +186,10 @@ func hasDuplicateKey(fields []rawField) bool {
 	}
 	seen := make(map[string]struct{}, len(fields))
 	for _, f := range fields {
-		k := foldKey(f.key)
-		if _, dup := seen[k]; dup {
+		if _, dup := seen[f.key]; dup {
 			return true
 		}
-		seen[k] = struct{}{}
+		seen[f.key] = struct{}{}
 	}
 	return false
 }
@@ -204,6 +204,26 @@ func foldKey(s string) string {
 		sb.WriteRune(low)
 	}
 	return sb.String()
+}
+
+// rawFieldNamed returns the field whose key matches one of keys as
+// encoding/json matches a struct field, ignoring case. ok is false when two
+// fields match: the decoder would read one of them and the upstream may
+// read the other.
+func rawFieldNamed(fields []rawField, keys ...string) (field rawField, found, ok bool) {
+	for _, f := range fields {
+		for _, k := range keys {
+			if !strings.EqualFold(f.key, k) {
+				continue
+			}
+			if found {
+				return rawField{}, false, false
+			}
+			field, found = f, true
+			break
+		}
+	}
+	return field, found, true
 }
 
 func rawItems(b []byte, s rawSpan) ([]rawSpan, error) {
@@ -227,19 +247,14 @@ func rawItems(b []byte, s rawSpan) ([]rawSpan, error) {
 }
 
 // rawFieldOf returns the value of key in the object at s, matching keys as
-// encoding/json matches struct fields. rawFields refuses keys that fold into
-// one, so at most one key matches.
+// encoding/json matches struct fields. It fails when two keys match.
 func rawFieldOf(b []byte, s rawSpan, key string) (rawSpan, bool) {
 	fields, err := rawFields(b, s)
 	if err != nil {
 		return rawSpan{}, false
 	}
-	for _, f := range fields {
-		if strings.EqualFold(f.key, key) {
-			return f.value, true
-		}
-	}
-	return rawSpan{}, false
+	f, found, ok := rawFieldNamed(fields, key)
+	return f.value, found && ok
 }
 
 // rawWithinCaps reports whether the raw walks can index the valid JSON body
@@ -276,128 +291,10 @@ func rawWithinCaps(b []byte) bool {
 	return true
 }
 
-// HasAmbiguousKeys reports a JSON body whose keys let encoding/json read
-// another value than the upstream will: an object that repeats a key, where
-// the decoder keeps the last copy and another parser may keep the first, or
-// an object decoded into a struct with two keys that differ only in case,
-// which the decoder folds into one field. Keys that differ in case are left
-// alone inside the objects the chat formats carry as free-form maps, such as
-// JSON schemas, tool arguments and metadata (freeFormKeys): the decoder keeps
-// both there, as the upstream does.
-//
-// It reads the body once, at any size or depth. On a body that is not valid
-// JSON the answer means nothing, since no decoder accepts such a body.
-func HasAmbiguousKeys(b []byte) bool {
-	return repeatsKey(b)
-}
-
-// freeFormKeys are the keys, folded as the decoder folds them, whose object
-// values the chat adapters decode as maps or raw JSON, and whose own keys
-// are the client's rather than the format's. nestedOnly marks a key that
-// names such an object only below the top level (Anthropic and Bedrock tool
-// call input; the Responses input is never an object).
-var freeFormKeys = func() map[string]bool {
-	m := map[string]bool{foldKey("input"): true}
-	for _, k := range []string{
-		"parameters", "input_schema", "schema", "json_schema", "properties", "json",
-		"parametersJsonSchema", "parameters_json_schema", "responseSchema", "response_schema",
-		"responseJsonSchema", "response_json_schema", "_responseJsonSchema", "guided_json",
-		"args", "response", "metadata", "labels", "logit_bias", "headers", "variables",
-		"chat_template_kwargs", "additionalModelRequestFields", "requestMetadata", "promptVariables",
-	} {
-		m[foldKey(k)] = false
-	}
-	return m
-}()
-
-func freeFormValue(key string, topLevel bool) bool {
-	nestedOnly, ok := freeFormKeys[foldKey(key)]
-	return ok && (!nestedOnly || !topLevel)
-}
-
-// repeatsKey is HasAmbiguousKeys.
-func repeatsKey(b []byte) bool {
-	var stack []keyFrame
-	for i := 0; i < len(b); i++ {
-		switch b[i] {
-		case '{', '[':
-			frame := keyFrame{object: b[i] == '{', atKey: b[i] == '{'}
-			if n := len(stack); n > 0 {
-				parent := &stack[n-1]
-				frame.free = parent.free || (frame.object && parent.object && freeFormValue(parent.lastKey, n == 1))
-			}
-			stack = append(stack, frame)
-		case '}', ']':
-			if len(stack) == 0 {
-				return false
-			}
-			stack = stack[:len(stack)-1]
-		case ',':
-			if n := len(stack); n > 0 && stack[n-1].object {
-				stack[n-1].atKey = true
-			}
-		case '"':
-			end, err := rawStringEnd(b, i)
-			if err != nil {
-				return false
-			}
-			if n := len(stack); n > 0 && stack[n-1].atKey {
-				key, ok := rawString(b, rawSpan{i, end})
-				if !ok || stack[n-1].repeats(key) {
-					return true
-				}
-				stack[n-1].atKey = false
-				stack[n-1].lastKey = key
-			}
-			i = end - 1
-		}
-	}
-	return false
-}
-
-// keyFrame tracks the keys of one open object. A free frame is a
-// free-form object or lies inside one: only exact repeats count there.
-type keyFrame struct {
-	object, atKey, free bool
-	lastKey             string
-	keys                []string
-	seen                map[string]struct{}
-}
-
-func (f *keyFrame) repeats(key string) bool {
-	same := strings.EqualFold
-	norm := foldKey
-	if f.free {
-		same = func(a, b string) bool { return a == b }
-		norm = func(s string) string { return s }
-	}
-	if f.seen == nil {
-		for _, k := range f.keys {
-			if same(k, key) {
-				return true
-			}
-		}
-		if f.keys = append(f.keys, key); len(f.keys) <= 8 {
-			return false
-		}
-		f.seen = make(map[string]struct{}, 2*len(f.keys))
-		for _, k := range f.keys {
-			f.seen[norm(k)] = struct{}{}
-		}
-		f.keys = nil
-		return false
-	}
-	k := norm(key)
-	if _, dup := f.seen[k]; dup {
-		return true
-	}
-	f.seen[k] = struct{}{}
-	return false
-}
-
 // rawLookup follows the object keys of path from s. found is false when a
 // key is missing or a value on the way is null; ok is false when an object
-// on the way cannot be read, such as one that repeats a key.
+// on the way cannot be read, such as one that repeats a key, or has two keys
+// that match a step ignoring case.
 func rawLookup(b []byte, s rawSpan, path []string) (v rawSpan, found, ok bool) {
 	for _, step := range path {
 		if string(b[s.start:s.end]) == "null" {
@@ -407,16 +304,14 @@ func rawLookup(b []byte, s rawSpan, path []string) (v rawSpan, found, ok bool) {
 		if err != nil {
 			return rawSpan{}, false, false
 		}
-		found = false
-		for _, f := range fields {
-			if strings.EqualFold(f.key, step) {
-				s, found = f.value, true
-				break
-			}
+		f, hit, unique := rawFieldNamed(fields, step)
+		if !unique {
+			return rawSpan{}, false, false
 		}
-		if !found {
+		if !hit {
 			return rawSpan{}, false, true
 		}
+		s = f.value
 	}
 	return s, true, true
 }

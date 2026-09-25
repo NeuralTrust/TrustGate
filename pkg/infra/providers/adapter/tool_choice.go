@@ -178,7 +178,8 @@ func (g *grafter) geminiForcedModePatches(calling rawSpan) ([]rawPatch, bool) {
 
 // rawFieldAlias returns the field of the object at s whose key matches one
 // of keys, as the decoder matches it. found is false when s is not an object
-// or has no such field.
+// or has no such field; ok is false when s cannot be read or two of its
+// fields match.
 func rawFieldAlias(b []byte, s rawSpan, keys ...string) (rawField, bool, bool) {
 	if s.end-s.start < 2 || b[s.start] != '{' {
 		return rawField{}, false, true
@@ -187,12 +188,5 @@ func rawFieldAlias(b []byte, s rawSpan, keys ...string) (rawField, bool, bool) {
 	if err != nil {
 		return rawField{}, false, false
 	}
-	for _, f := range fields {
-		for _, k := range keys {
-			if strings.EqualFold(f.key, k) {
-				return f, true, true
-			}
-		}
-	}
-	return rawField{}, false, true
+	return rawFieldNamed(fields, keys...)
 }

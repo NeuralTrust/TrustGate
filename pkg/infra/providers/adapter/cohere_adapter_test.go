@@ -460,3 +460,24 @@ func TestCohereFinishToCanonical(t *testing.T) {
 		})
 	}
 }
+
+func TestCohereAdapter_ToolChoiceString(t *testing.T) {
+	t.Parallel()
+	ad := &CohereAdapter{}
+	for in, want := range map[string]string{`"REQUIRED"`: "required", `"NONE"`: "none", `{"type":"required"}`: "required"} {
+		req, err := ad.DecodeRequest([]byte(`{"model":"command-a","messages":[{"role":"user","content":"hi"}],` +
+			`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":` + in + `}`))
+		require.NoError(t, err, in)
+		require.NotNil(t, req.ToolChoice, in)
+		assert.Equal(t, want, req.ToolChoice.Type, in)
+	}
+
+	for choice, want := range map[string]string{"required": `"REQUIRED"`, "any": `"REQUIRED"`, "tool": `"REQUIRED"`, "none": `"NONE"`, "auto": ""} {
+		out, err := ad.EncodeRequest(&CanonicalRequest{Model: "command-a", Messages: []CanonicalMessage{{Role: "user", Content: "hi"}},
+			ToolChoice: &CanonicalToolChoice{Type: choice, Name: "f"}})
+		require.NoError(t, err, choice)
+		var probe map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(out, &probe))
+		assert.Equal(t, want, string(probe["tool_choice"]), choice)
+	}
+}

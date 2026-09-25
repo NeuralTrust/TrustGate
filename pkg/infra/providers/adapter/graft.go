@@ -79,7 +79,8 @@ func GraftChangedFields(ad RequestAdapter, original []byte, baseline, mutated *C
 // whose canonical value changed are rewritten in original; every other byte
 // stays, so fields the canonical model does not carry, key order and cache
 // markers survive and the cached prefix is unchanged up to the first edit.
-// Nothing changed returns original itself, unless it repeats a key.
+// Nothing changed returns original itself, unless HasAmbiguousKeys reports
+// it.
 //
 // Grafting is for edits that add, remove or reword content the upstream may
 // see anyway (tools, compressed whitespace). A redaction must encode mutated
@@ -91,9 +92,9 @@ func GraftChangedFields(ad RequestAdapter, original []byte, baseline, mutated *C
 // boundary, only that message's content is replaced by its re-encoded form.
 // The result is mutated encoded in full, as before grafting existed, when
 // the change cannot be placed: messages added or removed, fields other than
-// text and tools changed, duplicate keys, a body over the size, value or
-// nesting caps (the raw walks rescan a value at each level above it), or a
-// grafted body that does not decode to mutated.
+// text and tools changed, a body HasAmbiguousKeys reports or over the size,
+// value or nesting caps (the raw walks rescan a value at each level above
+// it), or a grafted body that does not decode to mutated.
 func GraftChangedFieldsWith(ad RequestAdapter, original []byte, baseline, mutated *CanonicalRequest, opts GraftOptions) ([]byte, error) {
 	if ad == nil || mutated == nil {
 		return nil, errors.New("graft: missing adapter or request")
@@ -101,7 +102,7 @@ func GraftChangedFieldsWith(ad RequestAdapter, original []byte, baseline, mutate
 	var g *grafter
 	if baseline != nil {
 		g = newGrafter(ad, original, baseline, mutated, opts)
-		if g.unchanged() && !HasAmbiguousKeys(original) {
+		if g.unchanged() && !g.ambiguous {
 			return original, nil
 		}
 	}
@@ -184,6 +185,12 @@ type grafter struct {
 	origRead, origFound, origOK bool
 
 	sameRest, textChanged, toolsChanged bool
+
+	// shape is the key shape of original, which a graft keeps: it edits no
+	// top-level key the Chat adapter dispatches on. ambiguous is
+	// HasAmbiguousKeys for original.
+	shape     *keyShape
+	ambiguous bool
 }
 
 type topEdit struct {
@@ -194,6 +201,8 @@ type topEdit struct {
 func newGrafter(ad RequestAdapter, original []byte, baseline, mutated *CanonicalRequest, opts GraftOptions) *grafter {
 	_, bedrock := ad.(*BedrockAdapter)
 	g := &grafter{ad: ad, original: original, baseline: baseline, mutated: mutated, opts: opts, bedrock: bedrock}
+	g.shape = keyShapeFor(adapterFormat(ad), original)
+	g.ambiguous = !decodableBody(original) || ambiguousKeys(original, g.shape)
 	g.sameRest = bytes.Equal(canonicalJSON(withoutTextAndTools(baseline)), canonicalJSON(withoutTextAndTools(mutated)))
 	g.textChanged = g.sameRest && textChanged(baseline, mutated)
 	g.toolsChanged = !sameTools(baseline.Tools, mutated.Tools) || !sameToolChoice(baseline.ToolChoice, mutated.ToolChoice) ||
@@ -206,7 +215,7 @@ func (g *grafter) unchanged() bool {
 }
 
 func (g *grafter) graft() ([]byte, bool) {
-	if !g.sameRest || len(g.original) > maxGraftBody || !json.Valid(g.original) {
+	if !g.sameRest || len(g.original) > maxGraftBody || g.ambiguous {
 		return nil, false
 	}
 	root, err := rawRoot(g.original)
@@ -238,7 +247,7 @@ func (g *grafter) graft() ([]byte, bool) {
 		return nil, false
 	}
 	out, err := applyRawPatches(g.original, append(patches, topPatches...))
-	if err != nil || !g.faithful(out) || repeatsKey(out) {
+	if err != nil || !g.faithful(out) || ambiguousKeys(out, g.shape) {
 		return nil, false
 	}
 	return out, true
@@ -247,7 +256,7 @@ func (g *grafter) graft() ([]byte, bool) {
 // faithful reports whether out means what mutated means, directly or as the
 // full re-encode would carry it (an encoder may drop a tool_choice that names
 // a removed tool, for one). out must decode, which also proves it valid JSON
-// before repeatsKey scans it.
+// before ambiguousKeys scans it.
 func (g *grafter) faithful(out []byte) bool {
 	decoded, err := g.ad.DecodeRequest(out)
 	if err != nil || decoded == nil {

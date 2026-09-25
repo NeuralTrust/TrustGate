@@ -77,5 +77,5 @@ func TestPluginReencodesAnAmbiguousBodyItLeftUnchanged(t *testing.T) {
 
 	res := execPreRequest(t, settings, string(adapter.FormatOpenAI), []byte(body))
 
-	assert.False(t, adapter.HasAmbiguousKeys(res.RequestBody), string(res.RequestBody))
+	assert.False(t, adapter.HasAmbiguousKeys(adapter.FormatOpenAI, res.RequestBody), string(res.RequestBody))
 }

@@ -125,10 +125,10 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 		setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
 	}
 
-	// A body with keys the decoder folds into one is re-encoded even when
+	// A body adapter.HasAmbiguousKeys reports is re-encoded even when
 	// nothing was injected: the conflicts were judged on the tools decoded,
 	// which the upstream may not read.
-	if !injectionChanged(outcomes) && !adapter.HasAmbiguousKeys(in.Request.Body) {
+	if !injectionChanged(outcomes) && !adapter.HasAmbiguousKeys(adapter.Format(format), in.Request.Body) {
 		return okResult(), nil
 	}
 

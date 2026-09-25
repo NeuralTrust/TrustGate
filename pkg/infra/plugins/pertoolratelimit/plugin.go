@@ -289,10 +289,10 @@ func legacyFunctionNames(ad adapter.RequestAdapter, body []byte, canonical *adap
 }
 
 // forward lets a request the limits leave alone through as it came. A body
-// with keys the decoder folds into one is re-encoded instead: the tools and
+// adapter.HasAmbiguousKeys reports is re-encoded instead: the tools and
 // calls counted are the ones decoded, which the upstream may not read.
 func (p *Plugin) forward(body []byte, format string, canonical *adapter.CanonicalRequest) (*appplugins.Result, error) {
-	if !adapter.HasAmbiguousKeys(body) {
+	if !adapter.HasAmbiguousKeys(adapter.Format(format), body) {
 		return okResult(), nil
 	}
 	ad, err := p.registry.GetAdapter(adapter.Format(format))

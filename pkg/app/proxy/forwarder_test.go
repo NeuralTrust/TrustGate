@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -953,6 +954,14 @@ func TestForward_RefusesAChatBodyWithAmbiguousKeys(t *testing.T) {
 			Body: []byte(`{"model":"c","max_tokens":1,"messages":[{"role":"user","content":"evil","Content":"hi"}]}`)},
 		"no capability, chat format": {SourceFormat: "google",
 			Body: []byte(`{"contents":[{"role":"user","parts":[{"text":"evil","Text":"hi"}]}]}`)},
+		"gemini both spellings": {ProxyCapability: "chat", SourceFormat: "google",
+			Body: []byte(`{"contents":[],"systemInstruction":{"parts":[{"text":"a"}]},"system_instruction":{"parts":[{"text":"b"}]}}`)},
+		"byte order mark": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte("\xef\xbb\xbf{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")},
+		"not valid json": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"temperature":NaN}`)},
+		"too deep": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":` + strings.Repeat("[", 1<<20))},
 	} {
 		_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
 		assert.ErrorIs(t, err, appproxy.ErrAmbiguousRequestBody, name)
@@ -966,6 +975,10 @@ func TestForward_LetsOtherBodiesThrough(t *testing.T) {
 	for name, req := range map[string]*infracontext.RequestContext{
 		"schema with case variants": {ProxyCapability: "chat", SourceFormat: "openai",
 			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"Name":{},"name":{}}}}}]}`)},
+		"tool message parts with case variants": {ProxyCapability: "chat", SourceFormat: "openai",
+			Body: []byte(`{"model":"gpt-4o","messages":[{"role":"tool","tool_call_id":"c","content":[{"Result":1,"result":2}]}]}`)},
+		"anthropic input_examples": {ProxyCapability: "chat", SourceFormat: "anthropic",
+			Body: []byte(`{"model":"c","max_tokens":1,"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"f","input_schema":{},"input_examples":[{"A":1,"a":2}]}]}`)},
 		"embeddings": {ProxyCapability: "embeddings", SourceFormat: "openai_embeddings",
 			Body: []byte(`{"model":"e","input":"a","Input":"b"}`)},
 	} {
