@@ -27,16 +27,31 @@ const (
 )
 
 // CanonicalCacheBreakpoint marks a prompt-cache boundary in a segment (system,
-// tool or message). A nil breakpoint means no intent.
+// tool or message). A nil breakpoint means no intent; the zero value puts the
+// boundary at the end of the segment.
+//
+// The unexported fields are set by the Anthropic decoder, which joins a
+// segment's text blocks with "\n". They let the Anthropic encoder split the
+// text back at the marked block even after a plugin changed its length.
+// Encoders for other targets ignore them.
 type CanonicalCacheBreakpoint struct {
 	TTL CacheTTL `json:"ttl,omitempty"`
-	// Offset is where the boundary sits inside the segment's text when the
-	// decoder merged several text blocks into one string: the byte length of the
-	// text up to and including the marked block, without the "\n" joiner that
-	// follows it. Zero means the end of the segment. Encoders that cannot split
-	// text ignore it and place the boundary at the end; the Anthropic encoder
-	// splits the text there so the marker keeps its original block boundary.
-	Offset int `json:"offset,omitempty"`
+
+	// inText reports that the marked block was a text block of the segment,
+	// so the boundary is the "\n" that followed it rather than the segment's
+	// end.
+	inText bool
+	// newline counts the "\n" in the segment text before that boundary, so
+	// the joiner is newline number newline (from zero), or the text's end
+	// when newline equals newlines.
+	newline int
+	// newlines is the "\n" count of the whole segment text at decode time. A
+	// different count at encode time means a plugin added or removed lines
+	// and the boundary can no longer be found.
+	newlines int
+	// clientLast reports that the client sent this marker, with this TTL, on
+	// the last block of the segment.
+	clientLast bool
 }
 
 // CanonicalCacheOptions is request-level cache intent: the OpenAI-family
@@ -71,17 +86,18 @@ func cacheProfileFor(target Format) cacheProfile {
 	}
 }
 
-// laterCacheBreakpoint merges two markers of one segment into one: the later
-// position with the longer TTL. Raising the later marker to 1h stays valid
-// because every marker before a 1h one must already be 1h.
+// laterCacheBreakpoint merges two markers of one segment into a new one: the
+// later position with the longer TTL. Raising the later marker to 1h stays
+// valid because every marker before a 1h one must already be 1h.
 func laterCacheBreakpoint(earlier, later *CanonicalCacheBreakpoint) *CanonicalCacheBreakpoint {
 	if later == nil {
 		return earlier
 	}
+	merged := *later
 	if earlier != nil && earlier.TTL == CacheTTL1h {
-		later.TTL = CacheTTL1h
+		merged.TTL = CacheTTL1h
 	}
-	return later
+	return &merged
 }
 
 // normalizeCacheIntent applies the target's cache policy to intent decoded from

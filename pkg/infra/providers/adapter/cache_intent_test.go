@@ -265,14 +265,27 @@ func TestNormalizeCacheIntent_DroppedBreakpointsDoNotDowngradeTheRest(t *testing
 	assert.Equal(t, CacheTTL1h, req.SystemCache.TTL)
 }
 
-func TestNormalizeCacheIntent_KeepsTheBoundaryOffset(t *testing.T) {
+func TestNormalizeCacheIntent_KeepsTheTextBoundary(t *testing.T) {
 	t.Parallel()
 
+	boundary := CanonicalCacheBreakpoint{TTL: CacheTTL1h, inText: true, newlines: 1}
+	sys := boundary
 	req := &CanonicalRequest{
 		System:      "a\nb",
-		SystemCache: &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 1},
+		SystemCache: &sys,
 		Messages:    []CanonicalMessage{{Role: "user", Content: "m", Cache: bp("")}},
 	}
 	normalizeCacheIntent(req, FormatAnthropic)
-	assert.Equal(t, &CanonicalCacheBreakpoint{TTL: CacheTTL1h, Offset: 1}, req.SystemCache)
+	assert.Equal(t, &boundary, req.SystemCache)
+}
+
+func TestLaterCacheBreakpoint_ReturnsACopy(t *testing.T) {
+	t.Parallel()
+
+	earlier, later := bp(CacheTTL1h), &CanonicalCacheBreakpoint{inText: true, newline: 2}
+	merged := laterCacheBreakpoint(earlier, later)
+	assert.Equal(t, &CanonicalCacheBreakpoint{TTL: CacheTTL1h, inText: true, newline: 2}, merged)
+	assert.Equal(t, &CanonicalCacheBreakpoint{inText: true, newline: 2}, later)
+	assert.Equal(t, bp(CacheTTL1h), earlier)
+	assert.Same(t, earlier, laterCacheBreakpoint(earlier, nil))
 }

@@ -293,27 +293,32 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 	case "user":
 		var images []CanonicalImage
 		var toolMessages []CanonicalMessage
-		for _, b := range blocks {
+		for i, b := range blocks {
+			last := i == len(blocks)-1
 			switch b.Type {
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
-					text.mark(b.CacheControl, true)
+					text.markEnd(b.CacheControl, last)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
 				if b.IsError && content != "" {
 					content = "error: " + content
 				}
+				cache := anthropicCacheBreakpoint(b.CacheControl)
+				if cache != nil {
+					cache.clientLast = last
+				}
 				toolMessages = append(toolMessages, CanonicalMessage{
 					Role:       "tool",
 					ToolCallID: b.ToolUseID,
 					Content:    content,
-					Cache:      anthropicCacheBreakpoint(b.CacheControl),
+					Cache:      cache,
 				})
 			case "text":
 				text.add(b.Text)
-				text.mark(b.CacheControl, false)
+				text.markText(b.CacheControl, last)
 			}
 		}
 		out = append(out, toolMessages...)
@@ -322,30 +327,31 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 				Role:    "user",
 				Content: text.String(),
 				Images:  images,
-				Cache:   text.cache,
+				Cache:   text.breakpoint(),
 			})
 		}
 	case "assistant":
 		var toolCalls []CanonicalToolCall
-		for _, b := range blocks {
+		for i, b := range blocks {
+			last := i == len(blocks)-1
 			switch b.Type {
 			case "text":
 				text.add(b.Text)
-				text.mark(b.CacheControl, false)
+				text.markText(b.CacheControl, last)
 			case "tool_use":
 				toolCalls = append(toolCalls, CanonicalToolCall{
 					ID:        b.ID,
 					Name:      b.Name,
 					Arguments: string(b.Input),
 				})
-				text.mark(b.CacheControl, true)
+				text.markEnd(b.CacheControl, last)
 			}
 		}
 		out = append(out, CanonicalMessage{
 			Role:      "assistant",
 			Content:   text.String(),
 			ToolCalls: toolCalls,
-			Cache:     text.cache,
+			Cache:     text.breakpoint(),
 		})
 	default:
 		out = append(out, CanonicalMessage{
@@ -357,32 +363,46 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 }
 
 // anthropicTextJoin merges the text blocks of one segment with "\n" and keeps
-// a single cache marker for it, remembering the block boundary it sat on.
-// Markers on block types the canonical model drops (thinking, documents,
-// server tool blocks) are dropped with the block.
+// a single cache marker for it, remembering the block boundary it sat on as a
+// newline index. Markers on block types the canonical model drops (thinking,
+// documents, server tool blocks) are dropped with the block.
 type anthropicTextJoin struct {
-	parts []string
-	size  int
-	cache *CanonicalCacheBreakpoint
+	parts    []string
+	newlines int
+	cache    *CanonicalCacheBreakpoint
 }
 
 func (j *anthropicTextJoin) add(text string) {
 	if len(j.parts) > 0 {
-		j.size++
+		j.newlines++
 	}
 	j.parts = append(j.parts, text)
-	j.size += len(text)
+	j.newlines += strings.Count(text, "\n")
 }
 
-func (j *anthropicTextJoin) mark(cc *anthropicCacheControl, atEnd bool) {
-	bp := anthropicCacheBreakpoint(cc)
-	if bp == nil {
-		return
+func (j *anthropicTextJoin) markText(cc *anthropicCacheControl, last bool) {
+	if bp := anthropicCacheBreakpoint(cc); bp != nil {
+		bp.inText, bp.newline = true, j.newlines
+		j.merge(bp, last)
 	}
-	if !atEnd {
-		bp.Offset = j.size
+}
+
+func (j *anthropicTextJoin) markEnd(cc *anthropicCacheControl, last bool) {
+	if bp := anthropicCacheBreakpoint(cc); bp != nil {
+		j.merge(bp, last)
 	}
+}
+
+func (j *anthropicTextJoin) merge(bp *CanonicalCacheBreakpoint, last bool) {
 	j.cache = laterCacheBreakpoint(j.cache, bp)
+	j.cache.clientLast = last && j.cache.TTL == bp.TTL
+}
+
+func (j *anthropicTextJoin) breakpoint() *CanonicalCacheBreakpoint {
+	if j.cache != nil && j.cache.inText {
+		j.cache.newlines = j.newlines
+	}
+	return j.cache
 }
 
 func (j *anthropicTextJoin) String() string {
@@ -390,13 +410,13 @@ func (j *anthropicTextJoin) String() string {
 }
 
 // anthropicTextBlocks emits text as text blocks, splitting it at the marker's
-// offset when the boundary is still intact. It reports whether the marker was
+// boundary when it can still be found. It reports whether the marker was
 // placed; when it was not, the caller puts it on the segment's last block.
 func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropicContentBlock, bool) {
 	if text == "" {
 		return nil, false
 	}
-	head, tail, ok := anthropicSplitAtCacheOffset(text, bp)
+	head, tail, ok := anthropicSplitAtCacheBoundary(text, bp)
 	if !ok {
 		return []anthropicContentBlock{{Type: "text", Text: text}}, false
 	}
@@ -407,18 +427,28 @@ func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropic
 	return blocks, true
 }
 
-// anthropicSplitAtCacheOffset refuses a split whose boundary a plugin may have
-// moved (the byte at the offset is no longer the "\n" joiner) or that would
-// leave a blank block, which Anthropic rejects.
-func anthropicSplitAtCacheOffset(text string, bp *CanonicalCacheBreakpoint) (head, tail string, ok bool) {
-	if bp == nil || bp.Offset <= 0 || bp.Offset > len(text) {
+// anthropicSplitAtCacheBoundary finds the boundary by newline index rather
+// than byte offset, so a plugin that changed the text's length without adding
+// or removing lines (masking, anonymizing) still splits at the joiner. When
+// the newline count changed, the index may point at a user newline, so it
+// refuses; it also refuses a split that would leave a blank block, which
+// Anthropic rejects.
+func anthropicSplitAtCacheBoundary(text string, bp *CanonicalCacheBreakpoint) (head, tail string, ok bool) {
+	if bp == nil || !bp.inText || bp.newline > bp.newlines || strings.Count(text, "\n") != bp.newlines {
 		return "", "", false
 	}
-	if bp.Offset == len(text) {
+	if bp.newline == bp.newlines {
+		if strings.TrimSpace(text) == "" {
+			return "", "", false
+		}
 		return text, "", true
 	}
-	head, tail = text[:bp.Offset], text[bp.Offset+1:]
-	if text[bp.Offset] != '\n' || strings.TrimSpace(head) == "" || strings.TrimSpace(tail) == "" {
+	at := 0
+	for range bp.newline + 1 {
+		at += strings.IndexByte(text[at:], '\n') + 1
+	}
+	head, tail = text[:at-1], text[at:]
+	if strings.TrimSpace(head) == "" || strings.TrimSpace(tail) == "" {
 		return "", "", false
 	}
 	return head, tail, true
@@ -486,15 +516,15 @@ func anthropicMessageBlocks(m CanonicalMessage) ([]anthropicContentBlock, error)
 	return blocks, nil
 }
 
-// anthropicMessages collapses consecutive canonical Role="tool" messages into
-// one Anthropic "user" message with tool_result blocks, and sends assistant
-// tool calls as text + tool_use blocks so Anthropic can match each tool_result
-// to the previous message's tool_use.
+// anthropicMessages sends tool results as tool_result blocks of one user
+// message and tool calls as tool_use blocks after the assistant text, so
+// Anthropic can match each tool_result to the previous message's tool_use.
 func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]anthropicMessage, error) {
 	type turn struct {
 		role   string
 		text   string
 		blocks []anthropicContentBlock
+		cache  *CanonicalCacheBreakpoint
 	}
 	turns := make([]turn, 0, len(msgs))
 	for i := 0; i < len(msgs); i++ {
@@ -512,7 +542,7 @@ func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]
 				})
 			}
 			i--
-			turns = append(turns, turn{role: "user", blocks: blocks})
+			turns = append(turns, turn{role: "user", blocks: blocks, cache: msgs[i].Cache})
 		case m.Role == "assistant" && len(m.ToolCalls) > 0:
 			blocks, placed := anthropicTextBlocks(m.Content, m.Cache)
 			for _, tc := range m.ToolCalls {
@@ -526,17 +556,17 @@ func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]
 			if !placed {
 				blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
 			}
-			turns = append(turns, turn{role: "assistant", blocks: blocks})
+			turns = append(turns, turn{role: "assistant", blocks: blocks, cache: m.Cache})
 		default:
 			blocks, err := anthropicMessageBlocks(m)
 			if err != nil {
 				return nil, err
 			}
-			turns = append(turns, turn{role: m.Role, text: m.Content, blocks: blocks})
+			turns = append(turns, turn{role: m.Role, text: m.Content, blocks: blocks, cache: m.Cache})
 		}
 	}
-	if len(turns) > 0 && opts != nil {
-		dropCacheControlConflictingWithAuto(turns[len(turns)-1].blocks, opts.Auto)
+	if n := len(turns); n > 0 && opts != nil {
+		dropCacheControlConflictingWithAuto(turns[n-1].blocks, turns[n-1].cache, opts.Auto)
 	}
 
 	out := make([]anthropicMessage, 0, len(turns))
@@ -554,11 +584,14 @@ func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]
 	return out, nil
 }
 
-// dropCacheControlConflictingWithAuto removes an explicit marker on the last
-// block when top-level automatic caching would put a different TTL on that
-// same block: Anthropic answers 400 to that combination.
-func dropCacheControlConflictingWithAuto(blocks []anthropicContentBlock, auto *CanonicalCacheBreakpoint) {
-	if auto == nil || len(blocks) == 0 {
+// dropCacheControlConflictingWithAuto removes an explicit marker from the last
+// block when top-level automatic caching puts a different TTL on that same
+// block, a pair Anthropic answers with 400, but only when the gateway put it
+// there: a fallback from its block boundary, a TTL raised by merging markers,
+// or a marker a plugin added. A client that sent the pair itself gets the
+// same answer as on passthrough.
+func dropCacheControlConflictingWithAuto(blocks []anthropicContentBlock, cache, auto *CanonicalCacheBreakpoint) {
+	if auto == nil || len(blocks) == 0 || (cache != nil && cache.clientLast) {
 		return
 	}
 	last := &blocks[len(blocks)-1]
@@ -973,7 +1006,9 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 // anthropicSystem keeps the system text byte-for-byte, as the OpenAI decoders
 // do, so the same prompt reaches the upstream with the same cache prefix
-// whichever client format sent it.
+// whichever client format sent it. Blank blocks are skipped because Anthropic
+// rejects them: a marker on one moves to the text block before it, and a
+// marker on a leading blank block is dropped, as it caches no text.
 func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	if len(raw) == 0 {
 		return "", nil
@@ -991,14 +1026,17 @@ func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	}
 	var text anthropicTextJoin
 	for _, b := range blocks {
-		if b.Type == "" || b.Type == "text" {
-			if strings.TrimSpace(b.Text) != "" {
-				text.add(b.Text)
-			}
-			text.mark(b.CacheControl, false)
+		if b.Type != "" && b.Type != "text" {
+			continue
 		}
+		if strings.TrimSpace(b.Text) != "" {
+			text.add(b.Text)
+		} else if len(text.parts) == 0 {
+			continue
+		}
+		text.markText(b.CacheControl, false)
 	}
-	return text.String(), text.cache
+	return text.String(), text.breakpoint()
 }
 
 func anthropicSystemRaw(system string, cache *CanonicalCacheBreakpoint) json.RawMessage {
