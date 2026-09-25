@@ -34,7 +34,9 @@ type openaiRequest struct {
 	TopK                 *int                   `json:"top_k,omitempty"`
 	Stream               *bool                  `json:"stream,omitempty"`
 	Stop                 json.RawMessage        `json:"stop,omitempty"` // string or []string
-	ResponseFormat       *openaiRespFormat      `json:"response_format,omitempty"`
+	Seed                 *int64                 `json:"seed,omitempty"`
+	ResponseFormat       *openaiChatRespFormat  `json:"response_format,omitempty"`
+	ParallelToolCalls    *bool                  `json:"parallel_tool_calls,omitempty"`
 	Tools                []openaiTool           `json:"tools,omitempty"`
 	ToolChoice           json.RawMessage        `json:"tool_choice,omitempty"` // string or object
 	PromptCacheKey       string                 `json:"prompt_cache_key,omitempty"`
@@ -150,6 +152,11 @@ func encodeOpenAIToolCall(tc CanonicalToolCall) openaiToolCall {
 
 type openaiRespFormat struct {
 	Type string `json:"type"`
+}
+
+type openaiChatRespFormat struct {
+	Type       string          `json:"type"`
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
 }
 
 type openaiResponse struct {
@@ -339,8 +346,9 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	cr.Stop = decodeStopField(req.Stop)
 
 	if req.ResponseFormat != nil {
-		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type}
+		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type, JSONSchema: req.ResponseFormat.JSONSchema}
 	}
+	cr.Seed, cr.ParallelToolCalls = req.Seed, req.ParallelToolCalls
 
 	var system cacheTextJoin
 	for _, m := range req.Messages {
@@ -458,8 +466,9 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 
 	if req.ResponseFormat != nil {
-		out.ResponseFormat = &openaiRespFormat{Type: req.ResponseFormat.Type}
+		out.ResponseFormat = &openaiChatRespFormat{Type: req.ResponseFormat.Type, JSONSchema: req.ResponseFormat.JSONSchema}
 	}
+	out.Seed = req.Seed
 
 	if req.System != "" {
 		out.Messages = append(out.Messages, openaiMessage{
@@ -489,6 +498,9 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	dropped := len(req.Tools) > len(out.Tools)
 	if req.ToolChoice != nil && (!dropped || !toolChoiceDangles(req.ToolChoice, out.Tools)) {
 		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	}
+	if len(out.Tools) > 0 {
+		out.ParallelToolCalls = req.ParallelToolCalls
 	}
 	if o := req.CacheOptions; o != nil {
 		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention

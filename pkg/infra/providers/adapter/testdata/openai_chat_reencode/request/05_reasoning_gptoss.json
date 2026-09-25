@@ -1,0 +1,1 @@
+{"messages":[{"role":"developer","content":"Be terse."},{"role":"user","content":"Say hi"}],"model":"openai/gpt-oss-120b","max_completion_tokens":5,"reasoning_effort":"low","store":true,"metadata":{"k":"v"}}

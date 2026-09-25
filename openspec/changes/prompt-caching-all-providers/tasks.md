@@ -187,11 +187,11 @@ Cross-format Responses clients got a partial event stream: no `response.created`
 
 ## Phase 6 (S3): request passthrough and pass-through fixes
 
-- [x] 6.1 `format.go`/`registry.go`: `ShouldPassthroughRequest`; `AdaptRequest` uses it; responses keep `ShouldPassthroughSameWireFormat`.
-- [x] 6.2 `pkg/app/proxy/provider.go:326`: request predicate.
+- [x] 6.1 `format.go`/`registry.go`: ~~`ShouldPassthroughRequest`~~ dropped after review (D6 amended): Groq and OpenRouter requests are re-encoded; OpenRouter gets the `provider`/`session_id`/`user` allowlist graft (`graftOpenRouterClientKeys`).
+- [x] 6.2 `pkg/app/proxy/provider.go:326`: request adapted iff `crossFormat`, as before S3; `providers.Config.CacheRetentionMapped` tells the Azure client the gateway wrote retention.
 - [x] 6.3 `cache_intent.go`: OpenRouter and Mistral rows.
-- [x] 6.4 `providers/azure/client.go`: on 400 naming `prompt_cache_retention`, retry once key-only (D5); with the fallback in place, add retention back to the Azure profile row (S2b sends the key only).
-- [x] 6.5 Tests: openai→groq/openrouter byte-equal request; routing keys; `groq_adapter_test.go:179-215`, `openrouter_adapter_test.go:192-245` green; Mistral key; Responses→Azure Chat key+retention and 400 fallback.
+- [x] 6.4 `providers/azure/client.go`: on 400 naming `prompt_cache_retention`, retry once key-only (D5) only when the gateway mapped it; per-deployment memo (`retention.go`, 1h TTL, 1024 entries) stops sending it; Info log on retry; retention back on the Azure profile row.
+- [x] 6.5 Tests: openai→groq/openrouter JSON-equal to the pre-S3 re-encode on the review fixtures (`testdata/openai_chat_reencode`) plus seed/`parallel_tool_calls`/allowlist; `models`/`plugins`/`route`/`transforms` stripped; OpenRouter parts markers per model; seed/json_schema/parallel_tool_calls kept; `groq_adapter_test.go:179-215`, `openrouter_adapter_test.go:192-245` green; Mistral key; Responses→Azure Chat key+retention and 400 fallback.
 - [ ] 6.6 V1 (adapter, `pkg/app/proxy`, azure); V2; V3; V4 **Groq, OpenRouter (Claude + OpenAI upstreams), Mistral, Azure**; V5.
 
 ## Phase 7 (S4a): Bedrock cachePoint wire and SDK

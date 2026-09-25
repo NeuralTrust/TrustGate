@@ -169,7 +169,7 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 // as the binding default injected after adaptation; it only picks the cache
 // profile and is not written to the body.
 func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, providerName, defaultModel string) ([]byte, error) {
-	if ShouldPassthroughRequest(source, target) {
+	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
 
@@ -195,6 +195,12 @@ func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, p
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {
 		return nil, fmt.Errorf("adapter request encode (%s): %w", target, err)
+	}
+	if target == FormatOpenRouter && IsSameWireFormat(source, target) {
+		out, err = graftOpenRouterClientKeys(body, out)
+		if err != nil {
+			return nil, fmt.Errorf("adapter request encode (%s): %w", target, err)
+		}
 	}
 
 	return out, nil
@@ -312,20 +318,9 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 	return out, nil
 }
 
-// ShouldPassthroughRequest reports whether a request body in source can be
-// forwarded to target unchanged. Every OpenAI Chat dialect, Groq and
-// OpenRouter included, takes the client's body as sent, so routing keys,
-// session_id, parts cache_control and fields the canonical model does not
-// represent reach the provider.
-func ShouldPassthroughRequest(source, target Format) bool {
-	return IsSameWireFormat(source, target)
-}
-
-// ShouldPassthroughSameWireFormat reports whether response bodies and stream
-// chunks can be forwarded without canonical adaptation. Groq and OpenRouter
-// are OpenAI-compatible but not identical, so their responses still go through
-// the adapter, which drops x_groq, OpenRouter provider metadata and SSE
-// comments for other clients.
+// ShouldPassthroughSameWireFormat reports whether request/response bodies can be
+// forwarded without canonical adaptation. Groq and OpenRouter are OpenAI-compatible
+// but not identical, so openai↔groq/openrouter still goes through the adapter.
 func ShouldPassthroughSameWireFormat(source, target Format) bool {
 	if !IsSameWireFormat(source, target) {
 		return false

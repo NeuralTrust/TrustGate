@@ -1,0 +1,1 @@
+{"messages":[{"role":"user","content":"Say hi"}],"model":"anthropic/claude-sonnet-4.5","max_tokens":5,"provider":{"order":["anthropic"]},"models":["openai/gpt-4o"],"transforms":["middle-out"],"session_id":"s1","usage":{"include":true},"reasoning":{"effort":"low"},"plugins":[{"id":"web"}],"user":"u"}

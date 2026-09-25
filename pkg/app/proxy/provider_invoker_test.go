@@ -672,39 +672,82 @@ func TestProviderInvoke_ClientDecodeErrorIsInvalidPayload(t *testing.T) {
 	}
 }
 
-func TestProviderInvoke_OpenAIChatPassesThroughToGroqAndOpenRouter(t *testing.T) {
-	const body = `{"model":"m","seed":7,"prompt_cache_key":"k","session_id":"s-1",` +
-		`"provider":{"order":["Anthropic"]},"models":["a","b"],"transforms":["middle-out"],"route":"fallback",` +
-		`"messages":[{"role":"system","content":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"hi"}]}`
+func TestProviderInvoke_OpenAIChatIsReEncodedForGroqAndOpenRouter(t *testing.T) {
+	const body = `{"model":"m","seed":7,"n":2,"service_tier":"default","logprobs":true,"prompt_cache_key":"k","session_id":"s-1","user":"u-1",` +
+		`"provider":{"order":["Anthropic"]},"models":["a","b"],"plugins":[{"id":"web"}],"transforms":["middle-out"],"route":"fallback",` +
+		`"stream_options":{"include_usage":true,"include_obfuscation":false},` +
+		`"messages":[{"role":"developer","content":[{"type":"text","text":"sys"}]},{"role":"user","name":"alice","content":"hi"}]}`
 	const upstream = `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
 		`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"x_groq":{"id":"req_1"},"provider":"Anthropic"}`
 
-	for _, name := range []string{"groq", "openrouter"} {
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{provider: "groq", want: `{"model":"m","seed":7,"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+		{provider: "openrouter", want: `{"model":"m","seed":7,"session_id":"s-1","user":"u-1","provider":{"order":["Anthropic"]},` +
+			`"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
 			var sent []byte
+			var cfg *providers.Config
 			client := providermocks.NewClient(t)
 			client.EXPECT().
 				Completions(mock.Anything, mock.Anything, mock.Anything).
-				RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
-					sent = b
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					sent, cfg = b, c
 					return []byte(upstream), nil
 				}).
 				Once()
-			inv := newStreamInvoker(t, name, client)
+			inv := newStreamInvoker(t, tt.provider, client)
 			req := &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(adapter.FormatOpenAI)}
 
-			resp, err := inv.Invoke(context.Background(), apiKeyTarget(name), req)
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget(tt.provider), req)
 			require.NoError(t, err)
 
-			assert.JSONEq(t, body, string(sent))
+			assert.JSONEq(t, tt.want, string(sent))
+			assert.True(t, cfg.CacheRetentionMapped)
 			assert.NotContains(t, string(resp.Body), "x_groq", "the response is still re-encoded")
 			assert.NotContains(t, string(resp.Body), `"provider"`)
 		})
 	}
 }
 
-func TestProviderInvoke_GroqPassthroughKeepsGatewayMutations(t *testing.T) {
-	const body = `{"seed":7,"prompt_cache_key":"k","tools":[{"function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`
+func TestProviderInvoke_OpenRouterClientModelsCannotBypassEnforcement(t *testing.T) {
+	const body = `{"model":"anthropic/claude-sonnet-4.5","models":["openai/gpt-5.6-pro"],"route":"fallback","plugins":[{"id":"web"}],` +
+		`"provider":{"order":["Anthropic"],"models":["openai/gpt-5.6-pro"]},"messages":[{"role":"user","content":"hi"}]}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
+			sent = b
+			return []byte(`{"id":"x","choices":[]}`), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openrouter", client)
+	req := &infracontext.RequestContext{
+		Body:          []byte(body),
+		SourceFormat:  string(adapter.FormatOpenAI),
+		AllowedModels: []string{"anthropic/claude-sonnet-4.5"},
+	}
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openrouter"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `"anthropic/claude-sonnet-4.5"`, string(got["model"]))
+	assert.NotContains(t, got, "models")
+	assert.NotContains(t, got, "route")
+	assert.NotContains(t, got, "plugins")
+	assert.JSONEq(t, `{"order":["Anthropic"]}`, string(got["provider"]))
+}
+
+func TestProviderInvoke_GroqReEncodeKeepsGatewayMutations(t *testing.T) {
+	const body = `{"seed":7,"prompt_cache_key":"k","tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`
 
 	var sent []byte
 	client := providermocks.NewClient(t)
@@ -728,7 +771,41 @@ func TestProviderInvoke_GroqPassthroughKeepsGatewayMutations(t *testing.T) {
 	assert.JSONEq(t, `{"include_usage":true}`, string(got["stream_options"]))
 	assert.JSONEq(t, `false`, string(got["parallel_tool_calls"]), "Groq normalisation still applies")
 	assert.JSONEq(t, `7`, string(got["seed"]))
-	assert.JSONEq(t, `"k"`, string(got["prompt_cache_key"]))
+	assert.NotContains(t, got, "prompt_cache_key", "Groq caches automatically and takes no cache keys")
+}
+
+func TestProviderInvoke_AzureRetentionIsMappedOnlyWhenTranslated(t *testing.T) {
+	tests := []struct {
+		name   string
+		source adapter.Format
+		body   string
+		mapped bool
+	}{
+		{name: "responses to azure chat", source: adapter.FormatOpenAIResponses, body: `{"model":"prod-chat","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h"}`, mapped: true},
+		{name: "chat passthrough", source: adapter.FormatOpenAI, body: `{"model":"prod-chat","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"24h"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg *providers.Config
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					cfg, sent = c, b
+					return []byte(`{"id":"x","choices":[]}`), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{Body: []byte(tt.body), SourceFormat: string(tt.source)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.mapped, cfg.CacheRetentionMapped)
+			assert.Contains(t, string(sent), `"prompt_cache_retention":"24h"`)
+		})
+	}
 }
 
 func TestProviderInvokeStream_ResponsesToAzureChatCarriesKeyAndRetention(t *testing.T) {

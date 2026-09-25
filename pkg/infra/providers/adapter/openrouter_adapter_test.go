@@ -95,8 +95,6 @@ func TestOpenRouterAdapter_FormatRegistration(t *testing.T) {
 	assert.True(t, ShouldPassthroughSameWireFormat(FormatOpenRouter, FormatOpenRouter))
 	assert.False(t, ShouldPassthroughSameWireFormat(FormatOpenAI, FormatOpenRouter))
 	assert.False(t, ShouldPassthroughSameWireFormat(FormatOpenRouter, FormatOpenAI))
-	assert.True(t, ShouldPassthroughRequest(FormatOpenAI, FormatOpenRouter))
-	assert.False(t, ShouldPassthroughRequest(FormatAnthropic, FormatOpenRouter))
 
 	opts := map[string]any{"api": "responses"}
 	assert.Equal(t, FormatOpenAIResponses, ResolveTargetFormat("openai", opts))
@@ -369,14 +367,4 @@ func TestOpenRouterAdapter_RequestMappings(t *testing.T) {
 		}
 		assert.Contains(t, combined, `"provider"`)
 	})
-}
-
-func TestOpenRouterAdapter_OpenAIRequestPassesThroughUnchanged(t *testing.T) {
-	body := []byte(`{"model":"anthropic/claude-sonnet-4","session_id":"s-1","seed":3,"cache_control":{"type":"ephemeral"},` +
-		`"provider":{"order":["Anthropic"],"allow_fallbacks":false},"models":["anthropic/claude-sonnet-4","openai/gpt-4o"],"transforms":["middle-out"],"route":"fallback",` +
-		`"messages":[{"role":"system","content":[{"type":"text","text":"Long prefix.","cache_control":{"type":"ephemeral","ttl":"1h"}}]},{"role":"user","content":"hi"}]}`)
-
-	out, err := NewRegistry().AdaptRequestForProvider(body, FormatOpenAI, FormatOpenRouter, "openrouter", "")
-	require.NoError(t, err)
-	assert.Equal(t, string(body), string(out))
 }

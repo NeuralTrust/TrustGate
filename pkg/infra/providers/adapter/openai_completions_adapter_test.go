@@ -1100,7 +1100,7 @@ func TestAdaptRequest_SameWireCacheFieldsPassThroughUnchanged(t *testing.T) {
 	t.Parallel()
 
 	reg := NewRegistry()
-	for _, target := range []Format{FormatOpenAI, FormatAzure, FormatXAI, FormatGroq, FormatOpenRouter, FormatDeepSeek} {
+	for _, target := range []Format{FormatOpenAI, FormatAzure, FormatXAI, FormatDeepSeek} {
 		out, err := reg.AdaptRequest([]byte(chatCachedRequest), FormatOpenAI, target)
 		require.NoError(t, err)
 		assert.Equal(t, chatCachedRequest, string(out))

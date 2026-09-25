@@ -18,11 +18,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -646,28 +646,97 @@ func TestRawPost_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, be.StatusCode)
 }
 
+const azureRetentionError = `{"error":{"message":"Unrecognized request argument supplied: prompt_cache_retention","type":"invalid_request_error","param":"prompt_cache_retention"}}`
+
+type retentionServer struct {
+	url    string
+	bodies []string
+	paths  []string
+}
+
+func newRetentionServer(t *testing.T, stream bool, reject func(path, body string) (int, string)) *retentionServer {
+	t.Helper()
+	rs := &retentionServer{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		rs.bodies = append(rs.bodies, string(b))
+		rs.paths = append(rs.paths, r.URL.Path)
+		if status, errBody := reject(r.URL.Path, string(b)); status != 0 {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(errBody))
+			return
+		}
+		if stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"id\":\"az-1\"}\n\ndata: [DONE]\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"az-1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	rs.url = srv.URL
+	return rs
+}
+
+func retentionConfig(endpoint string, mapped bool) *providers.Config {
+	return &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "k",
+			Azure:  &providers.Azure{Endpoint: endpoint, AuthMode: providers.AzureAuthModeAPIKey},
+		},
+		CacheRetentionMapped: mapped,
+	}
+}
+
+func sendRetentionRequest(t *testing.T, c *client, cfg *providers.Config, body string, stream bool) error {
+	t.Helper()
+	if !stream {
+		_, err := c.Completions(context.Background(), cfg, []byte(body))
+		return err
+	}
+	seq, err := c.CompletionsStream(context.Background(), cfg, []byte(body))
+	if err != nil {
+		return err
+	}
+	for _, serr := range seq {
+		require.NoError(t, serr)
+	}
+	return nil
+}
+
 func TestCompletions_RetriesWithoutRetentionWhenAzureRejectsIt(t *testing.T) {
-	const retentionError = `{"error":{"message":"Unrecognized request argument supplied: prompt_cache_retention","type":"invalid_request_error","param":"prompt_cache_retention"}}`
 	const body = `{"model":"dep","prompt_cache_key":"k1","prompt_cache_retention":"24h","messages":[{"role":"user","content":"hi"}]}`
+	const keyOnly = `{"model":"dep","prompt_cache_key":"k1","messages":[{"role":"user","content":"hi"}]}`
 
 	tests := []struct {
 		name       string
 		body       string
+		mapped     bool
 		status     int
 		errBody    string
 		wantBodies []string
 		wantErr    bool
 	}{
 		{
-			name:       "retention rejected retries key-only once",
+			name:       "gateway-mapped retention rejected retries key-only once",
+			body:       body,
+			mapped:     true,
+			status:     http.StatusBadRequest,
+			errBody:    azureRetentionError,
+			wantBodies: []string{body, keyOnly},
+		},
+		{
+			name:       "client-sent retention is not retried",
 			body:       body,
 			status:     http.StatusBadRequest,
-			errBody:    retentionError,
-			wantBodies: []string{body, `{"model":"dep","prompt_cache_key":"k1","messages":[{"role":"user","content":"hi"}]}`},
+			errBody:    azureRetentionError,
+			wantBodies: []string{body},
+			wantErr:    true,
 		},
 		{
 			name:       "other 400 is returned as is",
 			body:       body,
+			mapped:     true,
 			status:     http.StatusBadRequest,
 			errBody:    `{"error":{"message":"max_tokens is too large"}}`,
 			wantBodies: []string{body},
@@ -676,16 +745,18 @@ func TestCompletions_RetriesWithoutRetentionWhenAzureRejectsIt(t *testing.T) {
 		{
 			name:       "500 naming the field is not retried",
 			body:       body,
+			mapped:     true,
 			status:     http.StatusInternalServerError,
-			errBody:    retentionError,
+			errBody:    azureRetentionError,
 			wantBodies: []string{body},
 			wantErr:    true,
 		},
 		{
 			name:       "body without retention is not retried",
 			body:       `{"model":"dep","messages":[{"role":"user","content":"hi"}]}`,
+			mapped:     true,
 			status:     http.StatusBadRequest,
-			errBody:    retentionError,
+			errBody:    azureRetentionError,
 			wantBodies: []string{`{"model":"dep","messages":[{"role":"user","content":"hi"}]}`},
 			wantErr:    true,
 		},
@@ -694,42 +765,17 @@ func TestCompletions_RetriesWithoutRetentionWhenAzureRejectsIt(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		for _, tt := range tests {
 			t.Run(fmt.Sprintf("%s stream=%v", tt.name, stream), func(t *testing.T) {
-				var got []string
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					b, _ := io.ReadAll(r.Body)
-					got = append(got, string(b))
-					if len(got) == 1 {
-						w.WriteHeader(tt.status)
-						_, _ = w.Write([]byte(tt.errBody))
-						return
+				calls := 0
+				srv := newRetentionServer(t, stream, func(string, string) (int, string) {
+					calls++
+					if calls == 1 {
+						return tt.status, tt.errBody
 					}
-					if stream {
-						w.Header().Set("Content-Type", "text/event-stream")
-						_, _ = w.Write([]byte("data: {\"id\":\"az-1\"}\n\ndata: [DONE]\n\n"))
-						return
-					}
-					_, _ = w.Write([]byte(`{"id":"az-1"}`))
-				}))
-				t.Cleanup(srv.Close)
+					return 0, ""
+				})
+				c := &client{pool: providers.NewHTTPClientPool(), retention: newRetentionMemo()}
 
-				cfg := &providers.Config{Credentials: providers.Credentials{
-					ApiKey: "k",
-					Azure:  &providers.Azure{Endpoint: srv.URL, AuthMode: providers.AzureAuthModeAPIKey},
-				}}
-				c := &client{pool: providers.NewHTTPClientPool()}
-
-				var err error
-				if stream {
-					var seq iter.Seq2[[]byte, error]
-					seq, err = c.CompletionsStream(context.Background(), cfg, []byte(tt.body))
-					if err == nil {
-						for _, serr := range seq {
-							require.NoError(t, serr)
-						}
-					}
-				} else {
-					_, err = c.Completions(context.Background(), cfg, []byte(tt.body))
-				}
+				err := sendRetentionRequest(t, c, retentionConfig(srv.url, tt.mapped), tt.body, stream)
 
 				if tt.wantErr {
 					be, ok := registry.IsBackendError(err)
@@ -738,11 +784,75 @@ func TestCompletions_RetriesWithoutRetentionWhenAzureRejectsIt(t *testing.T) {
 				} else {
 					require.NoError(t, err)
 				}
-				require.Len(t, got, len(tt.wantBodies))
-				for i := range got {
-					assert.JSONEq(t, tt.wantBodies[i], got[i])
+				require.Len(t, srv.bodies, len(tt.wantBodies))
+				for i := range srv.bodies {
+					assert.JSONEq(t, tt.wantBodies[i], srv.bodies[i])
 				}
 			})
 		}
 	}
+}
+
+func TestCompletions_DeploymentThatRejectedRetentionStopsReceivingIt(t *testing.T) {
+	const withRetention = `{"model":"%s","prompt_cache_key":"k1","prompt_cache_retention":"24h","messages":[{"role":"user","content":"hi"}]}`
+
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			srv := newRetentionServer(t, stream, func(path, body string) (int, string) {
+				if strings.Contains(path, "/old/") && strings.Contains(body, "prompt_cache_retention") {
+					return http.StatusBadRequest, azureRetentionError
+				}
+				return 0, ""
+			})
+			c := &client{pool: providers.NewHTTPClientPool(), retention: newRetentionMemo()}
+			mapped := retentionConfig(srv.url, true)
+
+			require.NoError(t, sendRetentionRequest(t, c, mapped, fmt.Sprintf(withRetention, "old"), stream))
+			require.Len(t, srv.bodies, 2, "the first request pays the retry")
+
+			require.NoError(t, sendRetentionRequest(t, c, mapped, fmt.Sprintf(withRetention, "old"), stream))
+			require.Len(t, srv.bodies, 3, "the memo drops retention before sending")
+			assert.NotContains(t, srv.bodies[2], "prompt_cache_retention")
+			assert.Contains(t, srv.bodies[2], "prompt_cache_key")
+
+			require.NoError(t, sendRetentionRequest(t, c, mapped, fmt.Sprintf(withRetention, "new"), stream))
+			require.Len(t, srv.bodies, 4)
+			assert.Contains(t, srv.bodies[3], "prompt_cache_retention", "other deployments still get retention")
+
+			err := sendRetentionRequest(t, c, retentionConfig(srv.url, false), fmt.Sprintf(withRetention, "old"), stream)
+			be, ok := registry.IsBackendError(err)
+			require.True(t, ok, "%v", err)
+			assert.Equal(t, http.StatusBadRequest, be.StatusCode, "a client-sent key is forwarded as sent")
+			assert.Contains(t, srv.bodies[4], "prompt_cache_retention")
+		})
+	}
+}
+
+func TestRetentionMemo_ExpiresAndStaysBounded(t *testing.T) {
+	now := time.Unix(0, 0)
+	m := &retentionMemo{ttl: time.Minute, max: 2, now: func() time.Time { return now }}
+
+	m.remember("a")
+	m.remember("a")
+	assert.True(t, m.rejected("a"))
+	assert.EqualValues(t, 1, m.size.Load())
+
+	m.remember("b")
+	m.remember("c")
+	assert.False(t, m.rejected("c"), "a full memo keeps the entries it has")
+	assert.True(t, m.rejected("a"))
+	assert.True(t, m.rejected("b"))
+	assert.EqualValues(t, 2, m.size.Load())
+
+	now = now.Add(time.Minute)
+	assert.False(t, m.rejected("a"), "entries expire after the TTL")
+	assert.EqualValues(t, 1, m.size.Load())
+	m.remember("c")
+	assert.True(t, m.rejected("c"), "expired entries free their slot")
+	assert.False(t, m.rejected("b"))
+	assert.EqualValues(t, 1, m.size.Load())
+
+	var nilMemo *retentionMemo
+	nilMemo.remember("a")
+	assert.False(t, nilMemo.rejected("a"))
 }
