@@ -17,6 +17,7 @@ package openaimoderation
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -31,6 +32,19 @@ const (
 	stagePreResponse = "pre_response"
 )
 
+// Streaming defaults. The moderation endpoint is a single classifier call with
+// no token leg in front of it, so it answers faster than a full guard and a
+// tighter cadence is affordable: blocks close about twice as often as
+// trustguard's, which buys a smaller window between the text being produced and
+// being cleared.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 1024,
+	MaxHoldMS:            500,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         1500 * time.Millisecond,
+}
+
 type Settings struct {
 	APIKey         string             `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
 	Model          string             `mapstructure:"model"`
@@ -39,6 +53,10 @@ type Settings struct {
 	Thresholds     map[string]float64 `mapstructure:"thresholds"`
 	BlockOnFlagged bool               `mapstructure:"block_on_flagged"`
 	Action         ActionSettings     `mapstructure:"action"`
+	// Streaming opts the pre_response leg into per-block inspection. Absent, a
+	// streamed response is not moderated at all, which is what this plugin did
+	// before the block loop existed.
+	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 }
 
 type ActionSettings struct {
@@ -64,6 +82,11 @@ func (s *Settings) applyDefaults() {
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
 	}
+	// The buffered leg already fails closed in enforce mode when the endpoint
+	// is unreachable, so the stream leg inherits that rather than a laxer
+	// default. In the modes that do not block, the executor discards a cut
+	// before it reaches the client, so this is not a way to make observe cut.
+	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 }
 
 func (s *Settings) validate() error {
@@ -80,7 +103,7 @@ func (s *Settings) validate() error {
 			return fmt.Errorf("openai_moderation: threshold for %q must be between 0 and 1", cat)
 		}
 	}
-	return nil
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {

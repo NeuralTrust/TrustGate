@@ -308,6 +308,64 @@ func TestStreamDataKeysAreStable(t *testing.T) {
 	}
 }
 
+func TestStreamFingerprintIsStableAndFieldSensitive(t *testing.T) {
+	t.Parallel()
+	base := StreamFingerprint("plug", "hate", "threshold")
+	if base == "" {
+		t.Fatal("identified fields must produce a key")
+	}
+	if base != StreamFingerprint("plug", "hate", "threshold") {
+		t.Error("the same identity must produce the same key")
+	}
+	if base == StreamFingerprint("plug", "hate", "flagged") {
+		t.Error("a different rule must produce a different key")
+	}
+	if base == StreamFingerprint("plug", "violence", "threshold") {
+		t.Error("a different category must produce a different key")
+	}
+	if len(base) != fingerprintBytes*2 {
+		t.Errorf("key length = %d, want %d hex chars", len(base), fingerprintBytes*2)
+	}
+}
+
+// Joining on a separator that cannot occur in a field is what stops two
+// different identities colliding by concatenation.
+func TestStreamFingerprintSeparatesFields(t *testing.T) {
+	t.Parallel()
+	if StreamFingerprint("ab", "c") == StreamFingerprint("a", "bc") {
+		t.Error("field boundaries must survive hashing")
+	}
+}
+
+func TestStreamFingerprintRejectsAnEmptyIdentity(t *testing.T) {
+	t.Parallel()
+	for _, fields := range [][]string{nil, {""}, {"", ""}, {"  ", "\t"}} {
+		if got := StreamFingerprint(fields...); got != "" {
+			t.Errorf("StreamFingerprint(%q) = %q, want an empty key", fields, got)
+		}
+	}
+}
+
+func TestDedupeFingerprintsKeepsFirstOccurrenceInOrder(t *testing.T) {
+	t.Parallel()
+	got := DedupeFingerprints([]string{"b", "a", "", "b", "c", "a"})
+	want := []string{"b", "a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("DedupeFingerprints() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DedupeFingerprints() = %v, want %v", got, want)
+		}
+	}
+	if got := DedupeFingerprints(nil); got != nil {
+		t.Errorf("DedupeFingerprints(nil) = %v, want nil", got)
+	}
+	if got := DedupeFingerprints([]string{"", ""}); got != nil {
+		t.Errorf("a set of unidentified findings must collapse to nil, got %v", got)
+	}
+}
+
 func TestStreamFingerprintsDropsTheEntryTag(t *testing.T) {
 	t.Parallel()
 	if got := StreamFingerprints(nil); got != nil {
