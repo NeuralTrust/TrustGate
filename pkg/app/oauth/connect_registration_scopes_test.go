@@ -30,8 +30,9 @@ import (
 )
 
 type stubScopeCatalog struct {
-	code   string
-	scopes []string
+	code     string
+	scopes   []string
+	resource string
 }
 
 func (c stubScopeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
@@ -40,7 +41,7 @@ func (c stubScopeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool)
 	}
 	return catalogdomain.MCPServer{
 		Code:  c.code,
-		OAuth: &catalogdomain.MCPOAuth{Scopes: c.scopes},
+		OAuth: &catalogdomain.MCPOAuth{Scopes: c.scopes, Resource: c.resource},
 	}, true
 }
 
@@ -109,5 +110,77 @@ func TestConnectService_AutoRegistrationAppliesCatalogScopes(t *testing.T) {
 	}
 	if got := strings.Join(refreshed.Scopes, " "); got != "mcp-api.all:write" {
 		t.Fatalf("refresh scope = %q, want only the catalog scope", got)
+	}
+}
+
+// Axiom's path-specific protected-resource metadata advertises
+// https://mcp.axiom.co/mcp, but its authorization server only accepts the root
+// resource and bounces the sign-in back with error=invalid_target. A registry
+// created from the old catalog entry persisted the rejected value, so the
+// catalog has to win on every call that sends the resource upstream.
+func TestConnectService_AutoRegistrationAppliesCatalogResource(t *testing.T) {
+	t.Parallel()
+	registrations := 0
+	var tokenForm url.Values
+	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "axiom-mcp", "", &registrydomain.MCPTarget{
+		URL:  upstream.URL + "/mcp",
+		Code: "co.axiom/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "co.axiom/mcp",
+			Registration: registrydomain.RegistrationAuto,
+			// Persisted from the old catalog entry.
+			Resource: upstream.URL + "/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		stubScopeCatalog{code: "co.axiom/mcp", resource: upstream.URL},
+	)
+	ctx := context.Background()
+
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "co.axiom/mcp")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, _ := url.Parse(location)
+	if got := u.Query().Get("resource"); got != upstream.URL {
+		t.Fatalf("resource = %q, want the catalog root resource %q", got, upstream.URL)
+	}
+	if got := u.Query().Get("scope"); got == "" {
+		t.Fatalf("scope is empty; a catalog entry without scopes must keep the discovered ones")
+	}
+
+	refreshed, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshed.Resource != upstream.URL {
+		t.Fatalf("refresh resource = %q, want the catalog root resource", refreshed.Resource)
 	}
 }
