@@ -32,6 +32,7 @@ type stubConnectService struct {
 	err         error
 	gotProvider string
 	gotBaseURL  string
+	callbackErr error
 }
 
 func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -66,7 +67,7 @@ func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider strin
 
 func (s *stubConnectService) Callback(_ context.Context, baseURL, _, _, _, _, _ string) (string, error) {
 	s.gotBaseURL = baseURL
-	return "t", nil
+	return "t", s.callbackErr
 }
 
 func (s *stubConnectService) Disconnect(context.Context, string, string) error { return nil }
@@ -227,5 +228,60 @@ func TestConnectStart_FallsBackToRequestBaseURL(t *testing.T) {
 	}
 	if stub.gotBaseURL != "http://gw-tenant.mcp.example.com" {
 		t.Fatalf("baseURL = %q, want request origin", stub.gotBaseURL)
+	}
+}
+
+// An upstream that refuses the sign-in redirects back with a bare RFC 6749 code
+// (Axiom sends error=invalid_target and nothing else). The page has to say what
+// happened and what to do, not echo the code on its own.
+func TestConnectCallback_UpstreamErrorRendersActionableFlash(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{
+		page: &appoauth.ConnectPage{
+			ConsumerPath: "/tools/mcp",
+			Providers:    []appoauth.ProviderStatus{{Provider: "co.axiom/mcp", Registry: "axiom"}},
+		},
+		callbackErr: &appoauth.OAuthError{Code: "invalid_target"},
+	}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectCallbackPath, h.Callback)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/callback/co.axiom/mcp?state=s&error=invalid_target", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	html := string(body)
+	if !strings.Contains(html, "The provider rejected the sign-in request") {
+		t.Fatalf("flash does not explain the failure: %s", html)
+	}
+	if !strings.Contains(html, "(invalid_target)") {
+		t.Fatalf("flash must keep the upstream code for operators: %s", html)
+	}
+}
+
+func TestCallbackFlash(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"denied", &appoauth.OAuthError{Code: "access_denied"}, "Sign-in was cancelled or access was not granted. Try again to connect your account. (access_denied)"},
+		{"with description", &appoauth.OAuthError{Code: "invalid_scope", Description: "unknown scope foo"}, "(invalid_scope: unknown scope foo)"},
+		{"unavailable", &appoauth.OAuthError{Code: "temporarily_unavailable"}, "Wait a moment and try again. (temporarily_unavailable)"},
+		{"unknown code", &appoauth.OAuthError{Code: "weird"}, "Sign-in with the provider failed."},
+		{"not an oauth error", io.ErrUnexpectedEOF, io.ErrUnexpectedEOF.Error()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := callbackFlash(tc.err); !strings.Contains(got, tc.want) {
+				t.Fatalf("callbackFlash = %q, want it to contain %q", got, tc.want)
+			}
+		})
 	}
 }
