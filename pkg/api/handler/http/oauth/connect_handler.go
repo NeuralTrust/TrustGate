@@ -79,9 +79,37 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 		if ticketID == "" {
 			return h.pageError(c, err)
 		}
-		return h.showPage(c, ticketID, err.Error())
+		return h.showPage(c, ticketID, callbackFlash(err))
 	}
 	return h.showPage(c, ticketID, "")
+}
+
+// callbackFlash turns an error the upstream identity provider sent back on the
+// redirect into something the person signing in can act on. Those errors arrive
+// as a bare RFC 6749 code, often without a description, and showing
+// "invalid_target" on its own tells them nothing. The code stays in the message
+// so an operator can still tell the failures apart.
+func callbackFlash(err error) string {
+	var oerr *appoauth.OAuthError
+	if !errors.As(err, &oerr) {
+		return err.Error()
+	}
+	var msg string
+	switch oerr.Code {
+	case "access_denied":
+		msg = "Sign-in was cancelled or access was not granted. Try again to connect your account."
+	case "invalid_target", "invalid_scope", "invalid_request", "unauthorized_client", "unsupported_response_type":
+		msg = "The provider rejected the sign-in request. Try again, and if it keeps failing, ask your administrator to check this connector's OAuth configuration."
+	case "server_error", "temporarily_unavailable":
+		msg = "The provider could not complete the sign-in right now. Wait a moment and try again."
+	default:
+		msg = "Sign-in with the provider failed. Try again, and if it keeps failing, contact your administrator."
+	}
+	detail := oerr.Code
+	if oerr.Description != "" {
+		detail += ": " + oerr.Description
+	}
+	return msg + " (" + detail + ")"
 }
 
 func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
