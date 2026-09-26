@@ -15,8 +15,11 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -25,19 +28,31 @@ import (
 // ---------------------------------------------------------------------------
 
 type openaiRequest struct {
-	Model               string            `json:"model,omitempty"`
-	Messages            []openaiMessage   `json:"messages"`
-	MaxTokens           *int              `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int              `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64          `json:"temperature,omitempty"`
-	TopP                *float64          `json:"top_p,omitempty"`
-	TopK                *int              `json:"top_k,omitempty"`
-	Stream              *bool             `json:"stream,omitempty"`
-	Stop                json.RawMessage   `json:"stop,omitempty"` // string or []string
-	ResponseFormat      *openaiRespFormat `json:"response_format,omitempty"`
-	Tools               []openaiTool      `json:"tools,omitempty"`
-	ToolChoice          json.RawMessage   `json:"tool_choice,omitempty"` // string or object
+	Model                string                 `json:"model,omitempty"`
+	Messages             []openaiMessage        `json:"messages"`
+	MaxTokens            *int                   `json:"max_tokens,omitempty"`
+	MaxCompletionTokens  *int                   `json:"max_completion_tokens,omitempty"`
+	Temperature          *float64               `json:"temperature,omitempty"`
+	TopP                 *float64               `json:"top_p,omitempty"`
+	TopK                 *int                   `json:"top_k,omitempty"`
+	Stream               *bool                  `json:"stream,omitempty"`
+	Stop                 json.RawMessage        `json:"stop,omitempty"` // string or []string
+	Seed                 *int64                 `json:"seed,omitempty"`
+	ResponseFormat       *openaiChatRespFormat  `json:"response_format,omitempty"`
+	ParallelToolCalls    *bool                  `json:"parallel_tool_calls,omitempty"`
+	Tools                []openaiTool           `json:"tools,omitempty"`
+	ToolChoice           json.RawMessage        `json:"tool_choice,omitempty"` // string or object
+	PromptCacheKey       string                 `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string                 `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   json.RawMessage        `json:"prompt_cache_options,omitempty"`
+	CacheControl         *anthropicCacheControl `json:"cache_control,omitempty"`
+	Store                json.RawMessage        `json:"store,omitempty"`
 }
+
+// chatCarriedKeys are the Chat keys a re-encode carries through
+// RequestExtensions, as responsesCarriedKeys are for Responses. metadata may
+// hold personal data and is left out.
+var chatCarriedKeys = []string{"store"}
 
 type openaiMessage struct {
 	Role       string           `json:"role"`
@@ -50,7 +65,20 @@ type openaiMessage struct {
 type openaiContentPart struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text,omitempty"`
+	Refusal  string          `json:"refusal,omitempty"`
 	ImageURL json.RawMessage `json:"image_url,omitempty"`
+	// CacheControl is the OpenRouter and Anthropic-compatible marker on Chat
+	// parts; PromptCacheBreakpoint is the Responses marker on input parts.
+	CacheControl          *anthropicCacheControl       `json:"cache_control,omitempty"`
+	PromptCacheBreakpoint *openaiPromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
+}
+
+type openaiPromptCacheBreakpoint struct {
+	Mode string `json:"mode"`
+}
+
+func openAIPartCacheControl(p openaiContentPart) *CanonicalCacheBreakpoint {
+	return anthropicCacheBreakpoint(p.CacheControl)
 }
 
 type openaiImageURL struct {
@@ -59,9 +87,10 @@ type openaiImageURL struct {
 }
 
 type openaiTool struct {
-	Type     string            `json:"type"`
-	Function *openaiFunction   `json:"function,omitempty"`
-	Custom   *openaiCustomTool `json:"custom,omitempty"`
+	Type         string                 `json:"type"`
+	Function     *openaiFunction        `json:"function,omitempty"`
+	Custom       *openaiCustomTool      `json:"custom,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // openaiCustomTool is the freeform tool shape GPT-5 models accept. Format is
@@ -130,8 +159,39 @@ func encodeOpenAIToolCall(tc CanonicalToolCall) openaiToolCall {
 	}
 }
 
+// openaiRespFormat is the Responses API text.format, which carries the
+// json_schema fields inline instead of under a json_schema object.
 type openaiRespFormat struct {
 	Type string `json:"type"`
+	openaiJSONSchema
+}
+
+type openaiJSONSchema struct {
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
+}
+
+type openaiChatRespFormat struct {
+	Type       string          `json:"type"`
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
+}
+
+const responseFormatJSONSchema = "json_schema"
+
+// encodeChatResponseFormat returns nil for a json_schema format without its
+// schema, which OpenAI-compatible targets reject.
+func encodeChatResponseFormat(f *CanonicalRespFormat) *openaiChatRespFormat {
+	if f == nil || (f.Type == responseFormatJSONSchema && isEmptyJSON(f.JSONSchema)) {
+		return nil
+	}
+	return &openaiChatRespFormat{Type: f.Type, JSONSchema: f.JSONSchema}
+}
+
+func isEmptyJSON(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
 }
 
 type openaiResponse struct {
@@ -161,10 +221,13 @@ type openaiUsage struct {
 	TotalTokens             int                            `json:"total_tokens"`
 	PromptTokensDetails     *openaiPromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *openaiCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	PromptCacheHitTokens    int                            `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens   int                            `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
 type openaiPromptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type openaiCompletionTokensDetails struct {
@@ -172,17 +235,63 @@ type openaiCompletionTokensDetails struct {
 }
 
 func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
-	cu := newCanonicalUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens)
+	in := max(u.PromptTokens, u.PromptCacheHitTokens+u.PromptCacheMissTokens)
+	cu := newCanonicalUsage(in, u.CompletionTokens, u.TotalTokens)
 	if cu == nil {
 		return nil
 	}
-	if u.PromptTokensDetails != nil {
-		cu.CachedInputTokens = u.PromptTokensDetails.CachedTokens
+	cu.TotalTokens = max(cu.TotalTokens, cu.InputTokens+cu.OutputTokens)
+	read, write := u.PromptCacheHitTokens, 0
+	if d := u.PromptTokensDetails; d != nil {
+		read, write = max(read, d.CachedTokens), d.CacheWriteTokens
+	}
+	if read+write > 0 {
+		cu.setCache(read, write, 0)
 	}
 	if u.CompletionTokensDetails != nil {
 		cu.ReasoningOutputTokens = u.CompletionTokensDetails.ReasoningTokens
 	}
 	return cu
+}
+
+// completionsUsage merges usage with x_groq.usage field-wise by max: Groq
+// repeats usage under x_groq, and the max counts it once (ENG-1618).
+func completionsUsage(usage *openaiUsage, xGroq json.RawMessage) *CanonicalUsage {
+	var cu *CanonicalUsage
+	if usage != nil {
+		cu = openaiUsageToCanonical(*usage)
+	}
+	if len(xGroq) == 0 {
+		return cu
+	}
+	var ext struct {
+		Usage *openaiUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(xGroq, &ext); err != nil || ext.Usage == nil {
+		return cu
+	}
+	return MergeUsage(cu, openaiUsageToCanonical(*ext.Usage))
+}
+
+func openaiUsageFromCanonical(u *CanonicalUsage) *openaiUsage {
+	if u == nil {
+		return nil
+	}
+	out := &openaiUsage{
+		PromptTokens:     u.InputTokens,
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+	if u.CachedInputTokens+u.CacheWriteInputTokens > 0 {
+		out.PromptTokensDetails = &openaiPromptTokensDetails{
+			CachedTokens:     u.CachedInputTokens,
+			CacheWriteTokens: u.CacheWriteInputTokens,
+		}
+	}
+	if u.ReasoningOutputTokens > 0 {
+		out.CompletionTokensDetails = &openaiCompletionTokensDetails{ReasoningTokens: u.ReasoningOutputTokens}
+	}
+	return out
 }
 
 type openaiStreamChunk struct {
@@ -192,6 +301,7 @@ type openaiStreamChunk struct {
 	Choices []openaiStreamChoice `json:"choices"`
 	Usage   *openaiUsage         `json:"usage,omitempty"`
 	XGroq   json.RawMessage      `json:"x_groq,omitempty"`
+	Error   json.RawMessage      `json:"error,omitempty"`
 }
 
 type openaiStreamChoice struct {
@@ -245,11 +355,20 @@ func (f *openaiStreamToolCallFn) name() string {
 // Request: Decode (Chat Completions → Canonical)
 // ---------------------------------------------------------------------------
 
+// openaiRequestIn reads seed and parallel_tool_calls raw so a value of the
+// wrong type drops that field instead of failing the whole request.
+type openaiRequestIn struct {
+	openaiRequest
+	Seed              json.RawMessage `json:"seed"`
+	ParallelToolCalls json.RawMessage `json:"parallel_tool_calls"`
+}
+
 func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
-	var req openaiRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var in openaiRequestIn
+	if err := json.Unmarshal(body, &in); err != nil {
 		return nil, err
 	}
+	req := in.openaiRequest
 
 	cr := &CanonicalRequest{
 		Model:       req.Model,
@@ -257,6 +376,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 		TopP:        req.TopP,
 		TopK:        req.TopK,
 	}
+	carryRequestKeys(cr, chatCarriedKeys, []*json.RawMessage{&req.Store})
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
@@ -271,16 +391,23 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	cr.Stop = decodeStopField(req.Stop)
 
 	if req.ResponseFormat != nil {
-		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type}
+		cr.ResponseFormat = &CanonicalRespFormat{Type: req.ResponseFormat.Type, JSONSchema: req.ResponseFormat.JSONSchema}
 	}
+	cr.Seed, cr.ParallelToolCalls = decodeChatSeed(in.Seed), decodeOptionalBool(in.ParallelToolCalls)
 
+	var system cacheTextJoin
 	for _, m := range req.Messages {
-		content, images := decodeOpenAIContent(m.Content)
-
+		if m.Role == "system" || m.Role == "developer" {
+			appendOpenAISystem(&system, m.Content, openAIPartCacheControl)
+			continue
+		}
+		var text cacheTextJoin
+		images := decodeOpenAIParts(m.Content, &text, openAIPartCacheControl, m.Role == "user")
 		cm := CanonicalMessage{
 			Role:       m.Role,
-			Content:    content,
+			Content:    text.String(),
 			ToolCallID: m.ToolCallID,
+			Cache:      text.breakpoint(),
 		}
 		if m.Role == "user" {
 			cm.Images = images
@@ -288,16 +415,9 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
 		}
-
-		if m.Role == "system" || m.Role == "developer" {
-			if cr.System != "" {
-				cr.System += "\n"
-			}
-			cr.System += content
-		} else {
-			cr.Messages = append(cr.Messages, cm)
-		}
+		cr.Messages = append(cr.Messages, cm)
 	}
+	cr.System, cr.SystemCache = system.String(), system.breakpoint()
 
 	for _, t := range req.Tools {
 		switch {
@@ -307,36 +427,91 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 				Name:        t.Custom.Name,
 				Description: t.Custom.Description,
 				Format:      t.Custom.Format,
+				Cache:       anthropicCacheBreakpoint(t.CacheControl),
 			})
 		case t.Function != nil:
 			cr.Tools = append(cr.Tools, CanonicalTool{
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
 				Schema:      t.Function.Parameters,
+				Cache:       anthropicCacheBreakpoint(t.CacheControl),
 			})
 		}
 	}
 
 	cr.ToolChoice = decodeOpenAIToolChoice(req.ToolChoice)
+	cr.CacheOptions = openAICacheOptions(req.PromptCacheKey, req.PromptCacheRetention, req.PromptCacheOptions)
+	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
+		if cr.CacheOptions == nil {
+			cr.CacheOptions = &CanonicalCacheOptions{}
+		}
+		cr.CacheOptions.Auto = auto
+	}
 
 	return cr, nil
+}
+
+// decodeChatSeed returns seed as an integer, taking integral floats such as
+// 42.0 that JSON encoders emit for numbers, and nil for anything else.
+func decodeChatSeed(raw json.RawMessage) *int64 {
+	text := string(bytes.TrimSpace(raw))
+	if text == "" || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) {
+		return nil
+	}
+	if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return &n
+	}
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil || f != math.Trunc(f) || f < math.MinInt64 || f >= math.MaxInt64 {
+		return nil
+	}
+	n := int64(f)
+	return &n
+}
+
+func decodeOptionalBool(raw json.RawMessage) *bool {
+	var b *bool
+	if json.Unmarshal(raw, &b) != nil {
+		return nil
+	}
+	return b
 }
 
 // ---------------------------------------------------------------------------
 // Request: Encode (Canonical → Chat Completions)
 // ---------------------------------------------------------------------------
 
-func encodeOpenAIContent(m CanonicalMessage) json.RawMessage {
-	if len(m.Images) == 0 {
-		return stringToContent(m.Content)
+func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
+	imageAt, onImage := cachedImageIndex(cache, len(images))
+	if cache.onImage() && !onImage {
+		cache = nil
 	}
-	parts := make([]openaiContentPart, 0, len(m.Images)+1)
-	for _, img := range m.Images {
+	if len(images) == 0 && cache == nil {
+		return stringToContent(text)
+	}
+	parts := make([]openaiContentPart, 0, len(images)+2)
+	for _, img := range images {
 		imageURL, _ := json.Marshal(openaiImageURL{URL: img.dataURI(), Detail: img.Detail})
 		parts = append(parts, openaiContentPart{Type: "image_url", ImageURL: imageURL})
 	}
-	if m.Content != "" {
-		parts = append(parts, openaiContentPart{Type: "text", Text: m.Content})
+	if onImage {
+		parts[imageAt].CacheControl = anthropicCacheControlFrom(cache)
+		cache = nil
+	}
+	texts, placed := cachedTextParts(text, cache)
+	first := len(parts)
+	for _, t := range texts {
+		parts = append(parts, openaiContentPart{Type: "text", Text: t})
+	}
+	if len(parts) == 0 {
+		return stringToContent(text)
+	}
+	if cache != nil {
+		at := len(parts) - 1
+		if placed {
+			at = first
+		}
+		parts[at].CacheControl = anthropicCacheControlFrom(cache)
 	}
 	b, _ := json.Marshal(parts)
 	return b
@@ -361,21 +536,22 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 		out.Stop, _ = json.Marshal(req.Stop)
 	}
 
-	if req.ResponseFormat != nil {
-		out.ResponseFormat = &openaiRespFormat{Type: req.ResponseFormat.Type}
-	}
+	out.ResponseFormat = encodeChatResponseFormat(req.ResponseFormat)
+	out.Seed = req.Seed
+	carriedRequestKeys(req, chatCarriedKeys, []*json.RawMessage{&out.Store})
 
 	if req.System != "" {
 		out.Messages = append(out.Messages, openaiMessage{
 			Role:    "system",
-			Content: stringToContent(req.System),
+			Content: encodeOpenAIContent(req.System, nil, req.SystemCache),
 		})
 	}
 	for _, m := range req.Messages {
-		content := stringToContent(m.Content)
+		var images []CanonicalImage
 		if m.Role == "user" {
-			content = encodeOpenAIContent(m)
+			images = m.Images
 		}
+		content := encodeOpenAIContent(m.Content, images, m.Cache)
 		msg := openaiMessage{
 			Role:       m.Role,
 			Content:    content,
@@ -392,6 +568,14 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 	dropped := len(req.Tools) > len(out.Tools)
 	if req.ToolChoice != nil && (!dropped || !toolChoiceDangles(req.ToolChoice, out.Tools)) {
 		out.ToolChoice = encodeOpenAIToolChoice(req.ToolChoice)
+	}
+	if len(out.Tools) > 0 {
+		out.ParallelToolCalls = req.ParallelToolCalls
+	}
+	if o := req.CacheOptions; o != nil {
+		out.PromptCacheKey, out.PromptCacheRetention = o.Key, o.Retention
+		out.PromptCacheOptions = o.openAIOptions()
+		out.CacheControl = anthropicCacheControlFrom(o.Auto)
 	}
 
 	return json.Marshal(out)
@@ -411,6 +595,7 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 					Description: t.Description,
 					Format:      t.Format,
 				},
+				CacheControl: anthropicCacheControlFrom(t.Cache),
 			})
 			continue
 		}
@@ -421,6 +606,7 @@ func encodeCompletionsTools(tools []CanonicalTool) []openaiTool {
 				Description: t.Description,
 				Parameters:  t.Schema,
 			},
+			CacheControl: anthropicCacheControlFrom(t.Cache),
 		})
 	}
 	return out
@@ -469,9 +655,7 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 		cr.FinishReason = choice.FinishReason
 	}
 
-	if resp.Usage != nil {
-		cr.Usage = openaiUsageToCanonical(*resp.Usage)
-	}
+	cr.Usage = completionsUsage(resp.Usage, resp.XGroq)
 
 	if resp.Reasoning != nil {
 		cr.Reasoning = &CanonicalReasoning{
@@ -517,13 +701,7 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 		}},
 	}
 
-	if resp.Usage != nil {
-		out.Usage = &openaiUsage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		}
-	}
+	out.Usage = openaiUsageFromCanonical(resp.Usage)
 
 	if resp.Reasoning != nil {
 		summary := resp.Reasoning.Summary
@@ -548,12 +726,29 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 // Stream: Decode (Chat Completions chunk → Canonical)
 // ---------------------------------------------------------------------------
 
+// decodeCompletionsStreamChunk decodes a Chat Completions chunk. A payload
+// carrying an "error" is reported on the chunk's UpstreamError, alongside the
+// content, finish and usage decoded from the rest of the payload, since
+// OpenRouter sends the failure's finish_reason and usage with the error.
 func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var raw openaiStreamChunk
 	if err := json.Unmarshal(chunk, &raw); err != nil {
 		return nil, nil // skip non-JSON
 	}
+	upstreamErr := decodeStreamError(raw.Error)
+	sc := decodeCompletionsStreamContent(&raw)
+	switch {
+	case upstreamErr == nil:
+		return sc, nil
+	case sc == nil:
+		return &CanonicalStreamChunk{UpstreamError: upstreamErr}, nil
+	default:
+		sc.UpstreamError = upstreamErr
+		return sc, nil
+	}
+}
 
+func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChunk {
 	sc := &CanonicalStreamChunk{
 		ID:    raw.ID,
 		Model: raw.Model,
@@ -582,9 +777,7 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		}
 	}
 
-	if raw.Usage != nil {
-		sc.Usage = openaiUsageToCanonical(*raw.Usage)
-	}
+	sc.Usage = completionsUsage(raw.Usage, raw.XGroq)
 
 	if raw.XGroq != nil {
 		sc.ProviderExtensions = map[string]json.RawMessage{
@@ -599,17 +792,20 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		len(sc.ToolCallDeltas) == 0 &&
 		sc.Usage == nil &&
 		len(sc.ProviderExtensions) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	return sc, nil
+	return sc
 }
 
 // ---------------------------------------------------------------------------
 // Stream: Encode (Canonical → Chat Completions chunk)
 // ---------------------------------------------------------------------------
 
-func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
+// encodeCompletionsStreamChunk encodes chunk as a Chat Completions chunk. With
+// emptyUsageChoices a usage-only chunk gets choices: [], the OpenAI
+// include_usage shape; Mistral clients keep the single empty choice.
+func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk, emptyUsageChoices bool) ([][]byte, error) {
 	delta := openaiStreamDelta{
 		Role:             chunk.Role,
 		Content:          chunk.Delta,
@@ -651,14 +847,12 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		Model:   chunk.Model,
 		Choices: []openaiStreamChoice{choice},
 	}
-
-	if chunk.Usage != nil {
-		out.Usage = &openaiUsage{
-			PromptTokens:     chunk.Usage.InputTokens,
-			CompletionTokens: chunk.Usage.OutputTokens,
-			TotalTokens:      chunk.Usage.TotalTokens,
-		}
+	if emptyUsageChoices && chunk.Usage != nil && chunk.FinishReason == "" && chunk.Role == "" && chunk.Delta == "" &&
+		chunk.ReasoningDelta == "" && len(chunk.ToolCallDeltas) == 0 {
+		out.Choices = []openaiStreamChoice{}
 	}
+
+	out.Usage = openaiUsageFromCanonical(chunk.Usage)
 
 	if raw, ok := chunk.ProviderExtensions["x_groq"]; ok && len(raw) > 0 {
 		out.XGroq = raw

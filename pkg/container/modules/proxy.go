@@ -49,7 +49,7 @@ func Proxy(c *container.Container) error {
 	if err := c.Provide(appproxy.NewModelsLister); err != nil {
 		return err
 	}
-	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister) *proxyhttp.ForwardedHandler {
-		return proxyhttp.NewForwardedHandler(fwd).WithModels(models)
+	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister, logger *slog.Logger) *proxyhttp.ForwardedHandler {
+		return proxyhttp.NewForwardedHandler(fwd).WithModels(models).WithLogger(logger)
 	})
 }

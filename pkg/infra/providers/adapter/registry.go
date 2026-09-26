@@ -70,6 +70,10 @@ type ResponseAdapter interface {
 // "data: {…}" and "" (empty-line event separator). This allows providers that
 // require multi-line SSE events (e.g. Anthropic's event: + data:) to produce
 // a byte-accurate stream.
+//
+// DecodeStreamChunk reports an error object the upstream sent as a payload on
+// the chunk's UpstreamError, not as its error; a payload carrying only the
+// error decodes to a chunk for which UpstreamErrorOnly reports true.
 type StreamAdapter interface {
 	DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error)
 	EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
@@ -101,6 +105,7 @@ func NewRegistry() *Registry {
 	r.Register(FormatOpenAIResponses, &OpenAIResponsesAdapter{})
 	r.Register(FormatAnthropic, &AnthropicAdapter{})
 	r.Register(FormatGemini, &GeminiAdapter{})
+	r.Register(FormatVertex, NewVertexAdapter())
 	r.Register(FormatBedrock, &BedrockAdapter{})
 	r.Register(FormatMistral, &MistralAdapter{})
 	r.Register(FormatCohere, &CohereAdapter{})
@@ -150,7 +155,20 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 	return cr, nil
 }
 
+// AdaptRequest is AdaptRequestForProvider for the provider target is named
+// after, with openai for the Responses API.
 func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, error) {
+	return r.AdaptRequestForProvider(body, source, target, formatProvider(target), "")
+}
+
+// AdaptRequestForProvider transforms a request body from source to target
+// format via the canonical model. providerName is the provider that serves
+// target; it decides which cache intent is sent, since formats such as
+// FormatOpenAI are shared by providers that accept different cache keys.
+// defaultModel is the model the gateway sends when the body names none, such
+// as the binding default injected after adaptation; it only picks the cache
+// profile and is not written to the body.
+func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, providerName, defaultModel string) ([]byte, error) {
 	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
@@ -172,10 +190,18 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
+	dropChatOptionsTargetRejects(canonical, target)
+	normalizeCacheIntent(canonical, target, providerName, defaultModel)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {
 		return nil, fmt.Errorf("adapter request encode (%s): %w", target, err)
+	}
+	if target == FormatOpenRouter && IsSameWireFormat(source, target) {
+		out, err = graftOpenRouterClientKeys(body, out)
+		if err != nil {
+			return nil, fmt.Errorf("adapter request encode (%s): %w", target, err)
+		}
 	}
 
 	return out, nil
@@ -280,7 +306,7 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 	if err != nil {
 		return nil, fmt.Errorf("adapter stream decode (%s): %w", target, err)
 	}
-	if canonical == nil {
+	if canonical == nil || canonical.UpstreamErrorOnly() {
 		return nil, nil
 	}
 	dropStreamProviderExtensionsForCrossFormat(source, target, canonical)
@@ -326,6 +352,23 @@ func dropStreamProviderExtensionsForCrossFormat(source, target Format, chunk *Ca
 	}
 	if source != target {
 		chunk.ProviderExtensions = nil
+	}
+}
+
+// dropChatOptionsTargetRejects clears the OpenAI Chat seed,
+// parallel_tool_calls and json_schema options on targets that fail on them.
+// Groq Llama models answer tool_use_failed to parallel tool calls, so Groq
+// never gets the caller's value and NormalizeGroqRequest sends false with
+// tools. DeepSeek documents none of them and takes text or json_object only.
+func dropChatOptionsTargetRejects(req *CanonicalRequest, target Format) {
+	switch target {
+	case FormatGroq:
+		req.ParallelToolCalls = nil
+	case FormatDeepSeek:
+		req.Seed, req.ParallelToolCalls = nil, nil
+		if rf := req.ResponseFormat; rf != nil && rf.Type == responseFormatJSONSchema {
+			req.ResponseFormat = nil
+		}
 	}
 }
 

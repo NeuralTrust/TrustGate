@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -438,6 +439,64 @@ func TestAnthropicThinkingDeltaReachesOpenAIStream(t *testing.T) {
 	assert.Empty(t, chunk.Choices[0].Delta.Content, "reasoning must not leak into content")
 }
 
+func TestAnthropicEncode_ToolUseInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments string
+		want      string
+	}{
+		{name: "no arguments", arguments: "", want: `{}`},
+		{name: "blank arguments", arguments: "  ", want: `{}`},
+		{name: "object", arguments: `{"city":"Paris"}`, want: `{"city":"Paris"}`},
+		{name: "invalid JSON", arguments: `{"city":"Par`, want: `{}`},
+		{name: "array", arguments: `["Paris"]`, want: `{}`},
+		{name: "string", arguments: `"Paris"`, want: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := (&AnthropicAdapter{}).EncodeRequest(&CanonicalRequest{
+				Model: "claude-opus-4-5",
+				Messages: []CanonicalMessage{
+					{Role: "user", Content: "hi"},
+					{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "toolu_1", Name: "now", Arguments: tt.arguments}}},
+					{Role: "tool", ToolCallID: "toolu_1", Content: "noon"},
+				},
+			})
+			require.NoError(t, err)
+
+			var out struct {
+				Messages []struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Len(t, out.Messages, 3)
+			var blocks []struct {
+				Type  string          `json:"type"`
+				Input json.RawMessage `json:"input"`
+			}
+			require.NoError(t, json.Unmarshal(out.Messages[1].Content, &blocks))
+			require.Len(t, blocks, 1)
+			assert.Equal(t, "tool_use", blocks[0].Type)
+			assert.JSONEq(t, tt.want, string(blocks[0].Input))
+
+			resp, err := (&AnthropicAdapter{}).EncodeResponse(&CanonicalResponse{
+				Role:      "assistant",
+				ToolCalls: []CanonicalToolCall{{ID: "toolu_1", Name: "now", Arguments: tt.arguments}},
+			})
+			require.NoError(t, err)
+			var encoded struct {
+				Content []struct {
+					Input json.RawMessage `json:"input"`
+				} `json:"content"`
+			}
+			require.NoError(t, json.Unmarshal(resp, &encoded))
+			require.Len(t, encoded.Content, 1)
+			assert.JSONEq(t, tt.want, string(encoded.Content[0].Input))
+		})
+	}
+}
+
 func TestAnthropicEncodeRequest_MaxTokensDefault(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -623,6 +682,15 @@ func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
 
 	assert.Same(t, prev, MergeUsage(prev, nil))
 	assert.Same(t, next, MergeUsage(nil, next))
+}
+
+func TestMergeUsage_KeepsCacheTTLKnown(t *testing.T) {
+	known := &CanonicalUsage{InputTokens: 400, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true}
+	unknown := &CanonicalUsage{OutputTokens: 7}
+
+	assert.True(t, MergeUsage(known, unknown).cacheTTLKnown)
+	assert.True(t, MergeUsage(unknown, known).cacheTTLKnown)
+	assert.False(t, MergeUsage(unknown, &CanonicalUsage{OutputTokens: 9}).cacheTTLKnown)
 }
 
 func TestAnthropicEncodeRequest_Images(t *testing.T) {
@@ -835,4 +903,595 @@ func TestDecodeAnthropicMessageContent_Images(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestAnthropicRequest_NoCacheMarkersLeaveNoIntent(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"system": [{"type": "text", "text": "Be brief."}],
+		"tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "hi"}]},
+			{"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "lookup", "input": {}}]},
+			{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}
+		]
+	}`)
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest(body)
+	require.NoError(t, err)
+
+	assert.Nil(t, cr.SystemCache)
+	assert.Nil(t, cr.CacheOptions)
+	assert.Equal(t, []any{nil}, toolTTLs(cr.Tools))
+	assert.Equal(t, []any{nil, nil, nil}, messageTTLs(cr.Messages))
+
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "cache_control")
+	assert.Contains(t, string(out), `"system":"Be brief."`)
+}
+
+type anthropicCachedBody struct {
+	Stream       *bool                  `json:"stream"`
+	CacheControl *anthropicCacheControl `json:"cache_control"`
+	System       []struct {
+		Text         string                 `json:"text"`
+		CacheControl *anthropicCacheControl `json:"cache_control"`
+	} `json:"system"`
+	Tools []struct {
+		Name         string                 `json:"name"`
+		CacheControl *anthropicCacheControl `json:"cache_control"`
+	} `json:"tools"`
+	Messages []struct {
+		Role    string                  `json:"role"`
+		Content []anthropicContentBlock `json:"content"`
+	} `json:"messages"`
+}
+
+func TestAnthropicRequest_CacheMarkersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "buffered", true: "stream"}[stream], func(t *testing.T) {
+			t.Parallel()
+			body := []byte(`{
+				"model": "claude-sonnet-4-5",
+				"max_tokens": 64,
+				"stream": ` + map[bool]string{false: "false", true: "true"}[stream] + `,
+				"cache_control": {"type": "ephemeral"},
+				"system": [
+					{"type": "text", "text": "Part one."},
+					{"type": "text", "text": "Part two.", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+				],
+				"tools": [
+					{"name": "a", "input_schema": {"type": "object"}},
+					{"name": "b", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+				],
+				"messages": [
+					{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]},
+					{"role": "assistant", "content": [
+						{"type": "text", "text": "calling"},
+						{"type": "tool_use", "id": "t1", "name": "b", "input": {}, "cache_control": {"type": "ephemeral"}}
+					]},
+					{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]}
+				]
+			}`)
+			a := &AnthropicAdapter{}
+			cr, err := a.DecodeRequest(body)
+			require.NoError(t, err)
+
+			assert.Equal(t, "Part one.\nPart two.", cr.System)
+			assert.Equal(t, CacheTTL1h, ttlOf(cr.SystemCache))
+			require.NotNil(t, cr.CacheOptions)
+			assert.Equal(t, CacheTTL(""), ttlOf(cr.CacheOptions.Auto))
+			assert.Equal(t, []any{nil, CacheTTL1h}, toolTTLs(cr.Tools))
+			assert.Equal(t, []any{CacheTTL1h, CacheTTL(""), CacheTTL5m}, messageTTLs(cr.Messages))
+			assert.Equal(t, "tool", cr.Messages[2].Role)
+
+			out, err := a.EncodeRequest(cr)
+			require.NoError(t, err)
+			var got anthropicCachedBody
+			require.NoError(t, json.Unmarshal(out, &got))
+
+			assert.Equal(t, stream, got.Stream != nil && *got.Stream)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral"}, got.CacheControl)
+			require.Len(t, got.System, 1)
+			assert.Equal(t, "Part one.\nPart two.", got.System[0].Text)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.System[0].CacheControl)
+			require.Len(t, got.Tools, 2)
+			assert.Nil(t, got.Tools[0].CacheControl)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.Tools[1].CacheControl)
+			require.Len(t, got.Messages, 3)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}, got.Messages[0].Content[0].CacheControl)
+			require.Len(t, got.Messages[1].Content, 2)
+			assert.Nil(t, got.Messages[1].Content[0].CacheControl)
+			assert.Equal(t, "tool_use", got.Messages[1].Content[1].Type)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral"}, got.Messages[1].Content[1].CacheControl)
+			assert.Equal(t, "tool_result", got.Messages[2].Content[0].Type)
+			assert.Equal(t, &anthropicCacheControl{Type: "ephemeral", TTL: "5m"}, got.Messages[2].Content[0].CacheControl)
+		})
+	}
+}
+
+func TestAnthropicRequest_MarkedImageBlockMarksTheMessage(t *testing.T) {
+	t.Parallel()
+
+	cr, err := (&AnthropicAdapter{}).DecodeRequest([]byte(`{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 64,
+		"messages": [{"role": "user", "content": [
+			{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}, "cache_control": {"type": "ephemeral"}},
+			{"type": "text", "text": "describe"}
+		]}]
+	}`))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 1)
+	assert.Equal(t, []any{CacheTTL("")}, messageTTLs(cr.Messages))
+}
+
+func TestAnthropicRequest_ImageMarkerStaysOnTheImage(t *testing.T) {
+	t.Parallel()
+
+	image := `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}`
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"describe"},` + image + `,"cache_control":{"type":"ephemeral"}},{"type":"text","text":"volatile"}]}]}`)
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest(body)
+	require.NoError(t, err)
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRequest
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 1)
+	assert.JSONEq(t, `[`+image+`,"cache_control":{"type":"ephemeral"}},{"type":"text","text":"describe\nvolatile"}]`, string(got.Messages[0].Content))
+}
+
+func TestAnthropicEncodeRequest_CacheMarkerGoesOnTheLastBlock(t *testing.T) {
+	t.Parallel()
+
+	img := CanonicalImage{MediaType: "image/png", Data: "iVBORw0KGgo="}
+	tests := []struct {
+		name        string
+		message     CanonicalMessage
+		wantContent string
+	}{
+		{
+			name:        "image then text",
+			message:     CanonicalMessage{Role: "user", Content: "describe", Images: []CanonicalImage{img}, Cache: bp(CacheTTL5m)},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"describe","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+		},
+		{
+			name:        "image only",
+			message:     CanonicalMessage{Role: "user", Images: []CanonicalImage{img}, Cache: bp("")},
+			wantContent: `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="},"cache_control":{"type":"ephemeral"}}]`,
+		},
+		{
+			name:        "string content becomes a text block",
+			message:     CanonicalMessage{Role: "assistant", Content: "done", Cache: bp(CacheTTL1h)},
+			wantContent: `[{"type":"text","text":"done","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:        "empty content drops the marker",
+			message:     CanonicalMessage{Role: "user", Cache: bp("")},
+			wantContent: `""`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := (&AnthropicAdapter{}).EncodeRequest(&CanonicalRequest{Model: "claude-sonnet-4-5", Messages: []CanonicalMessage{tt.message}})
+			require.NoError(t, err)
+			var got struct {
+				Messages []anthropicMessage `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+			require.Len(t, got.Messages, 1)
+			assert.JSONEq(t, tt.wantContent, string(got.Messages[0].Content))
+		})
+	}
+}
+
+func TestAnthropicEncodeRequest_NormalizedSixBreakpointsKeepFour(t *testing.T) {
+	t.Parallel()
+
+	req := cachedRequest(1, 4, "")
+	req.Model = "claude-sonnet-4-5"
+	normalizeCacheIntent(req, FormatAnthropic, formatProvider(FormatAnthropic), "")
+	out, err := (&AnthropicAdapter{}).EncodeRequest(req)
+	require.NoError(t, err)
+	assert.Equal(t, 4, bytes.Count(out, []byte(`"cache_control"`)))
+
+	var got struct {
+		Messages []anthropicMessage `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	require.Len(t, got.Messages, 4)
+	cc := `[{"type":"text","text":"m","cache_control":{"type":"ephemeral"}}]`
+	for i, want := range []string{`"m"`, `"m"`, cc, cc} {
+		assert.JSONEq(t, want, string(got.Messages[i].Content), "message %d", i)
+	}
+}
+
+type anthropicRawBody struct {
+	CacheControl json.RawMessage `json:"cache_control"`
+	System       json.RawMessage `json:"system"`
+	Tools        json.RawMessage `json:"tools"`
+	Messages     []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	} `json:"messages"`
+}
+
+func reencodeAnthropic(t *testing.T, body string) anthropicRawBody {
+	t.Helper()
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRawBody
+	require.NoError(t, json.Unmarshal(out, &got))
+	return got
+}
+
+func TestAnthropicRequest_CacheMarkerKeepsItsBlockBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		system       string
+		messages     []string
+		wantSystem   string
+		wantMessages []string
+	}{
+		{
+			name:     "marker before volatile system and user text",
+			system:   `[{"type":"text","text":"Static instructions.","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Current time: 2026-09-25T08:00:00Z"}]`,
+			messages: []string{`[{"type":"text","text":"Big document ...","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Question?"}]`},
+		},
+		{
+			name:     "marked text before tool calls stays on the text",
+			system:   `"s"`,
+			messages: []string{`"q"`, `[{"type":"text","text":"calling","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`, `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`},
+		},
+		{
+			name:         "several system markers keep the last position with the longest TTL",
+			system:       `[{"type":"text","text":"A","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"B","cache_control":{"type":"ephemeral"}},{"type":"text","text":"C"}]`,
+			messages:     []string{`"hi"`},
+			wantSystem:   `[{"type":"text","text":"A\nB","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"C"}]`,
+			wantMessages: []string{`"hi"`},
+		},
+		{
+			name:         "thinking markers are dropped with the block",
+			system:       `"s"`,
+			messages:     []string{`"q"`, `[{"type":"thinking","thinking":"hm","signature":"sig","cache_control":{"type":"ephemeral"}},{"type":"text","text":"a"}]`},
+			wantSystem:   `"s"`,
+			wantMessages: []string{`"q"`, `"a"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			roles := []string{"user", "assistant"}
+			msgs := make([]string, len(tt.messages))
+			for i, c := range tt.messages {
+				msgs[i] = `{"role":"` + roles[i%2] + `","content":` + c + `}`
+			}
+			body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + tt.system + `,"messages":[` + strings.Join(msgs, ",") + `]}`
+			got := reencodeAnthropic(t, body)
+
+			wantSystem, wantMessages := tt.wantSystem, tt.wantMessages
+			if wantSystem == "" {
+				wantSystem, wantMessages = tt.system, tt.messages
+			}
+			assert.JSONEq(t, wantSystem, string(got.System))
+			require.Len(t, got.Messages, len(wantMessages))
+			for i, want := range wantMessages {
+				assert.JSONEq(t, want, string(got.Messages[i].Content), "message %d", i)
+			}
+		})
+	}
+}
+
+func reencodeAnthropicEdited(t *testing.T, body string, edit func(*CanonicalRequest)) anthropicRawBody {
+	t.Helper()
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	if edit != nil {
+		edit(cr)
+	}
+	out, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+	var got anthropicRawBody
+	require.NoError(t, json.Unmarshal(out, &got))
+	return got
+}
+
+func TestAnthropicRequest_CacheBoundarySurvivesTextRewrites(t *testing.T) {
+	t.Parallel()
+
+	const blocks = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"text","text":"today\nWhat?"}]`
+	const toolTurn = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`
+	body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + blocks + `,"messages":[` +
+		`{"role":"user","content":` + blocks + `},` +
+		`{"role":"assistant","content":` + toolTurn + `},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}]}`
+
+	split := func(head, tail string) string {
+		h, _ := json.Marshal(head)
+		tl, _ := json.Marshal(tail)
+		return `[{"type":"text","text":` + string(h) + `,"cache_control":{"type":"ephemeral"}},{"type":"text","text":` + string(tl) + `}]`
+	}
+	whole := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `,"cache_control":{"type":"ephemeral"}}]`
+	}
+	onText := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `,"cache_control":{"type":"ephemeral"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`
+	}
+	onToolUse := func(text string) string {
+		b, _ := json.Marshal(text)
+		return `[{"type":"text","text":` + string(b) + `},{"type":"tool_use","id":"t1","name":"f","input":{},"cache_control":{"type":"ephemeral"}}]`
+	}
+
+	tests := []struct {
+		name          string
+		old, new      string
+		wantText      string
+		wantAssistant string
+	}{
+		{
+			name:          "shorter mask relocates the split",
+			old:           "john@example.com",
+			new:           "[E]",
+			wantText:      split("doc [E]\nline2", "today\nWhat?"),
+			wantAssistant: onText("doc [E]\nline2"),
+		},
+		{
+			name:          "longer mask relocates the split",
+			old:           "john@example.com",
+			new:           "[REDACTED_EMAIL_ADDRESS_0001]",
+			wantText:      split("doc [REDACTED_EMAIL_ADDRESS_0001]\nline2", "today\nWhat?"),
+			wantAssistant: onText("doc [REDACTED_EMAIL_ADDRESS_0001]\nline2"),
+		},
+		{
+			name:          "an added newline falls back to the end of the segment",
+			old:           "john@example.com",
+			new:           "john\n[E]",
+			wantText:      whole("doc john\n[E]\nline2\ntoday\nWhat?"),
+			wantAssistant: onToolUse("doc john\n[E]\nline2"),
+		},
+		{
+			name:          "a removed newline falls back to the end of the segment",
+			old:           "\nline2",
+			new:           " line2",
+			wantText:      whole("doc john@example.com line2\ntoday\nWhat?"),
+			wantAssistant: onToolUse("doc john@example.com line2"),
+		},
+		{
+			name:          "a newline moved across the boundary keeps the count and splits at the wrong line",
+			old:           "doc john@example.com\nline2\ntoday",
+			new:           "doc john@example.com line2\nto\nday",
+			wantText:      split("doc john@example.com line2\nto", "day\nWhat?"),
+			wantAssistant: onText("doc john@example.com\nline2"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := reencodeAnthropicEdited(t, body, func(cr *CanonicalRequest) {
+				cr.System = strings.Replace(cr.System, tt.old, tt.new, 1)
+				for i := range cr.Messages {
+					cr.Messages[i].Content = strings.Replace(cr.Messages[i].Content, tt.old, tt.new, 1)
+				}
+			})
+			assert.JSONEq(t, tt.wantText, string(got.System))
+			require.Len(t, got.Messages, 3)
+			assert.JSONEq(t, tt.wantText, string(got.Messages[0].Content))
+			assert.JSONEq(t, tt.wantAssistant, string(got.Messages[1].Content))
+		})
+	}
+}
+
+func TestAnthropicRequest_AutomaticCachingConflicts(t *testing.T) {
+	t.Parallel()
+
+	const auto = `"cache_control":{"type":"ephemeral"},`
+	tests := []struct {
+		name    string
+		content string
+		edit    func(*CanonicalRequest)
+		want    string
+	}{
+		{
+			name:    "a 1h marker before the last block stays in place",
+			content: `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`,
+		},
+		{
+			name:    "a client conflict on the last text block passes unchanged",
+			content: `[{"type":"text","text":"a"},{"type":"text","text":"b","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+			want:    `[{"type":"text","text":"a\nb","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:    "a client conflict on the last tool result passes unchanged",
+			content: `[{"type":"tool_result","tool_use_id":"t1","content":"ok","cache_control":{"type":"ephemeral","ttl":"1h"}}]`,
+		},
+		{
+			name:    "a marker that fell back to the last block is dropped",
+			content: `[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"volatile tail"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Content = strings.Replace(cr.Messages[len(cr.Messages)-1].Content, "volatile tail", "volatile\ntail", 1)
+			},
+			want: `[{"type":"text","text":"stable\nvolatile\ntail"}]`,
+		},
+		{
+			name:    "a TTL raised by merging markers goes back to the client's TTL on the last block",
+			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"b","cache_control":{"type":"ephemeral"}}]`,
+			want:    `[{"type":"text","text":"a\nb","cache_control":{"type":"ephemeral"}}]`,
+		},
+		{
+			name:    "a marker on an image stays on it with its own TTL",
+			content: `[{"type":"text","text":"a","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"},"cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"},"cache_control":{"type":"ephemeral","ttl":"5m"}},{"type":"text","text":"a"}]`,
+		},
+		{
+			name:    "a text marker moved last by image reordering is dropped when it conflicts",
+			content: `[{"type":"text","text":"A","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}}]`,
+			want:    `[{"type":"image","source":{"type":"url","url":"https://example.com/cat.jpg"}},{"type":"text","text":"A"}]`,
+		},
+		{
+			name:    "a marker with the automatic TTL stays on the last block",
+			content: `[{"type":"text","text":"tail"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Cache = bp(CacheTTL5m)
+			},
+			want: `[{"type":"text","text":"tail","cache_control":{"type":"ephemeral","ttl":"5m"}}]`,
+		},
+		{
+			name:    "a conflicting marker a plugin added is dropped",
+			content: `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+			edit: func(cr *CanonicalRequest) {
+				cr.Messages[len(cr.Messages)-1].Cache = bp(CacheTTL1h)
+			},
+			want: `[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"model":"claude-haiku-4-5","max_tokens":5,` + auto + `"messages":[` +
+				`{"role":"user","content":"q"},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},` +
+				`{"role":"user","content":` + tt.content + `}]}`
+			got := reencodeAnthropicEdited(t, body, tt.edit)
+			assert.JSONEq(t, `{"type":"ephemeral"}`, string(got.CacheControl))
+			require.Len(t, got.Messages, 3)
+			want := tt.want
+			if want == "" {
+				want = tt.content
+			}
+			assert.JSONEq(t, want, string(got.Messages[2].Content))
+		})
+	}
+}
+
+func TestAnthropicRequest_BlankSystemBlocks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		system     string
+		wantSystem string
+	}{
+		{
+			name:       "a marker on a blank first block is dropped",
+			system:     `[{"type":"text","text":" \n","cache_control":{"type":"ephemeral"}},{"type":"text","text":"A"},{"type":"text","text":"B"}]`,
+			wantSystem: `"A\nB"`,
+		},
+		{
+			name:       "a marker on a later blank block moves to the text before it",
+			system:     `[{"type":"text","text":"A"},{"type":"text","text":" ","cache_control":{"type":"ephemeral"}},{"type":"text","text":"B"}]`,
+			wantSystem: `[{"type":"text","text":"A","cache_control":{"type":"ephemeral"}},{"type":"text","text":"B"}]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := reencodeAnthropic(t, `{"model":"claude-haiku-4-5","max_tokens":5,"system":`+tt.system+`,"messages":[{"role":"user","content":"hi"}]}`)
+			assert.JSONEq(t, tt.wantSystem, string(got.System))
+		})
+	}
+}
+
+func TestAnthropicSplitAtCacheBoundary_RefusesUnsafeSplits(t *testing.T) {
+	t.Parallel()
+
+	at := func(newline, newlines int) *CanonicalCacheBreakpoint {
+		return &CanonicalCacheBreakpoint{inText: true, newline: newline, newlines: newlines}
+	}
+	tests := []struct {
+		name       string
+		text       string
+		bp         *CanonicalCacheBreakpoint
+		head, tail string
+		ok         bool
+	}{
+		{name: "first joiner", text: "a\nb\nc", bp: at(0, 2), head: "a", tail: "b\nc", ok: true},
+		{name: "second joiner", text: "a\nb\nc", bp: at(1, 2), head: "a\nb", tail: "c", ok: true},
+		{name: "last text block", text: "a\nb", bp: at(1, 1), head: "a\nb", ok: true},
+		{name: "end of segment", text: "a\nb", bp: &CanonicalCacheBreakpoint{}},
+		{name: "nil", text: "a\nb"},
+		{name: "newline count changed", text: "a\nb\nc", bp: at(0, 1)},
+		{name: "index past the count", text: "a\nb", bp: at(2, 1)},
+		{name: "blank tail", text: "a\n ", bp: at(0, 1)},
+		{name: "blank head", text: " \nb", bp: at(0, 1)},
+		{name: "blank last block", text: " ", bp: at(0, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			head, tail, ok := splitAtCacheBoundary(tt.text, tt.bp)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.head, head)
+			assert.Equal(t, tt.tail, tail)
+		})
+	}
+}
+
+func TestAnthropicRequest_ClaudeCodeShapedBodyKeepsMarkersInPlace(t *testing.T) {
+	t.Parallel()
+
+	got := reencodeAnthropic(t, `{
+		"model": "claude-haiku-4-5", "max_tokens": 5,
+		"system": [
+			{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.0;"},
+			{"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+			{"type": "text", "text": "\nYou are an interactive CLI tool.\n", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+		],
+		"tools": [
+			{"name": "Bash", "input_schema": {"type": "object"}},
+			{"name": "Read", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+		],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "<system-reminder>ctx</system-reminder>"}, {"type": "text", "text": "list files"}]},
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "User wants ls.", "signature": "sig", "cache_control": {"type": "ephemeral"}},
+				{"type": "text", "text": "I'll list them."},
+				{"type": "tool_use", "id": "toolu_01A", "name": "Bash", "input": {"command": "ls"}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "toolu_01A", "content": "a.go"},
+				{"type": "text", "text": "thanks", "cache_control": {"type": "ephemeral"}}
+			]}
+		]
+	}`)
+
+	assert.JSONEq(t, `[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.0;\nYou are Claude Code.\n\nYou are an interactive CLI tool.\n","cache_control":{"type":"ephemeral","ttl":"1h"}}]`, string(got.System))
+	assert.Equal(t, 1, bytes.Count(got.Tools, []byte(`"cache_control"`)))
+	require.Len(t, got.Messages, 4)
+	assert.NotContains(t, string(got.Messages[1].Content), "cache_control")
+	assert.JSONEq(t, `[{"type":"tool_result","tool_use_id":"toolu_01A","content":"a.go"}]`, string(got.Messages[2].Content))
+	assert.JSONEq(t, `[{"type":"text","text":"thanks","cache_control":{"type":"ephemeral"}}]`, string(got.Messages[3].Content))
+}
+
+func TestAnthropicDecodeRequest_BlankSystemStringIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"claude-haiku-4-5","max_tokens":5,"system":" \n ","messages":[{"role":"user","content":"hi"}]}`)
+	cr, err := (&AnthropicAdapter{}).DecodeRequest(body)
+	require.NoError(t, err)
+	assert.Empty(t, cr.System)
+
+	cr, err = (&AnthropicAdapter{}).DecodeRequest([]byte(`{"model":"m","max_tokens":5,"system":"  keep me \n","messages":[]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "  keep me \n", cr.System)
+
+	out, err := NewRegistry().AdaptRequest(body, FormatAnthropic, FormatBedrock)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"system"`)
 }

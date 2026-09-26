@@ -16,12 +16,25 @@ package adapter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 )
 
 var openRouterRequestKeys = []string{"provider", "models", "transforms", "route"}
 
 var openRouterResponseKeys = []string{"provider"}
+
+// openRouterClientKeys are the top-level keys an OpenAI Chat client may send
+// to OpenRouter through the gateway: provider routing preferences and the
+// session_id and user that pin requests to a warm cache. models, route and
+// plugins stay out because they bypass model enforcement or bill the tenant
+// key for paid features (ENG-1618 D6).
+var openRouterClientKeys = []string{"provider", "session_id", "user"}
+
+// openRouterModelKeys would select a model from inside provider; OpenRouter
+// documents none there, so any that appear are dropped rather than trusted.
+var openRouterModelKeys = []string{"model", "models"}
 
 // OpenRouterAdapter wraps OpenAIAdapter and preserves OpenRouter routing fields.
 type OpenRouterAdapter struct {
@@ -49,6 +62,9 @@ func (a *OpenRouterAdapter) DecodeResponse(body []byte) (*CanonicalResponse, err
 	cr, err := a.openai.DecodeResponse(body)
 	if err != nil {
 		return nil, err
+	}
+	if cr.Usage != nil {
+		logOpenRouterBilling(body)
 	}
 	ext := extractOpenRouterKeys(body, openRouterResponseKeys)
 	if len(ext) == 0 {
@@ -81,8 +97,11 @@ func (a *OpenRouterAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChu
 	}
 
 	sc, err := a.openai.DecodeStreamChunk(payload)
-	if err != nil || sc == nil {
+	if err != nil || sc == nil || sc.UpstreamErrorOnly() {
 		return sc, err
+	}
+	if sc.Usage != nil {
+		logOpenRouterBilling(payload)
 	}
 	ext := extractOpenRouterKeys(payload, openRouterResponseKeys)
 	if len(ext) == 0 {
@@ -118,6 +137,39 @@ func (a *OpenRouterAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]
 	return lines, nil
 }
 
+type openRouterBilling struct {
+	Usage struct {
+		Cost          *float64 `json:"cost"`
+		CacheDiscount *float64 `json:"cache_discount"`
+	} `json:"usage"`
+	CacheDiscount *float64 `json:"cache_discount"`
+}
+
+func logOpenRouterBilling(body []byte) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	var b openRouterBilling
+	if err := json.Unmarshal(body, &b); err != nil {
+		return
+	}
+	discount := b.Usage.CacheDiscount
+	if discount == nil {
+		discount = b.CacheDiscount
+	}
+	if b.Usage.Cost == nil && discount == nil {
+		return
+	}
+	attrs := make([]any, 0, 2)
+	if b.Usage.Cost != nil {
+		attrs = append(attrs, slog.Float64("cost", *b.Usage.Cost))
+	}
+	if discount != nil {
+		attrs = append(attrs, slog.Float64("cache_discount", *discount))
+	}
+	slog.Debug("openrouter reported billing", attrs...)
+}
+
 func extractOpenRouterKeys(body []byte, keys []string) map[string]json.RawMessage {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -147,6 +199,46 @@ func mergeJSONExtensions(base []byte, extensions map[string]json.RawMessage) ([]
 		out[k] = v
 	}
 	return json.Marshal(out)
+}
+
+// graftOpenRouterClientKeys copies openRouterClientKeys from the client's
+// body onto the re-encoded one. provider must be an object and session_id and
+// user strings; anything else is left out.
+func graftOpenRouterClientKeys(clientBody, encoded []byte) ([]byte, error) {
+	keys := extractOpenRouterKeys(clientBody, openRouterClientKeys)
+	for k, v := range keys {
+		var ok bool
+		if k == "provider" {
+			v, ok = openRouterProviderPreferences(v)
+			keys[k] = v
+		} else {
+			var s string
+			ok = json.Unmarshal(v, &s) == nil
+		}
+		if !ok {
+			delete(keys, k)
+		}
+	}
+	return mergeJSONExtensions(encoded, keys)
+}
+
+func openRouterProviderPreferences(raw json.RawMessage) (json.RawMessage, bool) {
+	var prefs map[string]json.RawMessage
+	if json.Unmarshal(raw, &prefs) != nil || prefs == nil {
+		return nil, false
+	}
+	dropped := false
+	for _, k := range openRouterModelKeys {
+		if _, has := prefs[k]; has {
+			delete(prefs, k)
+			dropped = true
+		}
+	}
+	if !dropped {
+		return raw, true
+	}
+	out, err := json.Marshal(prefs)
+	return out, err == nil
 }
 
 func isSSECommentLine(line []byte) bool {

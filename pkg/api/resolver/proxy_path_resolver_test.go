@@ -20,6 +20,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -186,5 +187,33 @@ func TestProxyRouteAllowedMethods(t *testing.T) {
 				t.Fatal("AllowsMethod(PUT) = true")
 			}
 		})
+	}
+}
+
+func TestProxyCapabilities_OnlyChatIsAChatRequest(t *testing.T) {
+	t.Parallel()
+	if string(CapabilityChat) != providers.CapabilityChat {
+		t.Fatalf("CapabilityChat = %q, providers.CapabilityChat = %q", CapabilityChat, providers.CapabilityChat)
+	}
+	cases := []struct {
+		capability ProxyCapability
+		want       bool
+	}{
+		{capability: CapabilityChat, want: true},
+		{capability: CapabilityEmbeddings},
+		{capability: CapabilityRerank},
+		{capability: CapabilityFiles},
+		{capability: CapabilityModels},
+		{capability: CapabilityImages},
+		{capability: CapabilityAudioSpeech},
+		{capability: CapabilityAudioTranscription},
+	}
+	formats := []adapter.Format{adapter.FormatOpenAI, adapter.FormatOpenAIEmbeddings, adapter.FormatCohereRerank}
+	for _, tc := range cases {
+		for _, f := range formats {
+			if got := adapter.IsChatRequest(string(tc.capability), f); got != tc.want {
+				t.Errorf("IsChatRequest(%q, %s) = %v, want %v", tc.capability, f, got, tc.want)
+			}
+		}
 	}
 }

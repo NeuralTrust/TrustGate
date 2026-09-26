@@ -251,15 +251,33 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
+			if adapter.IsRequestDecodeError(decErr) {
+				if !adapter.IsChatRequest(in.Request.ProxyCapability, format) {
+					return passThrough(), nil
+				}
+				p.warn(ctx, "trustguard request body decode failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.String("stage", string(in.Stage)),
+					slog.Any("error", decErr),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
+			}
+			if creq.DroppedInputItems > 0 {
+				p.debug(ctx, "trustguard request input items left out of inspection",
+					slog.String("plugin", PluginName),
+					slog.Int("dropped_items", creq.DroppedInputItems),
+				)
 			}
 			if strings.TrimSpace(joinRequestText(creq)) == "" && len(extractPayloadAttachments(in.Request.Body)) == 0 {
 				return passThrough(), nil
 			}
-			reg := p.registry
+			reg, original := p.registry, in.Request.Body
 			tgt.apply = func(masked string) ([]byte, bool) {
-				return rewriteRequest(reg, format, creq, masked)
+				return rewriteRequest(reg, format, original, creq, masked)
 			}
 			raw, err := llmRequestPayloadWithAttachments(creq, extractPayloadAttachments(in.Request.Body))
 			if err != nil {

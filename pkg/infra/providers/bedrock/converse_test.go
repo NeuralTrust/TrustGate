@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -172,10 +173,15 @@ func TestConverseResponseJSON(t *testing.T) {
 			},
 		}},
 		Usage: &bedrockTypes.TokenUsage{
-			InputTokens:          aws.Int32(12),
-			OutputTokens:         aws.Int32(7),
-			TotalTokens:          aws.Int32(19),
-			CacheReadInputTokens: aws.Int32(4),
+			InputTokens:           aws.Int32(12),
+			OutputTokens:          aws.Int32(7),
+			TotalTokens:           aws.Int32(19),
+			CacheReadInputTokens:  aws.Int32(4),
+			CacheWriteInputTokens: aws.Int32(300),
+			CacheDetails: []bedrockTypes.CacheDetail{
+				{InputTokens: aws.Int32(200), Ttl: bedrockTypes.CacheTTLOneHour},
+				{InputTokens: aws.Int32(100), Ttl: bedrockTypes.CacheTTLFiveMinutes},
+			},
 		},
 		Metrics: &bedrockTypes.ConverseMetrics{LatencyMs: aws.Int64(321)},
 	}
@@ -190,9 +196,34 @@ func TestConverseResponseJSON(t *testing.T) {
 			{"toolUse": {"toolUseId": "call_1", "name": "get_weather", "input": {"city": "Madrid"}}}
 		]}},
 		"stopReason": "tool_use",
-		"usage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19, "cacheReadInputTokens": 4},
+		"usage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19, "cacheReadInputTokens": 4, "cacheWriteInputTokens": 300,
+			"cacheDetails": [{"inputTokens": 200, "ttl": "1h"}, {"inputTokens": 100, "ttl": "5m"}]},
 		"metrics": {"latencyMs": 321}
 	}`, string(body))
+}
+
+func TestWireUsage_CacheSplit(t *testing.T) {
+	wire := wireUsage(&bedrockTypes.TokenUsage{
+		InputTokens:           aws.Int32(10),
+		OutputTokens:          aws.Int32(5),
+		TotalTokens:           aws.Int32(15),
+		CacheWriteInputTokens: aws.Int32(300),
+		CacheDetails: []bedrockTypes.CacheDetail{
+			{InputTokens: aws.Int32(200), Ttl: bedrockTypes.CacheTTLOneHour},
+			{InputTokens: aws.Int32(100), Ttl: bedrockTypes.CacheTTLFiveMinutes},
+		},
+	})
+	body, err := json.Marshal(adapter.ConverseResponse{StopReason: "end_turn", Usage: wire})
+	require.NoError(t, err)
+
+	cr, err := (&adapter.BedrockAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+	require.NotNil(t, cr.Usage)
+	assert.Equal(t, 310, cr.Usage.InputTokens)
+	assert.Equal(t, 5, cr.Usage.OutputTokens)
+	assert.Equal(t, 315, cr.Usage.TotalTokens)
+	assert.Equal(t, 300, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 200, cr.Usage.CacheWrite1hInputTokens)
 }
 
 func TestConverseStreamEventJSON(t *testing.T) {
@@ -255,6 +286,21 @@ func TestConverseStreamEventJSON(t *testing.T) {
 				Metrics: &bedrockTypes.ConverseStreamMetrics{LatencyMs: aws.Int64(100)},
 			}},
 			want: `{"metadata":{"usage":{"inputTokens":5,"outputTokens":9,"totalTokens":14},"metrics":{"latencyMs":100}}}`,
+		},
+		{
+			name: "metadata with cache details",
+			event: &bedrockTypes.ConverseStreamOutputMemberMetadata{Value: bedrockTypes.ConverseStreamMetadataEvent{
+				Usage: &bedrockTypes.TokenUsage{
+					InputTokens:           aws.Int32(12),
+					OutputTokens:          aws.Int32(7),
+					TotalTokens:           aws.Int32(19),
+					CacheReadInputTokens:  aws.Int32(4),
+					CacheWriteInputTokens: aws.Int32(2),
+					CacheDetails:          []bedrockTypes.CacheDetail{{InputTokens: aws.Int32(2), Ttl: bedrockTypes.CacheTTLOneHour}},
+				},
+			}},
+			want: `{"metadata":{"usage":{"inputTokens":12,"outputTokens":7,"totalTokens":19,"cacheReadInputTokens":4,"cacheWriteInputTokens":2,
+				"cacheDetails":[{"inputTokens":2,"ttl":"1h"}]}}}`,
 		},
 	}
 
@@ -527,4 +573,208 @@ func TestDecodeConverseBody_InvalidImageBytesIsARequestDecodeError(t *testing.T)
 
 	require.Error(t, err)
 	assert.True(t, adapter.IsRequestDecodeError(err))
+}
+
+func TestDecodeConverseBody_CachePoints(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{
+		"system":[{"text":"rules"},{"cachePoint":{"type":"default","ttl":"1h"}}],
+		"messages":[{"role":"user","content":[{"text":"doc"},{"cachePoint":{"type":"default","ttl":"5m"}},{"text":"question"}]}],
+		"toolConfig":{"tools":[{"toolSpec":{"name":"f","inputSchema":{"json":{"type":"object"}}}},{"cachePoint":{"type":"default"}}]}
+	}`))
+	require.NoError(t, err)
+	in := params.input("m")
+
+	require.Len(t, in.System, 2)
+	systemPoint, ok := in.System[1].(*bedrockTypes.SystemContentBlockMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault, Ttl: bedrockTypes.CacheTTLOneHour}, systemPoint.Value)
+
+	require.Len(t, in.Messages[0].Content, 3)
+	contentPoint, ok := in.Messages[0].Content[1].(*bedrockTypes.ContentBlockMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}, contentPoint.Value)
+
+	require.Len(t, in.ToolConfig.Tools, 2)
+	toolPoint, ok := in.ToolConfig.Tools[1].(*bedrockTypes.ToolMemberCachePoint)
+	require.True(t, ok)
+	assert.Equal(t, bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}, toolPoint.Value)
+}
+
+func TestFoldSystemIntoFirstTurn_KeepsCachePoint(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prepended before the first user text without merging", func(t *testing.T) {
+		t.Parallel()
+		params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"cachePoint":{"type":"default","ttl":"1h"}},{"text":"today"}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+		require.NoError(t, err)
+		require.True(t, params.foldSystemIntoFirstTurn())
+		assert.Nil(t, params.system)
+
+		content := params.messages[0].Content
+		require.Len(t, content, 4)
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "rules"}, content[0])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault, Ttl: bedrockTypes.CacheTTLOneHour}}, content[1])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "today"}, content[2])
+		assert.Equal(t, &bedrockTypes.ContentBlockMemberText{Value: "hi"}, content[3])
+	})
+	t.Run("new user turn when the conversation opens with the assistant", func(t *testing.T) {
+		t.Parallel()
+		params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"assistant","content":[{"text":"Hello"}]}]}`))
+		require.NoError(t, err)
+		require.True(t, params.foldSystemIntoFirstTurn())
+
+		require.Len(t, params.messages, 2)
+		assert.Equal(t, bedrockTypes.ConversationRoleUser, params.messages[0].Role)
+		require.Len(t, params.messages[0].Content, 2)
+		assert.IsType(t, &bedrockTypes.ContentBlockMemberCachePoint{}, params.messages[0].Content[1])
+	})
+}
+
+func TestDecodeConverseBody_CachePointAfterUntranslatedBlockIsDropped(t *testing.T) {
+	t.Parallel()
+
+	cp := &bedrockTypes.ContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}
+	tests := []struct {
+		name    string
+		content string
+		want    []bedrockTypes.ContentBlock
+	}{
+		{
+			name:    "document before the cachePoint (AWS documentation example)",
+			content: `[{"document":{"format":"pdf","name":"report","source":{"bytes":"JVBERi0="}}},{"cachePoint":{"type":"default"}},{"text":"Summarize"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "Summarize"}},
+		},
+		{
+			name:    "document and cachePoint only",
+			content: `[{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}}]`,
+			want:    []bedrockTypes.ContentBlock{},
+		},
+		{
+			name:    "S3 image before the cachePoint",
+			content: `[{"image":{"format":"png","source":{"s3Location":{"uri":"s3://b/k.png"}}}},{"cachePoint":{"type":"default"}},{"text":"what"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "what"}},
+		},
+		{
+			name:    "dropped block between text and cachePoint keeps one cachePoint",
+			content: `[{"text":"doc"},{"cachePoint":{"type":"default"}},{"document":{"format":"txt","name":"d","source":{"bytes":"aGk="}}},{"cachePoint":{"type":"default"}},{"text":"q"}]`,
+			want:    []bedrockTypes.ContentBlock{&bedrockTypes.ContentBlockMemberText{Value: "doc"}, cp, &bedrockTypes.ContentBlockMemberText{Value: "q"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			params, err := decodeConverseBody([]byte(`{"messages":[{"role":"user","content":` + tt.content + `}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, params.messages[0].Content)
+		})
+	}
+}
+
+func TestDecodeConverseBody_ToolCachePointNeedsAToolBefore(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{"messages":[],"toolConfig":{"tools":[
+		{"cachePoint":{"type":"default"}},
+		{"toolSpec":{"name":"f","inputSchema":{"json":{"type":"object"}}}},
+		{"cachePoint":{"type":"default"}},
+		{"cachePoint":{"type":"default","ttl":"1h"}}
+	]}}`))
+	require.NoError(t, err)
+
+	tools := params.tools.Tools
+	require.Len(t, tools, 2)
+	assert.IsType(t, &bedrockTypes.ToolMemberToolSpec{}, tools[0])
+	assert.Equal(t, &bedrockTypes.ToolMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}, tools[1])
+}
+
+func TestDecodeConverseBody_SystemGuardContent(t *testing.T) {
+	t.Parallel()
+
+	cp := &bedrockTypes.SystemContentBlockMemberCachePoint{Value: bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}}
+	tests := []struct {
+		name   string
+		system string
+		want   []bedrockTypes.SystemContentBlock
+	}{
+		{
+			name:   "guarded text keeps its cachePoint",
+			system: `[{"guardContent":{"text":{"text":"policy","qualifiers":["guard_content"]}}},{"cachePoint":{"type":"default"}}]`,
+			want: []bedrockTypes.SystemContentBlock{
+				&bedrockTypes.SystemContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: bedrockTypes.GuardrailConverseTextBlock{
+					Text:       aws.String("policy"),
+					Qualifiers: []bedrockTypes.GuardrailConverseContentQualifier{bedrockTypes.GuardrailConverseContentQualifierGuardContent},
+				}}},
+				cp,
+			},
+		},
+		{
+			name:   "guarded image",
+			system: `[{"guardContent":{"image":{"format":"png","source":{"bytes":"iVBORw0KGgo="}}}}]`,
+			want: []bedrockTypes.SystemContentBlock{
+				&bedrockTypes.SystemContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberImage{Value: bedrockTypes.GuardrailConverseImageBlock{
+					Format: bedrockTypes.GuardrailConverseImageFormatPng,
+					Source: &bedrockTypes.GuardrailConverseImageSourceMemberBytes{Value: []byte("\x89PNG\r\n\x1a\n")},
+				}}},
+			},
+		},
+		{
+			name:   "unknown system block is dropped, not sent as empty text",
+			system: `[{"guardContent":{}},{"cachePoint":{"type":"default"}},{"text":"rules"}]`,
+			want:   []bedrockTypes.SystemContentBlock{&bedrockTypes.SystemContentBlockMemberText{Value: "rules"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			params, err := decodeConverseBody([]byte(`{"system":` + tt.system + `,"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, params.system)
+		})
+	}
+}
+
+func TestFoldSystemIntoFirstTurn_KeepsGuardContent(t *testing.T) {
+	t.Parallel()
+
+	params, err := decodeConverseBody([]byte(`{"system":[{"text":"rules"},{"guardContent":{"text":{"text":"policy"}}}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+	require.NoError(t, err)
+	require.True(t, params.foldSystemIntoFirstTurn())
+
+	assert.Equal(t, []bedrockTypes.ContentBlock{
+		&bedrockTypes.ContentBlockMemberText{Value: "rules"},
+		&bedrockTypes.ContentBlockMemberGuardContent{Value: &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: bedrockTypes.GuardrailConverseTextBlock{Text: aws.String("policy")}}},
+		&bedrockTypes.ContentBlockMemberText{Value: "hi"},
+	}, params.messages[0].Content)
+}
+
+func TestFoldSystemIntoFirstTurn_LeavesEarlierInputsAlone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"merged into the first text", `{"system":[{"text":"rules"}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`},
+		{"prepended block by block", `{"system":[{"text":"rules"},{"cachePoint":{"type":"default"}}],"messages":[{"role":"user","content":[{"text":"hi"}]}]}`},
+		{"prepended before a tool result", `{"system":[{"text":"rules"}],"messages":[{"role":"user","content":[{"toolResult":{"toolUseId":"c1","content":[{"text":"ok"}]}}]}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			params, err := decodeConverseBody([]byte(tt.body))
+			require.NoError(t, err)
+			before := params.input("m")
+			system := slices.Clone(before.System)
+			first := slices.Clone(before.Messages[0].Content)
+
+			require.True(t, params.foldSystemIntoFirstTurn())
+			assert.Equal(t, system, before.System)
+			assert.Equal(t, first, before.Messages[0].Content)
+			assert.NotEqual(t, first, params.messages[0].Content)
+		})
+	}
 }

@@ -17,6 +17,7 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,6 +68,362 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_ArrayInput(t *testing.T) {
 	assert.Equal(t, "What is Go?", canonical.Messages[0].Content)
 	assert.Equal(t, "assistant", canonical.Messages[1].Role)
 	assert.Equal(t, "Tell me more.", canonical.Messages[2].Content)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_AssistantTurns(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		want       []CanonicalMessage
+		wantSystem string
+	}{
+		{
+			name: "text and parallel calls fold into one assistant message",
+			input: `[
+				{"role": "user", "content": "Weather and time?"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{}"},
+				{"type": "function_call", "call_id": "call_2", "name": "get_time", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
+				{"type": "function_call_output", "call_id": "call_2", "output": "noon"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Weather and time?"},
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{
+					{ID: "call_1", Name: "get_weather", Arguments: "{}"},
+					{ID: "call_2", Name: "get_time", Arguments: "{}"},
+				}},
+				{Role: "tool", Content: "sunny", ToolCallID: "call_1"},
+				{Role: "tool", Content: "noon", ToolCallID: "call_2"},
+			},
+		},
+		{
+			name: "an empty assistant message between items is dropped",
+			input: `[
+				{"role": "user", "content": "Find the client."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "function_call", "call_id": "call_1", "name": "query_clients", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+				{"type": "function_call_output", "call_id": "call_1", "output": "Ana"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Find the client."},
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "query_clients", Arguments: "{}"}}},
+				{Role: "tool", Content: "Ana", ToolCallID: "call_1"},
+			},
+		},
+		{
+			name: "text after a call joins the same turn",
+			input: `[
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "One."}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Two."}]},
+				{"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", Content: "One.\nTwo.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "ok", ToolCallID: "call_1"},
+			},
+		},
+		{
+			name: "a refusal-only assistant message is kept",
+			input: `[
+				{"role": "user", "content": "Do the thing."},
+				{"type": "message", "role": "assistant", "content": [{"type": "refusal", "refusal": "I can't help with that."}]},
+				{"role": "user", "content": "Why?"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Do the thing."},
+				{Role: "assistant", Content: "I can't help with that."},
+				{Role: "user", Content: "Why?"},
+			},
+		},
+		{
+			name: "an empty assistant message between users is dropped",
+			input: `[
+				{"role": "user", "content": "Hi."},
+				{"type": "message", "role": "assistant", "content": []},
+				{"role": "user", "content": "Hello?"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Hi."},
+				{Role: "user", Content: "Hello?"},
+			},
+		},
+		{
+			name: "a developer message between assistant items stays in the turn",
+			input: `[
+				{"role": "user", "content": "Hi."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A."}]},
+				{"role": "developer", "content": "Be brief."},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+				{"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "c1", "output": "ok"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "user", Content: "Hi."},
+				{Role: "assistant", Content: "A.", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "ok", ToolCallID: "c1"},
+			},
+			wantSystem: "Be brief.",
+		},
+		{
+			name: "skipped items between assistant items stay in the turn",
+			input: `[
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "item_reference", "id": "msg_1"},
+				{"type": "function_call", "call_id": "B", "name": "g", "arguments": "{}"},
+				{"type": "custom_tool_call", "call_id": "C", "name": "apply_patch", "input": "*** Begin Patch"},
+				{"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "q"}},
+				{"type": "tool_search_call", "call_id": "ts1", "execution": "client", "arguments": {"query": "calendar"}},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "function_call_output", "call_id": "B", "output": "b"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", Content: "Done.", ToolCalls: []CanonicalToolCall{
+					{ID: "A", Name: "f", Arguments: "{}"},
+					{ID: "B", Name: "g", Arguments: "{}"},
+				}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "tool", Content: "b", ToolCallID: "B"},
+			},
+		},
+		{
+			name: "a tool output ends the turn",
+			input: `[
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Next."}]},
+				{"type": "function_call", "call_id": "B", "name": "g", "arguments": "{}"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "A", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "assistant", Content: "Next.", ToolCalls: []CanonicalToolCall{{ID: "B", Name: "g", Arguments: "{}"}}},
+			},
+		},
+		{
+			name: "an empty assistant message does not open a turn",
+			input: `[
+				{"type": "function_call", "call_id": "A", "name": "f", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "A", "output": "a"},
+				{"type": "message", "role": "assistant", "content": ""},
+				{"role": "user", "content": "Go on."}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "A", Name: "f", Arguments: "{}"}}},
+				{Role: "tool", Content: "a", ToolCallID: "A"},
+				{Role: "user", Content: "Go on."},
+			},
+		},
+		{
+			name: "reasoning items stay within the turn",
+			input: `[
+				{"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "think"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Checking."}]},
+				{"type": "reasoning", "id": "rs_2", "summary": []},
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": "{}"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", Content: "Checking.", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "f", Arguments: "{}"}}},
+			},
+		},
+		{
+			name: "a call with no arguments gets an empty object",
+			input: `[
+				{"type": "function_call", "call_id": "call_1", "name": "f", "arguments": ""},
+				{"type": "function_call", "call_id": "call_2", "name": "g"}
+			]`,
+			want: []CanonicalMessage{
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{
+					{ID: "call_1", Name: "f", Arguments: "{}"},
+					{ID: "call_2", Name: "g", Arguments: "{}"},
+				}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(`{"model": "deepseek-chat", "input": ` + tt.input + `}`))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, canonical.Messages)
+			assert.Equal(t, tt.wantSystem, canonical.System)
+		})
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "string", output: `"sunny"`, want: "sunny"},
+		{name: "text parts are joined", output: `[{"type": "input_text", "text": "line 1"}, {"type": "output_text", "text": "line 2"}]`, want: "line 1\nline 2"},
+		{name: "non-text parts are left out", output: `[{"type": "input_text", "text": "img"}, {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: "img"},
+		{name: "only non-text parts", output: `[{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]`, want: responsesNonTextToolOutput},
+		{name: "empty list", output: `[]`, want: responsesNonTextToolOutput},
+		{name: "null", output: `null`, want: responsesNonTextToolOutput},
+		{name: "empty string", output: `""`, want: responsesNonTextToolOutput},
+		{name: "blank string", output: `" \n\t "`, want: responsesNonTextToolOutput},
+		{name: "blank text parts", output: `[{"type": "input_text", "text": "  "}]`, want: responsesNonTextToolOutput},
+		{name: "object", output: `{"stdout": "a"}`, want: `{"stdout": "a"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{"model": "m", "input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "look"}]},
+				{"type": "function_call", "call_id": "c1", "name": "view_image", "arguments": "{}"},
+				{"type": "function_call_output", "call_id": "c1", "output": ` + tt.output + `}
+			]}`
+			canonical, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
+			require.NoError(t, err)
+			assert.Equal(t, []CanonicalMessage{
+				{Role: "user", Content: "look"},
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "view_image", Arguments: "{}"}}},
+				{Role: "tool", Content: tt.want, ToolCallID: "c1"},
+			}, canonical.Messages)
+		})
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_MalformedInputFails(t *testing.T) {
+	for _, input := range []string{
+		`{"input": 42}`,
+		`{"input": {"role": "user", "content": "hi"}}`,
+		`{"input": true}`,
+	} {
+		_, err := (&OpenAIAdapter{}).DecodeRequest([]byte(input))
+		assert.Error(t, err, input)
+	}
+
+	_, err := NewRegistry().DecodeRequestFor([]byte(`{"model": "m", "input": 42}`), FormatOpenAIResponses)
+	assert.True(t, IsRequestDecodeError(err), "a malformed input is the caller's error: %v", err)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_LeavesOutItemsItCannotDecode(t *testing.T) {
+	body := `{"model": "m", "tools": [{"type": "function", "name": "book", "parameters": {"type": "object"}}], "input": [
+		{"role": "user", "content": "Find my calendar tool."},
+		{"type": "tool_search_call", "call_id": "ts1", "execution": "client", "arguments": {"query": "calendar"}, "status": "completed"},
+		{"type": "tool_search_output", "call_id": "ts1", "execution": "client", "status": "completed", "tools": []},
+		{"type": "input_text", "text": 42},
+		"stray",
+		{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Found it."}]},
+		{"type": "function_call", "call_id": "c1", "name": "book", "arguments": "{\"day\":\"mon\"}"},
+		{"type": "function_call_output", "call_id": "c1", "output": "booked"},
+		{"role": "user", "content": "Thanks."}
+	]}`
+
+	canonical, err := NewRegistry().DecodeRequestFor([]byte(body), FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Equal(t, []CanonicalMessage{
+		{Role: "user", Content: "Find my calendar tool."},
+		{Role: "assistant", Content: "Found it.", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "book", Arguments: `{"day":"mon"}`}}},
+		{Role: "tool", Content: "booked", ToolCallID: "c1"},
+		{Role: "user", Content: "Thanks."},
+	}, canonical.Messages)
+	assert.Equal(t, 2, canonical.DroppedInputItems)
+	require.Len(t, canonical.Tools, 1)
+	assert.Equal(t, "book", canonical.Tools[0].Name)
+
+	for _, target := range []Format{FormatOpenAI, FormatAnthropic, FormatBedrock, FormatGemini, FormatCohere, FormatDeepSeek} {
+		_, err := NewRegistry().AdaptRequest([]byte(body), FormatOpenAIResponses, target)
+		assert.NoError(t, err, target)
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_FunctionCallNonStringArguments(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments string
+		want      string
+	}{
+		{name: "object", arguments: `{"city": "Paris", "days": [1, 2]}`, want: `{"city":"Paris","days":[1,2]}`},
+		{name: "array", arguments: `[1, 2]`, want: `[1,2]`},
+		{name: "number", arguments: `42`, want: `42`},
+		{name: "null", arguments: `null`, want: `{}`},
+		{name: "blank string", arguments: `"  "`, want: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"model": "m", "input": [
+				{"role": "user", "content": "weather?"},
+				{"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": ` + tt.arguments + `},
+				{"type": "function_call_output", "call_id": "c1", "output": "sunny"}
+			]}`
+
+			canonical, err := NewRegistry().DecodeRequestFor([]byte(body), FormatOpenAIResponses)
+			require.NoError(t, err)
+			assert.Equal(t, []CanonicalMessage{
+				{Role: "user", Content: "weather?"},
+				{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "c1", Name: "get_weather", Arguments: tt.want}}},
+				{Role: "tool", Content: "sunny", ToolCallID: "c1"},
+			}, canonical.Messages)
+			assert.Zero(t, canonical.DroppedInputItems)
+		})
+	}
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_FunctionCallObjectArgumentsFanOut(t *testing.T) {
+	body := []byte(`{"model": "m", "input": [
+		{"role": "user", "content": "weather?"},
+		{"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": {"city": "Paris"}},
+		{"type": "function_call_output", "call_id": "c1", "output": "sunny"}
+	]}`)
+
+	t.Run("openai", func(t *testing.T) {
+		out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatOpenAI)
+		require.NoError(t, err)
+		var req struct {
+			Messages []struct {
+				Role       string `json:"role"`
+				ToolCallID string `json:"tool_call_id"`
+				ToolCalls  []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(out, &req))
+		require.Len(t, req.Messages, 3)
+		require.Len(t, req.Messages[1].ToolCalls, 1)
+		assert.Equal(t, "c1", req.Messages[1].ToolCalls[0].ID)
+		assert.JSONEq(t, `{"city":"Paris"}`, req.Messages[1].ToolCalls[0].Function.Arguments)
+		assert.Equal(t, "tool", req.Messages[2].Role)
+		assert.Equal(t, "c1", req.Messages[2].ToolCallID)
+	})
+
+	t.Run("anthropic", func(t *testing.T) {
+		out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatAnthropic)
+		require.NoError(t, err)
+		var req struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(out, &req))
+		require.Len(t, req.Messages, 3)
+		type block struct {
+			Type      string          `json:"type"`
+			ID        string          `json:"id"`
+			Input     json.RawMessage `json:"input"`
+			ToolUseID string          `json:"tool_use_id"`
+		}
+		var call, result []block
+		require.NoError(t, json.Unmarshal(req.Messages[1].Content, &call))
+		require.NoError(t, json.Unmarshal(req.Messages[2].Content, &result))
+		require.Len(t, call, 1)
+		assert.Equal(t, "tool_use", call[0].Type)
+		assert.Equal(t, "c1", call[0].ID)
+		assert.JSONEq(t, `{"city":"Paris"}`, string(call[0].Input))
+		require.Len(t, result, 1)
+		assert.Equal(t, "tool_result", result[0].Type)
+		assert.Equal(t, "c1", result[0].ToolUseID)
+	})
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_InputTextItems(t *testing.T) {
@@ -785,6 +1142,44 @@ func TestUsageSubCounts_OpenAIResponses_CachedInput(t *testing.T) {
 	assert.Equal(t, 5, cr.Usage.InputTokens, "CachedInputTokens is a sub-count; InputTokens must not be reduced")
 }
 
+func TestUsageCache_OpenAIResponses_CacheWrite(t *testing.T) {
+	const usage = `{"input_tokens":3000,"output_tokens":9,"total_tokens":3009,"input_tokens_details":{"cached_tokens":1200,"cache_write_tokens":700}}`
+	want := &CanonicalUsage{InputTokens: 3000, OutputTokens: 9, TotalTokens: 3009, CachedInputTokens: 1200, CacheWriteInputTokens: 700}
+	runUsageCases(t, &OpenAIResponsesAdapter{}, []usageCase{
+		{
+			name:      "buffered",
+			body:      []byte(`{"id":"resp_1","object":"response","model":"gpt-5.6","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":` + usage + `}`),
+			path:      "response",
+			wantUsage: want,
+		},
+		{
+			name:      "stream completed",
+			body:      []byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6","status":"completed","usage":` + usage + `}}`),
+			path:      "stream",
+			wantUsage: want,
+		},
+	})
+}
+
+func TestUsageCache_OpenAIResponses_ZeroDetails(t *testing.T) {
+	const usage = `{"input_tokens":3000,"output_tokens":9,"total_tokens":3009,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0}}`
+	want := &CanonicalUsage{InputTokens: 3000, OutputTokens: 9, TotalTokens: 3009}
+	runUsageCases(t, &OpenAIResponsesAdapter{}, []usageCase{
+		{
+			name:      "buffered",
+			body:      []byte(`{"id":"resp_1","object":"response","model":"gpt-5.6","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":` + usage + `}`),
+			path:      "response",
+			wantUsage: want,
+		},
+		{
+			name:      "stream completed",
+			body:      []byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6","status":"completed","usage":` + usage + `}}`),
+			path:      "stream",
+			wantUsage: want,
+		},
+	})
+}
+
 // Responses API custom tools are flat (no nested "custom" object). They used to
 // be dropped on decode, silently removing the tool from the request (ENG-1281).
 func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
@@ -819,4 +1214,163 @@ func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
 	format, ok := out.Tools[1]["format"].(map[string]any)
 	require.True(t, ok, "format must survive: %v", out.Tools[1])
 	assert.Equal(t, "text", format["type"])
+}
+
+func TestResponsesRequest_CacheOptionsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	a := &OpenAIResponsesAdapter{}
+	req, err := a.DecodeRequest([]byte(`{"model":"gpt-5.6","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`))
+	require.NoError(t, err)
+	require.NotNil(t, req.CacheOptions)
+	assert.Equal(t, "explicit", req.CacheOptions.Mode)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h","prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`, string(out))
+}
+
+func TestResponsesRequest_BreakpointsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	body := `{"model":"gpt-5.6","input":[
+		{"role":"developer","content":[{"type":"input_text","text":"Static.","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Now: 12:00"}]},
+		{"role":"user","content":[{"type":"input_text","text":"Doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Q?"}]},
+		{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"result","prompt_cache_breakpoint":{"mode":"explicit"}}]}
+	]}`
+	a := &OpenAIResponsesAdapter{}
+	req, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "Static.\nNow: 12:00", req.System)
+	require.NotNil(t, req.SystemCache)
+	assert.Equal(t, []any{CacheTTL(""), nil, CacheTTL("")}, messageTTLs(req.Messages))
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	var got struct {
+		Instructions string            `json:"instructions"`
+		Input        []json.RawMessage `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.Empty(t, got.Instructions)
+	require.Len(t, got.Input, 4)
+	assert.JSONEq(t, `{"role":"developer","content":[{"type":"input_text","text":"Static.","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Now: 12:00"}]}`, string(got.Input[0]))
+	assert.JSONEq(t, `{"role":"user","content":[{"type":"input_text","text":"Doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Q?"}]}`, string(got.Input[1]))
+	assert.JSONEq(t, `{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"result","prompt_cache_breakpoint":{"mode":"explicit"}}]}`, string(got.Input[3]))
+
+	again, err := a.DecodeRequest(out)
+	require.NoError(t, err)
+	assert.Equal(t, req, again)
+}
+
+func TestResponsesRequest_WithoutBreakpointsKeepsInstructionsAndStringInput(t *testing.T) {
+	t.Parallel()
+
+	a := &OpenAIResponsesAdapter{}
+	body := `{"model":"gpt-5.6","instructions":"sys","input":[{"role":"developer","content":[{"type":"input_text","text":"dev"}]},{"role":"user","content":"hi"}]}`
+	req, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "sys\ndev", req.System)
+	assert.Nil(t, req.SystemCache)
+	assert.Nil(t, req.CacheOptions)
+
+	out, err := a.EncodeRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","instructions":"sys\ndev","input":"hi"}`, string(out))
+}
+
+func TestAdaptRequest_AnthropicBreakpointsReachResponsesOnGPT56Only(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	for _, stream := range []bool{false, true} {
+		for _, model := range []string{"gpt-5.6", "gpt-4o"} {
+			body, err := json.Marshal(map[string]any{
+				"model":      model,
+				"max_tokens": 64,
+				"stream":     stream,
+				"system":     []map[string]any{{"type": "text", "text": "Long prefix.", "cache_control": map[string]string{"type": "ephemeral", "ttl": "1h"}}},
+				"tools":      []map[string]any{{"name": "lookup", "input_schema": map[string]string{"type": "object"}, "cache_control": map[string]string{"type": "ephemeral"}}},
+				"messages":   []map[string]any{{"role": "user", "content": "Question?"}},
+			})
+			require.NoError(t, err)
+
+			out, err := reg.AdaptRequest(body, FormatAnthropic, FormatOpenAIResponses)
+			require.NoError(t, err)
+			var got struct {
+				Instructions string          `json:"instructions"`
+				Input        json.RawMessage `json:"input"`
+				Stream       bool            `json:"stream"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+			assert.Equal(t, stream, got.Stream)
+			assert.NotContains(t, string(out), "cache_control")
+			assert.NotContains(t, string(out), "prompt_cache_options")
+			if model == "gpt-4o" {
+				assert.Equal(t, "Long prefix.", got.Instructions)
+				assert.JSONEq(t, `"Question?"`, string(got.Input))
+				assert.NotContains(t, string(out), "prompt_cache_breakpoint")
+				continue
+			}
+			assert.Empty(t, got.Instructions)
+			assert.JSONEq(t, `[
+				{"role":"developer","content":[{"type":"input_text","text":"Long prefix.","prompt_cache_breakpoint":{"mode":"explicit"}}]},
+				{"role":"user","content":"Question?"}
+			]`, string(got.Input))
+			assert.Equal(t, 1, strings.Count(string(out), "prompt_cache_breakpoint"))
+		}
+	}
+}
+
+func TestAdaptRequest_AssistantBreakpointsDoNotTakeResponsesSlots(t *testing.T) {
+	t.Parallel()
+
+	cc := `,"cache_control":{"type":"ephemeral"}`
+	body := []byte(`{"model":"gpt-5.6","max_tokens":10,"system":[{"type":"text","text":"sys"` + cc + `}],"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"u1"` + cc + `}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"a1"` + cc + `}]},` +
+		`{"role":"user","content":[{"type":"text","text":"u2"` + cc + `}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"a2"` + cc + `}]}]}`)
+	out, err := NewRegistry().AdaptRequest(body, FormatAnthropic, FormatOpenAIResponses)
+	require.NoError(t, err)
+	var got struct {
+		Input json.RawMessage `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	bp := `"prompt_cache_breakpoint":{"mode":"explicit"}`
+	assert.JSONEq(t, `[
+		{"role":"developer","content":[{"type":"input_text","text":"sys",`+bp+`}]},
+		{"role":"user","content":[{"type":"input_text","text":"u1",`+bp+`}]},
+		{"role":"assistant","content":"a1"},
+		{"role":"user","content":[{"type":"input_text","text":"u2",`+bp+`}]},
+		{"role":"assistant","content":"a2"}
+	]`, string(got.Input))
+}
+
+func TestAdaptRequest_ExplicitModeIsDroppedWithTheLastBreakpoint(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.6","input":[{"role":"user","content":[{"type":"input_text","text":"doc","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"q"}]}],"prompt_cache_key":"k","prompt_cache_options":{"mode":"explicit"}}`)
+	out, err := NewRegistry().AdaptRequest(body, FormatOpenAIResponses, FormatOpenAI)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "prompt_cache_options")
+	assert.Contains(t, string(out), `"prompt_cache_key":"k"`)
+
+	chat := []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":[{"type":"text","text":"doc","cache_control":{"type":"ephemeral"}}]}],"prompt_cache_options":{"mode":"explicit"}}`)
+	out, err = NewRegistry().AdaptRequest(chat, FormatOpenAI, FormatOpenAIResponses)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"prompt_cache_breakpoint":{"mode":"explicit"}`)
+	assert.Contains(t, string(out), `"prompt_cache_options":{"mode":"explicit"}`)
+}
+
+func TestResponsesEncodeRequest_BreakpointSkipsTheStringInputShortcut(t *testing.T) {
+	t.Parallel()
+
+	out, err := (&OpenAIResponsesAdapter{}).EncodeRequest(&CanonicalRequest{
+		Model:    "gpt-5.6",
+		Messages: []CanonicalMessage{{Role: "user", Content: "Question?", Cache: &CanonicalCacheBreakpoint{}}},
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"gpt-5.6","input":[{"role":"user","content":[{"type":"input_text","text":"Question?","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`, string(out))
 }

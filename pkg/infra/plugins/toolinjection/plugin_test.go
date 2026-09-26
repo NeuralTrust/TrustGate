@@ -158,6 +158,20 @@ func TestApplyInjections(t *testing.T) {
 			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
 		},
 		{
+			name: "gateway wins keeps the client's cache marker on the replaced tool",
+			tools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "client", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
+			},
+			entries:  []injectDef{injectFn("safety_check", "gateway")},
+			conflict: conflictGatewayWins,
+			wantTools: []adapter.CanonicalTool{
+				{Name: "other", Description: "o"},
+				{Name: "safety_check", Description: "gateway", Cache: &adapter.CanonicalCacheBreakpoint{TTL: adapter.CacheTTL1h}},
+			},
+			wantOutcomes: []injectOutcome{{Name: "safety_check", Outcome: outcomeReplaced}},
+		},
+		{
 			name:     "client name collision client wins drops",
 			tools:    []adapter.CanonicalTool{{Name: "safety_check", Description: "client"}},
 			entries:  []injectDef{injectFn("safety_check", "gateway")},
@@ -711,11 +725,6 @@ func TestPluginExecuteNoOpMatrix(t *testing.T) {
 			req:      &infracontext.RequestContext{Provider: "", SourceFormat: "", Body: openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"})},
 		},
 		{
-			name:     "undecodable body",
-			settings: injectSettings(),
-			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte("{not-json")},
-		},
-		{
 			name:     "client wins drop is a no-op",
 			settings: dropSettings,
 			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"})},
@@ -792,5 +801,81 @@ func TestPluginExecuteRejectPath(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotMap, wantMap) {
 		t.Fatalf("reject body = %#v, want %#v", gotMap, wantMap)
+	}
+}
+
+func TestPluginExecuteUndecodableBodyFailsClosed(t *testing.T) {
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte("{not-json")},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+
+	if res != nil {
+		t.Fatalf("Execute() result = %#v, want nil", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("Execute() error is not *PluginError: %v", err)
+	}
+	if pe.StatusCode != http.StatusBadRequest || pe.Type != "invalid_request_body" {
+		t.Fatalf("PluginError = %d %q, want 400 invalid_request_body", pe.StatusCode, pe.Type)
+	}
+}
+
+func TestPluginExecuteResponsesInputItemItCannotDecode(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"docs"}},` +
+		`{"type":"function_call","call_id":"c1","name":"search_docs","arguments":{"q":1}}` +
+		`],"tools":[{"type":"function","name":"search_docs","parameters":{"type":"object"}}]}`)
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_responses", Body: body},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAIResponses)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor(RequestBody) error = %v", err)
+	}
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("decoded tools missing injected safety_check: %#v", decoded.Tools)
+	}
+}
+
+func TestPluginExecuteNonChatRequestsPassThrough(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"text-embedding-3-small","input":[1,2,3]}`,
+		`{"model":"text-embedding-3-small","input":[[1,2],[3]]}`,
+		`{"model":"m","input":[1,"a"]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			in := appplugins.ExecInput{
+				Stage:   policy.StagePreRequest,
+				Config:  policy.PluginConfig{ID: "ti-1", Slug: PluginName, Name: PluginName, Settings: injectSettings()},
+				Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+				Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai_embeddings", ProxyCapability: "embeddings", Body: []byte(body)},
+			}
+
+			res, err := New(adapter.NewRegistry()).Execute(context.Background(), in)
+
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if res == nil || res.StatusCode != http.StatusOK || res.RequestBody != nil {
+				t.Fatalf("Execute() result = %#v, want an unchanged pass-through", res)
+			}
+		})
 	}
 }

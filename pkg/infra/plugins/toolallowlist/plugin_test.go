@@ -353,8 +353,21 @@ func TestPlugin_Execute(t *testing.T) {
 			},
 		},
 		{
-			name:     "no-op undecodable body",
+			name:     "undecodable body fails closed",
 			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				assert.Nil(t, res)
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "err = %v", err)
+				assert.Equal(t, 400, pe.StatusCode)
+				assert.Equal(t, "invalid_request_body", pe.Type)
+			},
+		},
+		{
+			name:     "observe records an undecodable body",
+			mode:     policy.ModeObserve,
 			settings: map[string]any{"allow_tools": []string{"search_*"}},
 			req:      reqFor("openai", `{"messages":123}`),
 			check: func(t *testing.T, res *appplugins.Result, err error) {
@@ -396,4 +409,67 @@ func TestPlugin_Execute(t *testing.T) {
 			tt.check(t, res, err)
 		})
 	}
+}
+
+func TestPlugin_Execute_ResponsesInputItemItCannotDecode(t *testing.T) {
+	body := `{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"find my calendar tool"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"calendar"}},` +
+		`{"type":"function_call","call_id":"c1","name":"search_web","arguments":{"q":1}}` +
+		`],"tools":[{"type":"function","name":"search_web","parameters":{"type":"object"}},{"type":"function","name":"delete_db","parameters":{"type":"object"}}]}`
+	p := New(adapter.NewRegistry())
+
+	res, err := run(p, policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, reqFor(string(adapter.FormatOpenAIResponses), body))
+
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "the disallowed tool is stripped, not let through")
+	var out struct {
+		Input []json.RawMessage `json:"input"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(res.RequestBody, &out))
+	require.Len(t, out.Tools, 1)
+	assert.Equal(t, "search_web", out.Tools[0].Name)
+	assert.Len(t, out.Input, 3, "the input items are kept as the client sent them")
+}
+
+func TestPlugin_Execute_NonChatRequestsPassThrough(t *testing.T) {
+	tests := []struct {
+		name       string
+		capability string
+		format     string
+		body       string
+	}{
+		{name: "embeddings token ids", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[1,2,3]}`},
+		{name: "embeddings token id batches", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[[1,2],[3]]}`},
+		{name: "embeddings input it cannot decode", capability: "embeddings", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
+		{name: "rerank body it cannot decode", capability: "rerank", format: "cohere_rerank", body: `{"model":"m","query":1}`},
+		{name: "embeddings format without a capability", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := reqFor(tt.format, tt.body)
+			req.ProxyCapability = tt.capability
+
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+			require.NoError(t, err)
+			assert.Equal(t, 200, res.StatusCode)
+			assert.Nil(t, res.RequestBody)
+		})
+	}
+}
+
+func TestPlugin_Execute_ChatRequestItCannotDecodeFailsClosed(t *testing.T) {
+	req := reqFor("openai", `{"messages":123,"tools":[{"type":"function","function":{"name":"delete_db"}}]}`)
+	req.ProxyCapability = "chat"
+
+	res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+	assert.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, 400, pe.StatusCode)
 }

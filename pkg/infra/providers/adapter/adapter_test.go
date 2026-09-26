@@ -1089,3 +1089,183 @@ func TestAdaptRequest_ImageRegression(t *testing.T) {
 		})
 	}
 }
+
+func decodeUsageFromSSE(t *testing.T, a ProviderAdapter, lines [][]byte) *CanonicalUsage {
+	t.Helper()
+	var merged *CanonicalUsage
+	for _, line := range lines {
+		payload, ok := bytes.CutPrefix(line, []byte("data: "))
+		if !ok {
+			continue
+		}
+		chunk, err := a.DecodeStreamChunk(payload)
+		require.NoError(t, err)
+		if chunk != nil {
+			merged = MergeUsage(merged, chunk.Usage)
+		}
+	}
+	return merged
+}
+
+func TestUsageRoundTrip_ClientEncoders(t *testing.T) {
+	chat := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 500, ReasoningOutputTokens: 4,
+	}
+	withTTL := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200, cacheTTLKnown: true,
+	}
+	fiveMinuteOnly := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300, cacheTTLKnown: true,
+	}
+	ttlUnknown := &CanonicalUsage{
+		InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010,
+		CachedInputTokens: 1000, CacheWriteInputTokens: 300,
+	}
+	noCache := &CanonicalUsage{InputTokens: 20, OutputTokens: 10, TotalTokens: 30}
+
+	tests := []struct {
+		name   string
+		format Format
+		usage  *CanonicalUsage
+	}{
+		{name: "openai chat", format: FormatOpenAI, usage: chat},
+		{name: "openai chat without cache", format: FormatOpenAI, usage: noCache},
+		{name: "openai responses", format: FormatOpenAIResponses, usage: chat},
+		{name: "openai responses without cache", format: FormatOpenAIResponses, usage: noCache},
+		{name: "cohere", format: FormatCohere, usage: &CanonicalUsage{InputTokens: 2000, OutputTokens: 10, TotalTokens: 2010, CachedInputTokens: 1000}},
+		{name: "cohere without cache", format: FormatCohere, usage: noCache},
+		{name: "anthropic with a 1h share", format: FormatAnthropic, usage: withTTL},
+		{name: "anthropic five-minute only", format: FormatAnthropic, usage: fiveMinuteOnly},
+		{name: "anthropic ttl unknown", format: FormatAnthropic, usage: ttlUnknown},
+		{name: "anthropic without cache", format: FormatAnthropic, usage: noCache},
+		{name: "bedrock with a 1h share", format: FormatBedrock, usage: withTTL},
+		{name: "bedrock five-minute only", format: FormatBedrock, usage: fiveMinuteOnly},
+		{name: "bedrock ttl unknown", format: FormatBedrock, usage: ttlUnknown},
+		{name: "bedrock without cache", format: FormatBedrock, usage: noCache},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := testRegistry().GetAdapter(tt.format)
+			require.NoError(t, err)
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			back, err := a.DecodeResponse(body)
+			require.NoError(t, err)
+			assert.Equal(t, tt.usage, back.Usage, "buffered")
+
+			var lines [][]byte
+			for _, chunk := range []*CanonicalStreamChunk{
+				{Role: "assistant"},
+				{Delta: "ok"},
+				{FinishReason: "stop", Usage: tt.usage},
+			} {
+				out, err := a.EncodeStreamChunk(chunk)
+				require.NoError(t, err)
+				lines = append(lines, out...)
+			}
+			assert.Equal(t, tt.usage, decodeUsageFromSSE(t, a, lines), "stream")
+		})
+	}
+}
+
+func TestAnthropicSSEUsage_CacheCreationBreakdown(t *testing.T) {
+	usage := &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CacheWriteInputTokens: 300, CacheWrite1hInputTokens: 200}
+
+	lines, err := (&AnthropicAdapter{}).EncodeStreamChunk(&CanonicalStreamChunk{Role: "assistant", Usage: usage})
+	require.NoError(t, err)
+
+	var start struct {
+		Message struct {
+			Usage map[string]json.RawMessage `json:"usage"`
+		} `json:"message"`
+	}
+	for _, line := range lines {
+		if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+			require.NoError(t, json.Unmarshal(payload, &start))
+			break
+		}
+	}
+	assert.JSONEq(t, `{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200}`, string(start.Message.Usage["cache_creation"]))
+	assert.JSONEq(t, `100`, string(start.Message.Usage["input_tokens"]))
+}
+
+func TestAnthropicUsage_CacheCreationWireCarriesBothKeys(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *CanonicalUsage
+		want  string
+	}{
+		{
+			name:  "five-minute-only write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CacheWriteInputTokens: 300, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":300,"ephemeral_1h_input_tokens":0}`,
+		},
+		{
+			name:  "ttl known without a write",
+			usage: &CanonicalUsage{InputTokens: 400, OutputTokens: 1, TotalTokens: 401, CachedInputTokens: 100, cacheTTLKnown: true},
+			want:  `{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &AnthropicAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: tt.usage})
+			require.NoError(t, err)
+			var buffered struct {
+				Usage map[string]json.RawMessage `json:"usage"`
+			}
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			assert.JSONEq(t, tt.want, string(buffered.Usage["cache_creation"]), "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Role: "assistant", Usage: tt.usage})
+			require.NoError(t, err)
+			var start struct {
+				Message struct {
+					Usage map[string]json.RawMessage `json:"usage"`
+				} `json:"message"`
+			}
+			for _, line := range lines {
+				if payload, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
+					require.NoError(t, json.Unmarshal(payload, &start))
+					break
+				}
+			}
+			assert.JSONEq(t, tt.want, string(start.Message.Usage["cache_creation"]), "stream")
+		})
+	}
+}
+
+func TestAnthropicUsage_OneHourShareClampedToWrite(t *testing.T) {
+	body := []byte(`{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+		"usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`)
+
+	cr, err := (&AnthropicAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, 50, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 50, cr.Usage.CacheWrite1hInputTokens)
+}
+
+func TestUsageUnfold_CacheAboveInput(t *testing.T) {
+	usage := &CanonicalUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CachedInputTokens: 8, CacheWriteInputTokens: 5}
+	require.Equal(t, 0, usage.PlainInputTokens())
+
+	anthropicBody, err := (&AnthropicAdapter{}).EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: usage})
+	require.NoError(t, err)
+	var anthropicWire anthropicResponse
+	require.NoError(t, json.Unmarshal(anthropicBody, &anthropicWire))
+	assert.Equal(t, 0, anthropicWire.Usage.InputTokens)
+
+	bedrockBody, err := (&BedrockAdapter{}).EncodeResponse(&CanonicalResponse{Role: "assistant", Content: "ok", FinishReason: "stop", Usage: usage})
+	require.NoError(t, err)
+	var bedrockWire ConverseResponse
+	require.NoError(t, json.Unmarshal(bedrockBody, &bedrockWire))
+	assert.Equal(t, 0, bedrockWire.Usage.InputTokens)
+}

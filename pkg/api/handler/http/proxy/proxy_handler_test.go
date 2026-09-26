@@ -15,15 +15,21 @@
 package proxy_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
@@ -528,6 +534,306 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 	}
 }
 
+func TestHandle_Streaming_MidStreamError(t *testing.T) {
+	upstreamErr := errors.New("upstream reset")
+	const genericFrame = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+	const clientFrame = "event: error\ndata: {\"type\":\"error\"}\n"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "generic error frame appended", err: upstreamErr, want: clientFrame + genericFrame + "\n\n"},
+		{name: "client already notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: clientFrame},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, fwd := newTestApp(t)
+			stream := func(yield func([]byte, error) bool) {
+				for _, l := range [][]byte{[]byte("event: error"), []byte(`data: {"type":"error"}`)} {
+					if !yield(l, nil) {
+						return
+					}
+				}
+				yield(nil, tt.err)
+			}
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{
+					StatusCode: 200,
+					Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+					Stream:     stream,
+				}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tt.want {
+				t.Fatalf("body = %q, want %q", string(body), tt.want)
+			}
+		})
+	}
+}
+
+func TestHandle_Streaming_PanicEndsWithErrorEventAndCancels(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(logger).Handle)
+
+	var forwardCtx context.Context
+	stream := func(yield func([]byte, error) bool) {
+		if !yield([]byte(`data: {"id":"1"}`), nil) {
+			return
+		}
+		panic("reader exploded")
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	want := `data: {"id":"1"}` + "\n" +
+		`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n\n"
+	if string(body) != want {
+		t.Fatalf("body = %q, want %q", string(body), want)
+	}
+	if forwardCtx.Err() == nil {
+		t.Fatal("the forward context outlived the panicking stream")
+	}
+	if !strings.Contains(logs.String(), "reader exploded") || !strings.Contains(logs.String(), "stack=") {
+		t.Fatalf("panic not logged with its stack: %s", logs.String())
+	}
+}
+
+func TestHandle_Streaming_PanicLogsTheReaderStack(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(logger).Handle)
+
+	stream := func(func([]byte, error) bool) {
+		panic(&appproxy.ReaderPanic{Value: "reader exploded", Stack: []byte("reader-goroutine-stack")})
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	if !strings.Contains(logs.String(), "panic=\"reader exploded\"") || !strings.Contains(logs.String(), "stack=reader-goroutine-stack") {
+		t.Fatalf("reader panic not logged with the reader stack: %s", logs.String())
+	}
+}
+
+func TestHandle_Streaming_PanicRunsFinalizerOnceWithErrorEvent(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	stream := func(yield func([]byte, error) bool) {
+		for _, l := range []string{"data: a", "data: b"} {
+			if !yield([]byte(l), nil) {
+				return
+			}
+		}
+		panic("reader exploded")
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	var (
+		mu        sync.Mutex
+		calls     int
+		gotOutput []byte
+	)
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
+			func(_ *infracontext.RequestContext, output []byte, _ int, _ map[string][]string) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls++
+				gotOutput = output
+			}))
+		return c.Next()
+	})
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.DiscardHandler)).Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", calls)
+	}
+	want := "data: a\ndata: b\n" + `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}` + "\n"
+	if string(gotOutput) != want {
+		t.Fatalf("captured output = %q, want %q", string(gotOutput), want)
+	}
+}
+
+func TestHandle_Streaming_PanicAfterTheStreamEndedWritesNoSecondErrorEvent(t *testing.T) {
+	const errorFrame = `data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`
+	upstreamErr := errors.New("upstream reset")
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "after the error event", err: upstreamErr, want: "data: a\n" + errorFrame + "\n\n"},
+		{name: "after the client was notified", err: &appproxy.ClientNotifiedStreamError{Err: upstreamErr}, want: "data: a\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			var logs bytes.Buffer
+			app := fiber.New()
+			app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.NewTextHandler(&logs, nil))).Handle)
+
+			stream := func(yield func([]byte, error) bool) {
+				if !yield([]byte("data: a"), nil) {
+					return
+				}
+				yield(nil, tt.err)
+				panic("panic while unwinding")
+			}
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tt.want {
+				t.Fatalf("body = %q, want %q", string(body), tt.want)
+			}
+			if !strings.Contains(logs.String(), "panic while unwinding") {
+				t.Fatalf("panic after the stream ended was not logged: %s", logs.String())
+			}
+		})
+	}
+}
+
+func TestHandle_ForwardContextEndsWithTheResponse(t *testing.T) {
+	t.Run("buffered", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the response")
+		}
+	})
+
+	t.Run("streamed", func(t *testing.T) {
+		app, fwd := newTestApp(t)
+		var forwardCtx context.Context
+		var errDuringStream error
+		stream := func(yield func([]byte, error) bool) {
+			errDuringStream = forwardCtx.Err()
+			yield([]byte("data: [DONE]"), nil)
+		}
+		fwd.EXPECT().
+			Forward(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx = ctx }).
+			Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+			Once()
+
+		resp, err := app.Test(newProxyRequest())
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		if errDuringStream != nil {
+			t.Fatalf("the forward context ended before the stream was written: %v", errDuringStream)
+		}
+		if forwardCtx.Err() == nil {
+			t.Fatal("the forward context outlived the stream")
+		}
+	})
+}
+
+func TestHandle_StreamingClientDisconnectCancelsTheForwardContext(t *testing.T) {
+	app, fwd := newTestApp(t)
+	forwardCtx := make(chan context.Context, 1)
+	stream := func(yield func([]byte, error) bool) {
+		ctx := <-forwardCtx
+		forwardCtx <- ctx
+		for ctx.Err() == nil {
+			if !yield([]byte(": keepalive"), nil) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ appproxy.ForwardInput) { forwardCtx <- ctx }).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+		Once()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = app.Listener(listener) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: gw\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"model\":\"gpt\"}", proxyPath)
+	if err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if _, err := bufio.NewReader(conn).ReadString(':'); err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	_ = conn.Close()
+
+	ctx := <-forwardCtx
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forward context was not cancelled after the client went away")
+	}
+}
+
 func TestHandle_InvalidRequestPayload(t *testing.T) {
 	app, fwd := newTestApp(t)
 	fwd.EXPECT().
@@ -544,6 +850,25 @@ func TestHandle_InvalidRequestPayload(t *testing.T) {
 	}
 	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request" {
 		t.Fatalf("error = %q, want invalid_request", eb.Error)
+	}
+}
+
+func TestHandle_AmbiguousRequestBody(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrAmbiguousRequestBody).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request_body" {
+		t.Fatalf("error = %q, want invalid_request_body", eb.Error)
 	}
 }
 

@@ -26,9 +26,14 @@ import (
 	"time"
 )
 
-// StreamTimeout bounds the total duration of a single streamed response.
+// StreamTimeout bounds the total duration of a single streamed response,
+// counted from its response headers, whether or not the upstream keeps
+// sending.
 const StreamTimeout = 5 * time.Minute
 
+// StreamResponse reads rc as an SSE stream that ends with a
+// context.DeadlineExceeded error once StreamTimeout has passed, even while a
+// read of rc is blocked.
 func StreamResponse(ctx context.Context, rc io.ReadCloser) iter.Seq2[[]byte, error] {
 	streamCtx, cancel := context.WithTimeout(ctx, StreamTimeout)
 	return StreamSSE(streamCtx, &cancelOnCloseBody{ReadCloser: rc, cancel: cancel})
@@ -44,9 +49,14 @@ func (b *cancelOnCloseBody) Close() error {
 	return b.ReadCloser.Close()
 }
 
+// StreamSSE reads rc line by line until [DONE], EOF or ctx ends. rc is closed
+// as soon as ctx ends so that a read blocked on a silent upstream returns, and
+// the stream then ends with the context's error.
 func StreamSSE(ctx context.Context, rc io.ReadCloser) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		defer func() { _ = rc.Close() }()
+		stopClosing := context.AfterFunc(ctx, func() { _ = rc.Close() })
+		defer stopClosing()
 
 		sc := bufio.NewScanner(rc)
 		buf := make([]byte, 0, 512*1024)
@@ -79,6 +89,10 @@ func StreamSSE(ctx context.Context, rc io.ReadCloser) iter.Seq2[[]byte, error] {
 			}
 		}
 
+		if err := ctx.Err(); err != nil {
+			yield(nil, err)
+			return
+		}
 		if err := sc.Err(); err != nil {
 			if isBenignStreamEnd(err) {
 				return

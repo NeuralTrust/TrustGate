@@ -36,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -43,6 +44,12 @@ var (
 	ErrNoBackendAvailable     = errors.New("no backend available")
 	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
 	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
+	// ErrAmbiguousRequestBody refuses a chat request whose body
+	// adapter.HasAmbiguousKeys reports: one that is not valid JSON, starts
+	// with a byte order mark, repeats a key, or has two keys the decoder
+	// reads as one struct field. The plugins would judge what the decoder
+	// reads, and the upstream may read another body or another copy.
+	ErrAmbiguousRequestBody = errors.New("request body is not valid JSON, repeats a key, or has keys that differ only in case where the gateway decodes it")
 )
 
 type ForwardInput struct {
@@ -134,6 +141,9 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
+	if ambiguousChatBody(in.Request) {
+		return nil, ErrAmbiguousRequestBody
+	}
 
 	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
 		return result, err
@@ -181,6 +191,18 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	stream := DetectStream(dto.request)
 
 	return f.invokeWithFailover(ctx, in.Consumer, dto, stream, route)
+}
+
+// ambiguousChatBody reports a chat request whose body the decoder may read
+// otherwise than the upstream. It runs before routing and before any plugin.
+// Only chat bodies are checked: the tool and prompt plugins judge them
+// through the canonical decode, whose struct shapes HasAmbiguousKeys knows.
+func ambiguousChatBody(req *infracontext.RequestContext) bool {
+	if req == nil || len(req.Body) == 0 {
+		return false
+	}
+	format := sourceFormatFromRequest(req)
+	return adapter.IsChatRequest(req.ProxyCapability, format) && adapter.HasAmbiguousKeys(format, req.Body)
 }
 
 func (f *forwarder) invokeWithFailover(

@@ -29,18 +29,38 @@ type AnthropicAdapter struct{}
 
 // Provider-specific typed structs
 type anthropicRequest struct {
-	Model       string                 `json:"model,omitempty"`
-	System      json.RawMessage        `json:"system,omitempty"`
-	Messages    []anthropicMessage     `json:"messages"`
-	MaxTokens   int                    `json:"max_tokens"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	TopP        *float64               `json:"top_p,omitempty"`
-	TopK        *int                   `json:"top_k,omitempty"`
-	Stream      *bool                  `json:"stream,omitempty"`
-	StopSeqs    []string               `json:"stop_sequences,omitempty"`
-	Tools       []anthropicTool        `json:"tools,omitempty"`
-	ToolChoice  *anthropicToolChoice   `json:"tool_choice,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Model        string                 `json:"model,omitempty"`
+	System       json.RawMessage        `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Temperature  *float64               `json:"temperature,omitempty"`
+	TopP         *float64               `json:"top_p,omitempty"`
+	TopK         *int                   `json:"top_k,omitempty"`
+	Stream       *bool                  `json:"stream,omitempty"`
+	StopSeqs     []string               `json:"stop_sequences,omitempty"`
+	Tools        []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+func anthropicCacheBreakpoint(cc *anthropicCacheControl) *CanonicalCacheBreakpoint {
+	if cc == nil {
+		return nil
+	}
+	return &CanonicalCacheBreakpoint{TTL: CacheTTL(cc.TTL)}
+}
+
+func anthropicCacheControlFrom(bp *CanonicalCacheBreakpoint) *anthropicCacheControl {
+	if bp == nil {
+		return nil
+	}
+	return &anthropicCacheControl{Type: "ephemeral", TTL: string(bp.TTL)}
 }
 
 type anthropicMessage struct {
@@ -50,11 +70,12 @@ type anthropicMessage struct {
 
 // anthropicTool is used when decoding requests (supports flat and type+custom).
 type anthropicTool struct {
-	Type        string                 `json:"type,omitempty"`
-	Custom      *anthropicToolCustom   `json:"custom,omitempty"`
-	Name        string                 `json:"name,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+	Type         string                 `json:"type,omitempty"`
+	Custom       *anthropicToolCustom   `json:"custom,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // anthropicToolCustom is the nested shape required by the API for custom tools (encode).
@@ -81,17 +102,18 @@ type anthropicResponse struct {
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Thinking  string          `json:"thinking,omitempty"`  // extended thinking block content
-	Signature string          `json:"signature,omitempty"` // thinking block signature
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"` // user message: tool_result block
-	Content   json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
-	IsError   bool            `json:"is_error,omitempty"`
-	Source    json.RawMessage `json:"source,omitempty"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`  // extended thinking block content
+	Signature    string                 `json:"signature,omitempty"` // thinking block signature
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        json.RawMessage        `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"` // user message: tool_result block
+	Content      json.RawMessage        `json:"content,omitempty"`     // tool_result content: string or blocks
+	IsError      bool                   `json:"is_error,omitempty"`
+	Source       json.RawMessage        `json:"source,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicImageSource struct {
@@ -112,8 +134,8 @@ type anthropicUsage struct {
 }
 
 type anthropicCacheCreation struct {
-	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens,omitempty"`
-	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // anthropicUsageToCanonical converts the Anthropic wire usage struct (used by
@@ -128,17 +150,29 @@ func anthropicUsageToCanonical(u anthropicUsage) *CanonicalUsage {
 	if cu == nil {
 		return nil
 	}
-	cu.CachedInputTokens = u.CacheReadInputTokens
-	cu.CacheWriteInputTokens = u.CacheCreationInputTokens
+	var write1h int
 	if u.CacheCreation != nil {
-		cu.CacheWrite1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
+		write1h = u.CacheCreation.Ephemeral1hInputTokens
+		cu.cacheTTLKnown = true
 	}
+	cu.setCache(u.CacheReadInputTokens, u.CacheCreationInputTokens, write1h)
 	cu.ServiceTier = u.ServiceTier
 	return cu
 }
 
 func anthropicWireInputTokens(u *CanonicalUsage) int {
 	return u.PlainInputTokens()
+}
+
+func anthropicCacheCreationFrom(u *CanonicalUsage) *anthropicCacheCreation {
+	if !u.hasCacheTTLBreakdown() {
+		return nil
+	}
+	write1h := min(u.CacheWrite1hInputTokens, u.CacheWriteInputTokens)
+	return &anthropicCacheCreation{
+		Ephemeral5mInputTokens: u.CacheWriteInputTokens - write1h,
+		Ephemeral1hInputTokens: write1h,
+	}
 }
 
 // anthropicSSEUsageFrom builds the on-wire usage block for a stream chunk.
@@ -152,6 +186,7 @@ func anthropicSSEUsageFrom(u *CanonicalUsage) anthropicSSEUsage {
 		OutputTokens:             u.OutputTokens,
 		CacheCreationInputTokens: u.CacheWriteInputTokens,
 		CacheReadInputTokens:     u.CachedInputTokens,
+		CacheCreation:            anthropicCacheCreationFrom(u),
 	}
 }
 
@@ -200,24 +235,11 @@ type anthropicSSEMessageInfo struct {
 }
 
 type anthropicSSEUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-}
-
-type anthropicSSEContentBlockStart struct {
-	Type         string                   `json:"type"`
-	Index        int                      `json:"index"`
-	ContentBlock anthropicSSEContentBlock `json:"content_block"`
-}
-
-type anthropicSSEContentBlock struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int                     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreation            *anthropicCacheCreation `json:"cache_creation,omitempty"`
 }
 
 type anthropicSSEContentBlockDelta struct {
@@ -266,58 +288,71 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		return []CanonicalMessage{{Role: role, Content: contentToString(content)}}
 	}
 	var out []CanonicalMessage
+	var text cacheTextJoin
 	switch role {
 	case "user":
-		var textParts []string
 		var images []CanonicalImage
 		var toolMessages []CanonicalMessage
-		for _, b := range blocks {
+		for i, b := range blocks {
+			last := i == len(blocks)-1
 			switch b.Type {
 			case "image":
 				if img, ok := anthropicImageToCanonical(b.Source); ok {
 					images = append(images, img)
+					text.addImage()
+					text.markImage(anthropicCacheBreakpoint(b.CacheControl), last)
 				}
 			case "tool_result":
 				content := anthropicToolResultText(b.Content)
 				if b.IsError && content != "" {
 					content = "error: " + content
 				}
+				cache := anthropicCacheBreakpoint(b.CacheControl)
+				if cache != nil {
+					cache.clientLast = last
+				}
 				toolMessages = append(toolMessages, CanonicalMessage{
 					Role:       "tool",
 					ToolCallID: b.ToolUseID,
 					Content:    content,
+					Cache:      cache,
 				})
 			case "text":
-				textParts = append(textParts, b.Text)
+				text.add(b.Text)
+				text.markText(anthropicCacheBreakpoint(b.CacheControl), last)
 			}
 		}
 		out = append(out, toolMessages...)
-		if len(textParts) > 0 || len(images) > 0 {
+		if len(text.parts) > 0 || len(images) > 0 {
 			out = append(out, CanonicalMessage{
 				Role:    "user",
-				Content: strings.Join(textParts, "\n"),
+				Content: text.String(),
 				Images:  images,
+				Cache:   text.breakpoint(),
 			})
 		}
 	case "assistant":
-		var textParts []string
 		var toolCalls []CanonicalToolCall
-		for _, b := range blocks {
+		for i, b := range blocks {
+			last := i == len(blocks)-1
 			switch b.Type {
 			case "text":
-				textParts = append(textParts, b.Text)
+				text.add(b.Text)
+				text.markText(anthropicCacheBreakpoint(b.CacheControl), last)
 			case "tool_use":
 				toolCalls = append(toolCalls, CanonicalToolCall{
 					ID:        b.ID,
 					Name:      b.Name,
 					Arguments: string(b.Input),
 				})
+				text.markEnd(anthropicCacheBreakpoint(b.CacheControl), last)
 			}
 		}
 		out = append(out, CanonicalMessage{
 			Role:      "assistant",
-			Content:   strings.Join(textParts, "\n"),
+			Content:   text.String(),
 			ToolCalls: toolCalls,
+			Cache:     text.breakpoint(),
 		})
 	default:
 		out = append(out, CanonicalMessage{
@@ -326,6 +361,21 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		})
 	}
 	return out
+}
+
+func anthropicTextBlocks(text string, bp *CanonicalCacheBreakpoint) ([]anthropicContentBlock, bool) {
+	parts, placed := cachedTextParts(text, bp)
+	if len(parts) == 0 {
+		return nil, false
+	}
+	blocks := make([]anthropicContentBlock, 0, len(parts))
+	for _, part := range parts {
+		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: part})
+	}
+	if placed {
+		blocks[0].CacheControl = anthropicCacheControlFrom(bp)
+	}
+	return blocks, placed
 }
 
 func anthropicImageToCanonical(raw json.RawMessage) (CanonicalImage, bool) {
@@ -364,22 +414,133 @@ func anthropicImageBlock(img CanonicalImage) (anthropicContentBlock, error) {
 	return anthropicContentBlock{Type: "image", Source: raw}, nil
 }
 
-func anthropicMessageContent(m CanonicalMessage) (json.RawMessage, error) {
-	if m.Role != "user" || len(m.Images) == 0 {
-		return stringToContent(m.Content), nil
+func anthropicMessageBlocks(m CanonicalMessage) ([]anthropicContentBlock, error) {
+	images := m.Images
+	if m.Role != "user" {
+		images = nil
 	}
-	blocks := make([]anthropicContentBlock, 0, len(m.Images)+1)
-	for _, img := range m.Images {
+	if len(images) == 0 && (m.Cache == nil || m.Content == "") {
+		return nil, nil
+	}
+	blocks := make([]anthropicContentBlock, 0, len(images)+2)
+	for _, img := range images {
 		b, err := anthropicImageBlock(img)
 		if err != nil {
 			return nil, err
 		}
 		blocks = append(blocks, b)
 	}
-	if m.Content != "" {
-		blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
+	cache := m.Cache
+	if cache.onImage() {
+		if at, ok := cachedImageIndex(cache, len(images)); ok {
+			blocks[at].CacheControl = anthropicCacheControlFrom(cache)
+		}
+		cache = nil
 	}
-	return json.Marshal(blocks)
+	text, placed := anthropicTextBlocks(m.Content, cache)
+	blocks = append(blocks, text...)
+	if !placed && cache != nil {
+		blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(cache)
+	}
+	return blocks, nil
+}
+
+// anthropicMessages sends tool results as tool_result blocks of one user
+// message and tool calls as tool_use blocks after the assistant text, so
+// Anthropic can match each tool_result to the previous message's tool_use.
+func anthropicMessages(msgs []CanonicalMessage, opts *CanonicalCacheOptions) ([]anthropicMessage, error) {
+	type turn struct {
+		role   string
+		text   string
+		blocks []anthropicContentBlock
+		cache  *CanonicalCacheBreakpoint
+	}
+	turns := make([]turn, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		switch {
+		case m.Role == "tool":
+			var blocks []anthropicContentBlock
+			for ; i < len(msgs) && msgs[i].Role == "tool"; i++ {
+				content, _ := json.Marshal(msgs[i].Content)
+				blocks = append(blocks, anthropicContentBlock{
+					Type:         "tool_result",
+					ToolUseID:    msgs[i].ToolCallID,
+					Content:      content,
+					CacheControl: anthropicCacheControlFrom(msgs[i].Cache),
+				})
+			}
+			i--
+			turns = append(turns, turn{role: "user", blocks: blocks, cache: msgs[i].Cache})
+		case m.Role == "assistant" && len(m.ToolCalls) > 0:
+			blocks, placed := anthropicTextBlocks(m.Content, m.Cache)
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, anthropicContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: anthropicToolInput(tc.Arguments),
+				})
+			}
+			if !placed {
+				blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(m.Cache)
+			}
+			turns = append(turns, turn{role: "assistant", blocks: blocks, cache: m.Cache})
+		default:
+			blocks, err := anthropicMessageBlocks(m)
+			if err != nil {
+				return nil, err
+			}
+			turns = append(turns, turn{role: m.Role, text: m.Content, blocks: blocks, cache: m.Cache})
+		}
+	}
+	if n := len(turns); n > 0 && opts != nil {
+		dropCacheControlConflictingWithAuto(turns[n-1].blocks, turns[n-1].cache, opts.Auto)
+	}
+
+	out := make([]anthropicMessage, 0, len(turns))
+	for _, t := range turns {
+		content := stringToContent(t.text)
+		if t.blocks != nil {
+			raw, err := json.Marshal(t.blocks)
+			if err != nil {
+				return nil, fmt.Errorf("encode anthropic %s message: %w", t.role, err)
+			}
+			content = raw
+		}
+		out = append(out, anthropicMessage{Role: t.role, Content: content})
+	}
+	return out, nil
+}
+
+// dropCacheControlConflictingWithAuto removes an explicit marker from the last
+// block when top-level automatic caching puts a different TTL on that same
+// block, a pair Anthropic answers with 400, but only when the gateway put it
+// there: a fallback from its block boundary, a TTL raised by merging markers,
+// or a marker a plugin added. A raised TTL goes back to the one the client
+// sent on that block when that one does not conflict. A client that sent the
+// pair itself gets the same answer as on passthrough.
+func dropCacheControlConflictingWithAuto(blocks []anthropicContentBlock, cache, auto *CanonicalCacheBreakpoint) {
+	if auto == nil || len(blocks) == 0 || (cache != nil && cache.clientLast) {
+		return
+	}
+	last := &blocks[len(blocks)-1]
+	autoTTL := anthropicEffectiveTTL(auto.TTL)
+	if last.CacheControl == nil || anthropicEffectiveTTL(CacheTTL(last.CacheControl.TTL)) == autoTTL {
+		return
+	}
+	if cache != nil && cache.raisedLast && anthropicEffectiveTTL(cache.clientTTL) == autoTTL {
+		last.CacheControl = anthropicCacheControlFrom(&CanonicalCacheBreakpoint{TTL: cache.clientTTL})
+		return
+	}
+	last.CacheControl = nil
+}
+
+func anthropicEffectiveTTL(ttl CacheTTL) CacheTTL {
+	if ttl == "" {
+		return CacheTTL5m
+	}
+	return ttl
 }
 
 // Request: Decode (Anthropic → Canonical)
@@ -390,9 +551,11 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		return nil, err
 	}
 
+	system, systemCache := anthropicSystem(req.System)
 	cr := &CanonicalRequest{
 		Model:       req.Model,
-		System:      anthropicSystemText(req.System),
+		System:      system,
+		SystemCache: systemCache,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -403,6 +566,9 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 
 	if req.Stream != nil {
 		cr.Stream = *req.Stream
+	}
+	if auto := anthropicCacheBreakpoint(req.CacheControl); auto != nil {
+		cr.CacheOptions = &CanonicalCacheOptions{Auto: auto}
 	}
 
 	// Messages: decode content blocks so tool_result (user) and tool_use (assistant) are preserved
@@ -420,6 +586,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 			Name:        name,
 			Description: desc,
 			Schema:      schema,
+			Cache:       anthropicCacheBreakpoint(t.CacheControl),
 		})
 	}
 
@@ -439,7 +606,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := anthropicRequest{
 		Model:       req.Model,
-		System:      anthropicSystemRaw(req.System),
+		System:      anthropicSystemRaw(req.System, req.SystemCache),
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
@@ -450,6 +617,9 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 	if req.Stream {
 		out.Stream = boolPtr(true)
 	}
+	if req.CacheOptions != nil {
+		out.CacheControl = anthropicCacheControlFrom(req.CacheOptions.Auto)
+	}
 
 	// max_tokens (required by Anthropic)
 	if req.MaxTokens > 0 {
@@ -458,59 +628,11 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 		out.MaxTokens = defaultAnthropicMaxTokens
 	}
 
-	// Messages: collapse canonical Role="tool" messages into one Anthropic "user" message with tool_result blocks
-	for i := 0; i < len(req.Messages); i++ {
-		m := req.Messages[i]
-		if m.Role == "tool" {
-			var toolResultBlocks []anthropicContentBlock
-			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
-				content, _ := json.Marshal(req.Messages[i].Content)
-				toolResultBlocks = append(toolResultBlocks, anthropicContentBlock{
-					Type:      "tool_result",
-					ToolUseID: req.Messages[i].ToolCallID,
-					Content:   content,
-				})
-				i++
-			}
-			i-- // loop will i++ again
-			raw, _ := json.Marshal(toolResultBlocks)
-			out.Messages = append(out.Messages, anthropicMessage{
-				Role:    "user",
-				Content: raw,
-			})
-			continue
-		}
-		// Assistant messages with tool_calls must send content as array of blocks (text + tool_use)
-		// so Anthropic can match tool_result blocks to the previous message's tool_use.
-		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			var blocks []anthropicContentBlock
-			if m.Content != "" {
-				blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
-			}
-			for _, tc := range m.ToolCalls {
-				blocks = append(blocks, anthropicContentBlock{
-					Type:  "tool_use",
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: json.RawMessage(tc.Arguments),
-				})
-			}
-			raw, _ := json.Marshal(blocks)
-			out.Messages = append(out.Messages, anthropicMessage{
-				Role:    "assistant",
-				Content: raw,
-			})
-			continue
-		}
-		content, err := anthropicMessageContent(m)
-		if err != nil {
-			return nil, err
-		}
-		out.Messages = append(out.Messages, anthropicMessage{
-			Role:    m.Role,
-			Content: content,
-		})
+	messages, err := anthropicMessages(req.Messages, req.CacheOptions)
+	if err != nil {
+		return nil, err
 	}
+	out.Messages = messages
 
 	// Tools: use flat format (name, input_schema, description at top level) — matches working Anthropic requests
 	for i, t := range req.Tools {
@@ -523,9 +645,10 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 			schema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 		}
 		out.Tools = append(out.Tools, anthropicTool{
-			Name:        name,
-			Description: t.Description,
-			InputSchema: schema,
+			Name:         name,
+			Description:  t.Description,
+			InputSchema:  schema,
+			CacheControl: anthropicCacheControlFrom(t.Cache),
 		})
 	}
 
@@ -624,18 +747,8 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Name,
-			Input: json.RawMessage(tc.Arguments),
+			Input: anthropicToolInput(tc.Arguments),
 		})
-	}
-
-	stopReason := "end_turn"
-	switch resp.FinishReason {
-	case "stop":
-		stopReason = "end_turn"
-	case "length":
-		stopReason = "max_tokens"
-	case "tool_calls":
-		stopReason = "tool_use"
 	}
 
 	out := anthropicResponse{
@@ -644,7 +757,7 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 		Role:       "assistant",
 		Model:      resp.Model,
 		Content:    content,
-		StopReason: stopReason,
+		StopReason: anthropicStopReason(resp.FinishReason),
 	}
 
 	if resp.Usage != nil {
@@ -653,6 +766,7 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 			OutputTokens:             resp.Usage.OutputTokens,
 			CacheCreationInputTokens: resp.Usage.CacheWriteInputTokens,
 			CacheReadInputTokens:     resp.Usage.CachedInputTokens,
+			CacheCreation:            anthropicCacheCreationFrom(resp.Usage),
 			ServiceTier:              resp.Usage.ServiceTier,
 		}
 	}
@@ -774,80 +888,33 @@ func emitToolUseBlocks(deltas []StreamToolCallDelta) [][]byte {
 	var lines [][]byte
 	for _, tc := range deltas {
 		if tc.ID != "" || tc.Name != "" {
-			cbStart := anthropicSSEContentBlockStart{
-				Type:  "content_block_start",
-				Index: tc.Index,
-				ContentBlock: anthropicSSEContentBlock{
-					Type:  "tool_use",
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: []byte("{}"),
-				},
-			}
-			data, _ := json.Marshal(cbStart)
-			lines = append(lines, SSEEvent("content_block_start", data)...)
+			lines = append(lines, anthropicToolUseBlockStartEvent(tc.Index, tc.ID, tc.Name)...)
 		}
 		if tc.ArgumentsDelta != "" {
-			cbDelta := anthropicSSEContentBlockDelta{
-				Type:  "content_block_delta",
-				Index: tc.Index,
-				Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
-			}
-			data, _ := json.Marshal(cbDelta)
-			lines = append(lines, SSEEvent("content_block_delta", data)...)
+			lines = append(lines, anthropicContentBlockDeltaEvent(tc.Index, anthropicBlockToolUse, tc.ArgumentsDelta)...)
 		}
 	}
 	return lines
 }
 
+// EncodeStreamChunk encodes chunk on its own, as if the stream had a single
+// text block at index 0. A stream with several blocks, tool calls or a finish
+// that must close them needs an AnthropicStreamEncoder instead.
 func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	// --- message_start (when role is set) ------------------------------------
 	if chunk.Role != "" {
-		var lines [][]byte
-
-		sseUsage := anthropicSSEUsageFrom(chunk.Usage)
-		msgStart := anthropicSSEMessageStartPayload{
-			Type: "message_start",
-			Message: anthropicSSEMessageInfo{
-				ID:      chunk.ID,
-				Type:    "message",
-				Role:    "assistant",
-				Content: []interface{}{},
-				Model:   chunk.Model,
-				Usage:   sseUsage,
-			},
-		}
-		data, _ := json.Marshal(msgStart)
-		lines = append(lines, SSEEvent("message_start", data)...)
+		lines := anthropicMessageStartEvent(chunk.ID, chunk.Model, chunk.Usage)
 
 		// If this chunk has tool_calls, emit tool_use block(s) instead of text block.
 		if len(chunk.ToolCallDeltas) > 0 {
 			lines = append(lines, emitToolUseBlocks(chunk.ToolCallDeltas)...)
 		} else if chunk.Delta != "" {
 			// Role + text in same chunk
-			cbStart := anthropicSSEContentBlockStart{
-				Type:         "content_block_start",
-				Index:        0,
-				ContentBlock: anthropicSSEContentBlock{Type: "text", Text: ""},
-			}
-			data, _ := json.Marshal(cbStart)
-			lines = append(lines, SSEEvent("content_block_start", data)...)
-			cbDelta := anthropicSSEContentBlockDelta{
-				Type:  "content_block_delta",
-				Index: 0,
-				Delta: anthropicDelta{Type: "text_delta", Text: chunk.Delta},
-			}
-			data, _ = json.Marshal(cbDelta)
-			lines = append(lines, SSEEvent("content_block_delta", data)...)
+			lines = append(lines, anthropicTextBlockStartEvent(0)...)
+			lines = append(lines, anthropicContentBlockDeltaEvent(0, anthropicBlockText, chunk.Delta)...)
 		} else {
 			// Role only (text response will follow in next chunks)
-			cbStart := anthropicSSEContentBlockStart{
-				Type:         "content_block_start",
-				Index:        0,
-				ContentBlock: anthropicSSEContentBlock{Type: "text", Text: ""},
-			}
-			data, _ := json.Marshal(cbStart)
-			lines = append(lines, SSEEvent("content_block_start", data)...)
+			lines = append(lines, anthropicTextBlockStartEvent(0)...)
 		}
 		return lines, nil
 	}
@@ -861,73 +928,66 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 	// --- text content_block_delta --------------------------------------------
 	if chunk.Delta != "" {
-		cbDelta := anthropicSSEContentBlockDelta{
-			Type:  "content_block_delta",
-			Index: 0,
-			Delta: anthropicDelta{Type: "text_delta", Text: chunk.Delta},
-		}
-		data, _ := json.Marshal(cbDelta)
-		return SSEEvent("content_block_delta", data), nil
+		return anthropicContentBlockDeltaEvent(0, anthropicBlockText, chunk.Delta), nil
 	}
 
 	// --- finish_reason → content_block_stop + message_delta + message_stop ----
 	if chunk.FinishReason != "" {
-		sr := "end_turn"
-		switch chunk.FinishReason {
-		case "length":
-			sr = "max_tokens"
-		case "tool_calls":
-			sr = "tool_use"
-		}
-
-		var lines [][]byte
-		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: 0}
-		data, _ := json.Marshal(cbStop)
-		lines = append(lines, SSEEvent("content_block_stop", data)...)
-		msgDelta := anthropicSSEMessageDelta{
-			Type:  "message_delta",
-			Delta: anthropicSSEMessageDeltaBody{StopReason: sr},
-			Usage: anthropicSSEUsageFrom(chunk.Usage),
-		}
-		data, _ = json.Marshal(msgDelta)
-		lines = append(lines, SSEEvent("message_delta", data)...)
-		msgStop := anthropicSSESimple{Type: "message_stop"}
-		data, _ = json.Marshal(msgStop)
-		lines = append(lines, SSEEvent("message_stop", data)...)
-		return lines, nil
+		lines := anthropicContentBlockStopEvent(0)
+		return append(lines, anthropicMessageEndEvents(chunk.FinishReason, chunk.Usage)...), nil
 	}
 
 	return nil, nil
 }
 
-func anthropicSystemText(raw json.RawMessage) string {
+// anthropicSystem keeps the system text byte-for-byte, as the OpenAI decoders
+// do, so the same prompt reaches the upstream with the same cache prefix
+// whichever client format sent it. Blank blocks are skipped because Anthropic
+// rejects them: a marker on one moves to the text block before it, and a
+// marker on a leading blank block is dropped, as it caches no text.
+func anthropicSystem(raw json.RawMessage) (string, *CanonicalCacheBreakpoint) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return strings.TrimSpace(s)
+		if strings.TrimSpace(s) == "" {
+			return "", nil
+		}
+		return s, nil
 	}
 	var blocks []anthropicContentBlock
 	if json.Unmarshal(raw, &blocks) != nil {
-		return strings.TrimSpace(contentToString(raw))
+		return contentToString(raw), nil
 	}
-	parts := make([]string, 0, len(blocks))
+	var text cacheTextJoin
 	for _, b := range blocks {
-		if b.Type == "" || b.Type == "text" {
-			if t := strings.TrimSpace(b.Text); t != "" {
-				parts = append(parts, t)
-			}
+		if b.Type != "" && b.Type != "text" {
+			continue
 		}
+		if strings.TrimSpace(b.Text) != "" {
+			text.add(b.Text)
+		} else if len(text.parts) == 0 {
+			continue
+		}
+		text.markText(anthropicCacheBreakpoint(b.CacheControl), false)
 	}
-	return strings.Join(parts, "\n")
+	return text.String(), text.breakpoint()
 }
 
-func anthropicSystemRaw(system string) json.RawMessage {
+func anthropicSystemRaw(system string, cache *CanonicalCacheBreakpoint) json.RawMessage {
 	if strings.TrimSpace(system) == "" {
 		return nil
 	}
-	raw, err := json.Marshal(system)
+	var v any = system
+	if cache != nil {
+		blocks, placed := anthropicTextBlocks(system, cache)
+		if !placed {
+			blocks[len(blocks)-1].CacheControl = anthropicCacheControlFrom(cache)
+		}
+		v = blocks
+	}
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil
 	}
@@ -955,4 +1015,18 @@ func anthropicToolResultText(raw json.RawMessage) string {
 		return strings.Join(parts, "\n")
 	}
 	return contentToString(raw)
+}
+
+// anthropicToolInput falls back to an empty object for arguments that are not
+// a JSON object: Anthropic requires one, and invalid raw JSON would fail to
+// marshal the whole message.
+func anthropicToolInput(arguments string) json.RawMessage {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
+		return json.RawMessage("{}")
+	}
+	if trimmed[0] != '{' || !json.Valid([]byte(trimmed)) {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(trimmed)
 }

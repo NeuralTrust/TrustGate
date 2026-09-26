@@ -17,10 +17,12 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/textproto"
 	"net/url"
+	"runtime/debug"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
@@ -60,6 +62,7 @@ const (
 	errCodeMethodNotAllowed     = "method_not_allowed"
 	errCodeNoBackendAvailable   = "no_backend_available"
 	errCodeInvalidRequest       = "invalid_request"
+	errCodeInvalidRequestBody   = "invalid_request_body"
 	errCodeInvalidModel         = "invalid_model"
 	errCodeModelNotAllowed      = "model_not_allowed"
 	errCodeModelNotSupported    = "model_not_supported"
@@ -83,10 +86,20 @@ var hopByHopHeaders = map[string]struct{}{
 type ForwardedHandler struct {
 	forwarder appproxy.Forwarder
 	models    appproxy.ModelsLister
+	logger    *slog.Logger
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
-	return &ForwardedHandler{forwarder: forwarder}
+	return &ForwardedHandler{forwarder: forwarder, logger: slog.Default()}
+}
+
+// WithLogger sets the logger the handler reports stream writer panics to.
+// A nil logger keeps the current one.
+func (h *ForwardedHandler) WithLogger(logger *slog.Logger) *ForwardedHandler {
+	if logger != nil {
+		h.logger = logger
+	}
+	return h
 }
 
 func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHandler {
@@ -135,7 +148,16 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
-	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
+	// The user context is never cancelled when the client goes away, so the
+	// upstream request gets a context of its own that ends with the response.
+	ctx, cancel := context.WithCancel(c.UserContext())
+	streaming := false
+	defer func() {
+		if !streaming {
+			cancel()
+		}
+	}()
+	result, err := h.forwarder.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
 		Data:      data,
@@ -149,7 +171,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	relayHeaders(c, result.Headers)
 
 	if result.Stream != nil {
-		return writeStream(c, result, reqCtx)
+		streaming = true
+		return writeStream(c, result, reqCtx, cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -169,7 +192,24 @@ func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 	}
 }
 
-func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext) error {
+// writeStream relays result.Stream from the body stream writer and calls
+// cancel once the writer returns, which a client that went away makes happen
+// at the first write that fails.
+//
+// fasthttp runs the writer on a goroutine of its own that does not recover,
+// so a panic from the stream, including one a Responses reader raises again,
+// is recovered here and logged, and ends the stream with the stream error
+// event unless the stream had already ended.
+func writeStream(
+	c *fiber.Ctx,
+	result *appproxy.ForwardResult,
+	req *infracontext.RequestContext,
+	cancel context.CancelFunc,
+	logger *slog.Logger,
+) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
 	statusCode := result.StatusCode
 	headers := result.Headers
@@ -182,6 +222,7 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 
 	c.Status(statusCode)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer cancel()
 		var captured bytes.Buffer
 		if finalizer != nil {
 			defer func() {
@@ -189,38 +230,67 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 				finalizer(req, captured.Bytes(), statusCode, headers)
 			}()
 		}
-		for line, err := range result.Stream {
-			if err != nil {
-				// The response is already a 200 SSE stream, so a mid-stream
-				// failure cannot change the status code. Emit an explicit error
-				// event (instead of a silent truncation that looks like a clean
-				// finish) so clients can distinguish an aborted stream.
-				if finalizer != nil {
-					captured.Write(streamErrorEvent)
-					captured.Write(newline)
+		// A stream that already ended, with an error event, a failed write or
+		// a client already told, can still panic while its iterator unwinds;
+		// a second error event after that would corrupt what the client got.
+		terminated := false
+		defer func() {
+			if r := recover(); r != nil {
+				value, stack := appproxy.PanicDetails(r, debug.Stack())
+				logger.Error("panic writing proxy stream",
+					slog.Any("panic", value),
+					slog.String("stack", string(stack)))
+				if !terminated {
+					writeStreamError(w, &captured, finalizer != nil)
 				}
-				_, _ = w.Write(streamErrorEvent)
-				_, _ = w.Write(newline)
-				_, _ = w.Write(newline)
+			}
+		}()
+		for line, err := range result.Stream {
+			if _, notified := errors.AsType[*appproxy.ClientNotifiedStreamError](err); notified {
+				terminated = true
 				_ = w.Flush()
+				return
+			}
+			if err != nil {
+				terminated = true
+				writeStreamError(w, &captured, finalizer != nil)
 				return
 			}
 			if finalizer != nil {
 				captured.Write(line)
 				captured.Write(newline)
 			}
-			if _, werr := w.Write(line); werr != nil {
-				return
-			}
-			if _, werr := w.Write(newline); werr != nil {
-				return
-			}
-			if flushErr := w.Flush(); flushErr != nil {
+			if !writeStreamLine(w, line) {
+				terminated = true
 				return
 			}
 		}
 	})
 	return nil
+}
+
+func writeStreamLine(w *bufio.Writer, line []byte) bool {
+	if _, err := w.Write(line); err != nil {
+		return false
+	}
+	if _, err := w.Write(newline); err != nil {
+		return false
+	}
+	return w.Flush() == nil
+}
+
+// writeStreamError ends a stream that failed after its 200 went out. The
+// status can no longer change, so an explicit error event tells the client
+// the stream was aborted rather than finished.
+func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool) {
+	if capture {
+		captured.Write(streamErrorEvent)
+		captured.Write(newline)
+	}
+	_, _ = w.Write(streamErrorEvent)
+	_, _ = w.Write(newline)
+	_, _ = w.Write(newline)
+	_ = w.Flush()
 }
 
 func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
@@ -445,6 +515,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
+	case errors.Is(err, appproxy.ErrAmbiguousRequestBody):
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequestBody, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
 		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}

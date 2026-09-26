@@ -449,6 +449,95 @@ func TestProviderInvoke_TokenParamKeyPerProvider(t *testing.T) {
 	}
 }
 
+func TestProviderInvoke_CacheKeysFollowTheTargetProvider(t *testing.T) {
+	const responsesBody = `{"model":"gpt-4o-mini","instructions":"terse","input":"hi","prompt_cache_key":"k","prompt_cache_retention":"24h"}`
+
+	tests := []struct {
+		provider string
+		want     map[string]any
+	}{
+		{provider: "openai", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
+		{provider: "azure", want: map[string]any{"prompt_cache_key": "k", "prompt_cache_retention": "24h"}},
+		{provider: "mistral", want: map[string]any{"prompt_cache_key": "k"}},
+		{provider: "cerebras"},
+		{provider: "openai_compatible"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(openaiResponseBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, tc.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(responsesBody), SourceFormat: string(adapter.FormatOpenAIResponses)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget(tc.provider), req)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(sent, &got))
+			cache := map[string]any{}
+			for k, v := range got {
+				if strings.HasPrefix(k, "prompt_cache") {
+					cache[k] = v
+				}
+			}
+			if tc.want == nil {
+				assert.Empty(t, cache)
+				return
+			}
+			assert.Equal(t, tc.want, cache)
+		})
+	}
+}
+
+func TestProviderInvoke_CacheProfileFollowsTheInjectedDefaultModel(t *testing.T) {
+	const strippedBody = `{"max_tokens":10,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`
+	const responsesBody = `{"id":"r","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+
+	tests := []struct {
+		defaultModel   string
+		wantBreakpoint bool
+	}{
+		{defaultModel: "gpt-5.6", wantBreakpoint: true},
+		{defaultModel: "gpt-4o"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.defaultModel, func(t *testing.T) {
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ *providers.Config, body []byte) ([]byte, error) {
+					sent = body
+					return []byte(responsesBody), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "openai", client)
+			target := apiKeyTarget("openai")
+			target.LLMTarget.ProviderOptions = map[string]any{"api": "responses"}
+			req := &infracontext.RequestContext{
+				Body:         []byte(strippedBody),
+				SourceFormat: string(adapter.FormatAnthropic),
+				DefaultModel: tc.defaultModel,
+			}
+
+			_, err := inv.Invoke(context.Background(), target, req)
+			require.NoError(t, err)
+
+			model, err := adapter.ExtractModel(sent)
+			require.NoError(t, err)
+			assert.Equal(t, tc.defaultModel, model)
+			assert.Equal(t, tc.wantBreakpoint, strings.Contains(string(sent), "prompt_cache_breakpoint"), string(sent))
+		})
+	}
+}
+
 func TestProviderInvoke_BedrockBindingDefaultSpeaksConverse(t *testing.T) {
 	const novaModel = "eu.amazon.nova-pro-v1:0"
 	const novaResponseBody = `{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`
@@ -581,4 +670,165 @@ func TestProviderInvoke_ClientDecodeErrorIsInvalidPayload(t *testing.T) {
 			assert.ErrorIs(t, err, networkErr)
 		})
 	}
+}
+
+func TestProviderInvoke_OpenAIChatIsReEncodedForGroqAndOpenRouter(t *testing.T) {
+	const body = `{"model":"m","seed":7,"n":2,"service_tier":"default","logprobs":true,"prompt_cache_key":"k","session_id":"s-1","user":"u-1",` +
+		`"provider":{"order":["Anthropic"]},"models":["a","b"],"plugins":[{"id":"web"}],"transforms":["middle-out"],"route":"fallback",` +
+		`"stream_options":{"include_usage":true,"include_obfuscation":false},` +
+		`"messages":[{"role":"developer","content":[{"type":"text","text":"sys"}]},{"role":"user","name":"alice","content":"hi"}]}`
+	const upstream = `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"x_groq":{"id":"req_1"},"provider":"Anthropic"}`
+
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{provider: "groq", want: `{"model":"m","seed":7,"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+		{provider: "openrouter", want: `{"model":"m","seed":7,"session_id":"s-1","user":"u-1","provider":{"order":["Anthropic"]},` +
+			`"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			var sent []byte
+			var cfg *providers.Config
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					sent, cfg = b, c
+					return []byte(upstream), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, tt.provider, client)
+			req := &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(adapter.FormatOpenAI)}
+
+			resp, err := inv.Invoke(context.Background(), apiKeyTarget(tt.provider), req)
+			require.NoError(t, err)
+
+			assert.JSONEq(t, tt.want, string(sent))
+			assert.True(t, cfg.CacheRetentionMapped)
+			assert.NotContains(t, string(resp.Body), "x_groq", "the response is still re-encoded")
+			assert.NotContains(t, string(resp.Body), `"provider"`)
+		})
+	}
+}
+
+func TestProviderInvoke_OpenRouterClientModelsCannotBypassEnforcement(t *testing.T) {
+	const body = `{"model":"anthropic/claude-sonnet-4.5","models":["openai/gpt-5.6-pro"],"route":"fallback","plugins":[{"id":"web"}],` +
+		`"provider":{"order":["Anthropic"],"models":["openai/gpt-5.6-pro"]},"messages":[{"role":"user","content":"hi"}]}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) ([]byte, error) {
+			sent = b
+			return []byte(`{"id":"x","choices":[]}`), nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "openrouter", client)
+	req := &infracontext.RequestContext{
+		Body:          []byte(body),
+		SourceFormat:  string(adapter.FormatOpenAI),
+		AllowedModels: []string{"anthropic/claude-sonnet-4.5"},
+	}
+
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openrouter"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `"anthropic/claude-sonnet-4.5"`, string(got["model"]))
+	assert.NotContains(t, got, "models")
+	assert.NotContains(t, got, "route")
+	assert.NotContains(t, got, "plugins")
+	assert.JSONEq(t, `{"order":["Anthropic"]}`, string(got["provider"]))
+}
+
+func TestProviderInvoke_GroqReEncodeKeepsGatewayMutations(t *testing.T) {
+	const body = `{"seed":7,"prompt_cache_key":"k","tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"hi"}]}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) (iter.Seq2[[]byte, error], error) {
+			sent = b
+			return func(func([]byte, error) bool) {}, nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "groq", client)
+	req := &infracontext.RequestContext{Body: []byte(body), SourceFormat: string(adapter.FormatOpenAI), DefaultModel: "openai/gpt-oss-120b"}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("groq"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.JSONEq(t, `"openai/gpt-oss-120b"`, string(got["model"]), "EnforceModel still injects the default model")
+	assert.JSONEq(t, `true`, string(got["stream"]))
+	assert.JSONEq(t, `{"include_usage":true}`, string(got["stream_options"]))
+	assert.JSONEq(t, `false`, string(got["parallel_tool_calls"]), "Groq normalisation still applies")
+	assert.JSONEq(t, `7`, string(got["seed"]))
+	assert.NotContains(t, got, "prompt_cache_key", "Groq caches automatically and takes no cache keys")
+}
+
+func TestProviderInvoke_AzureRetentionIsMappedOnlyWhenTranslated(t *testing.T) {
+	tests := []struct {
+		name   string
+		source adapter.Format
+		body   string
+		mapped bool
+	}{
+		{name: "responses to azure chat", source: adapter.FormatOpenAIResponses, body: `{"model":"prod-chat","input":"hi","prompt_cache_key":"k1","prompt_cache_retention":"24h"}`, mapped: true},
+		{name: "chat passthrough", source: adapter.FormatOpenAI, body: `{"model":"prod-chat","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"24h"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg *providers.Config
+			var sent []byte
+			client := providermocks.NewClient(t)
+			client.EXPECT().
+				Completions(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, c *providers.Config, b []byte) ([]byte, error) {
+					cfg, sent = c, b
+					return []byte(`{"id":"x","choices":[]}`), nil
+				}).
+				Once()
+			inv := newStreamInvoker(t, "azure", client)
+			req := &infracontext.RequestContext{Body: []byte(tt.body), SourceFormat: string(tt.source)}
+
+			_, err := inv.Invoke(context.Background(), apiKeyTarget("azure"), req)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.mapped, cfg.CacheRetentionMapped)
+			assert.Contains(t, string(sent), `"prompt_cache_retention":"24h"`)
+		})
+	}
+}
+
+func TestProviderInvokeStream_ResponsesToAzureChatCarriesKeyAndRetention(t *testing.T) {
+	const responsesBody = `{"model":"prod-chat","input":"hi","stream":true,"prompt_cache_key":"k1","prompt_cache_retention":"24h"}`
+
+	var sent []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *providers.Config, b []byte) (iter.Seq2[[]byte, error], error) {
+			sent = b
+			return func(func([]byte, error) bool) {}, nil
+		}).
+		Once()
+	inv := newStreamInvoker(t, "azure", client)
+	req := &infracontext.RequestContext{Body: []byte(responsesBody), SourceFormat: string(adapter.FormatOpenAIResponses)}
+
+	_, err := inv.InvokeStream(context.Background(), apiKeyTarget("azure"), req)
+	require.NoError(t, err)
+
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(sent, &got))
+	assert.Contains(t, got, "messages", "Azure is still sent as Chat")
+	assert.JSONEq(t, `"k1"`, string(got["prompt_cache_key"]))
+	assert.JSONEq(t, `"24h"`, string(got["prompt_cache_retention"]))
 }

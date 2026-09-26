@@ -25,6 +25,7 @@ const MetadataUsageKey = "usage"
 type CanonicalRequest struct {
 	Model             string                     `json:"model,omitempty"`
 	System            string                     `json:"system,omitempty"`
+	SystemCache       *CanonicalCacheBreakpoint  `json:"system_cache,omitempty"`
 	Messages          []CanonicalMessage         `json:"messages,omitempty"`
 	Tools             []CanonicalTool            `json:"tools,omitempty"`
 	ToolChoice        *CanonicalToolChoice       `json:"tool_choice,omitempty"`
@@ -34,9 +35,15 @@ type CanonicalRequest struct {
 	TopK              *int                       `json:"top_k,omitempty"`
 	Stop              []string                   `json:"stop,omitempty"`
 	Stream            bool                       `json:"stream,omitempty"`
+	Seed              *int64                     `json:"seed,omitempty"`
+	ParallelToolCalls *bool                      `json:"parallel_tool_calls,omitempty"`
 	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
 	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
+	CacheOptions      *CanonicalCacheOptions     `json:"cache_options,omitempty"`
 	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
+	// DroppedInputItems counts the input items a decoder left out because it
+	// could not read them; callers that inspect the request log it.
+	DroppedInputItems int `json:"-"`
 }
 
 // CanonicalImage is one image attached to a message. Exactly one of Data or
@@ -50,11 +57,12 @@ type CanonicalImage struct {
 
 // CanonicalMessage represents a single turn in the conversation.
 type CanonicalMessage struct {
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
-	Images     []CanonicalImage    `json:"images,omitempty"`
-	ToolCalls  []CanonicalToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content"`
+	Images     []CanonicalImage          `json:"images,omitempty"`
+	ToolCalls  []CanonicalToolCall       `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Cache      *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolKind distinguishes the tool shapes the gateway can represent.
@@ -78,7 +86,8 @@ type CanonicalTool struct {
 	Schema      map[string]interface{} `json:"schema,omitempty"`
 	// Format carries the grammar/format payload of a ToolKindCustom tool
 	// verbatim. It is nil for function tools.
-	Format json.RawMessage `json:"format,omitempty"`
+	Format json.RawMessage           `json:"format,omitempty"`
+	Cache  *CanonicalCacheBreakpoint `json:"cache,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.
@@ -102,6 +111,9 @@ type CanonicalToolCall struct {
 // CanonicalRespFormat controls the response format.
 type CanonicalRespFormat struct {
 	Type string `json:"type"` // "json_object", "text"
+	// JSONSchema is the OpenAI Chat json_schema object (name, schema,
+	// strict) of a "json_schema" format, kept verbatim.
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -149,13 +161,15 @@ type CanonicalUsage struct {
 	ToolUseInputTokens    int `json:"tool_use_input_tokens,omitempty"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
 
-	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with
-	// Anthropic's one-hour TTL, which bills at 2x input where the five-minute
-	// default bills at 1.25x. Carried because the wire reports it; not yet priced
-	// separately, since the catalog publishes a single cache-write rate.
+	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with a
+	// one-hour TTL rather than the five-minute default: Anthropic reports it as
+	// ephemeral_1h_input_tokens and Bedrock Converse as the cacheDetails entry
+	// whose ttl is 1h. It is never larger than CacheWriteInputTokens.
 	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
 
 	ServiceTier string `json:"service_tier,omitempty"`
+
+	cacheTTLKnown bool
 }
 
 // PlainInputTokens is the share of the prompt that bills at the plain input
@@ -164,11 +178,17 @@ func (u *CanonicalUsage) PlainInputTokens() int {
 	if u == nil {
 		return 0
 	}
-	plain := u.InputTokens - u.CachedInputTokens - u.CacheWriteInputTokens
-	if plain < 0 {
-		return u.InputTokens
-	}
-	return plain
+	return max(0, u.InputTokens-u.CachedInputTokens-u.CacheWriteInputTokens)
+}
+
+func (u *CanonicalUsage) hasCacheTTLBreakdown() bool {
+	return u.cacheTTLKnown || u.CacheWrite1hInputTokens > 0
+}
+
+func (u *CanonicalUsage) setCache(read, write, write1h int) {
+	u.CachedInputTokens, u.CacheWriteInputTokens = read, write
+	u.CacheWrite1hInputTokens = min(write1h, write)
+	u.TotalTokens = max(u.TotalTokens, u.InputTokens+u.OutputTokens)
 }
 
 // MergeUsage folds a later usage report into an earlier one, keeping the larger
@@ -193,6 +213,7 @@ func MergeUsage(prev, next *CanonicalUsage) *CanonicalUsage {
 	out.CacheWrite1hInputTokens = maxTokens(prev.CacheWrite1hInputTokens, next.CacheWrite1hInputTokens)
 	out.ToolUseInputTokens = maxTokens(prev.ToolUseInputTokens, next.ToolUseInputTokens)
 	out.ReasoningOutputTokens = maxTokens(prev.ReasoningOutputTokens, next.ReasoningOutputTokens)
+	out.cacheTTLKnown = prev.cacheTTLKnown || next.cacheTTLKnown
 	if next.ServiceTier != "" {
 		out.ServiceTier = next.ServiceTier
 	}
@@ -255,4 +276,7 @@ type CanonicalStreamChunk struct {
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers
 	ProviderExtensions map[string]json.RawMessage `json:"provider_extensions,omitempty"`
+	// UpstreamError is the error object the upstream sent in this chunk's
+	// payload, if any.
+	UpstreamError *UpstreamStreamError `json:"-"`
 }

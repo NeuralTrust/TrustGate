@@ -50,13 +50,16 @@ type invokeModelFn func(ctx context.Context, model string, body []byte) ([]byte,
 
 type converseFn func(ctx context.Context, input *bedrockruntime.ConverseInput) (*bedrockruntime.ConverseOutput, error)
 
+type converseStreamFn func(ctx context.Context, input *bedrockruntime.ConverseStreamInput) (*bedrockruntime.ConverseStreamOutput, error)
+
 type client struct {
-	clientPool    *sync.Map
-	buildMu       sync.Mutex
-	bedrockClient bedrockClient.Client
-	invoke        invokeModelFn
-	converse      converseFn
-	systemFold    systemFoldMemo
+	clientPool     *sync.Map
+	buildMu        sync.Mutex
+	bedrockClient  bedrockClient.Client
+	invoke         invokeModelFn
+	converse       converseFn
+	converseStream converseStreamFn
+	systemFold     systemFoldMemo
 }
 
 func NewBedrockClient() providers.Client {
@@ -82,8 +85,9 @@ func (c *client) Completions(
 	if err != nil {
 		return nil, err
 	}
+	params.applyCacheCapability(cacheCapabilityFor(model))
 
-	out, err := converseWithSystemFallback(&c.systemFold, model, params,
+	out, err := converseWithFallbacks(c, model, params,
 		func(p *converseParams) (*bedrockruntime.ConverseOutput, error) {
 			return c.converseModel(ctx, cfg, p.input(model))
 		})
@@ -94,6 +98,20 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("failed to converse with model: %w", err)
 	}
 	return converseResponseJSON(out)
+}
+
+// converseWithFallbacks nests the cachePoint fallback inside the system fold,
+// so a model that rejects both is repaired in either order and only the fold
+// is remembered.
+func converseWithFallbacks[T any](
+	c *client,
+	model string,
+	params *converseParams,
+	call func(*converseParams) (T, error),
+) (T, error) {
+	return converseWithSystemFallback(&c.systemFold, model, params, func(p *converseParams) (T, error) {
+		return converseWithCachePointFallback(p, call)
+	})
 }
 
 func (c *client) converseModel(
@@ -242,15 +260,22 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, err
 	}
+	params.applyCacheCapability(cacheCapabilityFor(model))
 
-	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
+	stream := c.converseStream
+	if stream == nil {
+		bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
+		}
+		stream = func(ctx context.Context, input *bedrockruntime.ConverseStreamInput) (*bedrockruntime.ConverseStreamOutput, error) {
+			return bedrockCl.ConverseStream(ctx, input)
+		}
 	}
 
-	resp, err := converseWithSystemFallback(&c.systemFold, model, params,
+	resp, err := converseWithFallbacks(c, model, params,
 		func(p *converseParams) (*bedrockruntime.ConverseStreamOutput, error) {
-			return bedrockCl.ConverseStream(ctx, p.streamInput(model))
+			return stream(ctx, p.streamInput(model))
 		})
 	if err != nil {
 		if backendErr := newBedrockBackendError(err); backendErr != nil {
