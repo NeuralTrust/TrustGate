@@ -3,11 +3,13 @@
 package functional_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func anthropicChatRequest(model string) map[string]any {
@@ -295,5 +297,96 @@ func TestQualifiedPin_Authorization(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 		assert.Contains(t, string(body), "invalid_model")
 		assert.Equal(t, 0, up.Hits(), "modelId is not a supported request field")
+	})
+}
+
+const functionalPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+func anthropicImageRequest(model string, withImage bool) map[string]any {
+	content := []map[string]any{{"type": "text", "text": "What is in the image?"}}
+	if withImage {
+		content = append([]map[string]any{{
+			"type":   "image",
+			"source": map[string]any{"type": "base64", "media_type": "image/png", "data": functionalPNGBase64},
+		}}, content...)
+	}
+	return map[string]any{
+		"model":      model,
+		"max_tokens": 128,
+		"messages":   []map[string]any{{"role": "user", "content": content}},
+	}
+}
+
+func setupAnthropicSlugRoute(t *testing.T, baseURL, model string) (string, string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("img-gw")})
+	backendID := CreateRegistry(t, gatewayID, anthropicFilesBackendPayload(uniqueName("ant-be"), baseURL))
+	coID := CreateConsumer(t, gatewayID, map[string]any{
+		"name": uniqueName("cons"),
+		"registries": []map[string]any{
+			{"id": backendID, "model_policies": map[string]any{"allowed": []string{model}}},
+		},
+	})
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	return apiKey, ConsumerSlug(t, coID)
+}
+
+func TestPayloadNormalization_ImageContent(t *testing.T) {
+	defer Track(t, "PayloadNormalization")()
+
+	t.Run("anthropic image block reaches an openai upstream as image_url", func(t *testing.T) {
+		up := newJSONUpstream(t, "image-served")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/messages",
+			anthropicImageRequest("@openai/gpt-4o-mini", true))
+
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		require.Equal(t, 1, up.Hits())
+		var sent struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.Unmarshal(up.LastBody(), &sent))
+		require.Len(t, sent.Messages, 1)
+		assert.JSONEq(t,
+			`[{"type":"image_url","image_url":{"url":"data:image/png;base64,`+functionalPNGBase64+`"}},{"type":"text","text":"What is in the image?"}]`,
+			string(sent.Messages[0].Content))
+	})
+
+	t.Run("text-only request still sends string content", func(t *testing.T) {
+		up := newJSONUpstream(t, "text-served")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/messages",
+			anthropicImageRequest("@openai/gpt-4o-mini", false))
+
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		require.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), `"content":"What is in the image?"`)
+		assert.NotContains(t, string(up.LastBody()), "image_url")
+	})
+
+	t.Run("ftp image to an anthropic backend is a 400 without an upstream call", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, slug := setupAnthropicSlugRoute(t, up.URL()+"/v1", "claude-sonnet-4")
+
+		payload := map[string]any{
+			"model": "claude-sonnet-4",
+			"messages": []map[string]any{{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": "What is in the image?"},
+				{"type": "image_url", "image_url": map[string]any{"url": "ftp://example.com/private.png"}},
+			}}},
+		}
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/chat/completions", payload)
+
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), `"invalid_request"`)
+		assert.Contains(t, string(body), "unsupported content")
+		for _, leak := range []string{"private.png", "adapter", "anthropic", "bedrock"} {
+			assert.NotContains(t, string(body), leak)
+		}
+		assert.Equal(t, 0, up.Hits())
 	})
 }

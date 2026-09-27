@@ -58,6 +58,7 @@ const (
 
 	skipReasonTools     = "tools_present"
 	skipReasonStreaming = "streaming"
+	skipReasonImages    = "images_present"
 )
 
 const (
@@ -271,7 +272,12 @@ func (p *Plugin) preRequest(
 		return missResult(), nil
 	}
 
-	text := p.extractUserInput(in.Request)
+	text, hasImages := p.extractUserInput(in.Request)
+	if hasImages {
+		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonImages})
+		return missResult(), nil
+	}
 	if text == "" {
 		markStatus(in.Response, cacheStatusMiss)
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode()})
@@ -418,7 +424,11 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 
-	text := p.extractUserInput(in.Request)
+	text, hasImages := p.extractUserInput(in.Request)
+	if hasImages {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonImages})
+		return passThrough(), nil
+	}
 	if text == "" {
 		return passThrough(), nil
 	}
@@ -496,22 +506,32 @@ func setCacheExtras(event *metrics.EventContext, data SemanticCacheData) {
 	event.SetExtras(data)
 }
 
-func (p *Plugin) extractUserInput(req *infracontext.RequestContext) string {
+// extractUserInput returns the text of the last user turn, the cache key. It
+// also reports whether that turn carries images: the key cannot see them, so
+// two requests with the same text and different images would share an answer.
+func (p *Plugin) extractUserInput(req *infracontext.RequestContext) (string, bool) {
 	if req == nil {
-		return ""
+		return "", false
 	}
 	if req.Provider != "" && p.registry != nil {
 		canonical, err := p.registry.DecodeRequestFor(req.Body, adapter.Format(req.Provider))
 		if err == nil && canonical != nil {
 			for i := len(canonical.Messages) - 1; i >= 0; i-- {
-				if canonical.Messages[i].Role == "user" && canonical.Messages[i].Content != "" {
-					return canonical.Messages[i].Content
+				m := canonical.Messages[i]
+				if m.Role != "user" {
+					continue
+				}
+				if len(m.Images) > 0 {
+					return "", true
+				}
+				if m.Content != "" {
+					return m.Content, false
 				}
 			}
-			return ""
+			return "", false
 		}
 	}
-	return adapter.ExtractUserInputGeneric(req.Body)
+	return adapter.ExtractUserInputGeneric(req.Body), false
 }
 
 func partitionKey(cfg *config, scope appplugins.RuntimeScope, req *infracontext.RequestContext) (string, bool) {

@@ -321,23 +321,23 @@ func TestAudio_TranslationsAre404(t *testing.T) {
 	assert.Equal(t, 0, up.Hits())
 }
 
-func TestAudio_InvalidMethodIs400(t *testing.T) {
+func TestAudio_InvalidMethodIs405(t *testing.T) {
 	defer Track(t, "AudioProvider")()
 
 	up, _ := newAudioUpstream(t)
 	apiKey, path := setupAudioSpeechRoute(t, openaiBackendPayload(uniqueName("oai-audio"), up.URL()+"/v1"))
 
 	status, _, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
-	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+	assert.Equal(t, http.StatusMethodNotAllowed, status, "body: %s", body)
 	assert.Equal(t, 0, up.Hits())
 }
 
-func TestAudio_EmptyCapablePoolIs503(t *testing.T) {
+func TestAudio_EmptyCapablePoolIs400(t *testing.T) {
 	defer Track(t, "AudioProvider")()
 
 	apiKey, path := setupAudioSpeechRoute(t, anthropicBackendPayload(uniqueName("ant-only")))
 
 	status, _, body := proxyPost(t, apiKey, path, speechRequest("tts-1"))
-	assert.Equal(t, http.StatusServiceUnavailable, status, "body: %s", body)
-	assert.Contains(t, string(body), "no_backend_available")
+	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+	assert.Contains(t, string(body), "invalid_request")
 }

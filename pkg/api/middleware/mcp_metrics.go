@@ -85,7 +85,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		GatewayID: gatewayID,
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
-		IP:        metricsClientIP(c, m.resolveClientIP),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 		Kind:      events.KindMCP,
 	}
 	if gw != nil {
@@ -95,6 +95,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		meta.RetentionWindow = window
 		meta.RetentionPlan = gw.Entitlements.Tier
 	}
+	meta.EndUser = detectEndUser(c)
 	return meta
 }
 
@@ -111,7 +112,7 @@ func (m *MCPMetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID strin
 		Method:    strings.Clone(c.Method()),
 		Path:      strings.Clone(c.Path()),
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        metricsClientIP(c, m.resolveClientIP),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
 }
 

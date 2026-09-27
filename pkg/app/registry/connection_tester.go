@@ -147,6 +147,8 @@ func unsupportedReason(auth *domain.TargetAuth) (bool, string) {
 	switch auth.Type {
 	case domain.AuthTypeOAuth2:
 		return true, "connection testing is not supported for oauth2 credentials yet"
+	case domain.AuthTypePassthrough:
+		return true, "connection testing is not supported for passthrough credentials; send Authorization: Bearer on each request"
 	default:
 		return false, ""
 	}

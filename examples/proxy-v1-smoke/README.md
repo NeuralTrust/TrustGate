@@ -23,7 +23,7 @@ chmod +x smoke.sh
 ./smoke.sh
 ```
 
-A 503 `no_backend_available` (or a pin 400) on a surface the attached registry cannot serve is reported as a **skip**, not a failure. Real HTTP errors fail the script.
+A 400 `does not support this capability` on a surface the attached registry cannot serve (or a 503 `no_backend_available` when the consumer has no registries at all) is reported as a **skip**, not a failure. Real HTTP errors fail the script.
 
 Artifacts (`speech.mp3`, `logo.png`) land in `./out`.
 

@@ -71,7 +71,9 @@ func TestConsumerTraceSeparatesVerifiedIdentityFromEndUser(t *testing.T) {
 			c.SetUserContext(ctx)
 			stampConsumerTrace(c, &appconsumer.RoutableConsumer{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), Name: "test"}})
 			meta := rt.Metadata()
-			require.Equal(t, "app-asserted-user", meta.EndUser)
+			require.NotNil(t, meta.EndUser)
+			require.Equal(t, "app-asserted-user", meta.EndUser.ID)
+			require.Equal(t, trace.EndUserSourceNeuralTrust, meta.EndUser.Source)
 			require.Equal(t, string(method), meta.PrincipalMethod)
 			if method != "" {
 				require.Equal(t, "verified-user", meta.PrincipalSubject)

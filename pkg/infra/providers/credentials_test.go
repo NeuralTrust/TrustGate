@@ -142,3 +142,29 @@ func TestCredentialsFromTargetAuth_GCPServiceAccount(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyIncomingBearer_Passthrough(t *testing.T) {
+	t.Parallel()
+
+	auth := &registry.TargetAuth{Type: registry.AuthTypePassthrough}
+	creds := providers.CredentialsFromTargetAuth(auth)
+	if creds.ApiKey != "" {
+		t.Fatalf("stored passthrough ApiKey = %q, want empty", creds.ApiKey)
+	}
+
+	providers.ApplyIncomingBearer(&creds, auth, "Bearer ya29.caller-token")
+	if creds.ApiKey != "ya29.caller-token" {
+		t.Fatalf("passthrough ApiKey = %q, want caller token", creds.ApiKey)
+	}
+}
+
+func TestApplyIncomingBearer_IgnoresStoredAuth(t *testing.T) {
+	t.Parallel()
+
+	auth := registry.NewAPIKeyAuth("sk-stored")
+	creds := providers.CredentialsFromTargetAuth(auth)
+	providers.ApplyIncomingBearer(&creds, auth, "Bearer ya29.caller-token")
+	if creds.ApiKey != "sk-stored" {
+		t.Fatalf("stored api_key was overwritten: %q", creds.ApiKey)
+	}
+}

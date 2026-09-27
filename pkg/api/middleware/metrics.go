@@ -133,7 +133,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 		TenantID:  gw.TenantID(),
 		Path:      strings.Clone(c.Path()),
 		Method:    strings.Clone(c.Method()),
-		IP:        metricsClientIP(c, m.resolveClientIP),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
 	if window, ok := gw.RetentionWindow(); ok {
 		meta.RetentionWindow = window
@@ -142,6 +142,7 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
 		meta.SessionID = strings.Clone(sessionID)
 	}
+	meta.EndUser = detectEndUser(c)
 	return meta
 }
 
@@ -164,7 +165,7 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		Path:      strings.Clone(c.Path()),
 		Query:     query,
 		Body:      append([]byte(nil), c.Body()...),
-		IP:        metricsClientIP(c, m.resolveClientIP),
+		IP:        strings.Clone(metricsClientIP(c, m.resolveClientIP)),
 	}
 	stampRequestTarget(c, req)
 	return req

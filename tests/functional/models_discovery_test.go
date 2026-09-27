@@ -134,7 +134,8 @@ func TestModelsDiscovery_RejectsNonGET(t *testing.T) {
 		[]string{"gpt-4o-mini"},
 	)
 
-	status, _, body := proxyRequest(t, http.MethodPost, apiKey, path, nil, []byte(`{}`))
-	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-	assert.True(t, strings.Contains(string(body), "invalid_request"), "body: %s", body)
+	status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, nil, []byte(`{}`))
+	assert.Equal(t, http.StatusMethodNotAllowed, status, "body: %s", body)
+	assert.Equal(t, http.MethodGet, headers.Get("Allow"))
+	assert.True(t, strings.Contains(string(body), "method_not_allowed"), "body: %s", body)
 }
