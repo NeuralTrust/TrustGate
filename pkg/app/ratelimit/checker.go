@@ -79,11 +79,11 @@ func (e *Exceeded) Body() []byte {
 func rateLimitClientMessage(reason string, retryAfterSeconds int) string {
 	switch reason {
 	case ReasonBurst:
-		return fmt.Sprintf("Request blocked: gateway burst rate limit exceeded. Retry after %ds.", retryAfterSeconds)
+		return fmt.Sprintf("TrustGate blocked this request: gateway burst rate limit exceeded. Retry in %ds.", retryAfterSeconds)
 	case ReasonQuota:
-		return fmt.Sprintf("Request blocked: monthly request quota exceeded. Retry after %ds.", retryAfterSeconds)
+		return fmt.Sprintf("TrustGate blocked this request: monthly request quota exceeded. Retry in %ds.", retryAfterSeconds)
 	default:
-		return fmt.Sprintf("Request blocked: rate limit exceeded (%s). Retry after %ds.", reason, retryAfterSeconds)
+		return fmt.Sprintf("TrustGate blocked this request: rate limit exceeded (%s). Retry in %ds.", reason, retryAfterSeconds)
 	}
 }
 

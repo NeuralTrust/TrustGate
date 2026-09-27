@@ -136,7 +136,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if in.Event != nil {
 				in.Event.SetExtras(data)
 			}
-			message := fmt.Sprintf("Request blocked: %s rate limit exceeded. Retry after %ss.", dimension, cfg.RetryAfter)
+			message := blockedMessage(dimension, cfg)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusTooManyRequests,
 				Message:    message,
@@ -213,6 +213,21 @@ func setLimitHeaders(headers map[string][]string, dimension string, limit int, c
 	headers[prefix+"-Limit"] = []string{strconv.Itoa(limit)}
 	headers[prefix+"-Remaining"] = []string{strconv.FormatInt(remaining, 10)}
 	headers[prefix+"-Reset"] = []string{strconv.FormatInt(reset.Unix(), 10)}
+}
+
+// blockedMessage is what the person behind the client reads when a request is
+// refused. Clients often show it verbatim, so it names the gateway as the one
+// that blocked the request and spells out the limit it hit.
+func blockedMessage(dimension string, cfg *config) string {
+	return fmt.Sprintf("TrustGate blocked this request: %s rate limit exceeded (%d %s per %s). Retry in %ss.",
+		dimension, cfg.Limit, pluralRequests(cfg.Limit), cfg.Window, cfg.RetryAfter)
+}
+
+func pluralRequests(n int) string {
+	if n == 1 {
+		return "request"
+	}
+	return "requests"
 }
 
 func rateLimitRejectBody(dimension, message string, cfg *config) []byte {
