@@ -194,7 +194,7 @@ func (p *providerInvoker) Invoke(
 		if be, ok := registry.IsBackendError(err); ok {
 			return p.backendErrorResponse(be, bk, prep), nil
 		}
-		return nil, err
+		return nil, clientRequestError(err)
 	}
 
 	usage, model, finishReason, responseID := p.decodeResponseMeta(respBody, prep.targetFormat)
@@ -272,7 +272,7 @@ func (p *providerInvoker) InvokeStream(
 		if be, ok := registry.IsBackendError(err); ok {
 			return p.backendErrorResponse(be, bk, prep), nil
 		}
-		return nil, fmt.Errorf("provider completions stream: %w", err)
+		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
 	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
@@ -283,6 +283,17 @@ func (p *providerInvoker) InvokeStream(
 		Stream:     stream,
 		SentModel:  prep.sentModel,
 	}, nil
+}
+
+// clientRequestError turns a body the provider client could not decode into a
+// terminal ErrInvalidRequestPayload; on a same-format passthrough the client is
+// the first to parse what the caller sent.
+func clientRequestError(err error) error {
+	var decodeErr *adapter.RequestDecodeError
+	if errors.As(err, &decodeErr) {
+		return fmt.Errorf("%w: %w", ErrInvalidRequestPayload, decodeErr)
+	}
+	return err
 }
 
 // prepare resolves the provider client and transforms the request payload across
@@ -308,7 +319,7 @@ func (p *providerInvoker) prepare(
 	if capability == capabilityFiles {
 		return &preparedInvocation{
 			client:       client,
-			cfg:          filesProviderConfig(bk),
+			cfg:          filesProviderConfig(bk, req.HeaderValue("Authorization")),
 			body:         req.Body,
 			sourceFormat: sourceFormat,
 			targetFormat: targetFormat,
@@ -329,8 +340,14 @@ func (p *providerInvoker) prepare(
 	if crossFormat {
 		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
 		if err != nil {
+			var contentErr *adapter.UnsupportedContentError
+			if errors.As(err, &contentErr) {
+				p.logger.Debug("request content not representable in target format",
+					slog.String("error", err.Error()))
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, contentErr)
+			}
 			if adapter.IsRequestDecodeError(err) {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+				return nil, fmt.Errorf("%w: %w", ErrInvalidRequestPayload, err)
 			}
 			return nil, fmt.Errorf("adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
 		}
@@ -360,7 +377,7 @@ func (p *providerInvoker) prepare(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,
@@ -545,11 +562,17 @@ func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocatio
 	}
 }
 
-func filesProviderConfig(bk *registry.Registry) *providers.Config {
+func filesProviderConfig(bk *registry.Registry, authorization string) *providers.Config {
 	return &providers.Config{
 		Options:     adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIFiles, bk.ProviderOptions()),
-		Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+		Credentials: registryCredentials(bk, authorization),
 	}
+}
+
+func registryCredentials(bk *registry.Registry, authorization string) providers.Credentials {
+	creds := providers.CredentialsFromTargetAuth(bk.Auth())
+	providers.ApplyIncomingBearer(&creds, bk.Auth(), authorization)
+	return creds
 }
 
 func (p *providerInvoker) prepareAudio(
@@ -592,7 +615,7 @@ func (p *providerInvoker) prepareAudio(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIAudio, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,
@@ -731,7 +754,7 @@ func (p *providerInvoker) prepareImages(
 		client: client,
 		cfg: &providers.Config{
 			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIImages, bk.ProviderOptions()),
-			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
 			AllowedModels: req.AllowedModels,

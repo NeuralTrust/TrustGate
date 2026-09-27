@@ -83,7 +83,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 	if raw := c.Query("mode"); raw != "" {
 		mode = domain.Mode(raw)
 		if !mode.IsValid() {
-			return httpio.WriteError(c, httpio.ErrInvalidFilter)
+			return httpio.WriteError(c, fmt.Errorf("%w: %s", httpio.ErrInvalidFilter, "mode"))
 		}
 	}
 	registryID, err := parseRegistryIDFilter(c)

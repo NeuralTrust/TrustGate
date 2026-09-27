@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -28,6 +29,18 @@ import (
 )
 
 const defaultSessionHeader = "X-Session-Id"
+
+// knownSessionHeaders are the conversation-id headers well-known chat
+// front-ends already send, tried after the gateway's own header so an explicit
+// configuration always wins. Without them a chat client's every message looks
+// like a fresh session, because the generated fallback below is per request.
+var knownSessionHeaders = []string{
+	// Our own namespace, for clients we do not know by name. It pairs with the
+	// X-TG-User-* headers detectEndUser reads.
+	"X-TG-Session-Id",
+	// Open WebUI, alongside the user headers detectEndUser reads.
+	"X-OpenWebUI-Chat-Id",
+}
 
 type SessionMiddleware struct {
 	logger *slog.Logger
@@ -55,6 +68,9 @@ func (m *SessionMiddleware) Middleware() fiber.Handler {
 		}
 
 		sessionID := c.Get(headerName)
+		if sessionID == "" {
+			sessionID = firstHeaderValue(c, knownSessionHeaders)
+		}
 		if sessionID == "" && bodyParam != "" {
 			sessionID = m.extractFromBody(c, bodyParam)
 		}
@@ -77,6 +93,15 @@ func (m *SessionMiddleware) Middleware() fiber.Handler {
 
 		return c.Next()
 	}
+}
+
+func firstHeaderValue(c *fiber.Ctx, headers []string) string {
+	for _, header := range headers {
+		if value := strings.TrimSpace(c.Get(header)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (m *SessionMiddleware) generateSessionID() string {
