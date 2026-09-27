@@ -29,7 +29,7 @@ const HeaderAPIKeyCompat = "x-api-key"
 // HeaderAPIKeyGoogle is the header Google's Gemini SDKs and Gemini CLI send
 // their api key in. Accepting it lets a Gemini-dialect client point at an
 // application with nothing but a base URL and a key.
-const HeaderAPIKeyGoogle = "x-goog-api-key"
+const HeaderAPIKeyGoogle = "x-goog-api-key" // #nosec G101 -- HTTP header name, not a credential
 
 // APIKeyFromRequest returns the gateway api key presented by the caller, or
 // an empty string when none is present. Precedence is X-AG-API-Key, then
