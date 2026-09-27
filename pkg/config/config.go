@@ -60,9 +60,6 @@ const (
 	defaultDBHealthCheckPeriod       = time.Minute
 	defaultDBConnectTimeout          = 5 * time.Second
 
-	postgresLoginDefault = "default"
-	postgresLoginAWS     = "aws"
-
 	redisLoginDefault = "default"
 	redisLoginAWS     = "aws"
 
@@ -312,7 +309,8 @@ type GoogleWorkspaceMCPConfig struct {
 }
 
 type DatabaseConfig struct {
-	Login             string
+	Login             PostgresLogin
+	AzureScope        string
 	Host              string
 	Port              int
 	User              string
@@ -569,10 +567,14 @@ func getServerConfig() ServerConfig {
 }
 
 func getDatabaseConfig() DatabaseConfig {
-	login := normalizePostgresLogin(os.Getenv("POSTGRES_LOGIN"))
+	login := normalizePostgresLogin(PostgresLogin(os.Getenv("POSTGRES_LOGIN")))
 	password := getEnv("DB_PASSWORD", defaultDBPassword)
-	if login == postgresLoginAWS {
+	if login.UsesTokenAuth() {
 		password = ""
+	}
+	azureScope := strings.TrimSpace(getEnv("DB_AZURE_SCOPE", DefaultAzureScope))
+	if azureScope == "" {
+		azureScope = DefaultAzureScope
 	}
 
 	return DatabaseConfig{
@@ -583,6 +585,7 @@ func getDatabaseConfig() DatabaseConfig {
 		Password:          password,
 		Name:              getEnv("DB_NAME", defaultDBName),
 		SSLMode:           getEnv("DB_SSL_MODE", defaultDBSSLMode),
+		AzureScope:        azureScope,
 		SSLRootCert:       getEnv("DB_SSL_ROOT_CERT", ""),
 		MinConns:          getEnvInt32("DB_MIN_CONNS", defaultDBMinConns),
 		MaxConns:          getEnvInt32("DB_MAX_CONNS", defaultDBMaxConns),
@@ -591,14 +594,6 @@ func getDatabaseConfig() DatabaseConfig {
 		HealthCheckPeriod: getEnvDuration("DB_HEALTH_CHECK_PERIOD", defaultDBHealthCheckPeriod),
 		ConnectTimeout:    getEnvDuration("DB_CONNECT_TIMEOUT", defaultDBConnectTimeout),
 	}
-}
-
-func normalizePostgresLogin(login string) string {
-	normalized := strings.ToLower(strings.TrimSpace(login))
-	if normalized == "" {
-		return postgresLoginDefault
-	}
-	return normalized
 }
 
 func getRedisConfig() RedisConfig {
@@ -1052,12 +1047,11 @@ func (cs ConfigSyncConfig) Validate() error {
 }
 
 func (c *Config) Validate() error {
-	c.Database.Login = normalizePostgresLogin(c.Database.Login)
-	switch c.Database.Login {
-	case postgresLoginDefault, postgresLoginAWS:
-	default:
-		return fmt.Errorf("%w: POSTGRES_LOGIN must be %q or %q", errors.ErrInvalidConfig, postgresLoginDefault, postgresLoginAWS)
+	login, err := ParsePostgresLogin(c.Database.Login)
+	if err != nil {
+		return err
 	}
+	c.Database.Login = login
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
 	}
@@ -1077,10 +1071,10 @@ func (c *Config) Validate() error {
 		if c.Database.Name == "" {
 			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
 		}
-		if c.Database.Login == postgresLoginAWS {
+		if c.Database.Login.UsesTokenAuth() {
 			c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
 			if c.Database.SSLMode != "require" && c.Database.SSLMode != "verify-ca" && c.Database.SSLMode != "verify-full" {
-				return fmt.Errorf("%w: DB_SSL_MODE must be %q, %q or %q when POSTGRES_LOGIN=%q", errors.ErrInvalidConfig, "require", "verify-ca", "verify-full", postgresLoginAWS)
+				return fmt.Errorf("%w: DB_SSL_MODE must be %q, %q or %q when POSTGRES_LOGIN=%q", errors.ErrInvalidConfig, "require", "verify-ca", "verify-full", c.Database.Login)
 			}
 		}
 	}

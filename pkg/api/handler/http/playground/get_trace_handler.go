@@ -51,14 +51,14 @@ func NewGetTraceHandler(finder TraceFinder) *GetTraceHandler {
 func (h *GetTraceHandler) Handle(c *fiber.Ctx) error {
 	traceID := c.Params("trace_id")
 	if traceID == "" {
-		return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
+		return c.Status(fiber.StatusNotFound).JSON(httpio.NotFoundBody())
 	}
 	evt, err := h.finder.Find(c.UserContext(), traceID)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 	if evt == nil {
-		return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
+		return c.Status(fiber.StatusNotFound).JSON(httpio.NotFoundBody())
 	}
 	return httpio.WriteOK(c, evt)
 }

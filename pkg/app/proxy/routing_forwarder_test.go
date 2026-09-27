@@ -323,6 +323,43 @@ func TestForward_GeminiAutoFromPathUsesBackendDefault(t *testing.T) {
 	}
 }
 
+func TestForward_VertexNativePathTakesModelFromPath(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	vertex := backendFor(gatewayID, "vertex")
+	rc := routableConsumerWith(gatewayID, vertex)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		vertex.ID: {Allowed: []string{"gemini-2.5-flash"}},
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
+			if !strings.Contains(string(req.Body), `"model":"gemini-2.5-flash"`) {
+				t.Fatalf("model from the Vertex path was not stamped into the body: %s", req.Body)
+			}
+		}).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Path:         "/slug/v1/projects/any-project/locations/any-region/publishers/google/models/gemini-2.5-flash:generateContent",
+			Body:         []byte(`{"contents":[]}`),
+			SourceFormat: string(adapter.FormatGemini),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
 func TestForward_PoolAliasBalancesAcrossMembers(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	memberA := backendFor(gatewayID, "openai")
@@ -992,7 +1029,7 @@ func TestForward_AudioTranscriptionPinnedIncapableIsTerminal(t *testing.T) {
 	}
 }
 
-func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
+func TestForward_EmbeddingsEmptyCapablePoolIsCapabilityNotSupported(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, anthropic)
@@ -1006,12 +1043,12 @@ func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 			ProxyCapability: "embeddings",
 		},
 	})
-	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
-		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
 	}
 }
 
-func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
+func TestForward_AudioSpeechEmptyCapablePoolIsCapabilityNotSupported(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, anthropic)
@@ -1027,7 +1064,39 @@ func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
 			ProxyCapability: "audio_speech",
 		},
 	})
-	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
-		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
+func TestForward_UnsupportedCapabilityWithoutModelIsCapabilityNotSupported(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		capability string
+	}{
+		{"files list", "/acme/v1/files", "files"},
+		{"files retrieve", "/acme/v1/files/abc", "files"},
+		{"rerank", "/acme/v1/rerank", "rerank"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "openai_compatible"))
+
+			fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+			_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request: &infracontext.RequestContext{
+					Method:          "GET",
+					Path:            tc.path,
+					ProxyCapability: tc.capability,
+				},
+			})
+			if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+				t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+			}
+		})
 	}
 }

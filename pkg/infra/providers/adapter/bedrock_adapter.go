@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -47,9 +48,21 @@ type ConverseMessage struct {
 // ConverseContentBlock is a tagged union: exactly one field is set.
 type ConverseContentBlock struct {
 	Text             string                    `json:"text,omitempty"`
+	Image            *ConverseImageBlock       `json:"image,omitempty"`
 	ToolUse          *ConverseToolUse          `json:"toolUse,omitempty"`
 	ToolResult       *ConverseToolResult       `json:"toolResult,omitempty"`
 	ReasoningContent *ConverseReasoningContent `json:"reasoningContent,omitempty"`
+}
+
+// ConverseImageBlock is an inline image; Bedrock takes bytes only, never URLs.
+type ConverseImageBlock struct {
+	Format string              `json:"format"`
+	Source ConverseImageSource `json:"source"`
+}
+
+// ConverseImageSource carries the raw image; encoding/json renders it as base64.
+type ConverseImageSource struct {
+	Bytes []byte `json:"bytes,omitempty"`
 }
 
 // ConverseSystemBlock is one system instruction.
@@ -305,7 +318,9 @@ func converseSystemText(blocks []ConverseSystemBlock) string {
 // converseMessageToCanonical splits one Converse turn into canonical messages:
 // text and tool-use blocks fold into a single message, while every tool result
 // becomes its own "tool" message placed first, so that on re-encoding the
-// results still directly follow the assistant turn that requested them.
+// results still directly follow the assistant turn that requested them. Image
+// blocks of a user turn go into Images; their order relative to the text is not
+// kept, since the encoders always emit images first.
 //
 // The canonical model has no slot for reasoning blocks or structured tool
 // results, so a round trip through it renders reasoning away and JSON results
@@ -329,6 +344,13 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 				ToolCallID: b.ToolResult.ToolUseID,
 				Content:    content,
 			})
+		case b.Image != nil:
+			if m.Role == converseRoleUser && len(b.Image.Source.Bytes) > 0 {
+				turn.Images = append(turn.Images, CanonicalImage{
+					MediaType: "image/" + b.Image.Format,
+					Data:      base64.StdEncoding.EncodeToString(b.Image.Source.Bytes),
+				})
+			}
 		case b.ToolUse != nil:
 			turn.ToolCalls = append(turn.ToolCalls, CanonicalToolCall{
 				ID:        b.ToolUse.ToolUseID,
@@ -340,7 +362,7 @@ func converseMessageToCanonical(m ConverseMessage) []CanonicalMessage {
 		}
 	}
 	turn.Content = text.String()
-	if turn.Content != "" || len(turn.ToolCalls) > 0 {
+	if turn.Content != "" || len(turn.ToolCalls) > 0 || len(turn.Images) > 0 {
 		out = append(out, turn)
 	}
 	return out
@@ -390,7 +412,11 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			out.System = append(out.System, ConverseSystemBlock{Text: m.Content})
 			continue
 		}
-		out.Messages = appendConverseMessage(out.Messages, converseMessageFromCanonical(m))
+		msg, err := converseMessageFromCanonical(m)
+		if err != nil {
+			return nil, err
+		}
+		out.Messages = appendConverseMessage(out.Messages, msg)
 	}
 	out.InferenceConfig = converseInferenceConfigFrom(req)
 	out.ToolConfig = converseToolConfigFrom(req)
@@ -412,7 +438,7 @@ func appendConverseMessage(msgs []ConverseMessage, msg ConverseMessage) []Conver
 	return append(msgs, msg)
 }
 
-func converseMessageFromCanonical(m CanonicalMessage) ConverseMessage {
+func converseMessageFromCanonical(m CanonicalMessage) (ConverseMessage, error) {
 	if m.Role == "tool" {
 		return ConverseMessage{
 			Role: converseRoleUser,
@@ -420,13 +446,24 @@ func converseMessageFromCanonical(m CanonicalMessage) ConverseMessage {
 				ToolUseID: m.ToolCallID,
 				Content:   []ConverseToolResultContent{{Text: m.Content}},
 			}}},
-		}
+		}, nil
 	}
 	role := converseRoleUser
 	if m.Role == converseRoleAssistant {
 		role = converseRoleAssistant
 	}
-	blocks := make([]ConverseContentBlock, 0, 1+len(m.ToolCalls))
+	var images []CanonicalImage
+	if m.Role == converseRoleUser {
+		images = m.Images
+	}
+	blocks := make([]ConverseContentBlock, 0, len(images)+1+len(m.ToolCalls))
+	for _, img := range images {
+		block, err := converseImageFromCanonical(img)
+		if err != nil {
+			return ConverseMessage{}, err
+		}
+		blocks = append(blocks, ConverseContentBlock{Image: block})
+	}
 	if m.Content != "" {
 		blocks = append(blocks, ConverseContentBlock{Text: m.Content})
 	}
@@ -437,7 +474,27 @@ func converseMessageFromCanonical(m CanonicalMessage) ConverseMessage {
 			Input:     converseToolInput(tc.Arguments),
 		}})
 	}
-	return ConverseMessage{Role: role, Content: blocks}
+	return ConverseMessage{Role: role, Content: blocks}, nil
+}
+
+func converseImageFromCanonical(img CanonicalImage) (*ConverseImageBlock, error) {
+	if img.Data == "" {
+		return nil, &UnsupportedContentError{Reason: "image URLs are not supported by the target; send inline base64 image data"}
+	}
+	format, ok := converseImageFormat(img.MediaType)
+	if !ok {
+		return nil, &UnsupportedContentError{Reason: "image media type is missing or not an image/* type"}
+	}
+	raw, err := base64.StdEncoding.DecodeString(img.Data)
+	if err != nil {
+		return nil, &UnsupportedContentError{Reason: "image data is not valid base64"}
+	}
+	return &ConverseImageBlock{Format: format, Source: ConverseImageSource{Bytes: raw}}, nil
+}
+
+func converseImageFormat(mediaType string) (string, bool) {
+	format, ok := strings.CutPrefix(mediaType, "image/")
+	return format, ok && format != ""
 }
 
 // converseToolInput turns the canonical arguments string into the JSON object
