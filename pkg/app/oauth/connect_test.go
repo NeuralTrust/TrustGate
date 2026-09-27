@@ -32,6 +32,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -1634,5 +1635,59 @@ func TestConnectService_ASharedInstanceIsReportedButNotRevocable(t *testing.T) {
 	if _, err := vault.Find(ctx, gw, registrydomain.SharedAccountSubject(shared.ID),
 		registrydomain.ForwardedVaultProvider(shared)); err != nil {
 		t.Fatalf("the instance's account survives a caller's revoke: %v", err)
+	}
+}
+
+// A link opened from the Portal names the screen it came from: the page gets it
+// to send the user back once the account is connected, and a URL that is not
+// somewhere a web app lives is refused at mint time rather than rendered.
+func TestConnectService_ResumableServerTicketCarriesTheResumeURL(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "notion-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.notion/mcp",
+		URL:  "https://mcp.notion.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.notion/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			AuthorizeURL: "https://mcp.notion.com/authorize",
+			TokenURL:     "https://mcp.notion.com/token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: appconsumer.NewData(gw, nil)},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		&stubRegistryLister{items: []*registrydomain.Registry{reg}},
+	)
+	ctx := context.Background()
+	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	const portal = "https://app.neuraltrust.ai/v2/team/portal?tab=installed"
+	ticket, err := svc.CreateResumableServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "", portal)
+	if err != nil {
+		t.Fatalf("CreateResumableServerTicket: %v", err)
+	}
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if page.ResumeURL != portal {
+		t.Fatalf("page resume = %q, want %q", page.ResumeURL, portal)
+	}
+
+	if _, err := svc.CreateResumableServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "", "javascript:alert(1)"); !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("want a validation error for a script URL, got %v", err)
 	}
 }
