@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,7 @@ type stubConnectService struct {
 	gotProvider string
 	gotInstance string
 	gotBaseURL  string
+	startErr    error
 }
 
 func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -69,6 +71,9 @@ func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider, inst
 	s.gotBaseURL = baseURL
 	s.gotProvider = provider
 	s.gotInstance = instanceID
+	if s.startErr != nil {
+		return "", s.startErr
+	}
 	return "https://github.com/login/oauth/authorize?x=1", nil
 }
 
@@ -381,5 +386,31 @@ func TestConnectPage_DoesNotHoldWhenThereIsNothingToWaitFor(t *testing.T) {
 		if flow.calls != 1 {
 			t.Fatalf("%s: Page was read %d times, want 1", tc.name, flow.calls)
 		}
+	}
+}
+
+// Calendly refusing the gateway's client registration is the upstream's answer,
+// not a gateway fault: it must not surface as a 500, and the page has to keep
+// the upstream's reason for whoever fixes the configuration.
+func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{startErr: fmt.Errorf("%w (status 400): %s",
+		appoauth.ErrUpstreamRegistrationRejected, `{"error":"invalid_client_metadata"}`)}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectStartPath, h.Start)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/com.calendly/mcp?ticket=abc", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "The provider refused to register this gateway") {
+		t.Fatalf("body does not explain the failure: %s", body)
+	}
+	if !strings.Contains(string(body), "invalid_client_metadata") {
+		t.Fatalf("body must keep the upstream reason: %s", body)
 	}
 }
