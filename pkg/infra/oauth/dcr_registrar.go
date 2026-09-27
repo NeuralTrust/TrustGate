@@ -51,12 +51,36 @@ type RegistrarOption func(*upstreamRegistrar)
 // WithClientName sets the client_name sent in dynamic client registrations. A
 // blank name keeps DefaultClientName. Changing the name re-registers cached
 // clients (see EnsureClient), so each environment gets its own upstream app.
+//
+// The name is reduced to letters, digits, hyphens and spaces: some upstreams
+// validate it that strictly and refuse the whole registration otherwise
+// (Calendly rejects "TrustGate MCP Gateway (dev)" with invalid_client_metadata).
 func WithClientName(name string) RegistrarOption {
 	return func(r *upstreamRegistrar) {
-		if trimmed := strings.TrimSpace(name); trimmed != "" {
-			r.clientName = trimmed
+		safe := portableClientName(name)
+		if safe != strings.TrimSpace(name) {
+			slog.Warn("oauth dcr: client name reduced to letters, digits, hyphens and spaces so strict upstreams accept it",
+				"configured", name, "registered", safe)
+		}
+		if safe != "" {
+			r.clientName = safe
 		}
 	}
+}
+
+// portableClientName keeps the characters every upstream seen so far accepts in
+// client_name and turns any other run into a single space.
+func portableClientName(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-':
+			b.WriteRune(c)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 type discoveryEntry struct {
@@ -219,7 +243,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("oauth dcr: read registration response: %w", err)
 	}
 	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("oauth dcr: registration rejected (status %d): %s", res.StatusCode, truncate(raw, 200))
+		return nil, fmt.Errorf("%w (status %d): %s", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode, truncate(raw, 200))
 	}
 	var doc struct {
 		ClientID     string `json:"client_id"`
