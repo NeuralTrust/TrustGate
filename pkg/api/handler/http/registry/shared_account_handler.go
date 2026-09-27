@@ -15,9 +15,14 @@
 package registry
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/response"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -59,13 +64,16 @@ func (h *SharedAccountHandler) Get(c *fiber.Ctx) error {
 
 // ConnectLink godoc
 // @Summary      Start connecting an instance's shared upstream account
-// @Description  Mints the connect page an administrator walks to authorize the account every caller of this instance uses.
+// @Description  Mints the connect page an administrator walks to authorize the account every caller of this instance uses. The body is optional: resume_url is where the page sends the administrator back to once the account is connected.
 // @Tags         registries
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id  path      string  true  "Gateway id"   format(uuid)
-// @Param        id          path      string  true  "Registry id"  format(uuid)
+// @Param        gateway_id  path      string                            true   "Gateway id"   format(uuid)
+// @Param        id          path      string                            true   "Registry id"  format(uuid)
+// @Param        body        body      request.SharedAccountConnectLink  false  "Where to come back to"
 // @Success      200         {object}  response.SharedAccountLinkResponse
+// @Failure      422         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id}/shared-account/connect-link [post]
@@ -74,7 +82,13 @@ func (h *SharedAccountHandler) ConnectLink(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	link, err := h.accounts.Link(c.UserContext(), gatewayID, id)
+	var req request.SharedAccountConnectLink
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		}
+	}
+	link, err := h.accounts.Link(c.UserContext(), gatewayID, id, strings.TrimSpace(req.ResumeURL))
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
