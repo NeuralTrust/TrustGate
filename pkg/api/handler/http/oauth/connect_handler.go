@@ -212,5 +212,13 @@ func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, appoauth.ErrSharedAccountNotYours) {
 		return fiber.NewError(fiber.StatusConflict, err.Error())
 	}
+	// The upstream refused to register the gateway as an OAuth client: the
+	// person connecting can do nothing about it, an operator has to. Name it as
+	// the upstream's refusal instead of a 500, and keep its answer for them.
+	if errors.Is(err, appoauth.ErrUpstreamRegistrationRejected) {
+		return fiber.NewError(fiber.StatusBadGateway,
+			"The provider refused to register this gateway as an OAuth app, so the account cannot be connected yet. "+
+				"Ask your administrator to check this connector's configuration. Details: "+err.Error())
+	}
 	return err
 }
