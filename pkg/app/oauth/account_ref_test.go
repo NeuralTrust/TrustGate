@@ -111,3 +111,76 @@ type failingUserInfo struct{}
 func (failingUserInfo) Fetch(context.Context, string, string) (map[string]any, error) {
 	return nil, errors.New("userinfo down")
 }
+
+// recordingUserInfo answers like userInfoMap and says which endpoint it was
+// asked, so a test can tell the declared endpoint from a guessed one.
+type recordingUserInfo struct {
+	claims   map[string]any
+	endpoint *string
+}
+
+func (r recordingUserInfo) Fetch(_ context.Context, endpoint, _ string) (map[string]any, error) {
+	*r.endpoint = endpoint
+	return r.claims, nil
+}
+
+// Calendly's MCP sends no ID token and is none of the providers the gateway
+// knows a userinfo endpoint for: the one its metadata declares is asked.
+func TestAccountRefFromTheDeclaredUserinfoEndpoint(t *testing.T) {
+	t.Parallel()
+	var asked string
+	cfg := &registrydomain.MCPAuth{
+		TokenURL:    "https://auth.calendly.com/oauth/token",
+		UserinfoURL: "https://auth.calendly.com/userinfo",
+	}
+	got := resolveAccountRef(context.Background(), recordingUserInfo{claims: map[string]any{"email": "ada@example.com"}, endpoint: &asked}, cfg, &ProviderToken{AccessToken: "opaque"})
+	if got != "ada@example.com" {
+		t.Fatalf("account ref = %q, want the email userinfo gave", got)
+	}
+	if asked != "https://auth.calendly.com/userinfo" {
+		t.Fatalf("asked %q, want the declared endpoint", asked)
+	}
+}
+
+func TestUserinfoURLIgnoresADeclaredEndpointThatIsNotHTTPS(t *testing.T) {
+	t.Parallel()
+	for _, declared := range []string{"http://auth.example.com/userinfo", "not a url", "file:///etc/passwd"} {
+		cfg := &registrydomain.MCPAuth{TokenURL: "https://auth.example.com/token", UserinfoURL: declared}
+		if got := userinfoURL(cfg); got != "" {
+			t.Fatalf("userinfoURL(%q) = %q, want empty", declared, got)
+		}
+	}
+}
+
+func TestAccountRefFromAReadableAccessToken(t *testing.T) {
+	t.Parallel()
+	token := &ProviderToken{AccessToken: mustSignedJWT(t, jwt.MapClaims{"preferred_username": "ada", "sub": "u_8f2a"})}
+	if got := resolveAccountRef(context.Background(), nil, nil, token); got != "ada" {
+		t.Fatalf("account ref = %q, want the readable name from the access token", got)
+	}
+}
+
+// An access token's sub is an id nobody would recognise, so it is not shown;
+// userinfo is asked instead.
+func TestAccountRefSkipsAnAccessTokenThatOnlyHasASub(t *testing.T) {
+	t.Parallel()
+	var asked string
+	cfg := &registrydomain.MCPAuth{TokenURL: "https://auth.example.com/token", UserinfoURL: "https://auth.example.com/userinfo"}
+	token := &ProviderToken{AccessToken: mustSignedJWT(t, jwt.MapClaims{"sub": "u_8f2a"})}
+	got := resolveAccountRef(context.Background(), recordingUserInfo{claims: map[string]any{"email": "ada@example.com"}, endpoint: &asked}, cfg, token)
+	if got != "ada@example.com" {
+		t.Fatalf("account ref = %q, want userinfo's email over the access token's sub", got)
+	}
+}
+
+func TestAutoAuthCarriesTheDeclaredUserinfoEndpoint(t *testing.T) {
+	t.Parallel()
+	meta := &UpstreamAuthServer{AuthorizationEndpoint: "https://a/authorize", TokenEndpoint: "https://a/token", UserinfoEndpoint: "https://a/userinfo"}
+	got := autoAuth(&registrydomain.MCPAuth{}, meta, &RegisteredClient{ClientID: "c"})
+	if got.UserinfoURL != "https://a/userinfo" {
+		t.Fatalf("UserinfoURL = %q", got.UserinfoURL)
+	}
+	if manualAuth(&registrydomain.MCPAuth{}, meta).UserinfoURL != "https://a/userinfo" {
+		t.Fatal("manual registration must carry it too")
+	}
+}

@@ -61,12 +61,16 @@ func (e *InvalidGrantError) Error() string { return ErrInvalidGrant.Error() }
 func (e *InvalidGrantError) Unwrap() error { return ErrInvalidGrant }
 
 type UpstreamAuthServer struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	RegistrationEndpoint  string   `json:"registration_endpoint"`
-	ScopesSupported       []string `json:"scopes_supported"`
-	Resource              string   `json:"resource"`
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	RegistrationEndpoint  string `json:"registration_endpoint"`
+	// UserinfoEndpoint is where an OpenID provider answers who a token is for.
+	// Optional in the metadata; when present, it names the account a
+	// connection was made with (see resolveAccountRef).
+	UserinfoEndpoint string   `json:"userinfo_endpoint,omitempty"`
+	ScopesSupported  []string `json:"scopes_supported"`
+	Resource         string   `json:"resource"`
 }
 
 type RegisteredClient struct {

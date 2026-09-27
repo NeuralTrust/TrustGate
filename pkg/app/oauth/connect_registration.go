@@ -152,6 +152,7 @@ func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *Reg
 	out.ClientSecret = client.ClientSecret
 	out.AuthorizeURL = meta.AuthorizationEndpoint
 	out.TokenURL = meta.TokenEndpoint
+	out.UserinfoURL = meta.UserinfoEndpoint
 	if len(out.Scopes) == 0 {
 		out.Scopes = meta.ScopesSupported
 	}
@@ -165,6 +166,7 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 	out := *cfg
 	out.AuthorizeURL = meta.AuthorizationEndpoint
 	out.TokenURL = meta.TokenEndpoint
+	out.UserinfoURL = meta.UserinfoEndpoint
 	if len(out.Scopes) == 0 {
 		out.Scopes = meta.ScopesSupported
 	}
