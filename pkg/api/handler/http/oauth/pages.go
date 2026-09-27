@@ -151,6 +151,17 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 	if view.ServerName == "" {
 		view.ServerName = serverDisplayName(catalog, page.Code)
 	}
+	// Not here yet, the server still has a logo: the catalog's, rather than the
+	// generic MCP mark the "getting ready" page showed in its place.
+	if !view.Found {
+		vendor := ""
+		if catalog != nil {
+			if server, ok := catalog.GetByCode(page.Code); ok {
+				vendor = server.Vendor
+			}
+		}
+		view.LogoURL = template.URL(appcatalog.BrandIconURL(vendor, view.ServerName, "", "", page.Code)) // #nosec G203 -- path is chosen from the bundled brand map
+	}
 	// A server connected for the first time was shelved on the control plane a
 	// moment ago, and config-sync may not have brought it to this plane yet: the
 	// page found nothing and said the server needs no connection, until a manual
@@ -175,9 +186,11 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 // connectPageWaitAttempts and connectPageWaitSeconds bound how long the
 // focused page waits for a server that is not on this plane yet: long enough
 // for config-sync to deliver one shelved a moment ago, short enough that a
-// server which really is not here is said so within half a minute.
+// server which really is not here is said so within half a minute. Each
+// attempt also holds its answer for up to connectPageHoldFor first, so four
+// attempts of that and two seconds between them come to under thirty.
 const (
-	connectPageWaitAttempts = 8
+	connectPageWaitAttempts = 4
 	connectPageWaitSeconds  = 2
 	connectWaitParam        = "wait"
 )
