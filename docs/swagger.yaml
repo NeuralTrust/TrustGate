@@ -1690,6 +1690,12 @@ definitions:
         type: string
       principal_sub:
         type: string
+      resume_url:
+        description: |-
+          ResumeURL is where the connect page sends the user once their account is
+          connected — the Portal screen they came from. An absolute https URL;
+          empty leaves them on the page.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_store_request.Decide:
     properties:
