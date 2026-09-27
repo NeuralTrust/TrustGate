@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -286,5 +287,99 @@ func TestConnectStart_FallsBackToRequestBaseURL(t *testing.T) {
 	}
 	if stub.gotBaseURL != "http://gw-tenant.mcp.example.com" {
 		t.Fatalf("baseURL = %q, want request origin", stub.gotBaseURL)
+	}
+}
+
+// sequencedConnectFlow answers Page with each page in turn, then keeps
+// answering the last: a server that reaches the plane on the Nth look.
+type sequencedConnectFlow struct {
+	stubConnectService
+	pages []*appoauth.ConnectPage
+	calls int
+}
+
+func (s *sequencedConnectFlow) Page(context.Context, string) (*appoauth.ConnectPage, error) {
+	page := s.pages[min(s.calls, len(s.pages)-1)]
+	s.calls++
+	return page, nil
+}
+
+func connectPageBody(t *testing.T, h *ConnectHandler, target string) string {
+	t.Helper()
+	app := fiber.New()
+	app.Get("/+/connect", h.Page)
+	res, err := app.Test(httptest.NewRequest("GET", target, nil), -1)
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	return string(body)
+}
+
+var (
+	linearNotHereYet = &appoauth.ConnectPage{ConsumerPath: "/store/mcp", Code: "app.linear/mcp"}
+	linearArrived    = &appoauth.ConnectPage{
+		ConsumerPath: "/store/mcp",
+		Code:         "app.linear/mcp",
+		Providers:    []appoauth.ProviderStatus{{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp"}},
+	}
+)
+
+// Right after a connect, config-sync brings the server within moments. The
+// page waits for it instead of showing "getting ready" and reloading into the
+// real page, which read as an error first.
+func TestConnectPage_HoldsForAServerThatIsArriving(t *testing.T) {
+	t.Parallel()
+	flow := &sequencedConnectFlow{pages: []*appoauth.ConnectPage{linearNotHereYet, linearNotHereYet, linearArrived}}
+	h := NewConnectHandler(flow, nil, "")
+	h.holdFor, h.holdEvery = time.Second, time.Millisecond
+
+	body := connectPageBody(t, h, "/store/mcp/connect?ticket=tk")
+	if strings.Contains(body, "ready</h1>") || strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatalf("page said it was getting ready although the server arrived while it waited: %s", body)
+	}
+	if !strings.Contains(body, "/oauth/connect/app.linear/mcp?ticket=tk") {
+		t.Fatalf("page is not the server's connect card: %s", body)
+	}
+	if flow.calls != 3 {
+		t.Fatalf("Page was read %d times, want 3", flow.calls)
+	}
+}
+
+// A server that does not arrive within the hold still gets the "getting ready"
+// page, with its own logo rather than the generic MCP mark.
+func TestConnectPage_FallsBackToGettingReadyAfterTheHold(t *testing.T) {
+	t.Parallel()
+	h := NewConnectHandler(&sequencedConnectFlow{pages: []*appoauth.ConnectPage{linearNotHereYet}}, nil, "")
+	h.holdFor, h.holdEvery = 20*time.Millisecond, time.Millisecond
+
+	body := connectPageBody(t, h, "/store/mcp/connect?ticket=tk")
+	if !strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatalf("page did not fall back to reloading: %s", body)
+	}
+	if !strings.Contains(body, `src="/oauth/brands/mcp/linear.svg"`) {
+		t.Fatalf("page does not show the server's own logo: %s", body)
+	}
+}
+
+// A page whose server is already here, and one past the last attempt, answer
+// at once.
+func TestConnectPage_DoesNotHoldWhenThereIsNothingToWaitFor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		page   *appoauth.ConnectPage
+		target string
+	}{
+		{"server already here", linearArrived, "/store/mcp/connect?ticket=tk"},
+		{"last attempt spent", linearNotHereYet, "/store/mcp/connect?ticket=tk&wait=4"},
+	} {
+		flow := &sequencedConnectFlow{pages: []*appoauth.ConnectPage{tc.page}}
+		h := NewConnectHandler(flow, nil, "")
+		h.holdFor, h.holdEvery = time.Minute, time.Millisecond
+		_ = connectPageBody(t, h, tc.target)
+		if flow.calls != 1 {
+			t.Fatalf("%s: Page was read %d times, want 1", tc.name, flow.calls)
+		}
 	}
 }
