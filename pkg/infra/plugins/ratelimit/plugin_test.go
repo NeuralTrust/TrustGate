@@ -188,7 +188,17 @@ func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
 	assert.Equal(t, "consumer", payload["reason"])
 	assert.Equal(t, float64(2), payload["limit"])
 	assert.Equal(t, float64(30), payload["retry_after_seconds"])
-	assert.Contains(t, payload["message"], "consumer rate limit exceeded")
+	// Clients such as Zed show the message verbatim, so it has to say who
+	// blocked the request and which limit it hit.
+	assert.Equal(t, "TrustGate blocked this request: consumer rate limit exceeded (2 requests per 1m). Retry in 30s.",
+		payload["message"])
+	assert.Equal(t, payload["message"], pe.Message)
+}
+
+func TestBlockedMessage_SingularLimit(t *testing.T) {
+	cfg := &config{Limit: 1, Window: "10s", RetryAfter: "10"}
+	assert.Equal(t, "TrustGate blocked this request: global rate limit exceeded (1 request per 10s). Retry in 10s.",
+		blockedMessage("global", cfg))
 }
 
 // A client that reads "1 remaining" must be able to spend it, so the countdown
