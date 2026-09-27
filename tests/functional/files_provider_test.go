@@ -450,13 +450,13 @@ func TestFiles_UnknownSubpathIs404(t *testing.T) {
 	assert.Equal(t, 0, up.Hits())
 }
 
-func TestFiles_InvalidMethodIs400(t *testing.T) {
+func TestFiles_InvalidMethodIs405(t *testing.T) {
 	defer Track(t, "FilesProvider")()
 
 	up, _ := newFilesUpstream(t)
 	apiKey, path := setupFilesRoute(t, openaiBackendPayload(uniqueName("oai-files"), up.URL()+"/v1"))
 
 	status, _, body := proxyRequest(t, http.MethodDelete, apiKey, path, nil, nil)
-	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+	assert.Equal(t, http.StatusMethodNotAllowed, status, "body: %s", body)
 	assert.Equal(t, 0, up.Hits())
 }

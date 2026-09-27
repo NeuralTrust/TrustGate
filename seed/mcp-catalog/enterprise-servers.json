@@ -1282,7 +1282,7 @@
         "pkce": true,
         "authorize_url": "https://mcp.axiom.co/authorize",
         "token_url": "https://mcp.axiom.co/token",
-        "resource": "https://mcp.axiom.co/mcp"
+        "resource": "https://mcp.axiom.co"
       },
       "tools": [
         {

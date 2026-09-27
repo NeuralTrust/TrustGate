@@ -31,7 +31,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
@@ -49,7 +49,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -63,7 +63,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		principalSub = p.Subject
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
@@ -84,7 +84,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
@@ -111,12 +111,13 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	return &out
 }
 
-// applyCatalogScopes lets the curated catalog correct the scopes persisted on a
-// registry. Both registration paths need it: scopes are copied onto the registry
-// when it is created, so a registry created against an older catalog keeps
-// asking for scopes the upstream may since have dropped, and nothing else ever
-// rewrites them.
-func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
+// applyCatalog lets the curated catalog correct the scopes and resource
+// indicator persisted on a registry. Both registration paths need it: these are
+// copied onto the registry when it is created, so a registry created against an
+// older catalog keeps asking for scopes the upstream may since have dropped, or
+// naming a resource its authorization server rejects with invalid_target (Axiom
+// only accepts its root resource), and nothing else ever rewrites them.
+func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
 	}
@@ -128,11 +129,20 @@ func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registr
 		code = strings.TrimSpace(cfg.Provider)
 	}
 	entry, ok := cat.GetByCode(code)
-	if !ok || entry.OAuth == nil || len(entry.OAuth.Scopes) == 0 {
+	if !ok || entry.OAuth == nil {
+		return cfg
+	}
+	resource := strings.TrimSpace(entry.OAuth.Resource)
+	if len(entry.OAuth.Scopes) == 0 && resource == "" {
 		return cfg
 	}
 	out := *cfg
-	out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	if len(entry.OAuth.Scopes) > 0 {
+		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	}
+	if resource != "" {
+		out.Resource = resource
+	}
 	return &out
 }
 

@@ -310,13 +310,15 @@ func TestGetProviderConfig_ResponseHeaderTimeout(t *testing.T) {
 
 func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 	tests := []struct {
-		name, login, password, sslMode, wantLogin, wantPassword string
+		name, login, password, sslMode, wantPassword string
+		wantLogin                                    PostgresLogin
 	}{
-		{name: "blank defaults to default", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
-		{name: "whitespace defaults to default", login: " \t ", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
-		{name: "default is trimmed and lowercased", login: " DeFaUlT ", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
-		{name: "default preserves configured password", login: postgresLoginDefault, password: "configured-password", wantLogin: postgresLoginDefault, wantPassword: "configured-password"},
-		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", sslMode: "require", wantLogin: postgresLoginAWS},
+		{name: "blank defaults to default", wantLogin: PostgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "whitespace defaults to default", login: " \t ", wantLogin: PostgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "default is trimmed and lowercased", login: " DeFaUlT ", wantLogin: PostgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "default preserves configured password", login: "default", password: "configured-password", wantLogin: PostgresLoginDefault, wantPassword: "configured-password"},
+		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAWS},
+		{name: "azure is normalized and drops configured password", login: " AzUrE ", password: "configured-password", sslMode: "require", wantLogin: PostgresLoginAzure},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -876,20 +878,43 @@ func TestValidate_ServerSecretKey(t *testing.T) {
 	}
 }
 
-func TestValidate_AWSSSLModes(t *testing.T) {
-	for mode, valid := range map[string]bool{" ReQuIrE ": true, " VERIFY-CA ": true, "verify-full": true, "disable": false, "allow": false, "prefer": false, "": false, "unknown": false} {
-		t.Run(mode, func(t *testing.T) {
-			cfg := postgresValid()
-			cfg.Database.Login, cfg.Database.SSLMode = postgresLoginAWS, mode
-			err := cfg.Validate()
-			if valid {
-				if err != nil || cfg.Database.SSLMode != strings.ToLower(strings.TrimSpace(mode)) {
-					t.Fatalf("secure AWS DB_SSL_MODE %q rejected or not normalized: mode=%q err=%v", mode, cfg.Database.SSLMode, err)
+func TestValidate_TokenLoginSSLModes(t *testing.T) {
+	for _, login := range []PostgresLogin{PostgresLoginAWS, PostgresLoginAzure} {
+		for mode, valid := range map[string]bool{" ReQuIrE ": true, " VERIFY-CA ": true, "verify-full": true, "disable": false, "allow": false, "prefer": false, "": false, "unknown": false} {
+			t.Run(string(login)+"/"+mode, func(t *testing.T) {
+				cfg := postgresValid()
+				cfg.Database.Login, cfg.Database.SSLMode = login, mode
+				err := cfg.Validate()
+				if valid {
+					if err != nil || cfg.Database.SSLMode != strings.ToLower(strings.TrimSpace(mode)) {
+						t.Fatalf("secure %s DB_SSL_MODE %q rejected or not normalized: mode=%q err=%v", login, mode, cfg.Database.SSLMode, err)
+					}
+					return
 				}
-				return
+				if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "DB_SSL_MODE") {
+					t.Fatalf("insecure %s DB_SSL_MODE %q error must be ErrInvalidConfig naming DB_SSL_MODE: %v", login, mode, err)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadConfig_AzureScope(t *testing.T) {
+	tests := []struct{ name, scope, want string }{
+		{name: "unset falls back to the public cloud scope", want: DefaultAzureScope},
+		{name: "blank falls back to the public cloud scope", scope: "  \t ", want: DefaultAzureScope},
+		{name: "sovereign cloud override is trimmed", scope: " https://ossrdbms-aad.database.usgovcloudapi.net/.default \n", want: "https://ossrdbms-aad.database.usgovcloudapi.net/.default"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("DB_AZURE_SCOPE", tc.scope)
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
 			}
-			if !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), "DB_SSL_MODE") {
-				t.Fatalf("insecure AWS DB_SSL_MODE %q error must be ErrInvalidConfig naming DB_SSL_MODE: %v", mode, err)
+			if cfg.Database.AzureScope != tc.want {
+				t.Errorf("AzureScope = %q, want %q", cfg.Database.AzureScope, tc.want)
 			}
 		})
 	}
@@ -897,7 +922,7 @@ func TestValidate_AWSSSLModes(t *testing.T) {
 
 func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {
 	cfg := dbLessValid()
-	cfg.Database.Login, cfg.Database.SSLMode = postgresLoginAWS, "disable"
+	cfg.Database.Login, cfg.Database.SSLMode = PostgresLoginAWS, "disable"
 	if cfg.Database.Host != "" || cfg.Database.User != "" || cfg.Database.Name != "" {
 		t.Fatal("dbLessValid should leave DB fields blank")
 	}

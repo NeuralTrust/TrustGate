@@ -244,13 +244,20 @@ var (
 			},
 		},
 	}
+
+	passthroughAuthOption = AuthTypeOption{
+		Type:        "passthrough",
+		Label:       "Passthrough",
+		Description: "No credentials are stored. The caller must send Authorization: Bearer with a GCP access token on each request.",
+		Fields:      []AuthField{},
+	}
 )
 
 var providerAuthCatalog = map[string][]AuthTypeOption{
 	providerdomain.OpenAI:           {apiKeyAuthOption},
 	providerdomain.OpenAICompatible: {openAICompatibleAuthOption},
 	providerdomain.Google:           {apiKeyAuthOption},
-	providerdomain.Vertex:           {gcpServiceAccountAuthOption},
+	providerdomain.Vertex:           {gcpServiceAccountAuthOption, passthroughAuthOption},
 	providerdomain.Anthropic:        {apiKeyAuthOption},
 	providerdomain.Bedrock:          awsAuthOptions,
 	providerdomain.Azure:            azureAuthOptions,

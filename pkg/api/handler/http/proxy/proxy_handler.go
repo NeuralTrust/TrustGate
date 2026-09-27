@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/textproto"
 	"net/url"
 	"strings"
@@ -50,12 +51,14 @@ var newline = []byte("\n")
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
+var errMethodNotAllowed = errors.New("method is not allowed for this route")
 
 const (
 	errCodePluginRejected        = "plugin_rejected"
 	errCodeUnauthenticated       = "unauthenticated"
 	errCodeForbidden             = "forbidden"
 	errCodeNotFound              = "not_found"
+	errCodeMethodNotAllowed      = "method_not_allowed"
 	errCodeNoBackendAvailable    = "no_backend_available"
 	errCodeInvalidRequest        = "invalid_request"
 	errCodeContextLengthExceeded = "context_length_exceeded"
@@ -132,6 +135,10 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	stampConsumerTrace(c, consumer)
+	if !route.AllowsMethod(c.Method()) {
+		c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
+		return writeProxyError(c, errMethodNotAllowed)
+	}
 	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
 	if err != nil {
 		return writeProxyError(c, err)
@@ -292,9 +299,6 @@ func (h *ForwardedHandler) handleModels(
 	if h.models == nil {
 		return writeProxyError(c, appproxy.ErrNoBackendAvailable)
 	}
-	if c.Method() != fiber.MethodGet {
-		return writeProxyError(c, appproxy.ErrInvalidRequestPayload)
-	}
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	in := appproxy.ListModelsInput{
 		Consumer: consumer,
@@ -430,6 +434,15 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetStatusReason(body.Error)
 	}
+	if status >= fiber.StatusInternalServerError {
+		slog.Default().LogAttrs(c.UserContext(), slog.LevelWarn, "proxy request failed",
+			slog.Int("status", status),
+			slog.String("code", body.Error),
+			slog.String("method", c.Method()),
+			slog.String("path", c.Path()),
+			slog.String("error", err.Error()),
+		)
+	}
 	format := adapter.FormatOpenAI
 	if route, rerr := proxyRoute(c); rerr == nil && route.SourceFormat != "" {
 		format = route.SourceFormat
@@ -456,6 +469,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound}
+	case errors.Is(err, errMethodNotAllowed):
+		return fiber.StatusMethodNotAllowed, httpio.ErrorBody{Error: errCodeMethodNotAllowed, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrModelNotFound):
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),

@@ -29,6 +29,7 @@ const (
 	AuthTypeAWS               AuthType = "aws"
 	AuthTypeOAuth2            AuthType = "oauth2"
 	AuthTypeGCPServiceAccount AuthType = "gcp_service_account"
+	AuthTypePassthrough       AuthType = "passthrough"
 )
 
 type AzureCredentialMode string
@@ -145,6 +146,7 @@ func (a *TargetAuth) ResolveSecretsFrom(prev *TargetAuth) {
 		if prev.GCPServiceAccount != nil && blankSecretPtr(a.GCPServiceAccount) {
 			a.GCPServiceAccount = prev.GCPServiceAccount
 		}
+	case AuthTypePassthrough:
 	}
 }
 
@@ -297,6 +299,8 @@ func (a *TargetAuth) Validate() error {
 		if a.GCPServiceAccount == nil || *a.GCPServiceAccount == "" {
 			return fmt.Errorf("%w: gcp_service_account payload required", ErrInvalidRegistry)
 		}
+	case AuthTypePassthrough:
+		// No stored credential. The proxy copies the incoming Authorization header.
 	default:
 		return fmt.Errorf("%w: unknown auth type %q", ErrInvalidRegistry, a.Type)
 	}
