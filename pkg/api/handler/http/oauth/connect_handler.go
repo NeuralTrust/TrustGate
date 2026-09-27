@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
@@ -38,7 +39,21 @@ type ConnectHandler struct {
 	connect            ConnectFlow
 	catalog            appcatalog.MCPServerCatalog
 	oauthPublicBaseURL string
+	// holdFor and holdEvery bound how long one request waits, before it
+	// answers, for a server its ticket names to reach this plane (see
+	// awaitServer). Fields rather than constants so tests need not sleep.
+	holdFor   time.Duration
+	holdEvery time.Duration
 }
+
+// connectPageHoldFor is how long a connect page waits for a server that is
+// not on this plane yet before it shows the "getting ready" page instead.
+// Config-sync brings a server shelved a moment ago within a few seconds, so
+// the page that opens right after a connect is usually the real one.
+const (
+	connectPageHoldFor   = 5 * time.Second
+	connectPageHoldEvery = 250 * time.Millisecond
+)
 
 type ConnectFlow interface {
 	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
@@ -60,6 +75,8 @@ func NewConnectHandler(
 		connect:            connect,
 		catalog:            catalog,
 		oauthPublicBaseURL: strings.TrimRight(strings.TrimSpace(oauthPublicBaseURL), "/"),
+		holdFor:            connectPageHoldFor,
+		holdEvery:          connectPageHoldEvery,
 	}
 }
 
@@ -138,7 +155,49 @@ func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 	if err != nil {
 		return h.pageError(c, err)
 	}
+	// A flash answers something the user just did; it is shown as it is.
+	if flash == "" && connectWaitAttempt(c) < connectPageWaitAttempts {
+		page = h.awaitServer(c.UserContext(), ticket, page)
+	}
 	return renderConnectPage(c, page, ticket, flash, h.catalog)
+}
+
+// awaitServer holds the answer, briefly, while the server a ticket names is
+// not on this plane yet.
+//
+// Right after a connect the server was shelved on the control plane a moment
+// ago, and config-sync usually brings it here within a few seconds. Answering
+// at once showed "Getting … ready" and reloaded into the real page a moment
+// later, which read as an error first. Waiting here instead means the page the
+// user sees first is, in the common case, the one they came for; should the
+// server still be missing, the page says it is getting ready and reloads, as
+// before. A page the ticket does not scope to one server, or whose server is
+// already here, is returned as it is.
+func (h *ConnectHandler) awaitServer(ctx context.Context, ticket string, page *appoauth.ConnectPage) *appoauth.ConnectPage {
+	if strings.TrimSpace(page.Code) == "" || len(providerRowsForPage(page)) > 0 || h.holdFor <= 0 {
+		return page
+	}
+	deadline := time.NewTimer(h.holdFor)
+	defer deadline.Stop()
+	tick := time.NewTicker(h.holdEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return page
+		case <-deadline.C:
+			return page
+		case <-tick.C:
+			next, err := h.connect.Page(ctx, ticket)
+			if err != nil {
+				return page
+			}
+			page = next
+			if len(providerRowsForPage(page)) > 0 {
+				return page
+			}
+		}
+	}
 }
 
 func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
