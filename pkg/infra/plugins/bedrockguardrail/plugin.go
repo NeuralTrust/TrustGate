@@ -199,7 +199,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	// this plugin does not yet parse. Reading that as a clean pass would be a
 	// guardrail that quietly stopped guarding.
 	if res.intervened && res.block == nil && res.anonymize == nil {
-		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, "",
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, unparsedPolicies(out.Assessments),
 			fmt.Errorf("guardrail intervened with no block or anonymize finding"))
 	}
 

@@ -35,7 +35,10 @@ type Data struct {
 	DegradedReason string `json:"degraded_reason,omitempty"`
 	// FailureReason and FailureDetail are set only on a failed_open/failed_closed
 	// decision: FailureReason is one of appplugins.FailureReason (transport,
-	// verdict_incomplete, config_invalid, decode_failed).
+	// verdict_incomplete, config_invalid, decode_failed). On verdict_incomplete
+	// FailureDetail names the policy assessments AWS returned that this plugin
+	// does not read (e.g. automated_reasoning_policy); it is empty when AWS
+	// intervened with no assessment at all.
 	FailureReason string `json:"failure_reason,omitempty"`
 	FailureDetail string `json:"failure_detail,omitempty"`
 	// Streaming is present only on a streamed response leg, written once when
