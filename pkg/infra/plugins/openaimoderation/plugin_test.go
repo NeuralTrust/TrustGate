@@ -448,3 +448,97 @@ func TestExecuteInvalidConfigErrors(t *testing.T) {
 	_, ok := appplugins.AsPluginError(err)
 	assert.False(t, ok, "config error must not be a PluginError")
 }
+
+// explicitNoBlockSettings is what an operator gets by explicitly disabling
+// BlockOnFlagged without configuring any thresholds: parseConfig honours it as
+// sent (see config.go), so evaluate() can never raise a violation. This is the
+// combination ValidateSettingsWrite must refuse on write.
+func explicitNoBlockSettings() map[string]any {
+	return map[string]any{
+		"api_key":          "secret",
+		"block_on_flagged": false,
+	}
+}
+
+func TestValidateSettingsWrite(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+
+	tests := []struct {
+		name     string
+		settings map[string]any
+		wantErr  bool
+	}{
+		{
+			name:     "block_on_flagged absent defaults true, no thresholds needed",
+			settings: noThresholdSettings(),
+			wantErr:  false,
+		},
+		{
+			name:     "block_on_flagged explicit true",
+			settings: map[string]any{"api_key": "secret", "block_on_flagged": true},
+			wantErr:  false,
+		},
+		{
+			name:     "block_on_flagged false with thresholds configured",
+			settings: map[string]any{"api_key": "secret", "block_on_flagged": false, "thresholds": map[string]any{"hate": 0.7}},
+			wantErr:  false,
+		},
+		{
+			name:     "block_on_flagged explicit false with no thresholds is rejected",
+			settings: explicitNoBlockSettings(),
+			wantErr:  true,
+		},
+		{
+			name:     "invalid settings surface the parseConfig error",
+			settings: map[string]any{},
+			wantErr:  true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.ValidateSettingsWrite(tt.settings)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestValidateSettingsWrite_RejectionExplainsTheFix(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+	err := p.ValidateSettingsWrite(explicitNoBlockSettings())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "thresholds")
+	assert.Contains(t, err.Error(), "block_on_flagged")
+}
+
+// TestExecuteExplicitNoBlockNoThresholdsStillExecutes proves the write-time
+// rejection in ValidateSettingsWrite does not change parseConfig/Execute
+// semantics: a stored policy with this combination (created before the guard
+// existed, or loaded from a snapshot) must keep running exactly as before -
+// no error, verdict decided by the flagged categories alone (none configured,
+// so it never blocks or reports, matching the explicit request).
+func TestExecuteExplicitNoBlockNoThresholdsStillExecutes(t *testing.T) {
+	t.Parallel()
+	f := &fakeModerator{response: flaggedHateResponse()}
+	srv := newModeratorServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, explicitNoBlockSettings(), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok, "expected ModerationData extras")
+	assert.Equal(t, decisionAllowed, data.Decision)
+}
