@@ -965,6 +965,29 @@ func geminiToolParameters(t *testing.T, body []byte) map[string]interface{} {
 	return decls[0].(map[string]interface{})["parameters"].(map[string]interface{})
 }
 
+// A tool without a schema is a function that takes no arguments. Gemini
+// accepts a declaration without parameters, so it goes out as the bare name
+// rather than gaining an OBJECT schema it never had.
+func TestGemini_EncodeRequest_ToolWithoutSchemaHasNoParameters(t *testing.T) {
+	t.Parallel()
+	out, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{
+		Model:    "gemini-2.5-flash",
+		Messages: []CanonicalMessage{{Role: "user", Content: "what time is it?"}},
+		Tools:    []CanonicalTool{{Name: "now"}},
+	})
+	require.NoError(t, err)
+
+	var body struct {
+		Tools []struct {
+			FunctionDeclarations []json.RawMessage `json:"functionDeclarations"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(out, &body))
+	require.Len(t, body.Tools, 1)
+	require.Len(t, body.Tools[0].FunctionDeclarations, 1)
+	assert.JSONEq(t, `{"name":"now"}`, string(body.Tools[0].FunctionDeclarations[0]))
+}
+
 func TestAnthropic_ToolSchema_StripsUnsupportedKeysForGemini(t *testing.T) {
 	input := `{
 		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],

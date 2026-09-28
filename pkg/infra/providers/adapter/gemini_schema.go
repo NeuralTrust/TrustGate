@@ -29,9 +29,6 @@ var geminiSchemaAllowlist = map[string]struct{}{
 const geminiRefDepthLimit = 8
 
 func sanitizeGeminiParameters(root map[string]interface{}) map[string]interface{} {
-	if root == nil {
-		return map[string]interface{}{"type": "OBJECT"}
-	}
 	defs := map[string]interface{}{}
 	if raw, ok := root["$defs"].(map[string]interface{}); ok {
 		defs = raw

@@ -1495,11 +1495,11 @@ func TestEncodeResponsesStreamChunk_CutTerminatorGolden(t *testing.T) {
 			},
 		},
 		{
-			name:   "length finish keeps the terminator it had",
+			name:   "length finish is incomplete for max_output_tokens",
 			chunks: []*CanonicalStreamChunk{{FinishReason: "length"}},
 			want: []string{
-				"event: response.completed",
-				`data: {"type":"response.completed","response":{"object":"response","output":[],"status":"incomplete"}}`,
+				"event: response.incomplete",
+				`data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},"object":"response","output":[],"status":"incomplete"}}`,
 				"",
 			},
 		},
@@ -1529,8 +1529,9 @@ func TestEncodeResponsesStreamChunk_ToolCallsDoneIsNotACut(t *testing.T) {
 	}, got)
 }
 
-// Both encoders read the same mapping, so a cut cannot be incomplete on the
-// stream and completed on the buffered body.
+// The buffered encode, the stateless chunk encode and ResponsesStreamEncoder
+// read the same mapping, so a finish cannot be incomplete on one path and
+// completed, or incomplete for another reason, on the other.
 func TestResponsesFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1547,7 +1548,11 @@ func TestResponsesFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 		},
 		{
 			name: "length", finishReason: "length", wantStatus: "incomplete",
-			wantMessageState: "completed", wantTerminator: "response.completed",
+			wantReason: "max_output_tokens", wantMessageState: "incomplete", wantTerminator: "response.incomplete",
+		},
+		{
+			name: "context window exceeded", finishReason: "model_context_window_exceeded", wantStatus: "incomplete",
+			wantReason: "max_output_tokens", wantMessageState: "incomplete", wantTerminator: "response.incomplete",
 		},
 		{
 			name: "tool calls", finishReason: "tool_calls", wantStatus: "completed",
@@ -1603,6 +1608,24 @@ func TestResponsesFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 				require.NotNil(t, streamed.IncompleteDetails, "streamed incomplete_details")
 				assert.Equal(t, tc.wantReason, streamed.IncompleteDetails.Reason, "streamed incomplete_details")
 			}
+
+			enc := NewResponsesStreamEncoder()
+			encoded := enc.Content(&CanonicalStreamChunk{Delta: "hi"})
+			encoded = append(encoded, enc.Finish(&CanonicalStreamChunk{FinishReason: tc.finishReason})...)
+			var encTerminal openaiResponsesStreamEvent
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(encoded[len(encoded)-2], []byte("data: ")), &encTerminal))
+			assert.Equal(t, tc.wantTerminator, encTerminal.Type, "stream encoder terminator")
+			var encResponse openaiResponsesResponse
+			require.NoError(t, json.Unmarshal(encTerminal.Response, &encResponse))
+			assert.Equal(t, tc.wantStatus, encResponse.Status, "stream encoder status")
+			if tc.wantReason == "" {
+				assert.Nil(t, encResponse.IncompleteDetails, "stream encoder incomplete_details")
+			} else {
+				require.NotNil(t, encResponse.IncompleteDetails, "stream encoder incomplete_details")
+				assert.Equal(t, tc.wantReason, encResponse.IncompleteDetails.Reason, "stream encoder incomplete_details")
+			}
+			require.Len(t, encResponse.Output, 1)
+			assert.Equal(t, tc.wantMessageState, encResponse.Output[0].Status, "stream encoder message item status")
 		})
 	}
 }

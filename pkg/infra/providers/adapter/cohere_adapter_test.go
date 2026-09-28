@@ -424,8 +424,7 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				"",
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
-					`"error":"response blocked by content filter",` +
-					`"usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`,
+					`"error":"response blocked by content filter"}}`,
 				"",
 			},
 		},
@@ -459,8 +458,7 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				"",
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
-					`"error":"response blocked by content filter",` +
-					`"usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`,
+					`"error":"response blocked by content filter"}}`,
 				"",
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"usage":{"billed_units":{"input_tokens":11,"output_tokens":7},"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
@@ -482,7 +480,7 @@ func TestCohereEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
 				`data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"recipe"}}}}`,
 				"",
 				"event: message-end",
-				`data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`,
+				`data: {"type":"message-end","delta":{"finish_reason":"COMPLETE"}}`,
 				"",
 			},
 		},
@@ -690,4 +688,38 @@ func TestCohereEncodeStreamChunk_UsageOnlyCarriesNoError(t *testing.T) {
 	assert.Equal(t,
 		`data: {"type":"message-end","delta":{"usage":{"billed_units":{"input_tokens":11,"output_tokens":7},"tokens":{"input_tokens":11,"output_tokens":7}}}}`,
 		string(lines[1]))
+}
+
+// A cut followed by a usage-only chunk must report usage once: the finish
+// message-end carries none, so a client summing billed_units across
+// message-end events bills 11/7 and not 0/0 followed by 11/7.
+func TestCohereEncodeStreamChunk_CutThenUsageReportsUsageOnce(t *testing.T) {
+	t.Parallel()
+	a := &CohereAdapter{}
+	var ends []cohereMessageEndDelta
+	for _, chunk := range []*CanonicalStreamChunk{
+		{FinishReason: "content_filter"},
+		{Usage: newCanonicalUsage(11, 7, 0)},
+	} {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		require.Len(t, lines, 3)
+		var event cohereStreamEvent
+		require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[1], []byte("data: ")), &event))
+		require.Equal(t, "message-end", event.Type)
+		var delta cohereMessageEndDelta
+		require.NoError(t, json.Unmarshal(event.Delta, &delta))
+		ends = append(ends, delta)
+	}
+
+	assert.Equal(t, cohereFinishError, ends[0].FinishReason)
+	assert.Equal(t, defaultStreamBlockedMessage, ends[0].Error)
+	assert.Nil(t, ends[0].Usage, "the cut reports no usage of its own")
+
+	assert.Empty(t, ends[1].FinishReason)
+	assert.Empty(t, ends[1].Error)
+	require.NotNil(t, ends[1].Usage)
+	require.NotNil(t, ends[1].Usage.BilledUnits)
+	assert.Equal(t, 11, ends[1].Usage.BilledUnits.InputTokens)
+	assert.Equal(t, 7, ends[1].Usage.BilledUnits.OutputTokens)
 }

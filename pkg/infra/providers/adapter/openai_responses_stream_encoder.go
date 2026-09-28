@@ -135,7 +135,7 @@ func (e *ResponsesStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 		return append(lines, e.fail(message, chunk.Usage)...)
 	}
 	e.done = true
-	status, reason := responsesFinishStatus(chunk.FinishReason)
+	status, reason := canonicalFinishToResponsesStatus(chunk.FinishReason)
 	lines = append(lines, e.finishMessage(status)...)
 	calls := e.namedCalls()
 	if status == responsesStatusIncomplete {
@@ -222,17 +222,6 @@ func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 		}
 	}
 	return true
-}
-
-func responsesFinishStatus(reason string) (status, incompleteReason string) {
-	switch {
-	case truncatedFinish(reason):
-		return responsesStatusIncomplete, "max_output_tokens"
-	case refusalFinish(reason):
-		return responsesStatusIncomplete, "content_filter"
-	default:
-		return responsesStatusCompleted, ""
-	}
 }
 
 func (e *ResponsesStreamEncoder) fail(message string, usage *CanonicalUsage) [][]byte {

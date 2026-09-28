@@ -543,12 +543,14 @@ func (a *CohereAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		// A trailing usage-only chunk must not assert a finish reason. Upstreams
 		// that send usage separately (OpenAI-family with include_usage) would
 		// otherwise emit a second message-end saying COMPLETE after the one that
-		// said ERROR, and the client reads the last one.
+		// said ERROR, and the client reads the last one. For the same reason a
+		// finish without usage carries no usage: zeroed billed_units ahead of
+		// the real report would read as a second, empty one.
 		var reason, errMessage string
 		if chunk.FinishReason != "" {
 			reason, errMessage = cohereFinish(chunk.FinishReason)
 		}
-		lines = append(lines, cohereMessageEnd(reason, errMessage, chunk.Usage)...)
+		lines = append(lines, cohereMessageEndLines(reason, errMessage, cohereUsageFromCanonical(chunk.Usage))...)
 	}
 	if len(lines) == 0 {
 		return nil, nil
