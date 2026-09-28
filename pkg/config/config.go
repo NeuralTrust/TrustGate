@@ -96,6 +96,13 @@ const (
 	defaultTopicClassifierEnqueueTimeout     = 500 * time.Millisecond
 	defaultTopicClassifierTimeout            = 5 * time.Second
 	defaultTopicClassifierCacheTTL           = time.Hour
+	defaultTopicClassifierStreamMaxLen       = 100_000
+	defaultTopicClassifierStreamRetention    = time.Hour
+	defaultTopicClassifierGatewayQuota       = 100
+	defaultTopicClassifierConcurrency        = 1
+	defaultTopicClassifierBatchMaxTexts      = 32
+	defaultTopicClassifierClaimMinIdle       = time.Minute
+	defaultTopicClassifierMaxAttempts        = 3
 
 	defaultPlaygroundTraceStoreEnabled = true
 	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
@@ -412,6 +419,16 @@ type TopicClassifierConfig struct {
 	EnqueueTimeout     time.Duration
 	ClassifierTimeout  time.Duration
 	CacheTTL           time.Duration
+	// StreamRetention bounds how long customer text may wait in Redis.
+	StreamMaxLen          int64
+	StreamRetention       time.Duration
+	GatewayQuotaPerSecond int64
+	// Concurrency is per replica: the load on topic-guard is Concurrency
+	// times the number of TrustGate replicas.
+	Concurrency   int
+	BatchMaxTexts int
+	ClaimMinIdle  time.Duration
+	MaxAttempts   int
 }
 
 type PlaygroundConfig struct {
@@ -751,6 +768,14 @@ func getTopicClassifierConfig() TopicClassifierConfig {
 		EnqueueTimeout:     getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
 		ClassifierTimeout:  getEnvDuration("TOPIC_CLASSIFIER_TIMEOUT", defaultTopicClassifierTimeout),
 		CacheTTL:           getEnvDuration("TOPIC_CLASSIFIER_CACHE_TTL", defaultTopicClassifierCacheTTL),
+
+		StreamMaxLen:          getEnvInt64("TOPIC_CLASSIFIER_STREAM_MAX_LEN", defaultTopicClassifierStreamMaxLen),
+		StreamRetention:       getEnvDuration("TOPIC_CLASSIFIER_STREAM_RETENTION", defaultTopicClassifierStreamRetention),
+		GatewayQuotaPerSecond: getEnvInt64("TOPIC_CLASSIFIER_GATEWAY_QUOTA_PER_SEC", defaultTopicClassifierGatewayQuota),
+		Concurrency:           getEnvInt("TOPIC_CLASSIFIER_CONCURRENCY", defaultTopicClassifierConcurrency),
+		BatchMaxTexts:         getEnvInt("TOPIC_CLASSIFIER_BATCH_MAX_TEXTS", defaultTopicClassifierBatchMaxTexts),
+		ClaimMinIdle:          getEnvDuration("TOPIC_CLASSIFIER_CLAIM_MIN_IDLE", defaultTopicClassifierClaimMinIdle),
+		MaxAttempts:           getEnvInt("TOPIC_CLASSIFIER_MAX_ATTEMPTS", defaultTopicClassifierMaxAttempts),
 	}
 }
 

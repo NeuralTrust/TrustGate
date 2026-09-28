@@ -49,6 +49,9 @@ var (
 	ErrClassifierNotConfigured = errors.New("topic classifier: not configured")
 	// ErrClassifierUnauthorized is returned when topic-guard rejects the token.
 	ErrClassifierUnauthorized = errors.New("topic classifier: unauthorized")
+	// ErrQuotaExceeded is returned when a gateway has queued more requests
+	// than its share in the current window. The request is dropped.
+	ErrQuotaExceeded = errors.New("topic classifier: gateway quota exceeded")
 )
 
 // BackpressureError reports that topic-guard is saturated and asks callers to
