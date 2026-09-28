@@ -15,6 +15,9 @@
 package trustguard
 
 import (
+	"encoding/json"
+	"errors"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -28,9 +31,9 @@ type transformTarget struct {
 	isResponse bool
 	apply      func(masked string) ([]byte, bool)
 	// applyPayload rebuilds the body from the structured payload TrustGuard
-	// echoes back. For protocol=mcp the transform outcome is the whole masked
-	// JSON-RPC envelope rather than a masked string, so there is nothing to
-	// re-split: the masked values are lifted straight out of it. Tried before
+	// echoes back: the masked JSON-RPC envelope for protocol=mcp, the masked
+	// messages[] for an LLM request. Either way there is nothing to re-split:
+	// the masked values are lifted straight out of it by position. Tried before
 	// apply, which stays as the fallback for a string-shaped payload.
 	applyPayload func(payload map[string]any) ([]byte, bool)
 }
@@ -76,14 +79,29 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 // canonical request does not model, so a redaction never keeps those fields.
 // An unchanged text forwards original as it came.
 func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, masked string) ([]byte, bool) {
+	return rewriteRequestWith(reg, format, original, creq, func(creq *adapter.CanonicalRequest) bool {
+		return applyMaskedRequest(creq, masked)
+	})
+}
+
+// rewriteRequestFromMessages is rewriteRequest for the messages[] payload
+// TrustGuard echoes on a protocol=llm transform: each masked message is mapped
+// back by position rather than re-split out of joined text.
+func rewriteRequestFromMessages(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, payload map[string]any) ([]byte, bool) {
+	return rewriteRequestWith(reg, format, original, creq, func(creq *adapter.CanonicalRequest) bool {
+		return applyTransformedMessages(creq, payload)
+	})
+}
+
+func rewriteRequestWith(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, apply func(*adapter.CanonicalRequest) bool) ([]byte, bool) {
 	if reg == nil || creq == nil {
 		return nil, false
 	}
-	before := requestParts(creq)
-	if !applyMaskedRequest(creq, masked) {
+	before, beforeArgs := requestParts(creq), requestToolArguments(creq)
+	if !apply(creq) {
 		return nil, false
 	}
-	if original != nil && slices.Equal(before, requestParts(creq)) {
+	if original != nil && slices.Equal(before, requestParts(creq)) && slices.Equal(beforeArgs, requestToolArguments(creq)) {
 		return original, true
 	}
 	adp, err := reg.GetAdapter(format)
@@ -114,10 +132,11 @@ func rewriteResponse(reg *adapter.Registry, format adapter.Format, cresp *adapte
 }
 
 // applyMaskedRequest writes the masked text back into the same segments that
-// joinRequestText concatenated. TrustGuard masks only detected spans and never
-// adds or removes newlines, so the masked text keeps the original line count and
-// can be split back into the per-segment values. A line-count mismatch means the
-// mapping is ambiguous, so it fails rather than corrupting the body.
+// joinRequestText concatenated, for a guard that answers with the legacy
+// "input" string. It relies on the mask keeping the original line count, which
+// a multi-line secret breaks; applyTransformedMessages is the primary path. A
+// line-count mismatch means the mapping is ambiguous, so it fails rather than
+// corrupting the body.
 func applyMaskedRequest(creq *adapter.CanonicalRequest, masked string) bool {
 	setters := requestSegmentSetters(creq)
 	if len(setters) == 0 {
@@ -135,6 +154,139 @@ func applyMaskedRequest(creq *adapter.CanonicalRequest, masked string) bool {
 		s.set(maskedParts[i])
 	}
 	return true
+}
+
+// applyTransformedMessages writes TrustGuard's masked messages[] back into the
+// request by position. guardChatMessages sends the trimmed system prompt (when
+// non-empty) followed by every message, and TrustGuard masks string leaves in
+// place, so entry i of the echo is entry i of what was sent. Mapping by position
+// rather than by line count means a mask that changes the newline structure (a
+// multi-line private key becomes one token) or a system prompt with surrounding
+// whitespace no longer degrades a transform into a block. Any shape mismatch
+// still fails, and nothing is written unless every entry maps.
+func applyTransformedMessages(creq *adapter.CanonicalRequest, payload map[string]any) bool {
+	arr, ok := payload["messages"].([]any)
+	if !ok {
+		return false
+	}
+	offset := 0
+	if strings.TrimSpace(creq.System) != "" {
+		offset = 1
+	}
+	if len(arr) != len(creq.Messages)+offset {
+		return false
+	}
+	var writes []func()
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		role, _ := m["role"].(string)
+		raw, present := m["content"]
+		content, isString := raw.(string)
+		if present && raw != nil && !isString {
+			return false
+		}
+		if offset == 1 && i == 0 {
+			if role != "system" || !isString {
+				return false
+			}
+			writes = append(writes, func() { creq.System = rewrapSpace(creq.System, content) })
+			continue
+		}
+		msg := &creq.Messages[i-offset]
+		if role != msg.Role {
+			return false
+		}
+		if isString && strings.TrimSpace(msg.Content) != "" {
+			writes = append(writes, func() { msg.Content = content })
+		}
+		argWrites, ok := transformedToolArguments(msg, m["tool_calls"])
+		if !ok {
+			return false
+		}
+		writes = append(writes, argWrites...)
+	}
+	for _, w := range writes {
+		w()
+	}
+	return true
+}
+
+// transformedToolArguments maps the echoed tool_calls of one message back onto
+// its canonical tool calls. TrustGuard masks secrets inside the arguments too,
+// and dropping them would forward the call with the secret intact while the
+// span says transformed. TrustGuard re-marshals arguments it parses, so an
+// argument is only written back when its JSON value changed, not its bytes.
+func transformedToolArguments(msg *adapter.CanonicalMessage, raw any) ([]func(), bool) {
+	if len(msg.ToolCalls) == 0 {
+		return nil, raw == nil
+	}
+	calls, ok := raw.([]any)
+	if !ok || len(calls) != len(msg.ToolCalls) {
+		return nil, false
+	}
+	var writes []func()
+	for j, item := range calls {
+		call, _ := item.(map[string]any)
+		fn, _ := call["function"].(map[string]any)
+		args, ok := fn["arguments"].(string)
+		if !ok {
+			return nil, false
+		}
+		tc := &msg.ToolCalls[j]
+		if !sameJSON(tc.Arguments, args) {
+			writes = append(writes, func() { tc.Arguments = args })
+		}
+	}
+	return writes, true
+}
+
+// sameJSON reports whether a and b hold the same JSON value, or are the same
+// string when either is not JSON (a custom tool's freeform input).
+func sameJSON(a, b string) bool {
+	if a == b {
+		return true
+	}
+	var va, vb any
+	if decodeJSON(a, &va) != nil || decodeJSON(b, &vb) != nil {
+		return false
+	}
+	return reflect.DeepEqual(va, vb)
+}
+
+func decodeJSON(s string, v *any) error {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("trailing data")
+	}
+	return nil
+}
+
+// requestToolArguments lists every tool call's arguments in order, so a
+// transform that masked only an argument is not taken for an unchanged body.
+func requestToolArguments(creq *adapter.CanonicalRequest) []string {
+	var out []string
+	for _, msg := range creq.Messages {
+		for _, tc := range msg.ToolCalls {
+			out = append(out, tc.Arguments)
+		}
+	}
+	return out
+}
+
+// rewrapSpace restores the leading and trailing whitespace guardChatMessages
+// trimmed off original before sending it, so an unmasked system prompt comes
+// back byte-identical.
+func rewrapSpace(original, masked string) string {
+	trimmed := strings.TrimSpace(original)
+	start := strings.Index(original, trimmed)
+	return original[:start] + masked + original[start+len(trimmed):]
 }
 
 type segmentSetter struct {
