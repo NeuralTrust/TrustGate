@@ -421,7 +421,7 @@ func (g *grafter) toolPatches(root rawSpan, top map[string]topEdit) ([]rawPatch,
 	if err != nil {
 		return nil, false
 	}
-	whole := make([][]byte, 0, len(encItems)+len(kept))
+	whole := make([][]byte, 0, len(encItems))
 	for _, it := range encItems {
 		whole = append(whole, g.encoded[it.start:it.end])
 	}
