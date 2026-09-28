@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -167,7 +168,11 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 }
 
 func azureDeploymentModels(catalogModels []domain.Model, live []providers.LiveModel) []domain.Model {
-	byProviderModel := make(map[string]domain.Model, len(catalogModels)*2)
+	capHint := len(catalogModels)
+	if capHint <= math.MaxInt/2 {
+		capHint *= 2
+	}
+	byProviderModel := make(map[string]domain.Model, capHint)
 	for _, model := range catalogModels {
 		for _, candidate := range SlugCandidates(model.Slug, model.ExternalID) {
 			byProviderModel[strings.ToLower(candidate)] = model
