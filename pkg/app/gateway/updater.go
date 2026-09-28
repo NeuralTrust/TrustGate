@@ -38,12 +38,11 @@ type UpdateInput struct {
 	Domain   *string
 	TenantID string
 	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements).
-	PlatformAdmin   bool
-	Metadata        map[string]string
-	Telemetry       *telemetry.Telemetry
-	ClientTLSConfig *domain.ClientTLSConfig
-	SessionConfig   *domain.SessionConfig
-	// TopicClassification, when set, replaces the whole topic classifier config.
+	PlatformAdmin       bool
+	Metadata            map[string]string
+	Telemetry           *telemetry.Telemetry
+	ClientTLSConfig     *domain.ClientTLSConfig
+	SessionConfig       *domain.SessionConfig
 	TopicClassification *topic.Config
 	Entitlements        *domain.Entitlements
 	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as

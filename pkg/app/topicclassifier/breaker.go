@@ -19,9 +19,6 @@ import (
 	"time"
 )
 
-// breaker stops calls to topic-guard after consecutive real failures, so a
-// service that is down is not hammered while the queue backs up. Once the
-// cooldown passes, a single failure opens it again and a success closes it.
 type breaker struct {
 	mu        sync.Mutex
 	threshold int

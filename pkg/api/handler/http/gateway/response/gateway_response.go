@@ -38,15 +38,14 @@ type GatewayResponse struct {
 	// for readers to dig out of metadata: a reader that missed it there read a
 	// gateway as open — the domain default — and showed a curated Store as
 	// wide open.
-	StoreMode       string                 `json:"store_mode"`
-	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
-	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
-	Entitlements    domain.Entitlements    `json:"entitlements"`
-	// TopicClassification is the gateway's async topic classifier config.
-	TopicClassification *topic.Config `json:"topic_classification,omitempty"`
-	CreatedAt           time.Time     `json:"created_at"`
-	UpdatedAt           time.Time     `json:"updated_at"`
+	StoreMode           string                 `json:"store_mode"`
+	Telemetry           *telemetry.Telemetry   `json:"telemetry,omitempty"`
+	ClientTLSConfig     domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig       *domain.SessionConfig  `json:"session_config,omitempty"`
+	Entitlements        domain.Entitlements    `json:"entitlements"`
+	TopicClassification *topic.Config          `json:"topic_classification,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each

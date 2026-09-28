@@ -29,25 +29,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// defaultTopicIntakeMaxBodyBytes caps the body copied for classification when
-// the config sets no cap. Only the latest user messages, at most
-// topic.MaxTextChars of them, are ever classified.
 const defaultTopicIntakeMaxBodyBytes = 512 << 10
 
-// TopicClassificationMiddleware offers the prompt of every chat request of a
-// gateway with topic classification enabled to the async classifier. It sits
-// before the handler, so requests a plugin later blocks are classified too,
-// and it never blocks or fails the request: when the classifier cannot take
-// more work, the candidate is dropped. Sampling happens here, before the body
-// is copied, so requests that will not be classified cost nothing more.
 type TopicClassificationMiddleware struct {
 	intake       topicclassifier.Intake
 	recorder     topicclassifier.Recorder
 	maxBodyBytes int
 }
 
-// NewTopicClassificationMiddleware builds the middleware on top of intake. A
-// nil recorder records nothing.
 func NewTopicClassificationMiddleware(intake topicclassifier.Intake, recorder topicclassifier.Recorder, cfg *config.Config) *TopicClassificationMiddleware {
 	maxBody := defaultTopicIntakeMaxBodyBytes
 	if cfg != nil && cfg.TopicClassifier.IntakeMaxBodyBytes > 0 {
@@ -87,8 +76,7 @@ func (m *TopicClassificationMiddleware) offer(c *fiber.Ctx) {
 		m.recorder.Intake(topicclassifier.OutcomeSampledOut)
 		return
 	}
-	// The raw body is checked first so an oversized compressed body is never
-	// decompressed here; the decoded one is checked again below.
+	// Checked on the raw body first so an oversized compressed body is never decompressed.
 	if len(c.Request().Body()) > m.maxBodyBytes {
 		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
 		return

@@ -22,8 +22,6 @@ import (
 	"time"
 )
 
-// Request is one unit of classification work: the text taken from a gateway
-// request plus what is needed to classify it and correlate the result.
 type Request struct {
 	GatewayID   string    `json:"gateway_id"`
 	ConsumerID  string    `json:"consumer_id,omitempty"`
@@ -36,7 +34,6 @@ type Request struct {
 	ReceivedAt  time.Time `json:"received_at"`
 }
 
-// RequestParams carries what NewRequest needs to build a Request.
 type RequestParams struct {
 	GatewayID  string
 	ConsumerID string
@@ -46,9 +43,6 @@ type RequestParams struct {
 	ReceivedAt time.Time
 }
 
-// NewRequest builds a Request from the gateway config in force when the
-// request arrived, deriving both hashes. The catalog is copied so a later
-// config change cannot alter work already queued.
 func NewRequest(p RequestParams) Request {
 	var topics []Topic
 	var threshold *float64
@@ -72,14 +66,11 @@ func NewRequest(p RequestParams) Request {
 	}
 }
 
-// HashText returns the hex SHA-256 of text.
 func HashText(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
 
-// CatalogHash returns a hash that is equal for catalogs holding the same
-// topics, whatever their order: order does not change the scores.
 func CatalogHash(topics []Topic) string {
 	sorted := slices.Clone(topics)
 	slices.SortFunc(sorted, func(a, b Topic) int {

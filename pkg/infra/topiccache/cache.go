@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topiccache keeps topic classifications in Redis so repeated prompts
-// are not sent to topic-guard again.
 package topiccache
 
 import (
@@ -38,17 +36,12 @@ const (
 
 var _ topicclassifier.Cache = (*Cache)(nil)
 
-// Cache stores classifications under topic.CacheKey with a fixed TTL. The key
-// is itself derived from the prompt, so Redis only ever sees its HMAC: with
-// read access to Redis alone, a guessed prompt cannot be checked against it.
 type Cache struct {
 	redis  redis.Cmdable
 	ttl    time.Duration
 	secret []byte
 }
 
-// New builds a Cache that signs keys with secret. A non-positive ttl falls
-// back to one hour.
 func New(client redis.Cmdable, ttl time.Duration, secret []byte) *Cache {
 	if ttl <= 0 {
 		ttl = defaultTTL
@@ -62,9 +55,6 @@ func (c *Cache) redisKey(key string) string {
 	return keyPrefix + hex.EncodeToString(mac.Sum(nil))
 }
 
-// GetMany returns the classifications stored under keys, in one round trip.
-// Missing keys are absent from the result; an entry that does not decode is
-// treated as missing.
 func (c *Cache) GetMany(ctx context.Context, keys []string) (map[string]topic.Classification, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -92,7 +82,6 @@ func (c *Cache) GetMany(ctx context.Context, keys []string) (map[string]topic.Cl
 	return out, nil
 }
 
-// SetMany stores every classification for the cache TTL, in one round trip.
 func (c *Cache) SetMany(ctx context.Context, entries map[string]topic.Classification) error {
 	if len(entries) == 0 {
 		return nil

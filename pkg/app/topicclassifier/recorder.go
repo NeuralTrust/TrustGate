@@ -16,9 +16,6 @@ package topicclassifier
 
 import "time"
 
-// Outcomes are the only label values the classifier's metrics carry, so the
-// series stay bounded whatever the number of gateways. Per-gateway detail is
-// in the topic_classification events themselves.
 const (
 	OutcomeAccepted      = "accepted"
 	OutcomeBufferFull    = "buffer_full"
@@ -42,7 +39,6 @@ const (
 	OutcomeBackpressure  = "backpressure"
 )
 
-// Outcomes lists every outcome, so a recorder can prepare its label sets once.
 func Outcomes() []string {
 	return []string{
 		OutcomeAccepted, OutcomeBufferFull, OutcomeShuttingDown, OutcomeBodyTooLarge,
@@ -53,10 +49,6 @@ func Outcomes() []string {
 	}
 }
 
-// Recorder receives the classifier's operational counts. Intake counts what
-// the request path offered, Enqueue what reached the queue, Result how each
-// queued request ended, and Call each topic-guard round trip.
-//
 //go:generate mockery --name=Recorder --dir=. --output=./mocks --filename=recorder_mock.go --case=underscore --with-expecter
 type Recorder interface {
 	Intake(outcome string)
@@ -65,7 +57,6 @@ type Recorder interface {
 	Call(outcome string, texts int, d time.Duration)
 }
 
-// NopRecorder records nothing.
 type NopRecorder struct{}
 
 func (NopRecorder) Intake(string)                   {}

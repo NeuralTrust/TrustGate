@@ -30,9 +30,6 @@ func init() {
 	})
 }
 
-// NULL means the feature was never configured, which is what every gateway
-// written before this column existed is: nullable, so no backfill turns the
-// classifier on for anyone.
 func upAddGatewayTopicClassification(ctx context.Context, tx pgx.Tx) error {
 	const ddl = `ALTER TABLE gateways ADD COLUMN IF NOT EXISTS topic_classification JSONB NULL;`
 	_, err := tx.Exec(ctx, ddl)

@@ -114,8 +114,6 @@ func TestEventSink_PublishesTheClassification(t *testing.T) {
 	assert.Equal(t, gw.Telemetry.Exporters, publisher.got[0].exporters, "the gateway's own exporters are used")
 }
 
-// The event goes to the OTel collector, where the prompt must never land: it is
-// correlated with the metadata and raw events by trace id instead.
 func TestEventSink_NeverCarriesThePrompt(t *testing.T) {
 	t.Parallel()
 	gw := sinkGateway(t)

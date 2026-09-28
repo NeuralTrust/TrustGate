@@ -94,8 +94,6 @@ func TestExporter_PublishTopicEmitsItsOwnRecord(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC).UnixMilli(), requested.AsInt64())
 }
 
-// The ClickHouse view behind trustgate_events keys on trustgate.tenant_id; a
-// topic record carrying it would be counted as a request.
 func TestExporter_PublishTopicStaysOutOfTheRequestNamespace(t *testing.T) {
 	t.Parallel()
 	exp, mem := newMemExporter(t)

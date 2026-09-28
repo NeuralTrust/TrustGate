@@ -27,8 +27,6 @@ func (r *topicGuardRecorder) record(inputs []string) {
 	r.inputs = append(r.inputs, inputs...)
 }
 
-// sawText reports whether topic-guard was asked to classify a text containing
-// marker.
 func (r *topicGuardRecorder) sawText(marker string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -47,10 +45,6 @@ type topicGuardStubRequest struct {
 	} `json:"topics"`
 }
 
-// registerTopicGuardStub serves topic-guard next to the complexity stub, since
-// both are reached through the same FIREWALL_BASE_URL and secret. Every topic
-// scores 0.9 except "legal", which scores 0.1, so each result has one match
-// and one miss.
 func registerTopicGuardStub(mux *http.ServeMux) {
 	mux.HandleFunc(topicGuardPath, func(w http.ResponseWriter, r *http.Request) {
 		if !isValidFirewallToken(r.Header.Get("token")) {

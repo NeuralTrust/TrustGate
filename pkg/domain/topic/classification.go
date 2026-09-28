@@ -24,15 +24,12 @@ import (
 	"time"
 )
 
-// Score is the verdict of topic-guard for one topic of the catalog.
 type Score struct {
 	Topic       string  `json:"topic"`
 	Probability float64 `json:"probability"`
 	Matched     bool    `json:"matched"`
 }
 
-// Classification is the topic-guard result for one text: a score for every
-// topic of the catalog, and the topics that cleared the threshold.
 type Classification struct {
 	Scores       []Score  `json:"scores"`
 	Matched      []string `json:"matched"`
@@ -40,22 +37,14 @@ type Classification struct {
 	ModelVersion string   `json:"model_version,omitempty"`
 }
 
-// MaxBatchTexts is the largest number of texts topic-guard scores in one call.
 const MaxBatchTexts = 128
 
 var (
-	// ErrClassifierNotConfigured is returned when the data plane has no
-	// topic-guard endpoint or credentials.
 	ErrClassifierNotConfigured = errors.New("topic classifier: not configured")
-	// ErrClassifierUnauthorized is returned when topic-guard rejects the token.
-	ErrClassifierUnauthorized = errors.New("topic classifier: unauthorized")
-	// ErrQuotaExceeded is returned when a gateway has queued more requests
-	// than its share in the current window. The request is dropped.
-	ErrQuotaExceeded = errors.New("topic classifier: gateway quota exceeded")
+	ErrClassifierUnauthorized  = errors.New("topic classifier: unauthorized")
+	ErrQuotaExceeded           = errors.New("topic classifier: gateway quota exceeded")
 )
 
-// BackpressureError reports that topic-guard is saturated and asks callers to
-// wait RetryAfter before sending more. It is not a failure of the service.
 type BackpressureError struct {
 	RetryAfter time.Duration
 }
@@ -64,10 +53,6 @@ func (e *BackpressureError) Error() string {
 	return fmt.Sprintf("topic classifier: saturated, retry after %s", e.RetryAfter)
 }
 
-// CacheKey identifies a classification by everything that determines it: the
-// text, the catalog, the threshold and the model version that scored it. The
-// gateway is part of it too, so gateways never share entries even with the
-// same catalog.
 func CacheKey(gatewayID, textHash, catalogHash string, threshold *float64, modelVersion string) string {
 	th := "default"
 	if threshold != nil {

@@ -40,15 +40,10 @@ const (
 
 var outcomeKey = attribute.Key("outcome")
 
-// StreamStats reports the classification queue length and how many entries
-// were handed out but not acknowledged.
 type StreamStats func(ctx context.Context) (length, pending int64, err error)
 
 var _ topicclassifier.Recorder = (*TopicClassifierMetrics)(nil)
 
-// TopicClassifierMetrics records the async topic classifier's operational
-// counts. Outcome is the only label, so the series stay bounded whatever the
-// number of gateways.
 type TopicClassifierMetrics struct {
 	enabled   bool
 	intake    metric.Int64Counter
@@ -56,15 +51,9 @@ type TopicClassifierMetrics struct {
 	results   metric.Int64Counter
 	calls     metric.Float64Histogram
 	callTexts metric.Int64Histogram
-	// outcomes holds one prepared label set per outcome, so recording on the
-	// request path does not build one per call.
-	outcomes map[string]metric.MeasurementOption
+	outcomes  map[string]metric.MeasurementOption
 }
 
-// NewTopicClassifierMetrics creates the instruments. Like NewProvider it runs
-// after SDK installed the global MeterProvider. When stats is set, the stream
-// length and pending count are exported as gauges on every collection, so a
-// backlog is visible even while no request is flowing.
 func NewTopicClassifierMetrics(cfg *config.Config, _ *SDK, stats StreamStats) (*TopicClassifierMetrics, error) {
 	if cfg == nil || !cfg.Telemetry.OpsMetricsEnabled {
 		return &TopicClassifierMetrics{}, nil
@@ -124,8 +113,6 @@ func registerStreamGauges(meter metric.Meter, stats StreamStats) error {
 		defer cancel()
 		l, p, err := stats(ctx)
 		if err != nil {
-			// A failed read skips this collection for the two gauges only;
-			// returning it would fail the export of every other instrument.
 			return nil
 		}
 		o.ObserveInt64(length, l)

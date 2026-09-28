@@ -34,9 +34,6 @@ const (
 	defaultIntakeMaxBufferBytes = 64 << 20
 )
 
-// Candidate is what the request path hands to the intake: an owned copy of
-// the request body plus what is needed to turn it into a classification
-// request later, off the request path.
 type Candidate struct {
 	GatewayID    string
 	ConsumerID   string
@@ -47,9 +44,6 @@ type Candidate struct {
 	ReceivedAt   time.Time
 }
 
-// IntakeConfig sizes the intake. Zero values fall back to defaults.
-// MaxBufferBytes bounds the request bodies held while they wait to be queued,
-// whatever their number: large bodies fill it long before QueueSize does.
 type IntakeConfig struct {
 	QueueSize      int
 	Workers        int
@@ -73,18 +67,10 @@ func (c IntakeConfig) withDefaults() IntakeConfig {
 	return c
 }
 
-// Intake accepts classification candidates from the request path without
-// ever blocking it, and turns them into queued requests on its own goroutines.
-//
 //go:generate mockery --name=Intake --dir=. --output=./mocks --filename=intake_mock.go --case=underscore --with-expecter
 type Intake interface {
-	// Submit offers a candidate and reports whether it was accepted. It never
-	// blocks: when the buffer is full or the intake is shut down it drops.
 	Submit(c Candidate) bool
 	Start()
-	// Shutdown stops accepting candidates and waits for the buffered ones to
-	// be queued. If ctx expires first, in-flight enqueues are cancelled and
-	// whatever is still buffered is dropped.
 	Shutdown(ctx context.Context) error
 }
 
@@ -107,8 +93,6 @@ type intake struct {
 	cancel  context.CancelFunc
 }
 
-// NewIntake builds an intake that decodes candidates with decoder and hands
-// the resulting requests to queue. A nil recorder records nothing.
 func NewIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) Intake {
 	return newIntake(logger, decoder, queue, recorder, cfg)
 }

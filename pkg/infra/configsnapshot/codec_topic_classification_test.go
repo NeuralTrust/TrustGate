@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The data planes only switch the classifier on from what the snapshot
-// carries, so losing the field in transit would silently disable it.
 func TestCodecRoundTrip_CarriesTopicClassification(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()

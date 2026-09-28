@@ -45,9 +45,6 @@ type proxyMiddlewares struct {
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 	// HybridGatewayGuard sits right after Auth (which resolves the gateway) and
 	// before Metrics so a refused hybrid gateway emits no telemetry event and no
-	// plugin or forwarder ever sees its payload. TopicClassifier follows Metrics,
-	// which it needs for the trace id, and precedes the handler, so requests a
-	// plugin later blocks are classified too.
 	return middleware.NewTransport(
 		m.SecurityHeaders,
 		m.PanicRecover,

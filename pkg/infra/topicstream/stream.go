@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topicstream carries topic classification requests on a Redis
-// stream consumed by a single consumer group, so each request is classified
-// by exactly one data plane.
 package topicstream
 
 import (
@@ -33,8 +30,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The hash tag keeps the stream and every quota key in one cluster slot, which
-// the enqueue script needs to touch both atomically.
+// The hash tag keeps the stream and quota keys in one cluster slot for the enqueue script.
 const (
 	streamKey      = "{topicclassifier}:stream"
 	quotaKeyPrefix = "{topicclassifier}:quota:"
@@ -65,12 +61,6 @@ redis.call('XTRIM', KEYS[1], 'MAXLEN', '~', ARGV[2])
 return 1
 `)
 
-// Config bounds the stream. Retention is how long an entry may wait before it
-// is trimmed, which is also how long customer text can sit in Redis: entries
-// are deleted once acknowledged, and Trim drops older ones even when nothing
-// new is enqueued.
-// GatewayQuotaPerSecond caps what one gateway may enqueue per second so a
-// burst from one tenant cannot push everybody else out; zero disables it.
 type Config struct {
 	MaxLen                int64
 	Retention             time.Duration
@@ -95,7 +85,6 @@ var (
 	_ topicclassifier.Stream = (*Stream)(nil)
 )
 
-// Stream is both ends of the classification queue on Redis.
 type Stream struct {
 	redis    redis.Cmdable
 	cfg      Config
@@ -106,8 +95,6 @@ type Stream struct {
 	cursor string
 }
 
-// New builds a Stream. The consumer name identifies this process in the group,
-// so entries it leaves pending can be told apart and reclaimed.
 func New(client redis.Cmdable, cfg Config) *Stream {
 	return &Stream{
 		redis:    client,
@@ -126,9 +113,6 @@ func consumerName() string {
 	return host + "-" + strconv.Itoa(os.Getpid())
 }
 
-// EnsureGroup creates the consumer group, and the stream with it, when missing.
-// The group starts at the beginning so entries queued before it existed are
-// still classified.
 func (s *Stream) EnsureGroup(ctx context.Context) error {
 	err := s.redis.XGroupCreateMkStream(ctx, streamKey, groupName, "0").Err()
 	if err != nil && !strings.HasPrefix(err.Error(), busyGroupErrPrefix) {
@@ -137,9 +121,6 @@ func (s *Stream) EnsureGroup(ctx context.Context) error {
 	return nil
 }
 
-// Enqueue appends req to the stream, trimming entries older than the
-// retention and beyond the length cap. It returns topic.ErrQuotaExceeded when
-// the gateway is over its share.
 func (s *Stream) Enqueue(ctx context.Context, req topic.Request) error {
 	payload, err := json.Marshal(req)
 	if err != nil {
@@ -159,8 +140,6 @@ func (s *Stream) Enqueue(ctx context.Context, req topic.Request) error {
 	return nil
 }
 
-// Read hands out up to count entries no consumer has seen yet, waiting at most
-// block for the first one.
 func (s *Stream) Read(ctx context.Context, count int, block time.Duration) ([]topicclassifier.Delivery, error) {
 	streams, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    groupName,
@@ -189,11 +168,6 @@ func (s *Stream) Read(ctx context.Context, count int, block time.Duration) ([]to
 	return out, nil
 }
 
-// Reclaim takes over entries another consumer left pending for at least
-// minIdle, typically because its process died, and reports how many times
-// each was handed out so poison entries can be dropped. Each call resumes the
-// scan where the previous one stopped, so a pending list longer than count is
-// walked in full over successive calls.
 func (s *Stream) Reclaim(ctx context.Context, minIdle time.Duration, count int) ([]topicclassifier.Delivery, error) {
 	s.mu.Lock()
 	start := s.cursor
@@ -244,10 +218,6 @@ func (s *Stream) resetCursor() {
 	s.mu.Unlock()
 }
 
-// deliveryCounts asks for each claimed entry on its own, in one round trip, so
-// other entries this consumer holds in the same id range cannot push any of
-// them out of the reply. An entry missing from the reply reports zero, which
-// never counts as poison: it is checked again on a later claim.
 func (s *Stream) deliveryCounts(ctx context.Context, msgs []redis.XMessage) (map[string]int64, error) {
 	pipe := s.redis.Pipeline()
 	cmds := make([]*redis.XPendingExtCmd, len(msgs))
@@ -272,9 +242,6 @@ func (s *Stream) deliveryCounts(ctx context.Context, msgs []redis.XMessage) (map
 	return counts, nil
 }
 
-// Touch resets the idle time of entries this consumer is still working on, so
-// no other consumer reclaims them while a slow batch waits for topic-guard. It
-// does not count as a delivery.
 func (s *Stream) Touch(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
@@ -292,8 +259,6 @@ func (s *Stream) Touch(ctx context.Context, ids ...string) error {
 	return nil
 }
 
-// Trim drops entries older than the retention. Enqueue trims too, but only
-// when something new arrives; this keeps the bound when traffic stops.
 func (s *Stream) Trim(ctx context.Context) error {
 	minID := strconv.FormatInt(s.now().Add(-s.cfg.Retention).UnixMilli(), 10)
 	if err := s.redis.XTrimMinID(ctx, streamKey, minID).Err(); err != nil {
@@ -302,9 +267,6 @@ func (s *Stream) Trim(ctx context.Context) error {
 	return nil
 }
 
-// Leave removes this consumer from the group on a clean shutdown, so every
-// restart does not leave one more consumer behind. A consumer that still
-// holds entries stays, so they can be reclaimed.
 func (s *Stream) Leave(ctx context.Context) error {
 	n, err := s.redis.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream:   streamKey,
@@ -329,9 +291,6 @@ func (s *Stream) Leave(ctx context.Context) error {
 	return nil
 }
 
-// Stats reports how many entries the stream holds and how many were handed
-// out but not acknowledged yet. A growing length means requests arrive faster
-// than they are classified; a growing pending count means consumers stall.
 func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
 	pipe := s.redis.Pipeline()
 	lenCmd := pipe.XLen(ctx, streamKey)
@@ -351,8 +310,6 @@ func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
 	return length, summary.Count, nil
 }
 
-// Ack marks entries as done and deletes them, so the customer text they carry
-// leaves Redis as soon as it is classified.
 func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
@@ -366,9 +323,6 @@ func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 	return nil
 }
 
-// isNoGroup reports a missing consumer group, which happens when Redis lost
-// the stream (a flush, a failover without persistence). The group is simply
-// created again.
 func isNoGroup(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), noGroupErrPrefix)
 }

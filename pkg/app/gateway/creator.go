@@ -37,14 +37,13 @@ const (
 )
 
 type CreateInput struct {
-	Slug            string
-	Domain          string
-	TenantID        string
-	Metadata        map[string]string
-	Telemetry       *telemetry.Telemetry
-	ClientTLSConfig domain.ClientTLSConfig
-	SessionConfig   *domain.SessionConfig
-	// TopicClassification is the optional async topic classifier config.
+	Slug                string
+	Domain              string
+	TenantID            string
+	Metadata            map[string]string
+	Telemetry           *telemetry.Telemetry
+	ClientTLSConfig     domain.ClientTLSConfig
+	SessionConfig       *domain.SessionConfig
 	TopicClassification *topic.Config
 	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements

@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topic holds the per-gateway topic classification feature: the
-// configuration an admin sets on a gateway and the work items the async
-// classifier processes.
 package topic
 
 import (
@@ -26,34 +23,21 @@ import (
 )
 
 const (
-	// MaxTopics is the largest catalog topic-guard scores in one request.
-	MaxTopics = 10
-	// MaxTextChars is the longest text topic-guard scores reliably. Longer
-	// input is split into windows whose false positives add up.
-	MaxTextChars = 10_000
-	// DefaultMessageWindow is how many of the latest user messages are
-	// classified when the gateway does not set a window.
-	DefaultMessageWindow = 3
-	// MaxMessageWindow bounds the configurable window.
-	MaxMessageWindow = 50
-	// MaxTopicNameChars and MaxTopicDefinitionChars bound each topic. The
-	// catalog travels with every queued request and every topic-guard call,
-	// so its size is what a gateway costs the shared Redis per request.
+	MaxTopics               = 10
+	MaxTextChars            = 10_000
+	DefaultMessageWindow    = 3
+	MaxMessageWindow        = 50
 	MaxTopicNameChars       = 64
 	MaxTopicDefinitionChars = 2_000
 )
 
-// ErrInvalidConfig is returned when a topic classification config is rejected.
 var ErrInvalidConfig = fmt.Errorf("topic_classification: %w", commonerrors.ErrValidation)
 
-// Topic is one customer-defined topic scored by topic-guard.
 type Topic struct {
 	Name       string `json:"name"`
 	Definition string `json:"definition"`
 }
 
-// Config is the topic classification setting of a gateway. A nil Config, or
-// one with Enabled false, leaves the feature off.
 type Config struct {
 	Enabled       bool     `json:"enabled"`
 	Topics        []Topic  `json:"topics,omitempty"`
@@ -62,12 +46,10 @@ type Config struct {
 	SamplingRate  *float64 `json:"sampling_rate,omitempty"`
 }
 
-// IsEnabled reports whether requests of the gateway must be classified.
 func (c *Config) IsEnabled() bool {
 	return c != nil && c.Enabled && len(c.Topics) > 0
 }
 
-// Window returns how many of the latest user messages are classified.
 func (c *Config) Window() int {
 	if c == nil || c.MessageWindow <= 0 {
 		return DefaultMessageWindow
@@ -75,7 +57,6 @@ func (c *Config) Window() int {
 	return c.MessageWindow
 }
 
-// Rate returns the fraction of requests to classify, in [0, 1].
 func (c *Config) Rate() float64 {
 	if c == nil || c.SamplingRate == nil {
 		return 1
@@ -83,8 +64,6 @@ func (c *Config) Rate() float64 {
 	return *c.SamplingRate
 }
 
-// Validate trims the topics in place and reports the first problem found. A
-// disabled config may keep its catalog, so topics are checked either way.
 func (c *Config) Validate() error {
 	if c == nil {
 		return nil

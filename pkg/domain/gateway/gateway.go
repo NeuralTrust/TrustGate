@@ -35,20 +35,18 @@ const MetadataTenantIDKey = "tenant_id"
 const MetadataLegacyTeamIDKey = "team_id"
 
 type Gateway struct {
-	ID              ids.GatewayID        `json:"id"`
-	Slug            string               `json:"slug"`
-	Status          string               `json:"status"`
-	Domain          string               `json:"domain,omitempty"`
-	Metadata        map[string]string    `json:"metadata,omitempty"`
-	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
-	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
-	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
-	Entitlements    Entitlements         `json:"entitlements"`
-	// TopicClassification turns on the async topic classifier for this
-	// gateway. It travels to the data planes inside the config snapshot.
-	TopicClassification *topic.Config `json:"topic_classification,omitempty"`
-	CreatedAt           time.Time     `json:"created_at"`
-	UpdatedAt           time.Time     `json:"updated_at"`
+	ID                  ids.GatewayID        `json:"id"`
+	Slug                string               `json:"slug"`
+	Status              string               `json:"status"`
+	Domain              string               `json:"domain,omitempty"`
+	Metadata            map[string]string    `json:"metadata,omitempty"`
+	Telemetry           *telemetry.Telemetry `json:"telemetry,omitempty"`
+	ClientTLSConfig     ClientTLSConfig      `json:"client_tls,omitempty"`
+	SessionConfig       *SessionConfig       `json:"session_config,omitempty"`
+	Entitlements        Entitlements         `json:"entitlements"`
+	TopicClassification *topic.Config        `json:"topic_classification,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 }
 
 func (g *Gateway) TenantID() string {
