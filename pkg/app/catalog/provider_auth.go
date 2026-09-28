@@ -89,14 +89,14 @@ var (
 		Key:         "endpoint",
 		Label:       "Endpoint",
 		Type:        AuthFieldTypeString,
-		Description: "Azure OpenAI resource endpoint URL.",
+		Description: "Azure OpenAI or Microsoft Foundry resource endpoint URL.",
 		Required:    true,
 	}
 	azureVersionField = AuthField{
 		Key:         "version",
 		Label:       "API Version",
 		Type:        AuthFieldTypeString,
-		Description: "Azure OpenAI API version (e.g. 2024-02-01).",
+		Description: "API version for the legacy Azure OpenAI deployments surface; ignored by Foundry v1 APIs.",
 	}
 
 	azureAuthOptions = []AuthTypeOption{
