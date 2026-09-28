@@ -204,35 +204,65 @@ func TestExecuteTokenRejectionIsNotCached(t *testing.T) {
 	assert.Equal(t, 1, f.count(), "the second call fetched a fresh token and reached evaluate")
 }
 
-// TestExecuteMissingCredentialsIsVisible keeps the pass-through a pod without
-// TRUSTGUARD_CLIENT_ID/SECRET has always given, but not silently: it counts as
-// an evaluate failure and the trace says the guard failed open and why.
-func TestExecuteMissingCredentialsIsVisible(t *testing.T) {
+// TestExecuteMissingCredentialsFailsClosed: a policy cannot be saved without
+// TRUSTGUARD_CLIENT_ID/SECRET, so a pod that has none is running a guard it
+// cannot call. That is a deployment fault, not a transient one, and on_error
+// does not relax it.
+func TestExecuteMissingCredentialsFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
-	p := New(adapter.NewRegistry(), newServer(t, f).URL, testTimeout, "", "", nil, withBaseTransport(testTransport(t)))
+	for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
+		t.Run(onError, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+			p := New(adapter.NewRegistry(), newServer(t, f).URL, testTimeout, "", "", nil, withBaseTransport(testTransport(t)))
 
-	event, span := newEvent()
-	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
-	res, err := p.Execute(context.Background(), in)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.False(t, res.StopUpstream)
-	assert.Zero(t, f.count())
+			set := settings("")
+			set["on_error"] = onError
+			event, span := newEvent()
+			in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+			res, err := p.Execute(context.Background(), in)
 
-	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	require.True(t, ok, "missing credentials must leave a trace, got %T", span.PluginAttrsCopy().Extras)
-	assert.True(t, extras.FailedOpen)
-	assert.Equal(t, decisionFailedOpen, extras.Decision)
-	assert.Equal(t, directionInput, extras.Direction)
-	assert.Equal(t, failureReasonCredentialsMissing, extras.FailureReason)
+			assert.Nil(t, res)
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok, "missing credentials must fail closed with on_error=%s, got %v", onError, err)
+			assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
+			assert.Equal(t, typeUnauthorized, pe.Type)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(pe.Body, &body))
+			assert.NotContains(t, body, "upstream_status", "TrustGuard was never asked, so there is no upstream status to report")
+			assert.Zero(t, f.count())
+
+			extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+			require.True(t, ok)
+			assert.True(t, extras.FailedClosed)
+			assert.Equal(t, decisionFailedClosed, extras.Decision)
+			assert.Equal(t, directionInput, extras.Direction)
+			assert.Equal(t, failureReasonCredentialsMissing, extras.FailureReason)
+		})
+	}
 }
 
-// TestExecuteMissingCredentialsCountsOnlyInspectedTraffic keeps the failure
-// count honest: a request the plugin would have passed without a call anyway
-// is not reported as having gone through unguarded for want of credentials.
-func TestExecuteMissingCredentialsCountsOnlyInspectedTraffic(t *testing.T) {
+// TestExecuteMissingCredentialsBlocksInObserveMode pins the same contract the
+// rate-limit and auth rejections have: observe relaxes findings, not a guard
+// the gateway cannot call.
+func TestExecuteMissingCredentialsBlocksInObserveMode(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
+	p := New(adapter.NewRegistry(), newServer(t, f).URL, testTimeout, "", "", nil, withBaseTransport(testTransport(t)))
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "missing credentials must block even in observe mode, got %v", err)
+	assert.Equal(t, typeUnauthorized, pe.Type)
+}
+
+// TestExecuteMissingCredentialsLeavesUninspectedTrafficAlone: the check sits
+// after the skips, so a request the plugin would have passed without a call
+// anyway is not turned into an outage by a missing credential.
+func TestExecuteMissingCredentialsLeavesUninspectedTrafficAlone(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{}
@@ -242,24 +272,28 @@ func TestExecuteMissingCredentialsCountsOnlyInspectedTraffic(t *testing.T) {
 	req.GatewayID = ""
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil, event)
-	_, err := p.Execute(context.Background(), in)
+	res, err := p.Execute(context.Background(), in)
 	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.False(t, res.StopUpstream)
 	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
 	require.True(t, ok)
-	assert.Empty(t, extras.FailureReason, "a missing gateway id is the reason this request went unguarded")
+	assert.Empty(t, extras.FailureReason, "a missing gateway id is the reason this request went uninspected")
 }
 
-func TestInspectSegmentMissingCredentialsAllows(t *testing.T) {
+func TestInspectSegmentMissingCredentialsBlocks(t *testing.T) {
 	t.Parallel()
 
-	g := &segmentGuard{response: GuardResponse{Status: statusBlock}}
+	g := &segmentGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newSegmentServer(t, g)
 	p := New(adapter.NewRegistry(), srv.URL, testClientTimeout, "", "", nil, withBaseTransport(testTransport(t)))
-	verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, streamingSettings(nil)),
+	set := streamingSettings(map[string]any{"on_error": onErrorFailOpen})
+	verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 		appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
 	require.NoError(t, err)
 	require.NotNil(t, verdict)
-	assert.False(t, verdict.Block)
+	assert.True(t, verdict.Block, "missing credentials must not be left to streaming.on_error")
+	assert.Equal(t, typeUnauthorized, verdict.Type)
 	assert.Empty(t, g.calls())
 }
 

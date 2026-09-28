@@ -60,7 +60,12 @@ func (p *Plugin) inspectSegment(
 	}
 	if !p.tokens.configured() {
 		recordEvaluateFailure(ctx, failureReasonCredentialsMissing)
-		return segmentAllow(), nil
+		p.error(ctx, "trustguard stream client credentials not configured, failing closed",
+			slog.String("plugin", PluginName),
+			slog.String("direction", directionOutput),
+			slog.Int("seq", seg.Seq),
+		)
+		return segmentBlock(typeUnauthorized, unauthorizedMessage), nil
 	}
 	traceID := gatewayTraceID(ctx)
 	body := GuardRequest{
