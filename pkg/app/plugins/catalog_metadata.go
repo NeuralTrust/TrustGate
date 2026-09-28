@@ -862,12 +862,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "on_error",
-					Label:       "On Error",
-					Type:        FieldTypeEnum,
-					Description: "What to do when the guard cannot be reached. Auth rejections always fail closed regardless of this.",
-					Enum:        enumOptions("fail_open", "fail_closed"),
-					Default:     "fail_open",
+					Key:   "on_error",
+					Label: "On Error",
+					Type:  FieldTypeEnum,
+					Description: "What to do on a transport failure or an unexpected server error reaching the guard. " +
+						"Covers those two cases only: rejected credentials, rate limits and unavailable entitlements " +
+						"always refuse the request regardless of this setting.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
 				},
 				{
 					Key:   "on_timeout",

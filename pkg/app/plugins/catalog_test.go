@@ -432,6 +432,27 @@ func TestTrustGuardSchema(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, collectorID.Type)
 	assert.True(t, collectorID.Required)
+
+	// RUN-1670: on_error, on_timeout and timeout must stay in the catalogue
+	// schema so the console can render them. They exist in the plugin's own
+	// settings (pkg/infra/plugins/trustguard/config.go) regardless of whether
+	// the catalogue lists them, so a silent removal here would once again make
+	// them reachable only through a raw admin-API call.
+	onError, ok := fieldByKey(fields, "on_error")
+	require.True(t, ok, "trustguard schema must expose on_error so fail_closed is reachable from the console")
+	assert.Equal(t, FieldTypeEnum, onError.Type)
+	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onError.Enum))
+	assert.Equal(t, "fail_open", onError.Default)
+
+	onTimeout, ok := fieldByKey(fields, "on_timeout")
+	require.True(t, ok, "trustguard schema must expose on_timeout")
+	assert.Equal(t, FieldTypeEnum, onTimeout.Type)
+	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onTimeout.Enum))
+	assert.Equal(t, "fail_closed", onTimeout.Default)
+
+	timeoutField, ok := fieldByKey(fields, "timeout")
+	require.True(t, ok, "trustguard schema must expose timeout")
+	assert.Equal(t, FieldTypeDuration, timeoutField.Type)
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {
