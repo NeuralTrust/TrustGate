@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 )
 
@@ -109,12 +110,7 @@ func (e *GeminiStreamEncoder) Fail(message string) [][]byte {
 	e.done = true
 	e.failed = true
 	e.withhold()
-	lines, err := GeminiStreamErrorEvent(message)
-	if err != nil {
-		e.encodeErr = err
-		return nil
-	}
-	return lines
+	return GeminiStreamErrorEvent(message)
 }
 
 // Failed reports whether the client got an error object from Fail.
@@ -227,30 +223,8 @@ func (e *GeminiStreamEncoder) encode(chunk *CanonicalStreamChunk) [][]byte {
 // GeminiStreamErrorEvent returns the SSE event of the error object the Gemini
 // API sends when a stream fails after it started: code 500 with an INTERNAL
 // status. google-genai raises it as a ServerError; an error object without a
-// code makes it fail with a TypeError instead.
-func GeminiStreamErrorEvent(message string) ([][]byte, error) {
-	data, err := json.Marshal(geminiStreamError{Error: geminiStreamErrorBody{
-		Code:    geminiErrorCode,
-		Message: message,
-		Status:  geminiErrorStatus,
-	}})
-	if err != nil {
-		return nil, err
-	}
-	return SSEData(data), nil
-}
-
-const (
-	geminiErrorCode   = 500
-	geminiErrorStatus = "INTERNAL"
-)
-
-type geminiStreamError struct {
-	Error geminiStreamErrorBody `json:"error"`
-}
-
-type geminiStreamErrorBody struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Status  string `json:"status"`
+// code makes it fail with a TypeError instead. It is the envelope
+// EncodeErrorBody writes for a Gemini client, framed as one SSE data event.
+func GeminiStreamErrorEvent(message string) [][]byte {
+	return SSEData(EncodeErrorBody(FormatGemini, http.StatusInternalServerError, message))
 }

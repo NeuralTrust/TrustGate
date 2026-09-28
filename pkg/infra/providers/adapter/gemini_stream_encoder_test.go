@@ -112,7 +112,8 @@ func TestGeminiStreamEncoder_Fail(t *testing.T) {
 	lines := e.Fail("upstream stream failed")
 
 	require.Len(t, lines, 2)
-	assert.JSONEq(t, `{"error":{"code":500,"message":"upstream stream failed","status":"INTERNAL"}}`, strings.TrimPrefix(string(lines[0]), "data: "))
+	assert.Equal(t, `data: {"error":{"code":500,"message":"upstream stream failed","status":"INTERNAL"}}`, string(lines[0]))
+	assert.Empty(t, lines[1])
 	assert.True(t, e.Failed())
 	assert.Equal(t, 1, e.Withheld())
 	assert.Empty(t, e.Fail("again"), "the stream ends once")

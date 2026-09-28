@@ -131,14 +131,20 @@ func cohereToolCallEnd(index int) [][]byte {
 
 // cohereMessageEnd always sends usage, zeroed when the upstream reported none,
 // since Cohere clients read delta.usage.billed_units from every message-end.
+// The stateful encoder emits exactly one message-end, so the zeroes cannot be
+// mistaken for a second usage report.
 func cohereMessageEnd(finishReason, errMessage string, usage *CanonicalUsage) [][]byte {
 	cu := cohereUsageFromCanonical(usage)
 	if cu == nil {
 		cu = &cohereUsage{BilledUnits: &cohereUsageTokens{}, Tokens: &cohereUsageTokens{}}
 	}
+	return cohereMessageEndLines(finishReason, errMessage, cu)
+}
+
+func cohereMessageEndLines(finishReason, errMessage string, usage *cohereUsage) [][]byte {
 	data, _ := json.Marshal(cohereMessageEndEvent{
 		Type:  "message-end",
-		Delta: cohereMessageEndDelta{FinishReason: finishReason, Error: errMessage, Usage: cu},
+		Delta: cohereMessageEndDelta{FinishReason: finishReason, Error: errMessage, Usage: usage},
 	})
 	return SSEEvent("message-end", data)
 }

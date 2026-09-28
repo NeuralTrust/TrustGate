@@ -632,6 +632,61 @@ func TestCompletionsTerminalStreamChunk(t *testing.T) {
 	}
 }
 
+func TestEncodeCompletionsRequest_DropsNamelessTools(t *testing.T) {
+	custom := func(name string) CanonicalTool {
+		return CanonicalTool{Kind: ToolKindCustom, Name: name, Format: json.RawMessage(`{"type":"text"}`)}
+	}
+	tests := []struct {
+		name           string
+		tools          []CanonicalTool
+		toolChoice     *CanonicalToolChoice
+		wantNames      []string
+		wantToolChoice bool
+	}{
+		{name: "nameless tool among named ones is dropped", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}, {Name: "Write"}}, wantNames: []string{"Read", "Write"}},
+		{name: "all nameless drops tools and tool_choice", tools: []CanonicalTool{{Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "auto"}},
+		{name: "named tool_choice to a kept tool survives", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: "Read"}, wantNames: []string{"Read"}, wantToolChoice: true},
+		{name: "named tool_choice to a dropped tool is omitted", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: ""}, wantNames: []string{"Read"}},
+		{name: "nothing dropped leaves an unknown tool_choice alone", tools: []CanonicalTool{{Name: "Read"}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: "Nope"}, wantNames: []string{"Read"}, wantToolChoice: true},
+		{name: "whitespace-only name is blank", tools: []CanonicalTool{{Name: "  "}, {Name: "Read"}}, wantNames: []string{"Read"}},
+		{name: "nameless custom tool is dropped", tools: []CanonicalTool{custom(""), custom("grep")}, wantNames: []string{"grep"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &CanonicalRequest{
+				Model:      "gpt-5",
+				Messages:   []CanonicalMessage{{Role: "user", Content: "hi"}},
+				Tools:      tc.tools,
+				ToolChoice: tc.toolChoice,
+			}
+			out, err := (&OpenAIAdapter{}).EncodeRequest(req)
+			require.NoError(t, err)
+
+			var got struct {
+				Tools []struct {
+					Function *struct{ Name string } `json:"function"`
+					Custom   *struct{ Name string } `json:"custom"`
+				} `json:"tools"`
+				ToolChoice json.RawMessage `json:"tool_choice"`
+			}
+			require.NoError(t, json.Unmarshal(out, &got))
+
+			var names []string
+			for _, tool := range got.Tools {
+				switch {
+				case tool.Function != nil:
+					names = append(names, tool.Function.Name)
+				case tool.Custom != nil:
+					names = append(names, tool.Custom.Name)
+				}
+			}
+			assert.Equal(t, tc.wantNames, names)
+			assert.Equal(t, tc.wantToolChoice, len(got.ToolChoice) > 0, "tool_choice presence")
+		})
+	}
+}
+
 func TestDecodeCompletionsRequest_Images(t *testing.T) {
 	t.Parallel()
 

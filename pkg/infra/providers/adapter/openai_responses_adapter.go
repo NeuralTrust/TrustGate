@@ -793,20 +793,19 @@ func responsesInputParts(text string, cache *CanonicalCacheBreakpoint) []openaiC
 
 // canonicalFinishToResponsesStatus maps a canonical finish reason onto the
 // Responses status and, where the status needs one, the incomplete_details
-// reason that explains it. The buffered and the streamed encode share it so a
-// cut cannot be honest on one path and a lie on the other.
+// reason that explains it. The buffered encode, the stateless chunk encode and
+// ResponsesStreamEncoder all share it, so a response cannot end one way
+// buffered and another way streamed.
 //
 // A cut must not land on "completed": the Responses SDKs read that status as a
-// clean finish, which is the whole failure this maps away from. length is left
-// exactly as it was — its terminator is already malformed and fixing it would
-// change what every truncated response emits, not just the cut ones.
-//
-// Every refusal finish maps like content_filter, as ResponsesStreamEncoder
-// maps them, so a Gemini SAFETY stop reads the same buffered and streamed.
+// clean finish, which is the whole failure this maps away from. A token-limit
+// or context-window finish is incomplete for max_output_tokens, the reason
+// OpenAI itself reports, and every refusal finish maps like content_filter, so
+// a Gemini SAFETY stop reads the same buffered and streamed.
 func canonicalFinishToResponsesStatus(reason string) (status, incompleteReason string) {
 	switch {
-	case reason == "length":
-		return responsesStatusIncomplete, ""
+	case truncatedFinish(reason):
+		return responsesStatusIncomplete, "max_output_tokens"
 	case refusalFinish(reason):
 		return responsesStatusIncomplete, "content_filter"
 	default:

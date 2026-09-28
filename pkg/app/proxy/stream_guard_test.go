@@ -1287,10 +1287,7 @@ func TestStreamGuard_CutSpeaksTheCallersDialect(t *testing.T) {
 			wantTail: []string{
 				"event: message-end",
 				`data: {"type":"message-end","delta":{"finish_reason":"ERROR",` +
-					`"error":"response blocked by content filter",` +
-					// Cohere clients read delta.usage.billed_units from every
-					// message-end, so the encoder sends it zeroed when absent.
-					`"usage":{"billed_units":{"input_tokens":0,"output_tokens":0},"tokens":{"input_tokens":0,"output_tokens":0}}}}`, "",
+					`"error":"response blocked by content filter"}}`, "",
 			},
 		},
 		{
