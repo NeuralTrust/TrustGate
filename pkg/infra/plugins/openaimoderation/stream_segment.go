@@ -69,6 +69,7 @@ func (p *Plugin) InspectSegment(
 	if err != nil {
 		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
+	p.warnUnknownConfig(ctx, in, cfg)
 	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
@@ -109,8 +110,13 @@ func (p *Plugin) InspectSegment(
 			fmt.Errorf("stream block %d: moderations response carried no results", seg.Seq))
 	}
 
-	violations := evaluate(cfg, aggregate(resp.Results))
+	agg := aggregate(resp.Results)
+	violations := evaluate(cfg, agg)
 	if len(violations) == 0 {
+		if missing := missingKnownThreshold(cfg, agg); missing != "" {
+			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, missing,
+				fmt.Errorf("stream block %d: thresholded category %q missing from response", seg.Seq, missing))
+		}
 		return segmentAllow(), nil
 	}
 	return &appplugins.SegmentVerdict{

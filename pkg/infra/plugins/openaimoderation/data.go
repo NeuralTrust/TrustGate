@@ -51,7 +51,9 @@ type ModerationData struct {
 	Decision          string             `json:"decision,omitempty"`
 	// FailureReason and FailureDetail are set only on a failed_open/failed_closed
 	// decision: FailureReason is one of appplugins.FailureReason (transport,
-	// verdict_incomplete, config_invalid, decode_failed).
+	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
+	// the thresholded category missing from the response on a
+	// verdict_incomplete.
 	FailureReason string `json:"failure_reason,omitempty"`
 	FailureDetail string `json:"failure_detail,omitempty"`
 	// Streaming is present only on a streamed response leg, written once when
