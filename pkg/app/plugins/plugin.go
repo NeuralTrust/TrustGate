@@ -73,8 +73,16 @@ func inertSafe(d PluginDescriptor) bool {
 // when settings are written, never when a stored policy is loaded. It can
 // reject a shape ValidateConfig must still accept, such as one saved before
 // the rule existed.
+//
+// previous is the settings as they were stored immediately before this
+// write: nil on create, and nil when the write also repoints the policy at a
+// different plugin (a slug change), since settings from another plugin are
+// not a previous version of this one's. A validator that wants to keep a
+// pre-existing shape editable (RUN-1711's option "b": reject only a newly
+// introduced unknown key) compares against previous; one with no such rule
+// simply ignores it.
 type SettingsWriteValidator interface {
-	ValidateSettingsWrite(settings map[string]any) error
+	ValidateSettingsWrite(settings, previous map[string]any) error
 }
 
 // IsInertSafe reports whether the plugin registered under slug opted into

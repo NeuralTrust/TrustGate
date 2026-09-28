@@ -185,7 +185,7 @@ func TestUpdater_Update_RejectsInertSettingsWriteWhenSettingsCarried(t *testing.
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(sentinel).Once()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(sentinel).Once()
 
 	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
@@ -199,6 +199,45 @@ func TestUpdater_Update_RejectsInertSettingsWriteWhenSettingsCarried(t *testing.
 		t.Fatalf("err = %v, want it to wrap ErrValidation", err)
 	}
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestUpdater_Update_SettingsWriteForwardsThePriorSettings proves the normal
+// (no slug change) case forwards the actual settings stored before this
+// write, not nil - the write-time rule needs the real prior shape to decide
+// which keys are pre-existing.
+func TestUpdater_Update_SettingsWriteForwardsThePriorSettings(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.Settings = map[string]any{"limit": 50}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().
+		ValidateSettingsWrite(mock.Anything, mock.Anything, mock.MatchedBy(func(prev map[string]any) bool {
+			return prev != nil && prev["limit"] == 50
+		})).
+		Return(nil).
+		Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:       existing.ID,
+		Settings: &map[string]any{"limit": 100},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
 }
 
 // TestUpdater_Update_DisableOnlyDoesNotTriggerSettingsWriteValidation is the
@@ -251,7 +290,7 @@ func TestUpdater_Update_SlugChangeTriggersSettingsWriteValidation(t *testing.T) 
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().ValidateSettingsWrite("openai_moderation", mock.Anything).Return(sentinel).Once()
+	reg.EXPECT().ValidateSettingsWrite("openai_moderation", mock.Anything, mock.Anything).Return(sentinel).Once()
 
 	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
@@ -262,6 +301,47 @@ func TestUpdater_Update_SlugChangeTriggersSettingsWriteValidation(t *testing.T) 
 		t.Fatalf("err = %v, want the plugin's sentinel error", err)
 	}
 	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestUpdater_Update_SlugChangeTreatsPreviousSettingsAsNil covers the other
+// half of the slug-change rule: even though the policy already had settings
+// stored (for its OLD plugin), a slug change must forward previous=nil to
+// ValidateSettingsWrite. Those settings belong to a plugin the policy is no
+// longer pointing at, so a key of theirs must never be read as "pre-existing"
+// for the new plugin's write-time rule.
+func TestUpdater_Update_SlugChangeTreatsPreviousSettingsAsNil(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.Settings = map[string]any{"limit": 100}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().
+		ValidateSettingsWrite("openai_moderation", mock.Anything, mock.MatchedBy(func(prev map[string]any) bool {
+			return prev == nil
+		})).
+		Return(nil).
+		Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr("openai_moderation"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
 }
 
 // Echoing the current slug back, as a full-form save does, is not a change.

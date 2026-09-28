@@ -128,11 +128,11 @@ func TestRegistry_Validate(t *testing.T) {
 // against a plugin that implements it and one (plain fakePlugin) that does not.
 type settingsWriteValidatingPlugin struct {
 	*fakePlugin
-	fn func(map[string]any) error
+	fn func(settings, previous map[string]any) error
 }
 
-func (p *settingsWriteValidatingPlugin) ValidateSettingsWrite(settings map[string]any) error {
-	return p.fn(settings)
+func (p *settingsWriteValidatingPlugin) ValidateSettingsWrite(settings, previous map[string]any) error {
+	return p.fn(settings, previous)
 }
 
 func TestRegistry_ValidateSettingsWrite(t *testing.T) {
@@ -141,16 +141,36 @@ func TestRegistry_ValidateSettingsWrite(t *testing.T) {
 	require.NoError(t, reg.Register(&fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreRequest}}))
 	require.NoError(t, reg.Register(&settingsWriteValidatingPlugin{
 		fakePlugin: &fakePlugin{name: "picky", stages: []policy.Stage{policy.StagePreRequest}},
-		fn:         func(map[string]any) error { return sentinel },
+		fn:         func(settings, previous map[string]any) error { return sentinel },
 	}))
 
 	// A plugin that does not implement SettingsWriteValidator is a no-op: the
 	// rule is opt-in, not blanket.
-	require.NoError(t, reg.ValidateSettingsWrite("plain", map[string]any{}))
+	require.NoError(t, reg.ValidateSettingsWrite("plain", map[string]any{}, nil))
 	// A plugin that implements it has its rule enforced.
-	require.ErrorIs(t, reg.ValidateSettingsWrite("picky", map[string]any{}), sentinel)
+	require.ErrorIs(t, reg.ValidateSettingsWrite("picky", map[string]any{}, nil), sentinel)
 	// Unknown plugin behaves like Validate.
-	require.ErrorIs(t, reg.ValidateSettingsWrite("missing", map[string]any{}), ErrUnknownPlugin)
+	require.ErrorIs(t, reg.ValidateSettingsWrite("missing", map[string]any{}, nil), ErrUnknownPlugin)
+}
+
+// TestRegistry_ValidateSettingsWrite_ForwardsPrevious proves the registry
+// passes previous through unchanged rather than dropping it: a plugin's rule
+// that depends on comparing settings against previous only works if the
+// registry is a transparent relay.
+func TestRegistry_ValidateSettingsWrite_ForwardsPrevious(t *testing.T) {
+	reg := NewRegistry()
+	previous := map[string]any{"threshold": 0.5}
+	var gotPrevious map[string]any
+	require.NoError(t, reg.Register(&settingsWriteValidatingPlugin{
+		fakePlugin: &fakePlugin{name: "picky", stages: []policy.Stage{policy.StagePreRequest}},
+		fn: func(settings, prev map[string]any) error {
+			gotPrevious = prev
+			return nil
+		},
+	}))
+
+	require.NoError(t, reg.ValidateSettingsWrite("picky", map[string]any{}, previous))
+	require.Equal(t, previous, gotPrevious)
 }
 
 func TestRegistry_Register_RejectsMandatoryOutsideSupported(t *testing.T) {
