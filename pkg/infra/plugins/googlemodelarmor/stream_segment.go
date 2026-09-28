@@ -77,7 +77,7 @@ func (p *Plugin) InspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("google_model_armor: %w", err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
 	if !cfg.Streaming.Enabled {
 		return segmentAllow(), nil
@@ -91,7 +91,8 @@ func (p *Plugin) InspectSegment(
 	}
 	cl, err := p.clientFor(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("google_model_armor: resolving client for stream block %d: %w", seg.Seq, err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "",
+			fmt.Errorf("resolving client for stream block %d: %w", seg.Seq, err))
 	}
 
 	// The deadline is enforced here because the caller is holding a client's
@@ -108,11 +109,13 @@ func (p *Plugin) InspectSegment(
 		// Resolved by the guard, not here: only it knows whether the status is
 		// still uncommitted, which is what makes streaming.on_error a clean 403
 		// at the head and a terminator after it.
-		return nil, fmt.Errorf("google_model_armor: sanitizing stream block %d: %w", seg.Seq, err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("sanitizing stream block %d: %w", seg.Seq, err))
 	}
 
 	if result.InvocationResult == invocationResultFailure {
-		return nil, fmt.Errorf("google_model_armor: stream block %d: invocationResult FAILURE", seg.Seq)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("stream block %d: invocationResult FAILURE", seg.Seq))
 	}
 
 	res := inspect(result, cfg)
@@ -122,8 +125,8 @@ func (p *Plugin) InspectSegment(
 	// wins because it is a verdict.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			return nil, fmt.Errorf("google_model_armor: stream block %d: filter %q selected in block_on produced no verdict (%s)",
-				seg.Seq, f, reason)
+			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, f,
+				fmt.Errorf("stream block %d: filter %q selected in block_on produced no verdict (%s)", seg.Seq, f, reason))
 		}
 	}
 	switch {

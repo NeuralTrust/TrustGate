@@ -25,11 +25,20 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
+
+func eventFor(t *testing.T) (*metrics.EventContext, *trace.Span) {
+	t.Helper()
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
+}
 
 type recordingClient struct {
 	mu        sync.Mutex
@@ -295,17 +304,122 @@ func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
 	client := &recordingClient{err: errors.New("boom")}
 	p := pluginWith(client)
 
+	event, span := eventFor(t)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+	in.Event = event
 	res, err := p.Execute(context.Background(), in)
 	if res != nil {
 		t.Fatalf("expected nil result on fail-closed, got %+v", res)
 	}
-	if err == nil {
-		t.Fatal("expected error on client failure in enforce mode")
-		return
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError on transport failure in enforce mode, got %v", err)
 	}
-	if _, ok := appplugins.AsPluginError(err); ok {
-		t.Fatalf("expected non-PluginError on transport failure, got %v", err)
+	if pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, want 502 guardrail_unavailable", pe)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "transport" {
+		t.Fatalf("extras = %+v, ok=%v, want transport/failed_closed", extras, ok)
+	}
+}
+
+func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
+	t.Parallel()
+	// An intervention none of the read policy families (topic, content, word,
+	// sensitive-information, contextual-grounding) can explain: AWS added a
+	// policy type this plugin does not yet parse.
+	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
+	p := pluginWith(client)
+
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "verdict_incomplete" {
+		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_closed", extras, ok)
+	}
+}
+
+func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}
+	p := pluginWith(client)
+
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "verdict_incomplete" {
+		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/failed_open", extras, ok)
+	}
+}
+
+func TestExecuteConfigInvalidEnforceFailsClosed(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(&recordingClient{})
+
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_closed" || extras.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", extras, ok)
+	}
+}
+
+func TestExecuteConfigInvalidObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(&recordingClient{})
+
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, map[string]any{}, reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", extras, ok)
+	}
+}
+
+func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+	t.Parallel()
+	client := &recordingClient{output: allowOutput()}
+	p := pluginWith(client)
+
+	req := reqCtx(openAIRequest())
+	req.Provider = "not-a-real-provider"
+	req.SourceFormat = ""
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), req, nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	if client.count() != 0 {
+		t.Fatalf("expected guardrail not called on decode failure, got %d calls", client.count())
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.Decision != "failed_open" || extras.FailureReason != "decode_failed" {
+		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", extras, ok)
 	}
 }
 

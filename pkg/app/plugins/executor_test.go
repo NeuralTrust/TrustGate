@@ -90,6 +90,7 @@ type polSpec struct {
 	parallel bool
 	global   bool
 	stages   []policy.Stage
+	mode     policy.Mode
 }
 
 func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
@@ -105,6 +106,7 @@ func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
 			Parallel: s.parallel,
 			Global:   s.global,
 			Stages:   s.stages,
+			Mode:     s.mode,
 		})
 	}
 	return out
@@ -637,4 +639,81 @@ func TestExecutor_RunStage_ParallelMetadataWriterReadersRaceSafe(t *testing.T) {
 	assert.Equal(t, []byte(`{"mutated":true}`), req.Body, "the single body mutator's write is folded into the request")
 	assert.Equal(t, map[string]interface{}{"by": "a_meta"}, resp.Metadata["written"], "the single metadata writer's nested write is merged back")
 	assert.Equal(t, map[string]interface{}{"k": "v"}, resp.Metadata["shared"], "pre-existing nested metadata read concurrently must survive untouched")
+}
+
+// newGuardrailStylePlugin builds a fake plugin whose Execute mirrors exactly
+// what an external guardrail (azure_content_safety, bedrock_guardrail,
+// google_model_armor, openai_moderation) does on a transport failure: it
+// hands the failure to HandleExternalFailure and returns whatever that
+// decides, mode by mode. It exists so this test exercises the real
+// executor/mode contract rather than a stand-in for it.
+func newGuardrailStylePlugin(name string) *fakePlugin {
+	return &fakePlugin{
+		name:   name,
+		stages: []policy.Stage{policy.StagePreRequest},
+		execFn: func(in ExecInput) (*Result, error) {
+			outcome := HandleExternalFailure(ExternalFailure{
+				Plugin: name,
+				Stage:  in.Stage,
+				Mode:   in.Mode,
+				Reason: FailureTransport,
+				Err:    context.DeadlineExceeded,
+			})
+			return outcome.Result, outcome.Err
+		},
+	}
+}
+
+func TestExecutor_RunStage_EnforceGuardrailFailureStopsChain(t *testing.T) {
+	calls := int32(0)
+	guardrail := newGuardrailStylePlugin("guardrail")
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, guardrail, after)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "guardrail", enabled: true, priority: 1, mode: policy.ModeEnforce},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeEnforce},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.Nil(t, out)
+	pe, ok := AsPluginError(err)
+	require.True(t, ok, "expected a *PluginError from the failed-closed guardrail, got %v", err)
+	assert.Equal(t, 502, pe.StatusCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&calls), "a later plugin must not run once enforce fails the chain closed")
+}
+
+func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.T) {
+	calls := int32(0)
+	guardrail := newGuardrailStylePlugin("guardrail")
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, guardrail, after)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "guardrail", enabled: true, priority: 1, mode: policy.ModeObserve},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeObserve},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "observe fails open, so the later plugin still runs")
 }

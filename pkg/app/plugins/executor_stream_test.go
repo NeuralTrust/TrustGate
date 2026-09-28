@@ -573,6 +573,41 @@ func lastSeen(t *testing.T, p *streamPlugin) StreamSegment {
 // the chain: a closing segment asks for no verdict, so one inspector failing on
 // it must not cost the ones after it the only point at which they can publish,
 // nor leave their spans to end on the default wall clock.
+func TestExecutor_RunStreamSegment_ObserveEntryErrorFailsOpen(t *testing.T) {
+	exec, pols, inspectors := streamChain(t,
+		entrySpec{slug: "first", mode: policy.ModeObserve},
+		entrySpec{slug: "second", mode: policy.ModeEnforce},
+	)
+	runner, ok := exec.(*executor)
+	require.True(t, ok)
+	inspectors["first"].err = errors.New("guard unreachable")
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+
+	out, err := runner.RunStreamSegment(ctx, StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	}, segment(1, false))
+	publish()
+
+	require.NoError(t, err, "an observe entry must never cut the stream, whatever streaming.on_error says")
+	require.NotNil(t, out)
+	assert.Len(t, inspectors["second"].seen, 1, "the chain carries on past the observe entry that failed")
+
+	var found bool
+	for _, span := range rt.Spans() {
+		if span.Name != "first" {
+			continue
+		}
+		found = true
+		assert.Equal(t, decisionFailedOpen, span.Plugin.Decision)
+		assert.NotEmpty(t, span.Error(), "the failure is still recorded on the span")
+	}
+	assert.True(t, found, "no span for the observe entry")
+}
+
 func TestExecutor_RunStreamSegment_ClosingSurvivesAnInspectorError(t *testing.T) {
 	sentinel := errors.New("aggregate rejected")
 	exec, pols, inspectors := streamChain(t,
