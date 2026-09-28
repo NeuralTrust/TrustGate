@@ -33,8 +33,8 @@ func streamAssistantText(reg *adapter.Registry, body []byte, format adapter.Form
 
 // streamCanonicalResponse reassembles a CanonicalResponse from a buffered SSE
 // body using per-chunk DecodeStreamChunk. Captures content deltas, reasoning
-// deltas, and tool_call deltas (merged by index). Returns nil when the body
-// yields nothing inspectable.
+// deltas, and tool_call deltas (merged by index, Gemini's renumbered across
+// the stream). Returns nil when the body yields nothing inspectable.
 func streamCanonicalResponse(reg *adapter.Registry, body []byte, format adapter.Format) *adapter.CanonicalResponse {
 	if reg == nil || len(body) == 0 {
 		return nil
@@ -42,6 +42,10 @@ func streamCanonicalResponse(reg *adapter.Registry, body []byte, format adapter.
 	var content strings.Builder
 	var reasoning strings.Builder
 	toolCalls := map[int]*adapter.CanonicalToolCall{}
+	var geminiCalls *adapter.GeminiCallIndexer
+	if adapter.IsSameWireFormat(format, adapter.FormatGemini) {
+		geminiCalls = &adapter.GeminiCallIndexer{}
+	}
 	for _, line := range strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "data:") {
@@ -61,6 +65,7 @@ func streamCanonicalResponse(reg *adapter.Registry, body []byte, format adapter.
 		if chunk.ReasoningDelta != "" {
 			reasoning.WriteString(chunk.ReasoningDelta)
 		}
+		geminiCalls.Renumber(chunk.ToolCallDeltas)
 		for _, tc := range chunk.ToolCallDeltas {
 			mergeStreamToolCall(toolCalls, tc)
 		}

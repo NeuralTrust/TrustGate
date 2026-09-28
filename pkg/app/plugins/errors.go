@@ -14,7 +14,10 @@
 
 package plugins
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // DefaultBlockMessage is the vendor-neutral message a guardrail plugin returns
 // to the caller when its configured message is empty or whitespace-only. Every
@@ -54,4 +57,17 @@ func AsPluginError(err error) (*PluginError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// UndecodableRequestError rejects a request whose body does not decode in its
+// wire format. A plugin that enforces a policy on the tools of a request
+// returns it rather than let a body it could not inspect reach the upstream,
+// which may accept what the gateway could not decode.
+func UndecodableRequestError(plugin string) *PluginError {
+	return &PluginError{
+		StatusCode: http.StatusBadRequest,
+		Type:       "invalid_request_body",
+		Message:    plugin + ": the request body could not be decoded",
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+	}
 }

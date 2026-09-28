@@ -15,6 +15,7 @@
 package trustguard
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -70,12 +71,20 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 	return strings.Join(requestParts(creq), "\n")
 }
 
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, masked string) ([]byte, bool) {
+// rewriteRequest re-encodes the request in full once the mask changes its
+// text: an in-place edit could leave a copy of the masked text in a field the
+// canonical request does not model, so a redaction never keeps those fields.
+// An unchanged text forwards original as it came.
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, masked string) ([]byte, bool) {
 	if reg == nil || creq == nil {
 		return nil, false
 	}
+	before := requestParts(creq)
 	if !applyMaskedRequest(creq, masked) {
 		return nil, false
+	}
+	if original != nil && slices.Equal(before, requestParts(creq)) {
+		return original, true
 	}
 	adp, err := reg.GetAdapter(format)
 	if err != nil {

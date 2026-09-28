@@ -91,7 +91,7 @@ type ProviderInvoker interface {
 // registry keeps the app layer off the infra adapter implementation and makes
 // the invoker testable in isolation.
 type providerCodec interface {
-	AdaptRequest(body []byte, source, target adapter.Format) ([]byte, error)
+	AdaptRequestForProvider(body []byte, source, target adapter.Format, providerName, defaultModel string) ([]byte, error)
 	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
 	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
 	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
@@ -264,18 +264,21 @@ func (p *providerInvoker) InvokeStream(
 		body = injectStreamIncludeUsage(body)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if retryBody, ok := p.retryBodyFor(ctx, prep, body, err); ok {
 		seq, err = prep.client.CompletionsStream(ctx, prep.cfg, retryBody)
 	}
 	if err != nil {
+		cancel()
 		if be, ok := registry.IsBackendError(err); ok {
 			return p.backendErrorResponse(be, bk, prep), nil
 		}
 		return nil, clientRequestError(fmt.Errorf("provider completions stream: %w", err))
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req),
+		withStreamContext(ctx), withStreamCancel(cancel))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -338,7 +341,7 @@ func (p *providerInvoker) prepare(
 
 	body := req.Body
 	if crossFormat {
-		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
+		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, bk.Provider(), req.DefaultModel, capability)
 		if err != nil {
 			var contentErr *adapter.UnsupportedContentError
 			if errors.As(err, &contentErr) {
@@ -376,11 +379,12 @@ func (p *providerInvoker) prepare(
 	prep := &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
-			Credentials:   registryCredentials(bk, req.HeaderValue("Authorization")),
-			Model:         sentModel,
-			DefaultModel:  req.DefaultModel,
-			AllowedModels: req.AllowedModels,
+			Options:              adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
+			Credentials:          registryCredentials(bk, req.HeaderValue("Authorization")),
+			Model:                sentModel,
+			DefaultModel:         req.DefaultModel,
+			AllowedModels:        req.AllowedModels,
+			CacheRetentionMapped: crossFormat,
 		},
 		body:         body,
 		sentModel:    sentModel,
@@ -523,7 +527,7 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 func (p *providerInvoker) adaptRequestBody(
 	body []byte,
 	sourceFormat, targetFormat adapter.Format,
-	capability string,
+	providerName, defaultModel, capability string,
 ) ([]byte, error) {
 	switch capability {
 	case capabilityEmbeddings:
@@ -539,7 +543,7 @@ func (p *providerInvoker) adaptRequestBody(
 		}
 		return adapter.AdaptRerankRequest(reg, body, sourceFormat, targetFormat)
 	default:
-		return p.registry.AdaptRequest(body, sourceFormat, targetFormat)
+		return p.registry.AdaptRequestForProvider(body, sourceFormat, targetFormat, providerName, defaultModel)
 	}
 }
 

@@ -47,7 +47,7 @@ func (a *BedrockTitanEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest
 }
 
 func (a *BedrockTitanEmbedAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
-	emb, err := embeddingFromCanonical(req)
+	emb, err := textEmbeddingFromCanonical(req)
 	if err != nil {
 		return nil, err
 	}

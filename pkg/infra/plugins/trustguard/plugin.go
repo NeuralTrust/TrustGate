@@ -429,11 +429,29 @@ func (p *Plugin) llmInspectionPayload(
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		request, decodeErr := p.registry.DecodeRequestFor(in.Request.Body, format)
+		if adapter.IsRequestDecodeError(decodeErr) && adapter.IsChatRequest(in.Request.ProxyCapability, format) {
+			p.warn(ctx, "trustguard request body decode failed, failing open",
+				slog.String("plugin", PluginName),
+				slog.String("stage", string(in.Stage)),
+				slog.Any("error", decodeErr),
+			)
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+			return nil, tgt, true
+		}
+		if request != nil && request.DroppedInputItems > 0 {
+			p.debug(ctx, "trustguard request input items left out of inspection",
+				slog.String("plugin", PluginName),
+				slog.Int("dropped_items", request.DroppedInputItems),
+			)
+		}
 		attachments := extractPayloadAttachments(in.Request.Body)
 		if decodeErr != nil || request == nil || (strings.TrimSpace(joinRequestText(request)) == "" && len(attachments) == 0) {
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
-		tgt.apply = func(masked string) ([]byte, bool) { return rewriteRequest(p.registry, format, request, masked) }
+		original := in.Request.Body
+		tgt.apply = func(masked string) ([]byte, bool) {
+			return rewriteRequest(p.registry, format, original, request, masked)
+		}
 		payload, payloadErr := llmRequestPayloadWithAttachments(request, attachments)
 		if payloadErr != nil {
 			p.payloadFailure(ctx, in, direction, "trustguard llm payload build failed, failing open", payloadErr)
