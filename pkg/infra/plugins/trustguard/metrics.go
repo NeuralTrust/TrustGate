@@ -30,7 +30,7 @@ const (
 	failureReasonTransport    = "transport"
 	failureReasonTimeout      = "timeout"
 	// failureReasonCredentialsMissing is a pod started without
-	// TRUSTGUARD_CLIENT_ID/SECRET: no call is made at all.
+	// TRUSTGUARD_CLIENT_ID/SECRET: no call is made, and the guard fails closed.
 	failureReasonCredentialsMissing = "credentials_missing"
 )
 
