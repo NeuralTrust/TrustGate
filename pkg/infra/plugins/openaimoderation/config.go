@@ -89,13 +89,6 @@ func (s *Settings) applyDefaults() {
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
 	}
-	// With no thresholds, evaluate() can only raise a violation through
-	// BlockOnFlagged. Left false, the policy calls OpenAI and never blocks or
-	// reports, which is what a console-created policy sends, so the flagged
-	// verdict decides. Configs with thresholds keep their own value.
-	if len(s.Thresholds) == 0 {
-		s.BlockOnFlagged = true
-	}
 	// The buffered leg already fails closed in enforce mode when the endpoint
 	// is unreachable, so the stream leg inherits that rather than a laxer
 	// default. In the modes that do not block, the executor discards a cut
