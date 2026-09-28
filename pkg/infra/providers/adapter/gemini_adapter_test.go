@@ -16,6 +16,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1140,4 +1141,75 @@ func TestGemini_DecodeRequest_PrefersCamelCaseWhenBothSpellingsCome(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "camel", req.System)
 	assert.True(t, HasAmbiguousKeys(FormatGemini, []byte(body)), "the upstream may read the other spelling")
+}
+
+func TestGemini_EncodeMapsCanonicalFinishReasonsToGeminiValues(t *testing.T) {
+	cases := map[string]string{
+		"stop":                          "STOP",
+		"tool_calls":                    "STOP",
+		"stop_sequence":                 "STOP",
+		"length":                        "MAX_TOKENS",
+		"model_context_window_exceeded": "MAX_TOKENS",
+		"content_filter":                "SAFETY",
+		"refusal":                       "SAFETY",
+		"error":                         "OTHER",
+		"pause_turn":                    "OTHER",
+		"malformed_tool_use":            "MALFORMED_FUNCTION_CALL",
+		"MALFORMED_FUNCTION_CALL":       "MALFORMED_FUNCTION_CALL",
+		"UNEXPECTED_TOOL_CALL":          "UNEXPECTED_TOOL_CALL",
+		"RECITATION":                    "RECITATION",
+		"SAFETY":                        "SAFETY",
+	}
+	a := &GeminiAdapter{}
+	for reason, want := range cases {
+		t.Run(reason, func(t *testing.T) {
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{FinishReason: reason})
+			require.NoError(t, err)
+			var chunk geminiResponse
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(string(lines[0]), "data: ")), &chunk))
+			assert.Equal(t, want, chunk.Candidates[0].FinishReason, "stream")
+
+			body, err := a.EncodeResponse(&CanonicalResponse{Content: "hi", FinishReason: reason})
+			require.NoError(t, err)
+			var resp geminiResponse
+			require.NoError(t, json.Unmarshal(body, &resp))
+			assert.Equal(t, want, resp.Candidates[0].FinishReason, "buffered")
+		})
+	}
+
+	lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Delta: "hi"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(lines[0]), "finishReason", "a chunk without a finish has none")
+	body, err := a.EncodeResponse(&CanonicalResponse{Content: "hi"})
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"finishReason":"STOP"`, "a buffered response always has a finish")
+}
+
+func TestGemini_EncodeSendsUpstreamCallIDs(t *testing.T) {
+	a := &GeminiAdapter{}
+	calls := []CanonicalToolCall{
+		{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+		{ID: "get_time", Name: "get_time", Arguments: `{}`},
+	}
+
+	body, err := a.EncodeResponse(&CanonicalResponse{ToolCalls: calls, FinishReason: "tool_calls"})
+	require.NoError(t, err)
+	var resp geminiResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	parts := resp.Candidates[0].Content.Parts
+	require.Len(t, parts, 2)
+	assert.Equal(t, "call_1", parts[0].FunctionCall.ID)
+	assert.Empty(t, parts[1].FunctionCall.ID, "a synthetic id stays off the wire")
+
+	lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{
+		{Index: 0, ID: calls[0].ID, Name: calls[0].Name, ArgumentsDelta: calls[0].Arguments},
+		{Index: 1, ID: calls[1].ID, Name: calls[1].Name, ArgumentsDelta: calls[1].Arguments},
+	}})
+	require.NoError(t, err)
+	var chunk geminiResponse
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(string(lines[0]), "data: ")), &chunk))
+	parts = chunk.Candidates[0].Content.Parts
+	require.Len(t, parts, 2)
+	assert.Equal(t, "call_1", parts[0].FunctionCall.ID)
+	assert.Empty(t, parts[1].FunctionCall.ID, "a synthetic id stays off the wire")
 }

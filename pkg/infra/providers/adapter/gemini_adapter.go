@@ -165,6 +165,16 @@ func geminiSyntheticCallID(id, name string) bool {
 	return err == nil && n >= 2 && strconv.Itoa(n) == suffix
 }
 
+// geminiClientCallID is the functionCall id a Gemini client gets for a call:
+// its upstream id, which Gemini 3 clients echo on the functionResponse, but
+// never one TrustGate made up for a Gemini call that had none.
+func geminiClientCallID(id, name string) string {
+	if geminiSyntheticCallID(id, name) {
+		return ""
+	}
+	return id
+}
+
 func geminiSyntheticCallName(id string, tools []CanonicalTool) (string, bool) {
 	cut := strings.LastIndexByte(id, '_')
 	if cut <= 0 {
@@ -652,13 +662,7 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 // ---------------------------------------------------------------------------
 
 func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
-	fr := "STOP"
-	switch resp.FinishReason {
-	case "length":
-		fr = "MAX_TOKENS"
-	case "tool_calls":
-		fr = "STOP" // Gemini uses STOP even for function calls
-	}
+	fr := cmp.Or(geminiFinishReason(resp.FinishReason), geminiFinishStop)
 
 	var parts []geminiPart
 	// Prepend thinking part if present (Gemini thinking/reasoning)
@@ -676,6 +680,7 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 		_ = json.Unmarshal([]byte(tc.Arguments), &args)
 		parts = append(parts, geminiPart{
 			FunctionCall: &geminiFunctionCall{
+				ID:   geminiClientCallID(tc.ID, tc.Name),
 				Name: tc.Name,
 				Args: args,
 			},
@@ -794,26 +799,14 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 			args = map[string]interface{}{"__raw": argsStr}
 		}
 		parts = append(parts, geminiPart{
-			FunctionCall: &geminiFunctionCall{Name: tc.Name, Args: args},
+			FunctionCall: &geminiFunctionCall{ID: geminiClientCallID(tc.ID, tc.Name), Name: tc.Name, Args: args},
 		})
-	}
-
-	finishReason := ""
-	switch chunk.FinishReason {
-	case "stop", "tool_calls":
-		finishReason = "STOP"
-	case "length":
-		finishReason = "MAX_TOKENS"
-	default:
-		if chunk.FinishReason != "" {
-			finishReason = chunk.FinishReason
-		}
 	}
 
 	out := geminiResponse{
 		Candidates: []geminiCandidate{{
 			Content:      geminiContent{Role: role, Parts: parts},
-			FinishReason: finishReason,
+			FinishReason: geminiFinishReason(chunk.FinishReason),
 		}},
 	}
 
@@ -826,6 +819,45 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		return nil, err
 	}
 	return SSEData(data), nil
+}
+
+const (
+	geminiFinishStop      = "STOP"
+	geminiFinishMaxTokens = "MAX_TOKENS"
+	geminiFinishSafety    = "SAFETY"
+	geminiFinishOther     = "OTHER"
+	geminiFinishBadCall   = "MALFORMED_FUNCTION_CALL"
+)
+
+// geminiFinishReasons are the Gemini FinishReason values, which reach the
+// canonical model verbatim from a Gemini upstream.
+var geminiFinishReasons = map[string]struct{}{
+	geminiFinishStop: {}, geminiFinishMaxTokens: {}, geminiFinishSafety: {}, "RECITATION": {},
+	"LANGUAGE": {}, geminiFinishOther: {}, "BLOCKLIST": {}, "PROHIBITED_CONTENT": {}, "SPII": {},
+	geminiFinishBadCall: {}, "IMAGE_SAFETY": {}, "UNEXPECTED_TOOL_CALL": {}, "TOO_MANY_TOOL_CALLS": {},
+	"IMAGE_PROHIBITED_CONTENT": {}, "NO_IMAGE": {}, "IMAGE_RECITATION": {}, "IMAGE_OTHER": {},
+}
+
+// geminiFinishReason maps a canonical finish reason to a Gemini FinishReason.
+// Gemini clients parse it as an enum, so a reason Gemini has no value for is
+// sent as OTHER rather than verbatim.
+func geminiFinishReason(reason string) string {
+	switch reason {
+	case "":
+		return ""
+	case "stop", "tool_calls", "stop_sequence", "end_turn", "function_call":
+		return geminiFinishStop
+	case "length", "max_tokens", "model_context_window_exceeded":
+		return geminiFinishMaxTokens
+	case "content_filter", "refusal":
+		return geminiFinishSafety
+	case "malformed_tool_use":
+		return geminiFinishBadCall
+	}
+	if _, ok := geminiFinishReasons[reason]; ok {
+		return reason
+	}
+	return geminiFinishOther
 }
 
 // ---------------------------------------------------------------------------

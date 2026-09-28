@@ -120,7 +120,7 @@ func (e *ResponsesStreamEncoder) Content(chunk *CanonicalStreamChunk) [][]byte {
 }
 
 // Finish encodes the finish and usage of chunk: response.completed, or
-// response.incomplete for a length or content filter stop. The held tool
+// response.incomplete for a length, context window or content filter stop. The held tool
 // calls follow the message on response.completed only: the arguments of an
 // incomplete response may be cut short, and clients execute the calls they
 // get, so those calls are withheld. A finish reason reporting a failure (see
@@ -226,7 +226,7 @@ func (e *ResponsesStreamEncoder) HeldCallsComplete() bool {
 
 func responsesFinishStatus(reason string) (status, incompleteReason string) {
 	switch {
-	case reason == "length":
+	case truncatedFinish(reason):
 		return responsesStatusIncomplete, "max_output_tokens"
 	case refusalFinish(reason):
 		return responsesStatusIncomplete, "content_filter"

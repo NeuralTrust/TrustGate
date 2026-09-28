@@ -100,3 +100,10 @@ func FinishFailure(finishReason string) (string, bool) {
 		return "", false
 	}
 }
+
+// truncatedFinish reports whether finishReason says the output was cut at a
+// token limit, the output budget or the context window, so a tool call in
+// flight may have lost the end of its arguments.
+func truncatedFinish(finishReason string) bool {
+	return finishReason == "length" || finishReason == "model_context_window_exceeded"
+}

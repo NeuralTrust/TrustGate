@@ -261,6 +261,16 @@ func TestResponsesStreamEncoder_OutputIndexes(t *testing.T) {
 			withheld: 1,
 		},
 		{
+			name: "a context window stop withholds the call as a length stop does",
+			chunks: []*CanonicalStreamChunk{
+				{Delta: "Checking."},
+				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: `{"x":1}`}}},
+			},
+			finish:   "model_context_window_exceeded",
+			want:     []string{"added 0 message", "text 0 Checking.", "done 0  incomplete"},
+			withheld: 1,
+		},
+		{
 			name: "a content filter stop withholds every call",
 			chunks: []*CanonicalStreamChunk{
 				{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "a", ArgumentsDelta: "{}"}}},
@@ -467,6 +477,7 @@ func TestResponsesStreamEncoder_FinishStatus(t *testing.T) {
 		{reason: "stop", wantEvent: "response.completed", wantStatus: "completed"},
 		{reason: "tool_calls", wantEvent: "response.completed", wantStatus: "completed"},
 		{reason: "length", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "max_output_tokens"},
+		{reason: "model_context_window_exceeded", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "max_output_tokens"},
 		{reason: "content_filter", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
 		{reason: "refusal", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},
 		{reason: "SAFETY", wantEvent: "response.incomplete", wantStatus: "incomplete", wantIncomplete: "content_filter"},

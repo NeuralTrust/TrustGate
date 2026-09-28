@@ -81,7 +81,7 @@ func TestGeminiStreamEncoder_WithholdsArgumentsThatAreNotAnObject(t *testing.T) 
 }
 
 func TestGeminiStreamEncoder_WithholdsCallsOnAnUnfinishedStream(t *testing.T) {
-	for _, reason := range []string{"length", "content_filter", "error"} {
+	for _, reason := range []string{"length", "model_context_window_exceeded", "content_filter", "error"} {
 		t.Run(reason, func(t *testing.T) {
 			e := NewGeminiStreamEncoder()
 			e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "a", Name: "search", ArgumentsDelta: `{"q":"x"}`}}})
@@ -101,4 +101,47 @@ func TestGeminiStreamEncoder_WithholdsCallsOnAnUnfinishedStream(t *testing.T) {
 		assert.Empty(t, e.Content(&CanonicalStreamChunk{Delta: "late"}))
 		assert.Empty(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
 	})
+}
+
+func TestGeminiStreamEncoder_HeldCallsCompleteTakesNoArgumentBytesAsNoArguments(t *testing.T) {
+	e := NewGeminiStreamEncoder()
+	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "a", Name: "list_files"}}})
+
+	require.True(t, e.HeldCallsComplete(), "a call with no argument bytes is complete, as for a Responses client")
+	calls := geminiEncodedCalls(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
+
+	require.Len(t, calls, 1)
+	assert.Equal(t, "list_files", calls[0].Name)
+	assert.Empty(t, calls[0].Args)
+	assert.Zero(t, e.Withheld())
+}
+
+func TestGeminiStreamEncoder_Fail(t *testing.T) {
+	e := NewGeminiStreamEncoder()
+	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "a", Name: "search", ArgumentsDelta: `{"q":"x"}`}}})
+
+	lines := e.Fail("upstream stream failed")
+
+	require.Len(t, lines, 2)
+	assert.JSONEq(t, `{"error":{"code":500,"message":"upstream stream failed","status":"INTERNAL"}}`, strings.TrimPrefix(string(lines[0]), "data: "))
+	assert.True(t, e.Failed())
+	assert.Equal(t, 1, e.Withheld())
+	assert.Empty(t, e.Fail("again"), "the stream ends once")
+	assert.Empty(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
+
+	e = NewGeminiStreamEncoder()
+	e.Finish(&CanonicalStreamChunk{FinishReason: "stop"})
+	assert.Empty(t, e.Fail("late"), "a finished stream gets no error object")
+	assert.False(t, e.Failed())
+}
+
+func TestGeminiStreamEncoder_SendsTheCallIDs(t *testing.T) {
+	e := NewGeminiStreamEncoder()
+	e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "call_1", Name: "search", ArgumentsDelta: `{"q":"x"}`}}})
+
+	calls := geminiEncodedCalls(t, e.Finish(&CanonicalStreamChunk{FinishReason: "tool_calls"}))
+
+	require.Len(t, calls, 1)
+	assert.Equal(t, "call_1", calls[0].ID)
+	assert.NoError(t, e.TakeEncodeError())
 }
