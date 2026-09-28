@@ -164,6 +164,9 @@ type fakeGuard struct {
 	headers     map[string]string
 	response    GuardResponse
 	responseFor map[string]GuardResponse
+	// delay stalls the evaluate leg so a call can be made to run out of time
+	// without waiting out a real detector. The token leg is never delayed.
+	delay time.Duration
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
@@ -173,6 +176,13 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", TokenType: "Bearer", ExpiresIn: 3600})
 			return
+		}
+		if f.delay > 0 {
+			select {
+			case <-time.After(f.delay):
+			case <-r.Context().Done():
+				return
+			}
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -2100,5 +2110,97 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 				t.Fatalf("extras.Direction = %q, want %q", extras.Direction, tc.direction)
 			}
 		})
+	}
+}
+
+// TestExecuteGuardTimeoutFailsClosedByDefault is the defect RUN-1712 was opened
+// for. A detector that ran out of time is, by selection, the one that had the
+// most to say: the run that surfaced this returned "blocked, score 1.00" some
+// thirteen seconds after the gateway had already streamed the payload. The
+// default therefore has to be the opposite of on_error's.
+func TestExecuteGuardTimeoutFailsClosedByDefault(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}, delay: 2 * time.Second}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	set := settings("")
+	set["timeout"] = "250ms"
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("a timed-out guard must not pass the content through, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504 so a timeout is tellable from an unreachable guard", pe.StatusCode)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", span.PluginAttrsCopy().Extras)
+	}
+	if !extras.FailedClosed || extras.FailureReason != failureReasonTimeout {
+		t.Fatalf("extras = %+v, want failed_closed with reason %q", extras, failureReasonTimeout)
+	}
+}
+
+// TestExecuteGuardTimeoutHonoursExplicitFailOpen keeps the escape hatch: an
+// operator who would rather keep serving can still say so, they just have to
+// say it rather than get it by omission.
+func TestExecuteGuardTimeoutHonoursExplicitFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}, delay: 2 * time.Second}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	set := settings("")
+	set["timeout"] = "250ms"
+	set["on_timeout"] = onErrorFailOpen
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", span.PluginAttrsCopy().Extras)
+	}
+	if !extras.FailedOpen || extras.FailureReason != failureReasonTimeout {
+		t.Fatalf("extras = %+v, want failed_open recorded as a timeout, not an unexplained pass", extras)
+	}
+}
+
+// TestExecuteTransportErrorStillFailsOpen guards the asymmetry from being
+// applied too widely: on_timeout must not quietly become the rule for every
+// way a guard call can fail.
+func TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := httptest.NewServer(f.handler())
+	addr := srv.URL
+	srv.Close()
+
+	p := newTestPlugin(t, adapter.NewRegistry(), addr)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("an unreachable guard still fails open by default, got %v", err)
+	}
+	if res == nil || res.StopUpstream {
+		t.Fatalf("expected pass-through, got %+v", res)
 	}
 }
