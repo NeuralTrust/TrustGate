@@ -838,7 +838,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors. Streaming responses are inspected after the stream completes (post_response), not live.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors but closed on a guard timeout, because a timeout is something a large enough payload can bring about. Streaming responses are inspected after the stream completes (post_response) unless per-block inspection is configured.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -860,6 +860,31 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeString,
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
+				},
+				{
+					Key:         "on_error",
+					Label:       "On Error",
+					Type:        FieldTypeEnum,
+					Description: "What to do when the guard cannot be reached. Auth rejections always fail closed regardless of this.",
+					Enum:        enumOptions("fail_open", "fail_closed"),
+					Default:     "fail_open",
+				},
+				{
+					Key:   "on_timeout",
+					Label: "On Timeout",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard does not answer in time. Defaults to fail_closed, " +
+						"unlike on_error: a refused connection is not something a caller can bring about, " +
+						"but a large enough payload can push the detector past the deadline.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_closed",
+				},
+				{
+					Key:   "timeout",
+					Label: "Timeout",
+					Type:  FieldTypeDuration,
+					Description: "How long one evaluate call may take for this policy (e.g. 30s). " +
+						"Leave empty to use the deployment-wide TRUSTGUARD_TIMEOUT.",
 				},
 			},
 		},

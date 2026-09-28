@@ -35,6 +35,8 @@ const unavailableMessage = "rate limit entitlements unavailable"
 const unauthorizedMessage = "trustguard authentication or configuration rejected"
 const guardErrorMessage = "trustguard unavailable"
 
+const guardTimeoutMessage = "trustguard did not answer in time"
+
 func blockError(resp *GuardResponse) *appplugins.PluginError {
 	message := clientBlockMessage(resp)
 	return &appplugins.PluginError{
@@ -86,6 +88,23 @@ func unauthorizedError(err *authRejectedError) *appplugins.PluginError {
 		StatusCode: http.StatusBadGateway,
 		Type:       typeUnauthorized,
 		Message:    unauthorizedMessage,
+		Body:       body,
+	}
+}
+
+// timeoutFailClosedError is 504 rather than the transport path's 502: the
+// upstream guard was reachable and simply did not answer in time, and an
+// operator reading the status code should be able to tell those apart without
+// opening the trace.
+func timeoutFailClosedError() *appplugins.PluginError {
+	body, _ := json.Marshal(map[string]any{
+		"error":   typeGuardError,
+		"message": guardTimeoutMessage,
+	})
+	return &appplugins.PluginError{
+		StatusCode: http.StatusGatewayTimeout,
+		Type:       typeGuardError,
+		Message:    guardTimeoutMessage,
 		Body:       body,
 	}
 }
