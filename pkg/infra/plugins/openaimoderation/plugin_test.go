@@ -173,7 +173,7 @@ func TestExecuteEnforceBlockReturns403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 	assert.Equal(t, typeContentFlagged, pe.Type)
 
-	const wantBody = `{"error":{"type":"content_flagged","message":"request blocked by content policy","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
+	wantBody := `{"error":{"type":"content_flagged","message":"` + appplugins.DefaultBlockMessage + `","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
 	assert.JSONEq(t, wantBody, string(pe.Body))
 	assert.Equal(t, wantBody, string(pe.Body))
 
@@ -186,7 +186,7 @@ func TestExecuteEnforceBlockReturns403(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(pe.Body, &decoded))
 	assert.Equal(t, typeContentFlagged, decoded.Error.Type)
-	assert.Equal(t, defaultBlockMessage, decoded.Error.Message)
+	assert.Equal(t, appplugins.DefaultBlockMessage, decoded.Error.Message)
 	require.Len(t, decoded.Error.Categories, 1)
 	assert.Equal(t, "hate", decoded.Error.Categories[0].Category)
 

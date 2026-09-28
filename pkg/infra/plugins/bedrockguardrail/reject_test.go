@@ -16,18 +16,21 @@ package bedrockguardrail
 
 import (
 	"net/http"
+	"strings"
 	"testing"
+
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
 func TestBlockBodyExactJSON(t *testing.T) {
 	t.Parallel()
-	got := string(blockBody(finding{
+	got := string(blockBody("Investment advice is not permitted.", finding{
 		policy:    policyTopic,
 		name:      "Investment Advice",
 		matchType: "DENY",
 		action:    "BLOCKED",
 	}))
-	want := `{"error":{"type":"guardrail_blocked","policy":"topic_policy","name":"Investment Advice"}}`
+	want := `{"error":{"type":"guardrail_blocked","message":"Investment advice is not permitted.","policy":"topic_policy","name":"Investment Advice"}}`
 	if got != want {
 		t.Fatalf("blockBody = %s, want %s", got, want)
 	}
@@ -35,17 +38,17 @@ func TestBlockBodyExactJSON(t *testing.T) {
 
 func TestBlockBodyOmitsEmptyName(t *testing.T) {
 	t.Parallel()
-	got := string(blockBody(finding{policy: policyContextualGrounding}))
-	want := `{"error":{"type":"guardrail_blocked","policy":"contextual_grounding"}}`
+	got := string(blockBody(appplugins.DefaultBlockMessage, finding{policy: policyContextualGrounding}))
+	want := `{"error":{"type":"guardrail_blocked","message":"` + appplugins.DefaultBlockMessage + `","policy":"contextual_grounding"}}`
 	if got != want {
 		t.Fatalf("blockBody = %s, want %s", got, want)
 	}
 }
 
-func TestBlockError(t *testing.T) {
+func TestBlockErrorUsesConfiguredMessage(t *testing.T) {
 	t.Parallel()
 	f := finding{policy: policyContent, name: "HATE", matchType: "HATE", action: "BLOCKED"}
-	err := blockError(f)
+	err := blockError("Hateful content is not allowed.", f)
 	if err == nil {
 		t.Fatal("blockError returned nil")
 		return
@@ -56,12 +59,37 @@ func TestBlockError(t *testing.T) {
 	if err.Type != typeGuardrailBlocked {
 		t.Fatalf("Type = %q, want %q", err.Type, typeGuardrailBlocked)
 	}
+	if err.Message != "Hateful content is not allowed." {
+		t.Fatalf("Message = %q, want %q", err.Message, "Hateful content is not allowed.")
+	}
 	ct := err.Headers["Content-Type"]
 	if len(ct) != 1 || ct[0] != "application/json" {
 		t.Fatalf("Content-Type header = %v, want [application/json]", ct)
 	}
-	want := `{"error":{"type":"guardrail_blocked","policy":"content_policy","name":"HATE"}}`
+	want := `{"error":{"type":"guardrail_blocked","message":"Hateful content is not allowed.","policy":"content_policy","name":"HATE"}}`
 	if string(err.Body) != want {
 		t.Fatalf("Body = %s, want %s", err.Body, want)
+	}
+}
+
+func TestBlockErrorFallsBackToSharedDefaultWhenMessageEmpty(t *testing.T) {
+	t.Parallel()
+	f := finding{policy: policyContent, name: "HATE"}
+	err := blockError("   ", f)
+	if err == nil {
+		t.Fatal("blockError returned nil")
+		return
+	}
+	if err.Message != appplugins.DefaultBlockMessage {
+		t.Fatalf("Message = %q, want %q", err.Message, appplugins.DefaultBlockMessage)
+	}
+	want := `{"error":{"type":"guardrail_blocked","message":"` + appplugins.DefaultBlockMessage + `","policy":"content_policy","name":"HATE"}}`
+	if string(err.Body) != want {
+		t.Fatalf("Body = %s, want %s", err.Body, want)
+	}
+	for _, vendor := range []string{"Bedrock", "AWS", "Azure", "Google", "Model Armor", "OpenAI"} {
+		if strings.Contains(err.Message, vendor) {
+			t.Fatalf("Message %q must not name the vendor %q", err.Message, vendor)
+		}
 	}
 }
