@@ -55,7 +55,7 @@ func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	return reg
 }
 
@@ -166,7 +166,7 @@ func TestCreator_Create_RejectsInertSettingsWrite(t *testing.T) {
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(sentinel).Once()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(sentinel).Once()
 	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))

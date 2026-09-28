@@ -27,13 +27,18 @@ import (
 )
 
 // validatePlugin runs ValidateSettingsWrite only when settingsWritten is true:
-// on create, and on an update that carries settings.
+// on create, and on an update that carries settings. previous is the
+// settings as they were stored immediately before this write - nil on
+// create, and nil on a slug change, since settings belonging to the policy's
+// previous plugin are not a previous version of the new one's; the caller
+// decides that, this only forwards what it is given.
 func validatePlugin(
 	reg appplugins.Registry,
 	slug string,
 	stages []domain.Stage,
 	mode domain.Mode,
 	settings map[string]any,
+	previous map[string]any,
 	settingsWritten bool,
 ) error {
 	if err := reg.ValidateStages(slug, stages); err != nil {
@@ -46,7 +51,7 @@ func validatePlugin(
 		return errors.Join(commonerrors.ErrValidation, err)
 	}
 	if settingsWritten {
-		if err := reg.ValidateSettingsWrite(slug, settings); err != nil {
+		if err := reg.ValidateSettingsWrite(slug, settings, previous); err != nil {
 			return errors.Join(commonerrors.ErrValidation, err)
 		}
 	}

@@ -903,11 +903,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "model",
-					Label:       "Model",
-					Type:        FieldTypeString,
-					Description: "Moderations model.",
-					Default:     "omni-moderation-latest",
+					Key:   "model",
+					Label: "Model",
+					Type:  FieldTypeString,
+					Description: "Moderations model: omni-moderation-latest or omni-moderation-2024-09-26. " +
+						"OpenAI has retired text-moderation-latest and text-moderation-stable. An unrecognised " +
+						"model already stored keeps loading (logged as a warning), but a new write must use a " +
+						"recognised one.",
+					Default: "omni-moderation-latest",
 				},
 				{
 					Key:         "stages",
@@ -922,10 +925,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "categories",
-					Label:       "Categories",
-					Type:        FieldTypeArray,
-					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned by OpenAI.",
+					Key:   "categories",
+					Label: "Categories",
+					Type:  FieldTypeArray,
+					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned " +
+						"by OpenAI. Valid keys: harassment, harassment/threatening, hate, hate/threatening, " +
+						"illicit, illicit/violent, self-harm, self-harm/intent, self-harm/instructions, " +
+						"sexual, sexual/minors, violence, violence/graphic. An unknown key is rejected on a " +
+						"new write; an already-stored one keeps working.",
 					Item: &Field{
 						Key:   "category",
 						Label: "Category",
@@ -933,10 +940,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "thresholds",
-					Label:       "Thresholds",
-					Type:        FieldTypeMap,
-					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks.",
+					Key:   "thresholds",
+					Label: "Thresholds",
+					Type:  FieldTypeMap,
+					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks. " +
+						"Keys must be one of the model's valid categories (see categories); a key that is not " +
+						"valid for the configured model is rejected on a new write, but an already-stored one " +
+						"keeps working unchanged.",
 					Value: &Field{
 						Key:   "threshold",
 						Label: "Threshold",

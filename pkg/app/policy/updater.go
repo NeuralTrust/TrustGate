@@ -105,6 +105,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	// Captured before any mutation below overwrites it: this is what
+	// ValidateSettingsWrite is given as "previous" when this update is a
+	// settings write, so a pre-existing shape (a key already saved before a
+	// rule started rejecting it) stays editable rather than becoming a hard
+	// rejection on every future save.
+	previousSettings := existing.Settings
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -140,6 +146,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	// A slug change repoints the stored settings at another plugin, so
+	// whatever was there before belongs to a different plugin's shape - not
+	// a previous version of this one's, and must not grandfather in a key
+	// that plugin happened to also use.
+	previousForWrite := previousSettings
+	if slugChanged {
+		previousForWrite = nil
+	}
 	// Write-time rules apply only when the update carries settings or points
 	// the stored ones at another plugin, so a disable or rename still succeeds.
 	if err := validatePlugin(
@@ -148,6 +162,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		existing.Stages,
 		existing.Mode,
 		existing.Settings,
+		previousForWrite,
 		in.Settings != nil || slugChanged,
 	); err != nil {
 		return nil, err

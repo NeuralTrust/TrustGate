@@ -91,7 +91,11 @@ var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
 // keys (Settings.requestCategories) so an already-saved mismatched policy
 // keeps working; this only stops a new one from being saved with the same
 // gap.
-func (p *Plugin) ValidateSettingsWrite(settings map[string]any) error {
+//
+// previous (the settings stored before this write) is unused here: this
+// plugin's rule is a same-settings internal consistency check, not one that
+// depends on what changed.
+func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return err

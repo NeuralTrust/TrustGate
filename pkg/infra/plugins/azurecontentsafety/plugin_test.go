@@ -448,7 +448,7 @@ func TestValidateSettingsWriteRejectsThresholdOutsideCategories(t *testing.T) {
 		"categories":        []any{CategoryHate},
 		"category_severity": map[string]any{CategoryViolence: 2},
 	}
-	if err := p.ValidateSettingsWrite(set); err == nil {
+	if err := p.ValidateSettingsWrite(set, nil); err == nil {
 		t.Fatal("expected an error for a category_severity key outside categories")
 	}
 }
@@ -463,7 +463,7 @@ func TestValidateSettingsWriteAcceptsMatchingKeys(t *testing.T) {
 		"categories":        []any{CategoryHate, CategoryViolence},
 		"category_severity": map[string]any{CategoryViolence: 2},
 	}
-	if err := p.ValidateSettingsWrite(set); err != nil {
+	if err := p.ValidateSettingsWrite(set, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
