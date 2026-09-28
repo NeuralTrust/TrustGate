@@ -119,19 +119,44 @@ func TestModelsIDFromRest(t *testing.T) {
 func TestGeminiModelFromPath(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/v1beta/models/gemini-pro:generateContent":                                                          "gemini-pro",
-		"/v1beta/models/gemini-1.5-flash:streamGenerateContent":                                              "gemini-1.5-flash",
-		"/v1beta/models/gemini-pro":                                                                          "gemini-pro",
-		"/slug/v1beta/models/gemini-pro:generateContent":                                                     "gemini-pro",
-		"/v1beta/models/:generateContent":                                                                    "",
-		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":               "gemini-2.5-flash",
-		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent": "gemini-2.5-pro",
-		"/v1/chat/completions":                                                                               "",
+		"/v1beta/models/gemini-pro:generateContent":                                                             "gemini-pro",
+		"/v1beta/models/gemini-1.5-flash:streamGenerateContent":                                                 "gemini-1.5-flash",
+		"/v1beta/models/gemini-pro":                                                                             "gemini-pro",
+		"/slug/v1beta/models/gemini-pro:generateContent":                                                        "gemini-pro",
+		"/v1beta/models/:generateContent":                                                                       "",
+		"/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-flash:generateContent":                  "gemini-2.5-flash",
+		"/slug/v1beta1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:streamGenerateContent":    "gemini-2.5-pro",
+		"/v1/chat/completions":                                                                                  "",
+		"/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent":                                               "eu.amazon.nova-lite-v1:0",
+		"/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent":                                 "mistral.mistral-7b-instruct-v0:2",
+		"/v1beta/models/eu.amazon.nova-lite-v1%3A0:generateContent":                                             "eu.amazon.nova-lite-v1:0",
+		"/v1beta/models/eu.amazon.nova-lite-v1:0":                                                               "eu.amazon.nova-lite-v1:0",
+		"/v1/projects/p/locations/r/publishers/google/models/us.anthropic.claude-opus-5-5-v1:0:generateContent": "us.anthropic.claude-opus-5-5-v1:0",
 	}
 	for rest, want := range cases {
 		if got := adapter.GeminiModelFromPath(rest); got != want {
 			t.Fatalf("GeminiModelFromPath(%q) = %q, want %q", rest, got, want)
 		}
+	}
+}
+
+func TestResolveProxyPathKeepsColonsInGeminiModelIDs(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/slug/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent",
+		"/slug/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent",
+		"/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0:generateContent",
+	} {
+		route, err := ResolveProxyPath(path)
+		if err != nil {
+			t.Fatalf("ResolveProxyPath(%q) error = %v", path, err)
+		}
+		if route.SourceFormat != adapter.FormatGemini || route.Capability != CapabilityChat {
+			t.Fatalf("ResolveProxyPath(%q) = %+v, want a Gemini chat route", path, route)
+		}
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path without a method must stay unknown, got %v", err)
 	}
 }
 

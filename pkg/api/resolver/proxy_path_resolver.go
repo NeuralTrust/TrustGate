@@ -160,8 +160,8 @@ func isVertexGenerateContentPath(rest string) bool {
 			return false
 		}
 	}
-	model, action, found := strings.Cut(parts[vertexModelIndex], ":")
-	if !found || model == "" {
+	model, action := adapter.SplitGeminiModelAction(parts[vertexModelIndex])
+	if model == "" {
 		return false
 	}
 	_, ok := vertexChatActions[action]

@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
@@ -70,11 +71,37 @@ func GeminiModelFromPath(path string) string {
 	if idx < 0 {
 		return ""
 	}
-	model := path[idx+len(marker):]
-	if c := strings.IndexByte(model, ':'); c >= 0 {
-		model = model[:c]
-	}
+	model, _ := SplitGeminiModelAction(path[idx+len(marker):])
 	return model
+}
+
+// geminiMethods are the actions a Gemini or Vertex model path can end with.
+var geminiMethods = map[string]struct{}{
+	"generateContent":       {},
+	"streamGenerateContent": {},
+	"countTokens":           {},
+	"embedContent":          {},
+	"batchEmbedContents":    {},
+	"predict":               {},
+	"streamRawPredict":      {},
+	"rawPredict":            {},
+}
+
+// SplitGeminiModelAction splits the last segment of a Gemini model path into
+// the model and its method. The split is at the last ':' followed by a known
+// method, because model ids can contain ':' themselves (Bedrock
+// "eu.amazon.nova-lite-v1:0"). A segment without a known method is all model.
+// Percent-encoded colons are decoded first.
+func SplitGeminiModelAction(segment string) (model, action string) {
+	if decoded, err := url.PathUnescape(segment); err == nil {
+		segment = decoded
+	}
+	if c := strings.LastIndexByte(segment, ':'); c >= 0 {
+		if _, ok := geminiMethods[segment[c+1:]]; ok {
+			return segment[:c], segment[c+1:]
+		}
+	}
+	return segment, ""
 }
 
 func DetectFormat(body []byte) Format {
