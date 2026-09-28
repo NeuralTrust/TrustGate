@@ -17,14 +17,12 @@ package azurecontentsafety
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
-const (
-	typeContentFlagged  = "content_flagged"
-	defaultBlockMessage = "request blocked by Azure Content Safety"
-)
+const typeContentFlagged = "content_flagged"
 
 type breachedCategory struct {
 	Category  string `json:"category"`
@@ -33,8 +31,8 @@ type breachedCategory struct {
 }
 
 func blockError(message string, breaches []breachedCategory) *appplugins.PluginError {
-	if message == "" {
-		message = defaultBlockMessage
+	if strings.TrimSpace(message) == "" {
+		message = appplugins.DefaultBlockMessage
 	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,

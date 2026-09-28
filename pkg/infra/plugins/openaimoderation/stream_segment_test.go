@@ -144,9 +144,9 @@ func TestInspectSegmentBlocksOnAViolation(t *testing.T) {
 	require.NotNil(t, got)
 	assert.True(t, got.Block)
 	assert.Equal(t, typeContentFlagged, got.Type)
-	assert.Equal(t, defaultStreamBlockMessage, got.Message)
+	assert.Equal(t, appplugins.DefaultBlockMessage, got.Message)
 	assert.NotContains(t, got.Message, "request",
-		"the buffered default says \"request blocked\", which is wrong for a response cut")
+		"the shared default is vendor- and leg-neutral, so it must not name the request leg")
 }
 
 func TestInspectSegmentUsesTheConfiguredMessage(t *testing.T) {

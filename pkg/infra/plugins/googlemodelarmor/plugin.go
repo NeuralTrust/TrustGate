@@ -273,7 +273,7 @@ func (p *Plugin) runGuardrail(
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
 			appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-			return nil, blockError(*res.block)
+			return nil, blockError(cfg.Message, *res.block)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -285,7 +285,7 @@ func (p *Plugin) runGuardrail(
 		applyFinding(data, res.anonymize)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(in, data, result, span, res.anonymize)
+			return p.anonymizeEnforce(in, data, cfg.Message, result, span, res.anonymize)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -302,20 +302,21 @@ func (p *Plugin) runGuardrail(
 func (p *Plugin) anonymizeEnforce(
 	in appplugins.ExecInput,
 	data *Data,
+	message string,
 	result *SanitizationResult,
 	span rewriteSpan,
 	f *finding,
 ) (*appplugins.Result, error) {
 	masked, ok := maskedText(result)
 	if !ok {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeNoOutput, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeNoOutput, f)
 	}
 	if !supportsReencode(p.registry, span.format) {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeUnsupportedFormat, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeUnsupportedFormat, f)
 	}
 	body, ok := span.rewrite(masked)
 	if !ok {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeEncodeFailed, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeEncodeFailed, f)
 	}
 	data.Decision = decisionAnonymized
 	setExtras(in.Event, data)
@@ -323,13 +324,13 @@ func (p *Plugin) anonymizeEnforce(
 	return span.result(body), nil
 }
 
-func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, reason string, f *finding) (*appplugins.Result, error) {
+func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.Decision = decisionBlocked
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-	return nil, blockError(*f)
+	return nil, blockError(message, *f)
 }
 
 // failClosed is the shared outcome for a transport error, an invocationResult

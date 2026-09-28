@@ -577,7 +577,7 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res, err := p.anonymizeEnforce(in, data, tt.result, tt.span, f)
+			res, err := p.anonymizeEnforce(in, data, "", tt.result, tt.span, f)
 			if res != nil {
 				t.Fatalf("expected nil result, got %+v", res)
 			}
@@ -607,7 +607,7 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		DeidentifyResult: &SDPDeidentifyResult{MatchState: matchStateMatchFound, Data: &SDPData{Text: "masked-body"}},
 	}}}}
 
-	res, err := p.anonymizeEnforce(in, data, result, span, f)
+	res, err := p.anonymizeEnforce(in, data, "", result, span, f)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
