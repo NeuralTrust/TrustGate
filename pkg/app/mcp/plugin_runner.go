@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -335,6 +336,13 @@ func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage polic
 // isolated request; the MetadataMCP* keys mirror it for plugins that only read
 // metadata, but a plugin can overwrite those, so gating decisions read the
 // fields.
+//
+// Headers carries a synthetic Content-Length: MCP tools/call requests have no
+// transport-level headers at all, but the marshaled body's length is known
+// right here, so a plugin that requires Content-Length (RUN-1674) sees the
+// real size instead of an absent header it can never obtain on this plane.
+// Every other header stays unset — this does not fabricate a full header set,
+// only the one value that is both meaningful and knowable for this plane.
 func (r *PluginRunner) buildRequestContext(
 	rc *appconsumer.RoutableConsumer,
 	call ToolCall,
@@ -354,6 +362,9 @@ func (r *PluginRunner) buildRequestContext(
 		MCP:            true,
 		MCPToolCallID:  call.ClientToolCallID,
 		Body:           body,
+		Headers: map[string][]string{
+			"Content-Length": {strconv.Itoa(len(body))},
+		},
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
