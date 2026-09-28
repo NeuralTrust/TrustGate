@@ -69,6 +69,13 @@ func parseConfig(settings map[string]any) (Settings, error) {
 		return Settings{}, err
 	}
 	cfg.applyDefaults()
+	// With no thresholds, evaluate() can only raise a violation through
+	// BlockOnFlagged. A console-created policy omits both, so it would call
+	// OpenAI and never block or report; the flagged verdict decides instead.
+	// An explicit block_on_flagged is kept as sent.
+	if v, set := settings["block_on_flagged"]; (!set || v == nil) && len(cfg.Thresholds) == 0 {
+		cfg.BlockOnFlagged = true
+	}
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}

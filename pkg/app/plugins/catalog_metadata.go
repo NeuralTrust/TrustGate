@@ -916,7 +916,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "block_on_flagged",
 					Label:       "Block On Flagged",
 					Type:        FieldTypeBoolean,
-					Description: "Block any category OpenAI marks flagged, even without a configured threshold.",
+					Description: "Block any category OpenAI marks flagged, even without a configured threshold. When neither this nor thresholds is set, it defaults to true so the policy acts on the flagged verdict.",
 					Default:     false,
 				},
 				{
