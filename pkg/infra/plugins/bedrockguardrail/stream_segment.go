@@ -116,7 +116,7 @@ func (p *Plugin) InspectSegment(
 	// way a transport failure is, since only it knows whether the block is
 	// still uncommitted.
 	if res.intervened && res.block == nil && res.anonymize == nil {
-		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, "",
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, unparsedPolicies(out.Assessments),
 			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding", seg.Seq))
 	}
 	switch {

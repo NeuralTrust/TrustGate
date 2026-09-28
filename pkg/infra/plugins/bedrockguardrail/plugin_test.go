@@ -349,6 +349,26 @@ func TestExecuteVerdictIncompleteEnforceFailsClosed(t *testing.T) {
 	}
 }
 
+func TestExecuteVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
+	t.Parallel()
+	client := &recordingClient{output: intervened(types.GuardrailAssessment{
+		AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
+	})}
+	p := pluginWith(client)
+
+	event, span := eventFor(t)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionBlock), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	_, err := p.Execute(context.Background(), in)
+	if pe, ok := appplugins.AsPluginError(err); !ok || pe.StatusCode != http.StatusBadGateway {
+		t.Fatalf("err = %v, want 502 guardrail_unavailable", err)
+	}
+	extras, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || extras.FailureReason != "verdict_incomplete" || extras.FailureDetail != "automated_reasoning_policy" {
+		t.Fatalf("extras = %+v, ok=%v, want verdict_incomplete/automated_reasoning_policy", extras, ok)
+	}
+}
+
 func TestExecuteVerdictIncompleteObserveFailsOpen(t *testing.T) {
 	t.Parallel()
 	client := &recordingClient{output: intervened(types.GuardrailAssessment{})}

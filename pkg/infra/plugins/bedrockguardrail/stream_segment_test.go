@@ -318,6 +318,23 @@ func TestInspectSegmentReturnsTheVerdictIncompleteFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "verdict_incomplete")
 }
 
+func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
+		Action: types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{
+			AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
+		}},
+	}))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
+}
+
 func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
 	t.Parallel()
 	g := intervening(blockingOutput())

@@ -15,6 +15,10 @@
 package bedrockguardrail
 
 import (
+	"reflect"
+	"strings"
+	"unicode"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -83,6 +87,58 @@ func inspect(output *bedrockruntime.ApplyGuardrailOutput, piiAction string) asse
 		inspectContextualGrounding(output.Assessments[i].ContextualGroundingPolicy, &res)
 	}
 	return res
+}
+
+// readPolicies are the GuardrailAssessment members inspect reads. Any other
+// *Policy member is one AWS can intervene on without this plugin seeing why.
+var readPolicies = map[string]bool{
+	"TopicPolicy":                true,
+	"ContentPolicy":              true,
+	"WordPolicy":                 true,
+	"SensitiveInformationPolicy": true,
+	"ContextualGroundingPolicy":  true,
+}
+
+// unparsedPolicies names, in snake_case and comma-separated, every policy
+// assessment present in assessments that inspect does not read — the
+// failure_detail of a verdict_incomplete. It walks GuardrailAssessment by
+// reflection rather than naming AutomatedReasoningPolicy, so a policy type a
+// future SDK bump adds is named without anyone updating a list. Only called
+// on the verdict_incomplete path, never on a clean or explained verdict.
+func unparsedPolicies(assessments []types.GuardrailAssessment) string {
+	var names []string
+	seen := map[string]bool{}
+	for i := range assessments {
+		v := reflect.ValueOf(assessments[i])
+		t := v.Type()
+		for j := 0; j < t.NumField(); j++ {
+			f := t.Field(j)
+			if !f.IsExported() || !strings.HasSuffix(f.Name, "Policy") || readPolicies[f.Name] {
+				continue
+			}
+			fv := v.Field(j)
+			if fv.Kind() != reflect.Pointer || fv.IsNil() || seen[f.Name] {
+				continue
+			}
+			seen[f.Name] = true
+			names = append(names, snakeCase(f.Name))
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+func snakeCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			r = unicode.ToLower(r)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func inspectTopic(p *types.GuardrailTopicPolicyAssessment, res *assessmentResult) {
