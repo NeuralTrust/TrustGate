@@ -32,12 +32,55 @@ import (
 
 var _ appoauth.UpstreamRegistrar = (*upstreamRegistrar)(nil)
 
+// DefaultClientName is the client_name registered upstream when none is
+// configured (MCP_OAUTH_CLIENT_NAME).
+const DefaultClientName = "TrustGate MCP Gateway"
+
 type upstreamRegistrar struct {
-	clients appoauth.ClientStore
-	http    *http.Client
+	clients    appoauth.ClientStore
+	http       *http.Client
+	clientName string
 
 	mu        sync.Mutex
 	discovery map[string]discoveryEntry
+}
+
+// RegistrarOption tunes NewUpstreamRegistrar.
+type RegistrarOption func(*upstreamRegistrar)
+
+// WithClientName sets the client_name sent in dynamic client registrations. A
+// blank name keeps DefaultClientName. Changing the name re-registers cached
+// clients (see EnsureClient), so each environment gets its own upstream app.
+//
+// The name is reduced to letters, digits, hyphens and spaces: some upstreams
+// validate it that strictly and refuse the whole registration otherwise
+// (Calendly rejects "TrustGate MCP Gateway (dev)" with invalid_client_metadata).
+func WithClientName(name string) RegistrarOption {
+	return func(r *upstreamRegistrar) {
+		safe := portableClientName(name)
+		if safe != strings.TrimSpace(name) {
+			slog.Warn("oauth dcr: client name reduced to letters, digits, hyphens and spaces so strict upstreams accept it",
+				"configured", name, "registered", safe)
+		}
+		if safe != "" {
+			r.clientName = safe
+		}
+	}
+}
+
+// portableClientName keeps the characters every upstream seen so far accepts in
+// client_name and turns any other run into a single space.
+func portableClientName(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-':
+			b.WriteRune(c)
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 type discoveryEntry struct {
@@ -47,15 +90,32 @@ type discoveryEntry struct {
 
 const discoveryTTL = time.Hour
 
-func NewUpstreamRegistrar(clients appoauth.ClientStore, client *http.Client) appoauth.UpstreamRegistrar {
+func NewUpstreamRegistrar(clients appoauth.ClientStore, client *http.Client, opts ...RegistrarOption) appoauth.UpstreamRegistrar {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &upstreamRegistrar{
-		clients:   clients,
-		http:      client,
-		discovery: map[string]discoveryEntry{},
+	r := &upstreamRegistrar{
+		clients:    clients,
+		http:       client,
+		clientName: DefaultClientName,
+		discovery:  map[string]discoveryEntry{},
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(r)
+		}
+	}
+	return r
+}
+
+// clientNameMatches reports whether a cached registration carries the name this
+// registrar would send. Rows written before the name was recorded count as the
+// default name, so an unchanged default never churns existing registrations.
+func (r *upstreamRegistrar) clientNameMatches(cached *appoauth.RegisteredClient) bool {
+	if cached.ClientName == "" {
+		return r.clientName == DefaultClientName
+	}
+	return cached.ClientName == r.clientName
 }
 
 func (r *upstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
@@ -144,22 +204,25 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
 	cached, cacheErr := r.clients.GetClient(ctx, key)
-	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI {
+	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI && r.clientNameMatches(cached) {
 		return cached, nil
 	}
-	// A client is already registered but for a different redirect URI. Replacing
-	// it is deliberate, and it invalidates every refresh token the old client
-	// holds, so say so rather than losing those grants silently.
+	// A client is already registered but for a different redirect URI or under a
+	// different name. Replacing it is deliberate, and it invalidates every
+	// refresh token the old client holds, so say so rather than losing those
+	// grants silently.
 	replacing := cacheErr == nil && cached != nil
 	if replacing {
-		slog.Warn("oauth dcr: re-registering upstream client because the redirect URI changed; grants held by the previous client can no longer be refreshed",
-			"key", key, "old_redirect_uri", cached.RedirectURI, "new_redirect_uri", redirectURI)
+		slog.Warn("oauth dcr: re-registering upstream client because its redirect URI or client name changed; grants held by the previous client can no longer be refreshed",
+			"key", key,
+			"old_redirect_uri", cached.RedirectURI, "new_redirect_uri", redirectURI,
+			"old_client_name", cached.ClientName, "new_client_name", r.clientName)
 	}
 	if meta.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"client_name":                "TrustGate MCP Gateway",
+		"client_name":                r.clientName,
 		"redirect_uris":              []string{redirectURI},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
@@ -180,7 +243,7 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("oauth dcr: read registration response: %w", err)
 	}
 	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("oauth dcr: registration rejected (status %d): %s", res.StatusCode, truncate(raw, 200))
+		return nil, fmt.Errorf("%w (status %d): %s", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode, truncate(raw, 200))
 	}
 	var doc struct {
 		ClientID     string `json:"client_id"`
@@ -189,7 +252,12 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	if err := json.Unmarshal(raw, &doc); err != nil || doc.ClientID == "" {
 		return nil, fmt.Errorf("oauth dcr: registration response has no client_id")
 	}
-	client := &appoauth.RegisteredClient{ClientID: doc.ClientID, ClientSecret: doc.ClientSecret, RedirectURI: redirectURI}
+	client := &appoauth.RegisteredClient{
+		ClientID:     doc.ClientID,
+		ClientSecret: doc.ClientSecret,
+		RedirectURI:  redirectURI,
+		ClientName:   r.clientName,
+	}
 	if replacing {
 		if err := r.clients.SaveClient(ctx, key, *client); err != nil {
 			return nil, err

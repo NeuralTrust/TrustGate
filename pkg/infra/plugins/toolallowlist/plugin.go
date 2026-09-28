@@ -15,6 +15,7 @@
 package toolallowlist
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -33,6 +35,8 @@ import (
 const PluginName = "tool_allowlist"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
+
+var ownedToolKeys = []string{"tools", "tool_choice", "parallel_tool_calls", "toolConfig"}
 
 type Plugin struct {
 	registry *adapter.Registry
@@ -59,12 +63,18 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
-	return []appplugins.Protocol{appplugins.ProtocolLLM}
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
+
+// ScopeInertSafe reports false: the plugin gates by tool name, and on a plane
+// where the mcp_scope does not gate there is no (registry, native tool)
+// binding to resolve those names against. A deny-all narrowed to a group would
+// widen to every function call of the consumer.
+func (p *Plugin) ScopeInertSafe() bool { return false }
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
@@ -76,6 +86,9 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if err != nil {
 		return nil, fmt.Errorf("tool_allowlist: %w", err)
 	}
+	if in.Request != nil && in.Request.MCP {
+		return executeMCP(cfg, in)
+	}
 	if p.registry == nil || in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
 	}
@@ -83,11 +96,23 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	if format == "" {
 		return okResult(), nil
 	}
+	scan := scanToolKeys(in.Request.Body)
 	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if appplugins.Blocks(in.Mode) && (scan.ambiguous || (err != nil && scan.present)) {
+		setExtras(in.Event, ToolAllowlistData{
+			Provider:       in.Request.Provider,
+			ToolsRequested: []string{},
+			ToolsAllowed:   []string{},
+			ToolsRemoved:   []string{},
+			Action:         actionRejected,
+			Decision:       appplugins.DecisionForMode(in.Mode),
+		})
+		return newRejectResult(http.StatusBadRequest, errInvalidToolsField, nil)
+	}
 	if adapter.IsRequestDecodeError(err) && adapter.IsChatRequest(in.Request.ProxyCapability, adapter.Format(format)) {
 		return undecodable(in)
 	}
-	if err != nil || canonical == nil {
+	if err != nil || canonical == nil || isJSONNull(in.Request.Body) {
 		return okResult(), nil
 	}
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
@@ -133,8 +158,102 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	case onEmptyPassThrough:
 		return f.rewriteEmpty(false)
 	default:
-		return newRejectResult(data.ToolsRequested)
+		return newRejectResult(http.StatusForbidden, errNoToolsAllowed, data.ToolsRequested)
 	}
+}
+
+// executeMCP decides a single tools/call on the upstream-native tool name the
+// dispatcher stamped in the request metadata. The body carries the exposed
+// name, which on a federated consumer is a hash; policies are written against
+// the native one, so the body is never consulted. Without the metadata the
+// call is not a tools/call the plugin can judge (discovery, an unbound tool)
+// and it passes untouched. on_empty_after_filter has no meaning here: one
+// tool is either allowed or it is not.
+func executeMCP(cfg *config, in appplugins.ExecInput) (*appplugins.Result, error) {
+	if in.Stage != policy.StagePreRequest {
+		return okResult(), nil
+	}
+	tool := mcpNativeTool(in.Request)
+	if tool == "" {
+		return okResult(), nil
+	}
+	data := ToolAllowlistData{
+		Provider:       in.Request.Provider,
+		ToolsRequested: []string{tool},
+		ToolsAllowed:   []string{},
+		ToolsRemoved:   []string{},
+		Decision:       appplugins.DecisionForMode(in.Mode),
+	}
+	if keepTool(tool, nil, cfg) {
+		data.ToolsAllowed = []string{tool}
+		data.Action = actionAllowed
+		setExtras(in.Event, data)
+		return okResult(), nil
+	}
+	data.ToolsRemoved = []string{tool}
+	data.Action = actionRejected
+	setExtras(in.Event, data)
+	if !appplugins.Blocks(in.Mode) {
+		appplugins.SetDecision(in.Event, in.Mode)
+		return okResult(), nil
+	}
+	return newRejectResult(http.StatusForbidden, errToolDenied, []string{tool})
+}
+
+// mcpNativeTool reads the binding the dispatcher fixed before the chain ran.
+// It deliberately ignores MetadataMCPTool: Metadata is merged back out of the
+// isolated requests of a parallel batch and shared across a sequential one, so
+// a plugin ordered ahead of this one could name a tool the call never reaches.
+func mcpNativeTool(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.MCPTool)
+}
+
+type toolKeyScan struct {
+	present   bool
+	ambiguous bool
+}
+
+func scanToolKeys(body []byte) toolKeyScan {
+	var scan toolKeyScan
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return scan
+	}
+	seen := make(map[string]int, len(ownedToolKeys))
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return scan
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return scan
+		}
+		if canonical, owned := ownedToolKey(key); owned {
+			scan.present = true
+			seen[canonical]++
+			if key != canonical || seen[canonical] > 1 {
+				scan.ambiguous = true
+			}
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return scan
+		}
+	}
+	return scan
+}
+
+func ownedToolKey(key string) (string, bool) {
+	for _, owned := range ownedToolKeys {
+		if strings.EqualFold(key, owned) {
+			return owned, true
+		}
+	}
+	return "", false
 }
 
 // toolFilter applies the allow and deny patterns to one request.
@@ -341,17 +460,17 @@ func undecodable(in appplugins.ExecInput) (*appplugins.Result, error) {
 	return nil, appplugins.UndecodableRequestError(PluginName)
 }
 
-func newRejectResult(requested []string) (*appplugins.Result, error) {
-	body, err := json.Marshal(newErrorBody(requested))
+func newRejectResult(status int, kind string, requested []string) (*appplugins.Result, error) {
+	body, err := json.Marshal(newErrorBody(kind, requested))
 	if err != nil {
 		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusForbidden,
-			Message:    "no tools allowed",
+			StatusCode: status,
+			Message:    kind,
 		}
 	}
 	return &appplugins.Result{
 		StopUpstream: true,
-		StatusCode:   http.StatusForbidden,
+		StatusCode:   status,
 		Headers:      map[string][]string{"Content-Type": {"application/json"}},
 		Body:         body,
 	}, nil
@@ -361,6 +480,9 @@ func newRejectResult(requested []string) (*appplugins.Result, error) {
 // server tool, by its versioned type too: allow_tools must match one of
 // them and deny_tools none.
 func keepTool(name string, types []string, cfg *config) bool {
+	if !printableName(name) {
+		return false
+	}
 	ids := append([]string{name}, types...)
 	if len(cfg.AllowTools) > 0 && !matchesAny(cfg.AllowTools, ids) {
 		return false
@@ -447,6 +569,10 @@ func matchAny(patterns []string, name string) (string, bool) {
 	return "", false
 }
 
+func printableName(name string) bool {
+	return strings.IndexFunc(name, func(r rune) bool { return !unicode.IsPrint(r) }) < 0
+}
+
 func matchToolPattern(pattern, name string) bool {
 	const sentinel = "\x00"
 	p := strings.ReplaceAll(pattern, "/", sentinel)
@@ -463,6 +589,12 @@ func wireFormat(req *infracontext.RequestContext) string {
 		return req.SourceFormat
 	}
 	return req.Provider
+}
+
+// isJSONNull reports a body that is the JSON literal null: it declares no
+// tools, so there is nothing to filter and nothing the upstream could run.
+func isJSONNull(body []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(body), []byte("null"))
 }
 
 func okResult() *appplugins.Result { return &appplugins.Result{StatusCode: http.StatusOK} }

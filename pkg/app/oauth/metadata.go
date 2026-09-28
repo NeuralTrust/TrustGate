@@ -28,6 +28,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 var (
@@ -42,12 +43,15 @@ type ProtectedResourceMetadata struct {
 	Resource               string   `json:"resource"`
 	AuthorizationServers   []string `json:"authorization_servers,omitempty"`
 	BearerMethodsSupported []string `json:"bearer_methods_supported"`
-	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+	ScopesSupported        []string `json:"scopes_supported"`
 }
 
 type RegisterRequest struct {
 	RedirectURIs []string `json:"redirect_uris"`
 	ClientName   string   `json:"client_name,omitempty"`
+	// ClientID is only read on an RFC 7592 update, where the body must name the
+	// registration it addresses. Registration ignores it and mints its own.
+	ClientID string `json:"client_id,omitempty"`
 }
 
 type RegisterResponse struct {
@@ -57,12 +61,17 @@ type RegisterResponse struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	RegistrationClientURI   string   `json:"registration_client_uri,omitempty"`
+	RegistrationAccessToken string   `json:"registration_access_token,omitempty"`
 }
 
 type MetadataService interface {
 	ProtectedResource(ctx context.Context, baseURL, resource string) (*ProtectedResourceMetadata, error)
 	AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error)
-	RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error)
+	RegisterClient(ctx context.Context, baseURL string, req RegisterRequest) (*RegisterResponse, error)
+	ReadClient(ctx context.Context, baseURL, clientID, token string) (*RegisterResponse, error)
+	UpdateClient(ctx context.Context, baseURL, clientID, token string, req RegisterRequest) (*RegisterResponse, error)
+	DeleteClient(ctx context.Context, clientID, token string) error
 }
 
 var _ MetadataService = (*metadataService)(nil)
@@ -120,6 +129,12 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 				if protected {
 					return nil, nil
 				}
+				// The resource pinned a consumer with no provider of its own, so
+				// scope the fallback to that consumer's gateway the way the
+				// authorize path does. The platform-wide lookup below published
+				// other tenants' required scopes on this unauthenticated document
+				// (RUN-1501).
+				return s.gatewayScopedAuths(ctx, matches[0].GatewayID)
 			}
 		}
 	}
@@ -128,6 +143,21 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
 	return auths, nil
+}
+
+func (s *metadataService) gatewayScopedAuths(ctx context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	auths, err := s.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
+	}
+	def := s.credentials.DefaultOAuth2ForGateway(gatewayID)
+	if def == nil {
+		return auths, nil
+	}
+	out := make([]*authdomain.Auth, 0, len(auths)+1)
+	out = append(out, auths...)
+	out = append(out, def)
+	return out, nil
 }
 
 func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
@@ -154,7 +184,7 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 	return doc, nil
 }
 
-func (s *metadataService) RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
+func (s *metadataService) RegisterClient(ctx context.Context, baseURL string, req RegisterRequest) (*RegisterResponse, error) {
 	auths, err := s.credentials.OAuth2Auths(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
@@ -165,34 +195,34 @@ func (s *metadataService) RegisterClient(ctx context.Context, req RegisterReques
 	if len(req.RedirectURIs) == 0 {
 		return nil, oauthErr("invalid_client_metadata", "redirect_uris is required")
 	}
-	for _, uri := range req.RedirectURIs {
-		if !IsAcceptableRedirectURI(uri) {
-			return nil, oauthErr("invalid_redirect_uri",
-				fmt.Sprintf("%q must be an https URL, an http loopback URL, or a private-use URI without a fragment", uri))
-		}
+	if err := validateRedirectURIs(req.RedirectURIs); err != nil {
+		return nil, err
 	}
 	suffix, err := randomToken()
 	if err != nil {
 		return nil, err
 	}
+	accessToken, tokenHash, err := newRegistrationToken()
+	if err != nil {
+		return nil, err
+	}
 	client := RegisteredGatewayClient{
-		ClientID:     "agw-" + suffix,
-		RedirectURIs: req.RedirectURIs,
-		ClientName:   req.ClientName,
+		ClientID:              "agw-" + suffix,
+		RedirectURIs:          req.RedirectURIs,
+		ClientName:            req.ClientName,
+		RegistrationTokenHash: tokenHash,
 	}
-	if s.clients != nil {
-		if err := s.clients.SaveGatewayClient(ctx, client); err != nil {
-			return nil, fmt.Errorf("oauth: persist client registration: %w", err)
-		}
+	if s.clients == nil {
+		// With no store the registration cannot be read back, so RUN-1501
+		// advertises no management URI rather than one that would 404.
+		res := registrationResponse(baseURL, client, "")
+		res.RegistrationClientURI = ""
+		return res, nil
 	}
-	return &RegisterResponse{
-		ClientID:                client.ClientID,
-		RedirectURIs:            client.RedirectURIs,
-		ClientName:              client.ClientName,
-		GrantTypes:              []string{"authorization_code", "refresh_token"},
-		ResponseTypes:           []string{"code"},
-		TokenEndpointAuthMethod: "none",
-	}, nil
+	if err := s.clients.SaveGatewayClient(ctx, client); err != nil {
+		return nil, fmt.Errorf("oauth: persist client registration: %w", err)
+	}
+	return registrationResponse(baseURL, client, accessToken), nil
 }
 
 func hasUpstreamClient(auths []*authdomain.Auth) bool {
@@ -295,12 +325,17 @@ func (s *metadataService) fetchJSON(ctx context.Context, url string) (map[string
 	return doc, nil
 }
 
+// issuersOf returns the issuers the gateway can actually broker a login
+// against. A validation-only provider is deliberately skipped: it stays a
+// usable credential for a client that already holds a token, but advertising
+// it as an authorization server sends the client into an /authorize that
+// cannot succeed.
 func issuersOf(auths []*authdomain.Auth) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, a := range auths {
 		cfg := a.Config.OAuth2
-		if cfg == nil || cfg.Issuer == "" {
+		if cfg == nil || cfg.Issuer == "" || !cfg.Interactive() {
 			continue
 		}
 		if _, ok := seen[cfg.Issuer]; ok {
@@ -314,7 +349,7 @@ func issuersOf(auths []*authdomain.Auth) []string {
 
 func scopesOf(auths []*authdomain.Auth) []string {
 	seen := map[string]struct{}{}
-	var out []string
+	out := make([]string, 0)
 	for _, a := range auths {
 		cfg := a.Config.OAuth2
 		if cfg == nil {

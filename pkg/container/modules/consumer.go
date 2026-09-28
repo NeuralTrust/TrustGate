@@ -18,18 +18,21 @@ import (
 	"log/slog"
 
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	"go.uber.org/dig"
 )
 
 func Consumer(c *container.Container) error {
@@ -40,9 +43,12 @@ func Consumer(c *container.Container) error {
 }
 
 func provideConsumerRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) *consumerrepo.Repository {
 		return consumerrepo.NewRepository(conn, appender)
-	})
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(r *consumerrepo.Repository) domain.Repository { return r })
 }
 
 // provideConsumerRepositoryViews exposes the consumer repository under its
@@ -62,8 +68,8 @@ func provideConsumerServices(c *container.Container) error {
 	if err := provideConsumerRepositoryViews(c); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
-		return appconsumer.NewCreator(repo, registryRepo, roleRepo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
@@ -86,8 +92,18 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
-		return appconsumer.NewAssociator(repo, registryRepo, roleRepo, authRepo, policyRepo, manager, publisher, logger, sig.Signaler, resolver)
+	// What an api key reaches, which is how a client learns its own consumers
+	// instead of being configured with their slugs.
+	if err := c.Provide(provideAPIKeyConsumers); err != nil {
+		return err
+	}
+	// The same question backwards: which consumers hold a given key, which is
+	// what an admin is really asking before revoking one.
+	if err := c.Provide(appconsumer.NewAuthConsumers); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, policyLevels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, resolver *appplugins.ProtocolResolver) appconsumer.Associator {
+		return appconsumer.NewAssociator(repo, registryRepo, authRepo, policyRepo, policyLevels, manager, publisher, logger, sig.Signaler, resolver)
 	}); err != nil {
 		return err
 	}
@@ -111,4 +127,19 @@ func provideConsumerServices(c *container.Container) error {
 		return err
 	}
 	return nil
+}
+
+// apiKeyConsumersParams takes the vault as optional because a plane can be
+// built without one. The answer then leaves the upstream accounts out rather
+// than claiming everything is connected — a gateway that did not look must not
+// say it did.
+type apiKeyConsumersParams struct {
+	dig.In
+	Consumers appconsumer.DataFinder
+	APIKeys   appauth.APIKeyFinder
+	Vault     vaultdomain.Repository `optional:"true"`
+}
+
+func provideAPIKeyConsumers(p apiKeyConsumersParams) (appconsumer.APIKeyConsumers, error) {
+	return appconsumer.NewAPIKeyConsumers(p.Consumers, p.APIKeys, p.Vault)
 }

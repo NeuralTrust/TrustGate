@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -22,10 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: Gemini → Canonical → Gemini
-// ---------------------------------------------------------------------------
 
 func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	input := `{
@@ -60,10 +57,6 @@ func TestCanonical_Gemini_Roundtrip(t *testing.T) {
 	second := contents[1].(map[string]interface{})
 	assert.Equal(t, "model", second["role"]) // assistant → model
 }
-
-// ---------------------------------------------------------------------------
-// Gemini functionCall response: real-world payload
-// ---------------------------------------------------------------------------
 
 func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	body := `{
@@ -162,10 +155,6 @@ func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	require.Len(t, cr2.ToolCalls, 1)
 	assert.Equal(t, "database_agent", cr2.ToolCalls[0].Name)
 }
-
-// ---------------------------------------------------------------------------
-// Gemini → OpenAI: tool schema type conversion (STRING → string)
-// ---------------------------------------------------------------------------
 
 func TestGemini_ToolSchemaTypes_ConvertedToOpenAI(t *testing.T) {
 	// Gemini-format request with UPPER_CASE types
@@ -957,6 +946,219 @@ func TestGemini_EncodeRequest_ToolResultNameWithoutItsCall(t *testing.T) {
 	}
 }
 
+func TestGeminiEncodeRequestRejectsMalformedToolArguments(t *testing.T) {
+	adapter := &GeminiAdapter{}
+	_, err := adapter.EncodeRequest(&CanonicalRequest{Messages: []CanonicalMessage{{
+		Role:      "assistant",
+		ToolCalls: []CanonicalToolCall{{Name: "lookup", Arguments: "{"}},
+	}}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "lookup")
+}
+
+func geminiToolParameters(t *testing.T, body []byte) map[string]interface{} {
+	t.Helper()
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &result))
+	tools := result["tools"].([]interface{})
+	decls := tools[0].(map[string]interface{})["functionDeclarations"].([]interface{})
+	return decls[0].(map[string]interface{})["parameters"].(map[string]interface{})
+}
+
+func TestAnthropic_ToolSchema_StripsUnsupportedKeysForGemini(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","description":"d","input_schema":{
+			"$schema":"https://json-schema.org/draft/2020-12/schema",
+			"type":"object",
+			"additionalProperties":false,
+			"$defs":{"Addr":{"type":"object"}},
+			"examples":[{"x":1}],
+			"const":"unused",
+			"exclusiveMinimum":1,
+			"patternProperties":{"x":{"type":"string"}},
+			"properties":{
+				"default":{"type":"string"},
+				"type":{"type":"string"},
+				"nested":{"type":"object","default":{"type":"keep-me"}}
+			}
+		}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	assert.NotContains(t, params, "$schema")
+	assert.NotContains(t, params, "additionalProperties")
+	assert.NotContains(t, params, "$defs")
+	assert.NotContains(t, params, "examples")
+	assert.NotContains(t, params, "patternProperties")
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["default"].(map[string]interface{})["type"])
+	assert.Equal(t, "STRING", props["type"].(map[string]interface{})["type"])
+	assert.Equal(t, map[string]interface{}{"type": "keep-me"}, props["nested"].(map[string]interface{})["default"])
+}
+
+func TestAnthropic_ToolSchema_NestedPropertiesItemsAnyOf(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{
+			"list":{"type":"array","items":{"type":"string"}},
+			"tuple":{"type":"array","items":[{"type":"number"},{"type":"string"}]},
+			"choice":{"oneOf":[{"type":"string"},{"type":"number"}]},
+			"mode":{"enum":["a","b"]}
+		},"required":["list"]}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["list"].(map[string]interface{})["items"].(map[string]interface{})["type"])
+	assert.Equal(t, "NUMBER", props["tuple"].(map[string]interface{})["items"].(map[string]interface{})["type"])
+	assert.Contains(t, props["choice"].(map[string]interface{}), "anyOf")
+	assert.Equal(t, []interface{}{"list"}, params["required"])
+}
+
+func TestAnthropic_ToolSchema_ResolvesLocalRefsAndGuardsCycles(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{
+			"type":"object",
+			"$defs":{
+				"Address":{"type":"object","properties":{"city":{"type":"string"}}},
+				"Node":{"type":"object","properties":{"child":{"$ref":"#/$defs/Node"}}}
+			},
+			"properties":{
+				"home":{"$ref":"#/$defs/Address"},
+				"work":{"$ref":"#/$defs/Address"},
+				"tree":{"$ref":"#/$defs/Node"}
+			}
+		}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, out)
+	raw := string(out)
+	assert.NotContains(t, raw, `"$ref"`)
+	assert.NotContains(t, raw, `"$defs"`)
+	props := params["properties"].(map[string]interface{})
+	assert.Equal(t, "STRING", props["home"].(map[string]interface{})["properties"].(map[string]interface{})["city"].(map[string]interface{})["type"])
+	assert.Equal(t, "OBJECT", props["tree"].(map[string]interface{})["properties"].(map[string]interface{})["child"].(map[string]interface{})["type"])
+}
+
+func TestAnthropic_ToolSchema_TypeArrayBecomesNullable(t *testing.T) {
+	input := `{
+		"model":"claude","max_tokens":16,"messages":[{"role":"user","content":"hi"}],
+		"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{
+			"name":{"type":["string","null"]},
+			"weird":{"type":"not-a-type"}
+		}}}]
+	}`
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	out, err := (&GeminiAdapter{}).EncodeRequest(canonical)
+	require.NoError(t, err)
+	props := geminiToolParameters(t, out)["properties"].(map[string]interface{})
+	name := props["name"].(map[string]interface{})
+	assert.Equal(t, "STRING", name["type"])
+	assert.Equal(t, true, name["nullable"])
+	_, hasType := props["weird"].(map[string]interface{})["type"]
+	assert.False(t, hasType)
+
+	native := `{
+		"contents":[{"role":"user","parts":[{"text":"hi"}]}],
+		"tools":[{"functionDeclarations":[{"name":"lookup","parameters":{"type":"OBJECT","properties":{"q":{"type":"STRING"}},"required":["q"]}}]}]
+	}`
+	decoded, err := (&GeminiAdapter{}).DecodeRequest([]byte(native))
+	require.NoError(t, err)
+	round, err := (&GeminiAdapter{}).EncodeRequest(decoded)
+	require.NoError(t, err)
+	params := geminiToolParameters(t, round)
+	assert.Equal(t, "OBJECT", params["type"])
+	assert.Equal(t, "STRING", params["properties"].(map[string]interface{})["q"].(map[string]interface{})["type"])
+}
+
+func encodeGeminiStream(t *testing.T, chunks []*CanonicalStreamChunk) []string {
+	t.Helper()
+	a := &GeminiAdapter{}
+	var got []string
+	for _, chunk := range chunks {
+		lines, err := a.EncodeStreamChunk(chunk)
+		require.NoError(t, err)
+		got = append(got, bytesLinesToStrings(lines)...)
+	}
+	return got
+}
+
+// A cut used to put the canonical value straight on the wire, so a Gemini
+// client received a finishReason that is not in the enum at all. Every chunk
+// also carries a parts array rather than a null, which @google/genai
+// dereferences without a guard. The last case pins the untouched shape of a
+// normal finish.
+func TestGeminiEncodeStreamChunk_CutTerminatorGolden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		chunks []*CanonicalStreamChunk
+		want   []string
+	}{
+		{
+			name: "cut after partial text",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "content_filter"},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Here is the "}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}]}`,
+				"",
+			},
+		},
+		{
+			name: "cut carrying the usage of the stream it ends",
+			chunks: []*CanonicalStreamChunk{
+				{FinishReason: "content_filter", Usage: newCanonicalUsage(11, 7, 0)},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"PROHIBITED_CONTENT"}],` +
+					`"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"totalTokenCount":18}}`,
+				"",
+			},
+		},
+		{
+			name: "normal finish",
+			chunks: []*CanonicalStreamChunk{
+				{Role: "assistant", Delta: "Here is the "},
+				{Delta: "recipe"},
+				{FinishReason: "stop"},
+			},
+			want: []string{
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Here is the "}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"recipe"}]}}]}`,
+				"",
+				`data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}]}`,
+				"",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, encodeGeminiStream(t, tc.chunks))
+		})
+	}
+}
+
 func TestGemini_ParallelCallsWithoutIDsGetDistinctIDs(t *testing.T) {
 	parts := `{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}},
 		{"functionCall":{"name":"get_time","args":{}}},
@@ -1150,8 +1352,8 @@ func TestGemini_EncodeMapsCanonicalFinishReasonsToGeminiValues(t *testing.T) {
 		"stop_sequence":                 "STOP",
 		"length":                        "MAX_TOKENS",
 		"model_context_window_exceeded": "MAX_TOKENS",
-		"content_filter":                "SAFETY",
-		"refusal":                       "SAFETY",
+		"content_filter":                "PROHIBITED_CONTENT",
+		"refusal":                       "PROHIBITED_CONTENT",
 		"error":                         "OTHER",
 		"pause_turn":                    "OTHER",
 		"malformed_tool_use":            "MALFORMED_FUNCTION_CALL",
@@ -1212,4 +1414,86 @@ func TestGemini_EncodeSendsUpstreamCallIDs(t *testing.T) {
 	require.Len(t, parts, 2)
 	assert.Equal(t, "call_1", parts[0].FunctionCall.ID)
 	assert.Empty(t, parts[1].FunctionCall.ID, "a synthetic id stays off the wire")
+}
+
+// @google/genai reads a candidate's parts as `parts === undefined ||
+// parts.length === 0`, so a JSON null is dereferenced and throws inside
+// sendMessageStream before any chunk reaches the caller. No chunk the encoder
+// can produce may carry one.
+func TestGeminiEncodeStreamChunk_NeverEmitsNullParts(t *testing.T) {
+	t.Parallel()
+	chunks := map[string]*CanonicalStreamChunk{
+		"role only":            {Role: "assistant"},
+		"text delta":           {Delta: "hi"},
+		"normal finish":        {FinishReason: "stop"},
+		"cut":                  {FinishReason: "content_filter"},
+		"cut carrying usage":   {FinishReason: "content_filter", Usage: newCanonicalUsage(1, 1, 0)},
+		"length finish":        {FinishReason: "length"},
+		"unrecognised finish":  {FinishReason: "something_else"},
+		"tool call with args":  {ToolCallDeltas: []StreamToolCallDelta{{Name: "f", ArgumentsDelta: `{"a":1}`}}},
+		"tool call, no args":   {ToolCallDeltas: []StreamToolCallDelta{{Name: "f"}}},
+		"role and finish only": {Role: "assistant", FinishReason: "content_filter"},
+	}
+	for name, chunk := range chunks {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lines, err := (&GeminiAdapter{}).EncodeStreamChunk(chunk)
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			for _, line := range lines {
+				assert.NotContains(t, string(line), `"parts":null`)
+			}
+			var decoded geminiResponse
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[0], []byte("data: ")), &decoded))
+			require.Len(t, decoded.Candidates, 1)
+			assert.NotNil(t, decoded.Candidates[0].Content.Parts)
+		})
+	}
+}
+
+// The buffered and the streamed encode must agree on the cut, and neither may
+// move a reason the gateway already emits. They keep separate fallbacks: the
+// buffered candidate always carries a finishReason, the streamed one only
+// carries what the chunk brought.
+func TestGeminiFinishReason_BufferedAndStreamedAgree(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		finishReason string
+		wantBuffered string
+		wantStreamed string
+	}{
+		{name: "stop", finishReason: "stop", wantBuffered: "STOP", wantStreamed: "STOP"},
+		{name: "length", finishReason: "length", wantBuffered: "MAX_TOKENS", wantStreamed: "MAX_TOKENS"},
+		{name: "tool calls", finishReason: "tool_calls", wantBuffered: "STOP", wantStreamed: "STOP"},
+		{name: "content filter", finishReason: "content_filter", wantBuffered: "PROHIBITED_CONTENT", wantStreamed: "PROHIBITED_CONTENT"},
+		{name: "upstream refusal", finishReason: "refusal", wantBuffered: "PROHIBITED_CONTENT", wantStreamed: "PROHIBITED_CONTENT"},
+		{name: "empty", finishReason: "", wantBuffered: "STOP", wantStreamed: ""},
+		// Gemini clients parse finishReason as an enum, so a reason Gemini has
+		// no member for is sent as OTHER on both paths rather than verbatim.
+		{name: "unrecognised", finishReason: "something_else", wantBuffered: "OTHER", wantStreamed: "OTHER"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &GeminiAdapter{}
+
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ID: "resp_1", Model: "gemini-2.5-pro", Content: "hi", FinishReason: tc.finishReason,
+			})
+			require.NoError(t, err)
+			var buffered geminiResponse
+			require.NoError(t, json.Unmarshal(body, &buffered))
+			require.Len(t, buffered.Candidates, 1)
+			assert.Equal(t, tc.wantBuffered, buffered.Candidates[0].FinishReason, "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{Delta: "hi", FinishReason: tc.finishReason})
+			require.NoError(t, err)
+			require.NotEmpty(t, lines)
+			var streamed geminiResponse
+			require.NoError(t, json.Unmarshal(bytes.TrimPrefix(lines[0], []byte("data: ")), &streamed))
+			require.Len(t, streamed.Candidates, 1)
+			assert.Equal(t, tc.wantStreamed, streamed.Candidates[0].FinishReason, "streamed")
+		})
+	}
 }

@@ -498,7 +498,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"tool_allowlist": {
 		name:        "Tool Allowlist",
 		group:       groupRouting,
-		description: "Control which tools appear on the request with allow and deny glob patterns. Deny wins; choose how to handle an empty tools list after filtering.",
+		description: "Control which tools a request may use with allow and deny glob patterns; deny wins. LLM requests have their tools list filtered, with a choice of what to do when nothing is left; on MCP a denied tools/call is refused before it reaches the upstream.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -519,7 +519,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "on_empty_after_filter",
 					Label:       "On Empty After Filter",
 					Type:        FieldTypeEnum,
-					Description: "Behavior when filtering removes every tool from the request.",
+					Description: "Behavior when filtering removes every tool from an LLM request. Not applicable to MCP, where a tools/call is either allowed or refused.",
 					Enum:        enumOptions("reject", "pass_through_empty", "strip_tools_field"),
 					Default:     "reject",
 				},
@@ -748,65 +748,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"prompt_compression": {
 		name:        "Prompt Compression",
 		group:       groupPromptManagement,
-		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "compress_json",
-					Label:       "Compress JSON",
-					Type:        FieldTypeBoolean,
-					Description: "Minify standalone JSON message content, ```json fenced blocks and tool-call arguments. At least one transform must stay enabled.",
-					Default:     true,
-				},
-				{
-					Key:         "normalize_whitespace",
-					Label:       "Normalize Whitespace",
-					Type:        FieldTypeBoolean,
-					Description: "Trim trailing spaces per line, keeping Markdown hard line breaks, and collapse runs of blank lines.",
-					Default:     true,
-				},
-				{
-					Key:         "strip_ansi",
-					Label:       "Strip ANSI Escapes",
-					Type:        FieldTypeBoolean,
-					Description: "Remove ANSI colour and cursor sequences, common in captured terminal and CI logs.",
-					Default:     true,
-				},
-				{
-					Key:         "max_consecutive_blank_lines",
-					Label:       "Max Consecutive Blank Lines",
-					Type:        FieldTypeInteger,
-					Description: "Longest run of blank lines kept when whitespace is normalized. Between 1 and 1000.",
-					Default:     1,
-				},
-				{
-					Key:         "min_length",
-					Label:       "Minimum Content Length",
-					Type:        FieldTypeInteger,
-					Description: "Skip message content shorter than this many bytes; 0 compresses everything. Leaving small messages byte-identical protects provider prompt-cache prefixes.",
-					Default:     256,
-				},
-				{
-					Key:         "max_body_bytes",
-					Label:       "Max Body Bytes",
-					Type:        FieldTypeInteger,
-					Description: "Skip the whole pipeline for request bodies larger than this, bounding per-request CPU cost; 0 disables the cap.",
-					Default:     1048576,
-				},
-				{
-					Key:         "target_roles",
-					Label:       "Target Roles",
-					Type:        FieldTypeArray,
-					Description: "Restrict compression to messages with these roles. Empty compresses every role.",
-					Item: &Field{
-						Key:   "role",
-						Label: "Role",
-						Type:  FieldTypeEnum,
-						Enum:  enumOptions("system", "user", "assistant", "tool"),
-					},
-				},
-			},
-		},
+		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable. Runs with fixed defaults; there is nothing to configure.",
+		// No operator-facing fields. The transforms are safe on every prompt and the
+		// thresholds (256-byte minimum, 1 MiB body cap, every role) are the ones that
+		// keep provider prompt caches stable, so exposing them only invited settings
+		// that made the policy worse. The plugin still honours explicit settings sent
+		// over the API; the console has nothing to render.
+		schema: SettingsSchema{},
 	},
 	"tool_injection": {
 		name:        "Tool Injection",
@@ -968,7 +916,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "block_on_flagged",
 					Label:       "Block On Flagged",
 					Type:        FieldTypeBoolean,
-					Description: "Block any category OpenAI marks flagged, even without a configured threshold.",
+					Description: "Block any category OpenAI marks flagged, even without a configured threshold. When neither this nor thresholds is set, it defaults to true so the policy acts on the flagged verdict.",
 					Default:     false,
 				},
 				{
@@ -1131,6 +1079,62 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Description: "Optional temporary-credential session token.",
 						},
 					},
+				},
+			},
+		},
+	},
+	"google_model_armor": {
+		name:        "Google Model Armor",
+		group:       groupGuardrails,
+		description: "Run a Google Cloud Model Armor template against prompts and/or responses. A single sanitize call returns orthogonal findings (sensitive data, responsible AI, prompt injection/jailbreak, malicious URIs, CSAM); block_on picks which ones reject the call. Streaming responses pass through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "project",
+					Label:       "Project",
+					Type:        FieldTypeString,
+					Description: "GCP project ID that owns the Model Armor template.",
+					Required:    true,
+				},
+				{
+					Key:         "location",
+					Label:       "Location",
+					Type:        FieldTypeString,
+					Description: "Model Armor is regional; this names the template's region (e.g. us-central1) and picks the regional API host.",
+					Required:    true,
+				},
+				{
+					Key:         "template",
+					Label:       "Template ID",
+					Type:        FieldTypeString,
+					Description: "Model Armor template identifier to evaluate against.",
+					Required:    true,
+				},
+				{
+					Key:         "block_on",
+					Label:       "Block On",
+					Type:        FieldTypeArray,
+					Description: "Filters that reject the call when they return MATCH_FOUND. Defaults to all five when left empty.",
+					Item: &Field{
+						Key:   "filter",
+						Label: "Filter",
+						Type:  FieldTypeEnum,
+						Enum:  enumOptions("sdp", "rai", "pi_and_jailbreak", "malicious_uris", "csam"),
+					},
+				},
+				{
+					Key:         "sdp_action",
+					Label:       "SDP Action",
+					Type:        FieldTypeEnum,
+					Description: "How TrustGate reacts when the sensitive-data-protection filter fires: block the call, or reinject the de-identified text Model Armor itself returned. Only applies when sdp is in Block On.",
+					Enum:        enumOptions("block", "anonymize"),
+					Default:     "block",
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional operator message; the 403 body always carries the filter that fired.",
 				},
 			},
 		},

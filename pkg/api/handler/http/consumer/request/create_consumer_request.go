@@ -28,16 +28,60 @@ import (
 type CreateConsumerRequest struct {
 	Name          string                   `json:"name"`
 	Type          string                   `json:"type,omitempty"`
-	RoutingMode   string                   `json:"routing_mode,omitempty"`
 	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
 	Headers       map[string]string        `json:"headers,omitempty"`
 	Active        *bool                    `json:"active,omitempty"`
 	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
 	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
-	Roles         []string                 `json:"roles,omitempty"`
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      string                   `json:"fail_mode,omitempty"`
+	Identity      *IdentityRequest         `json:"identity,omitempty"`
+	AuthBinding   *AuthBindingRequest      `json:"auth_binding,omitempty"`
+}
+
+// AuthBindingRequest narrows which callers of a shared auth (external IdP,
+// mTLS CA) may enter the consumer. Omitted or empty lists accept every caller
+// the auth verifies.
+type AuthBindingRequest struct {
+	// AllowedClientIDs are the azp / client_id values accepted on a bearer JWT.
+	AllowedClientIDs []string `json:"allowed_client_ids,omitempty"`
+	// AllowedCertificateSubjects are the client-certificate common names or SAN
+	// DNS names accepted over mTLS.
+	AllowedCertificateSubjects []string `json:"allowed_certificate_subjects,omitempty"`
+}
+
+// ToDomain maps the request onto the domain binding; nil when omitted.
+func (r *AuthBindingRequest) ToDomain() *domain.AuthBinding {
+	if r == nil {
+		return nil
+	}
+	return &domain.AuthBinding{
+		AllowedClientIDs:           append([]string(nil), r.AllowedClientIDs...),
+		AllowedCertificateSubjects: append([]string(nil), r.AllowedCertificateSubjects...),
+	}
+}
+
+// IdentityRequest is accepted and ignored.
+//
+// It used to declare who a consumer acts for. Nothing declares that any more:
+// who a request runs as is read from the request — a verified person is their
+// token's subject, a machine credential naming an end user acts for that
+// person, one naming nobody acts as the application. The fields stay on the
+// wire so a client written against the old shape is not refused; what it asks
+// for is what it now gets by sending (or not sending) the end-user header.
+type IdentityRequest struct {
+	ActsForUsers  bool   `json:"acts_for_users"`
+	Source        string `json:"source,omitempty"`
+	EndUserHeader bool   `json:"end_user_header,omitempty"`
+}
+
+// ToDomain maps the request onto the domain identity; nil when omitted.
+func (r *IdentityRequest) ToDomain() *domain.Identity {
+	if r == nil {
+		return nil
+	}
+	return &domain.Identity{}
 }
 
 type RegistryBindingRequest struct {
@@ -225,10 +269,6 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
-func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
-	return domain.NewRoutingMode(r.RoutingMode)
-}
-
 func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
 	return r.LBConfig.ToDomain()
 }
@@ -325,13 +365,6 @@ func normalizeBindingWeight(weight *int) (int, error) {
 		)
 	}
 	return *weight, nil
-}
-
-func (r CreateConsumerRequest) ToRoleIDs() ([]ids.RoleID, error) {
-	if len(r.Roles) == 0 {
-		return nil, nil
-	}
-	return parseUUIDList[ids.RoleKind](r.Roles, "roles")
 }
 
 func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {

@@ -19,22 +19,13 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestMapPgError_RoutingConflict(t *testing.T) {
+func TestMapPgError_CrossGatewayLink(t *testing.T) {
 	t.Parallel()
-	err := mapPgError(&pgconn.PgError{Code: pgRoutingConflict, Message: "routing_mode_conflict"})
+	err := mapPgError(&pgconn.PgError{Code: pgCrossGatewayLink, Message: "cross_gateway_link"})
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
-	}
-}
-
-func TestMapPgError_RoutingModeCheck(t *testing.T) {
-	t.Parallel()
-	err := mapPgError(&pgconn.PgError{Code: pgCheckViolation, ConstraintName: consumerRoutingModeCheck})
-	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
-		t.Fatalf("err = %v, want ErrInvalidRoutingMode", err)
 	}
 }

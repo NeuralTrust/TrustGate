@@ -23,10 +23,6 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
-// Chat Completions API typed structs
-// ---------------------------------------------------------------------------
-
 type openaiRequest struct {
 	Model                string                 `json:"model,omitempty"`
 	Messages             []openaiMessage        `json:"messages"`
@@ -223,6 +219,8 @@ type openaiUsage struct {
 	CompletionTokensDetails *openaiCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	PromptCacheHitTokens    int                            `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens   int                            `json:"prompt_cache_miss_tokens,omitempty"`
+	// CachedTokens is Moonshot's top-level cache read count.
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 type openaiPromptTokensDetails struct {
@@ -241,7 +239,7 @@ func openaiUsageToCanonical(u openaiUsage) *CanonicalUsage {
 		return nil
 	}
 	cu.TotalTokens = max(cu.TotalTokens, cu.InputTokens+cu.OutputTokens)
-	read, write := u.PromptCacheHitTokens, 0
+	read, write := max(u.PromptCacheHitTokens, u.CachedTokens), 0
 	if d := u.PromptTokensDetails; d != nil {
 		read, write = max(read, d.CachedTokens), d.CacheWriteTokens
 	}
@@ -308,6 +306,9 @@ type openaiStreamChoice struct {
 	Index        int               `json:"index"`
 	Delta        openaiStreamDelta `json:"delta"`
 	FinishReason *string           `json:"finish_reason,omitempty"`
+	// Usage is where Moonshot puts the usage of a stream, on the last choice
+	// rather than on the chunk.
+	Usage *openaiUsage `json:"usage,omitempty"`
 }
 
 type openaiStreamDelta struct {
@@ -350,10 +351,6 @@ func (f *openaiStreamToolCallFn) name() string {
 	}
 	return f.Name
 }
-
-// ---------------------------------------------------------------------------
-// Request: Decode (Chat Completions → Canonical)
-// ---------------------------------------------------------------------------
 
 // openaiRequestIn reads seed and parallel_tool_calls raw so a value of the
 // wrong type drops that field instead of failing the whole request.
@@ -476,10 +473,6 @@ func decodeOptionalBool(raw json.RawMessage) *bool {
 	}
 	return b
 }
-
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Chat Completions)
-// ---------------------------------------------------------------------------
 
 func encodeOpenAIContent(text string, images []CanonicalImage, cache *CanonicalCacheBreakpoint) json.RawMessage {
 	imageAt, onImage := cachedImageIndex(cache, len(images))
@@ -625,10 +618,6 @@ func toolChoiceDangles(tc *CanonicalToolChoice, kept []openaiTool) bool {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Response: Decode (Chat Completions response → Canonical)
-// ---------------------------------------------------------------------------
-
 func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	var resp openaiResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -677,10 +666,6 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response: Encode (Canonical → Chat Completions response)
-// ---------------------------------------------------------------------------
-
 func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 	msg := openaiMessage{
 		Role:    "assistant",
@@ -722,10 +707,6 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// ---------------------------------------------------------------------------
-// Stream: Decode (Chat Completions chunk → Canonical)
-// ---------------------------------------------------------------------------
-
 // decodeCompletionsStreamChunk decodes a Chat Completions chunk. A payload
 // carrying an "error" is reported on the chunk's UpstreamError, alongside the
 // content, finish and usage decoded from the rest of the payload, since
@@ -754,8 +735,12 @@ func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChun
 		Model: raw.Model,
 	}
 
+	usage := raw.Usage
 	if len(raw.Choices) > 0 {
 		choice := raw.Choices[0]
+		if usage == nil {
+			usage = choice.Usage
+		}
 		delta := choice.Delta
 		sc.Role = delta.Role
 		sc.Delta = delta.Content
@@ -777,7 +762,7 @@ func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChun
 		}
 	}
 
-	sc.Usage = completionsUsage(raw.Usage, raw.XGroq)
+	sc.Usage = completionsUsage(usage, raw.XGroq)
 
 	if raw.XGroq != nil {
 		sc.ProviderExtensions = map[string]json.RawMessage{
@@ -797,10 +782,6 @@ func decodeCompletionsStreamContent(raw *openaiStreamChunk) *CanonicalStreamChun
 
 	return sc
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Chat Completions chunk)
-// ---------------------------------------------------------------------------
 
 // encodeCompletionsStreamChunk encodes chunk as a Chat Completions chunk. With
 // emptyUsageChoices a usage-only chunk gets choices: [], the OpenAI
@@ -863,4 +844,16 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk, emptyUsageChoices
 		return nil, err
 	}
 	return SSEData(data), nil
+}
+
+// CompletionsTerminalStreamChunk builds the chunk that closes an OpenAI-chat
+// stream the gateway cut short. It carries id and model over from the first
+// observed chunk because strict client validators reject a chunk without them.
+func CompletionsTerminalStreamChunk(first *CanonicalStreamChunk, finishReason string) *CanonicalStreamChunk {
+	terminal := &CanonicalStreamChunk{FinishReason: finishReason}
+	if first != nil {
+		terminal.ID = first.ID
+		terminal.Model = first.Model
+	}
+	return terminal
 }

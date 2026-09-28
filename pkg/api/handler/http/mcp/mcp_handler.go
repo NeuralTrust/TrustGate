@@ -15,15 +15,11 @@
 package mcp
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -31,11 +27,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -43,28 +39,81 @@ import (
 )
 
 const (
-	serverName              = "trustgate"
-	serverVersion           = "1.0"
-	latestProtocolVersion   = "2025-06-18"
-	discoverCacheTTLMs      = 0
-	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
+	serverName            = "trustgate"
+	serverVersion         = "1.0"
+	latestProtocolVersion = "2026-07-28"
+	// handshakeProtocolVersion is the newest revision that still has
+	// initialize: whatever a client asks for, it is the newest answer
+	// initialize can give.
+	handshakeProtocolVersion = "2025-11-25"
+	modernServerInfoMetaKey  = "io.modelcontextprotocol/serverInfo"
 )
 
-// advertisedProtocolVersions is the ordered list returned by server/discover,
-// newest first, and the single source of truth for what initialize negotiates.
-// The two must not be allowed to drift: server/discover once advertised
-// 2026-07-28 while initialize refused to negotiate it, so a client probing with
-// that revision was silently downgraded, kept applying the newer revision's
-// rules, and rejected every tools/call result as malformed. A revision belongs
-// here only once the whole response path implements it — tools/call relays the
-// upstream's bytes verbatim, so that is not a one-line change.
+// advertisedProtocolVersions is what server/discover offers and what
+// initialize will negotiate, newest first. They are the same list on purpose:
+// advertising a revision initialize then refuses downgrades a client silently,
+// and it keeps applying the newer rules to answers built under the older one.
+//
+// What 2026-07-28 costs this gateway, and what it is given:
+//   - server/discover, which servers must implement, and which is where a
+//     client on this revision starts.
+//   - the result envelope on every answer, the relayed ones included
+//     (stampResultEnvelope).
+//   - subscriptions/listen in place of the GET stream, carrying the tool-list
+//     changes a client opts in to.
+//   - statelessness, which cost nothing: this gateway has never minted a
+//     session id or required a handshake before serving a request.
+//
+// What it does not implement, and why nothing here claims otherwise: the
+// resource subscriptions and prompt-list changes of a listen stream (the
+// acknowledgement names only what it will send, and the capabilities claim
+// only tools.listChanged), and the multi-round-trip pattern, which a gateway
+// has no use for on its own — an upstream that returns an input_required
+// result has it relayed with its own resultType intact.
+//
+// initialize and ping are gone in this revision but still answered, because
+// every client below it needs them and answering a method nobody on the newer
+// revision calls costs nothing.
+//
+// 2025-11-25 asks nothing of a server that this gateway was not already doing
+// or that is not negotiated away (tasks, URL elicitation and sampling tools are
+// capabilities it does not claim). It is listed because it is what current
+// clients offer in initialize: left out, they were answered with a revision
+// they had never heard of, and Cursor refused the connection.
 var advertisedProtocolVersions = []string{
 	latestProtocolVersion,
+	handshakeProtocolVersion,
+	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
 
 var supportedProtocolVersions = negotiableVersions(advertisedProtocolVersions)
+
+// negotiateHandshakeVersion is the revision initialize answers with.
+//
+// The one asked for when it is supported. Otherwise the newest supported
+// revision no newer than it, since a client that knows a revision knows the
+// ones before it; and never one past handshakeProtocolVersion, because a
+// client that asks initialize for a revision this gateway has not heard of
+// only knows revisions that have initialize, and answering with the one that
+// dropped it is answering with one it cannot speak. The oldest supported
+// revision is the last resort, for a version older than all of them.
+func negotiateHandshakeVersion(requested string) string {
+	if supportedProtocolVersions[requested] {
+		return requested
+	}
+	ceiling := handshakeProtocolVersion
+	if requested != "" && requested < ceiling {
+		ceiling = requested
+	}
+	for _, version := range advertisedProtocolVersions {
+		if version <= ceiling {
+			return version
+		}
+	}
+	return advertisedProtocolVersions[len(advertisedProtocolVersions)-1]
+}
 
 func negotiableVersions(advertised []string) map[string]bool {
 	versions := make(map[string]bool, len(advertised))
@@ -91,19 +140,47 @@ const (
 )
 
 type Handler struct {
-	gateway    *RPCGateway
-	roleScoper appmcp.RoleScoper
-	vault      vaultdomain.Repository
-	timings    streamTimings
+	resolveClientIP func(string, string) string
+	gateway         *RPCGateway
+	surface         appmcp.SurfaceWatcher
+	consumers       appconsumer.DataFinder
+	timings         streamTimings
+	memory          *surfaceMemory
 }
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, vault vaultdomain.Repository) *Handler {
-	return &Handler{
-		gateway:    gateway,
-		roleScoper: roleScoper,
-		vault:      vault,
-		timings:    defaultStreamTimings,
+type HandlerOption func(*Handler)
+
+func WithClientIPResolver(resolve func(string, string) string) HandlerOption {
+	return func(h *Handler) {
+		if resolve != nil {
+			h.resolveClientIP = resolve
+		}
 	}
+}
+
+// WithConsumerFinder lets the notification stream re-read the consumer on
+// each poll so an admin attach or detach is visible. Without it the stream
+// keeps the RoutableConsumer resolved when the GET opened.
+func WithConsumerFinder(finder appconsumer.DataFinder) HandlerOption {
+	return func(h *Handler) {
+		if finder != nil {
+			h.consumers = finder
+		}
+	}
+}
+
+func NewHandler(gateway *RPCGateway, surface appmcp.SurfaceWatcher, opts ...HandlerOption) *Handler {
+	h := &Handler{
+		resolveClientIP: requestmeta.NewIPResolver("peer", nil),
+		gateway:         gateway,
+		surface:         surface,
+		timings:         defaultStreamTimings,
+		memory:          newSurfaceMemory(),
+	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 type rpcRequest struct {
@@ -131,13 +208,20 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
 }
 
-func (h *Handler) Handle(c *fiber.Ctx) error {
-	rc, err := resolveMCPConsumer(c)
-	if err != nil {
-		skipMetrics(c)
-		return err
+// NotServedHere answers a request on a catch-all route: 405 for an MCP endpoint
+// reached with the wrong verb, 404 for a path this gateway does not serve at
+// all. Only the first is a resource the caller could have reached another way,
+// and only for it does "Allow: POST" say anything true.
+func (h *Handler) NotServedHere(c *fiber.Ctx) error {
+	if appconsumer.SlugFromMCPPath(c.Path()) != "" {
+		return h.MethodNotAllowed(c)
 	}
-	rc, err = h.scopeByRoles(c, rc)
+	return c.SendStatus(fiber.StatusNotFound)
+}
+
+func (h *Handler) Handle(c *fiber.Ctx) error {
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
+	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)
 		return err
@@ -163,9 +247,10 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
+	c.Locals(rpcMethodLocal, req.Method)
 	if req.Method != "ping" {
 		if rt := trace.FromContext(c.UserContext()); rt != nil {
-			stampRequestIdentity(c, rt, rc, h.vault)
+			stampRequestIdentity(c, rt, rc, h.surface)
 		}
 	}
 
@@ -175,29 +260,41 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return h.handleInitialize(c, req, rc)
 	case "server/discover":
 		recordServerDiscovery(c)
-		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.connectedProviders(c, rc)))
+		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.surfaceVersion(c, rc)))
 	case "ping":
 		skipMetrics(c)
-		return writeRPCResult(c, req.ID, struct{}{})
+		return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, struct{}{}))
+	case "subscriptions/listen":
+		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
 	result, err := h.gateway.DispatchWithBaseURL(c.UserContext(), rc, c.BaseURL(), req.Method, req.Params)
 	if err != nil {
 		return writeAppError(c, req.ID, err)
 	}
+	// An install or a connect made since this caller's last request leaves their
+	// client serving the tool list it cached at handshake. tools/list_changed is
+	// what fixes that, and the GET stream is not always there to carry it, so a
+	// response the client is already waiting for carries it instead. tools/list
+	// is the one method to leave alone: it is the answer to the notification,
+	// and announcing a change on it asks for another list of what was just sent.
+	// The surface is re-read either way, so the announcement is recorded against
+	// the snapshot the next request will compare with.
+	result = stampResultEnvelope(req.Method, result)
+	moved := h.surfaceMoved(c, rc)
+	listChanged := req.Method != "tools/list" &&
+		(moved || (clientAcceptsEventStream(c) && changesTheSurface(req.Method, req.Params)))
 	if raw, ok := result.(json.RawMessage); ok {
-		return writeRawRPCResult(c, req.ID, raw)
+		return writeRPCBody(c, rawRPCResponse(req.ID, raw), listChanged)
 	}
-	return writeRPCResult(c, req.ID, result)
+	return writeRPCBody(c, rpcResponse{JSONRPC: "2.0", ID: normalizeID(req.ID), Result: result}, listChanged)
 }
 
-// skipMetrics tells the MCP metrics middleware not to publish an event for the
-// current request (ping, notifications, or pre-dispatch failures).
 func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
 }
 
-func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, vault vaultdomain.Repository) {
+func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, surface appmcp.SurfaceWatcher) {
 	if rt == nil {
 		return
 	}
@@ -206,10 +303,14 @@ func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.
 		return
 	}
 	email := p.Email()
-	if email == "" && vault != nil && rc != nil && rc.Consumer != nil {
-		email = appmcp.ConnectedAccountEmail(c.UserContext(), vault, rc.Consumer.GatewayID, p.Subject)
+	subject := p.Subject
+	if credential, ok := p.Claims[identity.ClaimCredentialSubject].(string); ok && credential != "" {
+		subject = credential
 	}
-	rt.SetPrincipalIdentity(p.Subject, string(p.Method), email)
+	if email == "" && surface != nil && rc != nil && rc.Consumer != nil {
+		email = surface.ConnectedEmail(c.UserContext(), rc.Consumer.GatewayID, p.Subject)
+	}
+	rt.SetPrincipalIdentity(subject, string(p.Method), email)
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {
@@ -230,16 +331,8 @@ type initializeParams struct {
 func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
 	var params initializeParams
 	_ = json.Unmarshal(req.Params, &params)
-	version := latestProtocolVersion
-	if supportedProtocolVersions[params.ProtocolVersion] {
-		version = params.ProtocolVersion
-	}
-	return writeRPCResult(c, req.ID, fiber.Map{
-		"protocolVersion": version,
-		// tools.listChanged has to be advertised for clients to act on the
-		// notification at all — Claude drops notifications/tools/list_changed
-		// from a server that did not declare the capability. The gateway backs
-		// it with the SSE stream served on GET.
+	return writeRPCResult(c, req.ID, stampResultEnvelope(req.Method, fiber.Map{
+		"protocolVersion": negotiateHandshakeVersion(params.ProtocolVersion),
 		"capabilities": fiber.Map{
 			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
@@ -247,106 +340,42 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion + "+" + surfaceFingerprint(rc, h.connectedProviders(c, rc)),
+			"version": serverVersion + "+" + h.surfaceVersion(c, rc),
 		},
-	})
+		"instructions": serverInstructions(rc),
+	}))
 }
 
-// connectedProviders describes, for the calling principal, which of this
-// consumer's forwarded-auth providers currently hold a credential and when it
-// last changed. Federation skips upstreams pending consent, so connecting an
-// account on the connect page changes the tool surface without touching any
-// registry or toolkit — the configuration-only fingerprint stayed identical and
-// a version-keyed client kept serving its stale tool list. Providers this
-// consumer does not federate are left out so an unrelated connection elsewhere
-// on the gateway does not invalidate this surface.
-func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
-	ctx := c.UserContext()
-	return h.connectionSnapshot(ctx, rc, identity.PrincipalFromContext(ctx))
+const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."
+
+const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
+
+func serverInstructions(rc *appconsumer.RoutableConsumer) string {
+	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+		return baseServerInstructions + storeServerInstructions
+	}
+	return baseServerInstructions
 }
 
-// connectionSnapshot takes its context and principal as arguments because the
-// notification stream keeps polling it long after the request context that
-// opened the stream is gone.
-func (h *Handler) connectionSnapshot(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	principal *identity.Principal,
-) []string {
-	if h.vault == nil || rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
-		return nil
-	}
-	federated := forwardedProviders(rc)
-	if len(federated) == 0 {
-		return nil
-	}
-	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
-	if err != nil {
-		return nil
-	}
-	parts := make([]string, 0, len(creds))
-	for _, cred := range creds {
-		if cred == nil {
-			continue
-		}
-		if _, ok := federated[cred.Provider]; !ok {
-			continue
-		}
-		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	return parts
-}
+// rpcMethodLocal carries the method being served, so an error can name it.
+const rpcMethodLocal = "trustgate.mcp.rpc.method"
 
-func forwardedProviders(rc *appconsumer.RoutableConsumer) map[string]struct{} {
-	providers := make(map[string]struct{})
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
-			continue
-		}
-		if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
-			continue
-		}
-		providers[reg.MCPTarget.Auth.Provider] = struct{}{}
-	}
-	return providers
-}
-
-// surfaceFingerprint summarises everything that decides which tools a virtual
-// MCP exposes: the bound MCP registries, when each was last changed, the
-// toolkit that filters them, and the caller's connected accounts. It rides in
-// serverInfo.version as semver build metadata, so a client that caches a
-// server's tool list keyed on its reported version re-lists after the consumer
-// is reconfigured or the user connects an account. Without it every virtual MCP
-// reports a constant "1.0" forever and a newly attached registry stays
-// invisible until the client is reinstalled.
-func surfaceFingerprint(rc *appconsumer.RoutableConsumer, connections []string) string {
-	if rc == nil || rc.Consumer == nil {
-		return "0"
-	}
-	parts := make([]string, 0, len(rc.Registries))
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() {
-			continue
-		}
-		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
-	for _, e := range rc.Consumer.Toolkit() {
-		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
-	}
-	// None of these lists has a guaranteed order across replicas or reloads —
-	// the role-derived toolkit is a union, the vault answers in its own order —
-	// so sort them all: the same configuration must always fingerprint the same.
-	sort.Strings(parts)
-	sort.Strings(entries)
-	linked := append([]string(nil), connections...)
-	sort.Strings(linked)
-	material := append(append(parts, entries...), linked...)
-	sum := sha256.Sum256([]byte(strings.Join(material, "|")))
-	return hex.EncodeToString(sum[:6])
+// logRPCError writes down a JSON-RPC failure.
+//
+// These go out as HTTP 200 with the error in the body, which is what JSON-RPC
+// over HTTP requires and what leaves an operator reading `"status":200` for a
+// call that failed. A client reports "it does not work" and the access log
+// agrees that everything is fine. The reason is a code and a message the
+// gateway itself composed; arguments and tickets stay out of it.
+func logRPCError(c *fiber.Ctx, code int, message string, attrs ...slog.Attr) {
+	method, _ := c.Locals(rpcMethodLocal).(string)
+	slog.LogAttrs(c.UserContext(), slog.LevelWarn, "mcp: request answered with an error",
+		append([]slog.Attr{
+			slog.String("method", method),
+			slog.Int("code", code),
+			slog.String("message", message),
+			slog.String("path", c.Path()),
+		}, attrs...)...)
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
@@ -354,6 +383,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
 		notPermitted  *appmcp.ToolNotPermittedError
+		appNotLinked  *appmcp.ApplicationNotConnectedError
 		invalidParams *InvalidParamsError
 	)
 	switch {
@@ -367,6 +397,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
 		applyRPCErrorHeaders(c, rpcErr)
+		logRPCError(c, int(rpcErr.Code), rpcErr.Message)
 		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -378,13 +409,13 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
+			"cause":       consentErr.Cause,
 		})
-		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
-		// clients treat any non-2xx on this endpoint as a transport failure: they
-		// drop the connection and restart authentication instead of reading the
-		// body, so the connect URL never reaches the user. The refusal is
-		// reported to the agent through the JSON-RPC error, and the semantic
-		// status (403) is recorded on the span for metrics and traces.
+		// The message carries a connect ticket, so the provider and the cause go
+		// to the log in its place.
+		logRPCError(c, codeConsentRequired, "user consent required",
+			slog.String("provider", consentErr.Provider),
+			slog.String("cause", consentErr.Cause))
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -394,12 +425,17 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 				Data:    data,
 			},
 		})
-	case errors.As(err, &notPermitted):
-		// A denial the agent should read and act on, so it rides on HTTP 200 for
-		// the same transport reason as the consent case above; the span records
-		// it as forbidden. Written inline rather than through writeRPCError,
-		// which would reclassify the outcome as a generic client error.
+	case errors.As(err, &appNotLinked):
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codeConsentRequired, appNotLinked.Error())
+		return writeJSON(c, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error:   &rpcError{Code: codeConsentRequired, Message: appNotLinked.Error()},
+		})
+	case errors.As(err, &notPermitted):
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		logRPCError(c, codePolicyBlocked, notPermitted.Error())
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -411,7 +447,8 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		return writeRPCError(c, id, codeMethodNotFound, err.Error())
 	case errors.Is(err, sts.ErrInteractionRequired):
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrAudienceMismatch),
+	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrUpstreamNeedsCallerToken),
+		errors.Is(err, appmcp.ErrAudienceMismatch),
 		errors.Is(err, sts.ErrNoUserIdentity):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound):
@@ -427,8 +464,21 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
+		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "upstream MCP server unreachable")
+	case errors.Is(err, registrydomain.ErrURLTemplate):
+		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
-		return writeRPCError(c, id, codeInternalError, err.Error())
+		// Everything above is an error the gateway classified, and its text was
+		// written to be read by a caller. What reaches here was not: it carries
+		// whatever the layer that raised it put in it — a driver message, a
+		// resolved upstream URL with a token in its query, a file path. The
+		// caller gets the fact, the operator gets the error.
+		slog.Default().Error("mcp handler: unclassified internal error",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "internal error")
 	}
 }
 
@@ -440,15 +490,18 @@ func writeRPCResult(c *fiber.Ctx, id json.RawMessage, result any) error {
 	return writeJSON(c, rpcResponse{JSONRPC: "2.0", ID: normalizeID(id), Result: result})
 }
 
-func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage) error {
-	return writeJSON(c, struct {
+// rawRPCResponse wraps an already-encoded result, which rpcResponse cannot: its
+// Result is `any` with omitempty, and a json.RawMessage there would be re-encoded.
+func rawRPCResponse(id json.RawMessage, result json.RawMessage) any {
+	return struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
-	}{JSONRPC: "2.0", ID: normalizeID(id), Result: result})
+	}{JSONRPC: "2.0", ID: normalizeID(id), Result: result}
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	logRPCError(c, code, message)
 	outcome := o11y.OutcomeClientError
 	if code == codeInternalError {
 		outcome = o11y.OutcomeServerError
@@ -469,15 +522,6 @@ func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
 	return c.Status(status).JSON(body)
 }
 
-// httpStatusForRPCError maps gateway denials onto the wire HTTP status so
-// agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
-// httpStatusForRPCError is always 200: on the MCP wire a JSON-RPC error is a
-// successful exchange carrying a failed call. Clients treat a 4xx/5xx here as a
-// transport failure — they drop the connection and restart authentication
-// without reading the body — so a policy denial answered with 403 killed the
-// session instead of telling the agent it was blocked. The status the refusal
-// means (403, 429, 503) is recorded on the span, and rate-limit headers still
-// ride along on the response.
 func httpStatusForRPCError(_ *appmcp.RPCError) int {
 	return fiber.StatusOK
 }
@@ -500,24 +544,6 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 	return id
 }
 
-func (h *Handler) scopeByRoles(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
-	if rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
-		return rc, nil
-	}
-	data, ok := appconsumer.DataFromContext(c.UserContext())
-	if !ok || data == nil {
-		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
-	}
-	scoped, err := h.roleScoper.Scope(c.UserContext(), rc, data)
-	if err != nil {
-		if errors.Is(err, appmcp.ErrNoRoleAccess) {
-			return nil, fiber.NewError(fiber.StatusForbidden, err.Error())
-		}
-		return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	return scoped, nil
-}
-
 func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	authID, ok := appconsumer.AuthIDFromContext(c.UserContext())
 	if !ok {
@@ -527,6 +553,18 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
 	}
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
+		if data.StoreConsumer != nil {
+			return data.StoreConsumer, nil
+		}
+		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+		if !ok {
+			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+		}
+		return &appconsumer.RoutableConsumer{
+			Consumer: consumerdomain.BuildStoreConsumer(gatewayID),
+		}, nil
+	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {
 		return nil, fiber.NewError(fiber.StatusNotFound, "no virtual MCP configured for this path")
@@ -534,14 +572,128 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, fiber.NewError(fiber.StatusNotFound, "consumer is not an MCP consumer")
 	}
-	// The built-in NeuralTrust default identity provider is not attached to the
-	// consumer's AuthIDs (the consumer has no identity provider of its own). The
-	// auth chain only resolves a default-IdP session on a path that has no
-	// oauth2 provider, so accepting it here is consistent with that scoping.
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
+	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
+		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
+	}
+	// Who the request runs as is read from the request, not from the consumer.
+	//
+	// A verified person — a token an identity provider signed — is already
+	// whoever the token says, and stays that across applications: the upstream
+	// accounts follow the person, which is the whole point of having verified
+	// them. A machine credential proves the application and nothing about a
+	// person, so what it names in the end-user header is taken at face value and
+	// namespaced by the application; naming nobody means the application itself.
+	//
+	// This is what lets one application do both. The flag it replaced had to be
+	// answered when the consumer was created, before anyone had met its callers.
+	if machineCredential(identity.PrincipalFromContext(c.UserContext())) {
+		caller := identity.PrincipalFromContext(c.UserContext())
+		endUser := strings.TrimSpace(c.Get(consumerdomain.EndUserHeader))
+		if endUser == "" {
+			c.SetUserContext(identity.WithPrincipal(c.UserContext(), appPrincipal(rc.Consumer, caller)))
+			return rc, nil
+		}
+		// Named but malformed is refused rather than quietly treated as
+		// unnamed: the difference decides whose account the call reaches.
+		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
+			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, caller, endUser))
+		c.SetUserContext(ctx)
+		if rt := trace.FromContext(ctx); rt != nil {
+			rt.SetEndUser(endUser)
+		}
+	}
 	return rc, nil
+}
+
+func machineCredential(p *identity.Principal) bool {
+	return p != nil && (p.Method == identity.MethodAPIKey || p.Method == identity.MethodMTLS)
+}
+
+func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, endUser string) *identity.Principal {
+	endUser = strings.TrimSpace(endUser)
+	p := &identity.Principal{
+		Subject: consumerdomain.EndUserSubject(cons.ID, endUser),
+		Method:  identity.MethodAPIKey,
+		Claims: map[string]any{
+			"end_user":    endUser,
+			"consumer_id": cons.ID.String(),
+		},
+	}
+	if app != nil {
+		if app.Method != "" {
+			p.Method = app.Method
+		}
+		if app.Subject != "" {
+			p.Claims["app_subject"] = app.Subject
+		}
+	}
+	return p
+}
+
+// appPrincipal is the principal a request runs as on a consumer that acts as
+// the application itself and was entered with a credential the application
+// holds: the consumer-namespaced subject its upstream accounts hang off. The
+// credential's own subject stays in the claims, so an audit trail still names
+// the api key or the certificate that was used.
+//
+// The swap happens here, after the auth binding has been applied to the real
+// caller, because only the request path knows which consumer is being entered:
+// an api key is a many-to-many row, so the credential alone cannot say whose
+// application this is.
+//
+// It is deliberately limited to an api key or a client certificate — a shared
+// credential, where callers already share whatever it opens. A bearer token
+// keeps its own subject: on a consumer that admits tokens from an external IdP
+// the token may well be one person's, and collapsing those onto one subject
+// would hand every holder the account the first of them linked. A
+// client-credentials token needs nothing from this either, since its subject is
+// the application's client id already.
+func appPrincipal(cons *consumerdomain.Consumer, caller *identity.Principal) *identity.Principal {
+	p := &identity.Principal{Subject: consumerdomain.AppSubject(cons.ID), Method: identity.MethodAPIKey}
+	if caller != nil {
+		// Everything but the subject is carried over: an upstream that forwards
+		// or exchanges the caller's own token still needs it, and the claims are
+		// what an audit trail reads.
+		copied := *caller
+		p = &copied
+		p.Subject = consumerdomain.AppSubject(cons.ID)
+	}
+	claims := make(map[string]any, len(p.Claims)+2)
+	for k, v := range p.Claims {
+		claims[k] = v
+	}
+	claims["consumer_id"] = cons.ID.String()
+	if caller != nil && caller.Subject != "" {
+		claims[identity.ClaimCredentialSubject] = caller.Subject
+	}
+	p.Claims = claims
+	return p
+}
+
+// consumerAdmitsPrincipal applies the consumer's auth binding to the verified
+// caller: a bearer token from a shared IdP must have been issued to an allowed
+// client, and a client certificate must carry an allowed subject. API keys are
+// bound to one consumer already, and a missing principal has nothing to bind.
+func consumerAdmitsPrincipal(cons *consumerdomain.Consumer, principal *identity.Principal) bool {
+	if cons == nil {
+		return false
+	}
+	if principal == nil {
+		return true
+	}
+	switch {
+	case principal.Method.IsBearerToken():
+		return cons.AuthBinding.AllowsClient(principal.Claims)
+	case principal.Method == identity.MethodMTLS:
+		return cons.AuthBinding.AllowsCertificateClaims(principal.Claims)
+	default:
+		return true
+	}
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

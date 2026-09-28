@@ -29,7 +29,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
@@ -341,6 +343,8 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 		GatewayID: "gw-1",
 		AuthID:    "auth-1",
 		Audiences: []string{"api://gw"},
+		LoginAt:   time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
@@ -561,5 +565,46 @@ func TestExchangeCodeOffModeReturnsTokenVerbatim(t *testing.T) {
 	}
 	if _, ok := resp["refresh_token"]; ok {
 		t.Fatalf("OFF mode must not add a gateway refresh_token, got %v", resp)
+	}
+}
+
+// A default-IdP session that names no gateway can never be honoured: the MCP
+// plane reads its gwid to find the gateway and gets the zero uuid. Refreshing
+// re-mints the stored record as it stands, so such a session would come back
+// just as broken for as long as the client kept the refresh token — the client
+// never re-runs the authorization that would fix it, because from its side the
+// refresh keeps succeeding. Refusing the refresh is what sends it back.
+func TestRefreshDefaultIdPSessionWithoutGatewayIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, gatewayID := range []string{"", "00000000-0000-0000-0000-000000000000"} {
+		store := newMemFlowStore()
+		signer := newTestSigner(t)
+		noIdP := &http.Client{Transport: failingTransport{t}}
+		proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil)
+		ctx := context.Background()
+
+		const refresh = "gwrt_pre-binding"
+		if err := store.SaveSession(ctx, refresh, SessionRecord{
+			Subject:   "user-42",
+			Scopes:    []string{"mcp.access"},
+			GatewayID: gatewayID,
+			AuthID:    appauth.DefaultIdPAuthID().String(),
+			LoginAt:   time.Now(),
+			ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("seed session: %v", err)
+		}
+
+		_, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+			GrantType:    "refresh_token",
+			RefreshToken: refresh,
+		})
+		if err == nil {
+			t.Fatalf("gateway %q: refresh must be refused", gatewayID)
+		}
+		var oe *OAuthError
+		if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
+			t.Fatalf("gateway %q: want invalid_grant so the client signs in again, got %v", gatewayID, err)
+		}
 	}
 }

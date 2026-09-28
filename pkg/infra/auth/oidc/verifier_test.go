@@ -31,6 +31,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -52,12 +53,12 @@ func TestVerifier_VerifyJWKSRS256(t *testing.T) {
 		"nbf":    time.Now().Add(-time.Minute).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		JWKSURL:           server.URL,
-		RequiredScopes:    []string{"chat"},
-		AllowedAlgorithms: []string{"RS256"},
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
+		Issuer:         "https://issuer.example.com",
+		Audiences:      []string{"gateway"},
+		JWKSURL:        server.URL,
+		RequiredScopes: []string{"chat"},
+		Algorithms:     []string{"RS256"},
 	})
 	requireNoError(t, err)
 	if got.Subject != "user-1" {
@@ -87,7 +88,7 @@ func TestVerifier_VerifySelectsMatchingKID(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -117,7 +118,7 @@ func TestVerifier_VerifyWithoutKIDTriesCompatibleKeys(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -148,7 +149,7 @@ func TestVerifier_VerifyRefreshesJWKSOnKIDMiss(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -180,7 +181,7 @@ func TestVerifier_VerifyRefreshesJWKSOnSignatureFailure(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -201,11 +202,11 @@ func TestVerifier_VerifyRejectsInvalidIssuer(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(nil, time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		PublicKeys:        []string{publicKeyPEM(t, &key.PublicKey)},
-		AllowedAlgorithms: []string{"RS256"},
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		PublicKeys: []string{publicKeyPEM(t, &key.PublicKey)},
+		Algorithms: []string{"RS256"},
 	})
 	if !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("err = %v, want ErrInvalidToken", err)
@@ -268,5 +269,47 @@ func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifierSignedClaimValidation(t *testing.T) {
+	t.Parallel()
+	key := newRSAKey(t)
+	publicKey, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	requireNoError(t, err)
+	cfg := domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		PublicKeys: []string{string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKey}))},
+	}
+	now := time.Now()
+	for _, tc := range []struct {
+		name, claim string
+		value       any
+		valid       bool
+	}{
+		{"valid", "aud", "gateway", true},
+		{"multiple audiences", "aud", []string{"other", "gateway"}, true},
+		{"expired", "exp", now.Add(-time.Minute).Unix(), false},
+		{"future nbf", "nbf", now.Add(time.Hour).Unix(), false},
+		{"wrong issuer", "iss", "https://other.example.com", false},
+		{"wrong audience", "aud", "other", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := jwt.MapClaims{"sub": "alice", "email": "alice@example.com", "iss": cfg.Issuer, "aud": "gateway", "exp": now.Add(time.Hour).Unix()}
+			claims[tc.claim] = tc.value
+			token := signToken(t, key, "", claims)
+			got, err := NewVerifierWithCache(NewJWKSCache(http.DefaultClient, time.Minute)).Verify(context.Background(), token, cfg)
+			if !tc.valid {
+				if err == nil || got != nil {
+					t.Fatalf("invalid signed claims accepted: principal=%+v err=%v", got, err)
+				}
+				return
+			}
+			requireNoError(t, err)
+			if got.Method != identity.MethodExternalJWT || got.Issuer != cfg.Issuer || got.Subject != "alice" || got.Email() != "alice@example.com" {
+				t.Fatalf("verified identity not preserved: %+v", got)
+			}
+		})
 	}
 }

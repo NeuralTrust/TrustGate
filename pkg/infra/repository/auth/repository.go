@@ -70,13 +70,13 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	}
 	const query = `
 		INSERT INTO auths (
-			id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+			id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
-			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
+			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
 			a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
@@ -100,10 +100,17 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       enabled    = $4,
 		       config     = $5,
 		       key_hash   = $6,
-		       updated_at = $7
-		 WHERE id = $1 AND gateway_id = $8`
+		       key_prefix = $7,
+		       key_suffix = $8,
+		       expires_at = $9,
+		       updated_at = $10
+		 WHERE id = $1 AND gateway_id = $11`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt, a.GatewayID)
+		cmd, err := tx.Exec(ctx, query,
+			a.ID, a.Name, string(a.Type), a.Enabled, configBytes,
+			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix), a.ExpiresAt,
+			a.UpdatedAt, a.GatewayID,
+		)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -130,7 +137,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 
 func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -146,7 +153,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 
 func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE key_hash = $1
 		   AND type = 'api_key'
@@ -167,7 +174,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -200,7 +207,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 		typeNames = append(typeNames, string(t))
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE enabled = TRUE
 		   AND type = ANY($1::text[])
@@ -231,13 +238,13 @@ func (r *Repository) ListEnabledByGatewayAndType(
 	authType domain.Type,
 ) ([]*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
-		   AND type = $2
+		   AND type = ANY($2::text[])
 		   AND enabled = TRUE
 		 ORDER BY created_at DESC, id`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, string(authType))
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, storedTypeNames(authType))
 	if err != nil {
 		return nil, fmt.Errorf("auth repository: list enabled by gateway and type: %w", err)
 	}
@@ -266,11 +273,11 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
-	typeParam := string(filter.Type)
+	typeParam := storedTypeNames(filter.Type)
 
 	var total int
 	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled).Scan(&total); err != nil {
@@ -278,11 +285,11 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	listQuery := `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, expires_at, created_at, updated_at
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		   AND ($3 = '' OR type = $3)
+		   AND (coalesce(cardinality($3::text[]), 0) = 0 OR type = ANY($3::text[]))
 		   AND ($4::boolean IS NULL OR enabled = $4)
 		 ORDER BY ` + authOrderBy(filter.Sort) + `
 		 LIMIT $5 OFFSET $6`
@@ -321,12 +328,12 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
-		&configRaw, &keyHash, &keyPrefix, &keySuffix,
+		&configRaw, &keyHash, &keyPrefix, &keySuffix, &a.ExpiresAt,
 		&a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
-	a.Type = domain.Type(authType)
+	a.Type = domain.NormalizeType(domain.Type(authType))
 	if keyHash != nil {
 		a.KeyHash = *keyHash
 	}
@@ -399,4 +406,19 @@ func mapPgDeleteError(err error) error {
 		}
 	}
 	return err
+}
+
+// storedTypeNames expands a canonical type into every value a persisted row may
+// carry for it, so a filter written against the canonical type still matches
+// rows stored under a deprecated alias before the migration runs.
+func storedTypeNames(t domain.Type) []string {
+	if t == "" {
+		return []string{}
+	}
+	stored := domain.StoredTypes(t)
+	names := make([]string, 0, len(stored))
+	for _, s := range stored {
+		names = append(names, string(s))
+	}
+	return names
 }

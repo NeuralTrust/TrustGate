@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,7 +55,7 @@ func TestVerify_Success(t *testing.T) {
 	principal, err := verifier.Verify(context.Background(), raw)
 	require.NoError(t, err)
 	assert.Equal(t, "user-123", principal.Subject)
-	assert.Equal(t, identity.MethodJWT, principal.Method)
+	assert.Equal(t, identity.MethodOAuth, principal.Method)
 	assert.Equal(t, signer.Issuer(), principal.Issuer)
 	assert.Equal(t, []string{"read", "write", "admin"}, principal.Scopes)
 	assert.Equal(t, raw, principal.RawToken)
@@ -167,7 +168,12 @@ func TestVerify_TamperedSignature(t *testing.T) {
 		"iss": testIssuer,
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	tampered := raw[:len(raw)-2] + flipLast(raw)
+	parts := strings.Split(raw, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, err)
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	tampered := strings.Join(parts, ".")
 
 	_, err = verifier.Verify(context.Background(), tampered)
 	require.Error(t, err)
@@ -197,14 +203,6 @@ func signToken(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClai
 	raw, err := token.SignedString(key)
 	require.NoError(t, err)
 	return raw
-}
-
-func flipLast(raw string) string {
-	last := raw[len(raw)-1]
-	if last == 'A' {
-		return "BB"
-	}
-	return "AA"
 }
 
 var _ appsts.TokenSigner = (*stubSigner)(nil)

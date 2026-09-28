@@ -145,13 +145,14 @@ func (t *connectionTool) Call(
 	result := map[string]any{
 		"content": []map[string]string{{
 			"type": "text",
-			"text": label + " can be connected at " + connectURL +
-				". Present this link to the user and let them decide whether to open it. Do not claim that it opened automatically.",
+			"text": "Present this link to the user to connect " + label + ": " + linkMarkdown("Connect "+label, connectURL) +
+				". Let them decide whether to open it. Do not claim that it opened automatically.",
 		}},
 		"structuredContent": map[string]string{
-			"connect_url": connectURL,
-			"action":      "user_confirmation_required",
-			"tool":        name,
+			"connect_url":   connectURL,
+			"connect_label": "Connect " + label,
+			"action":        "user_confirmation_required",
+			"tool":          name,
 		},
 	}
 	raw, err := json.Marshal(result)
@@ -168,10 +169,12 @@ func connectionPending(status appoauth.ProviderStatus) bool {
 func pendingConnectionDefinition(name string, status appoauth.ProviderStatus) (Tool, error) {
 	display := connectionDisplayName(status)
 	description := display + " is not connected for this TrustGate MCP user. Call this tool when the user asks about " +
-		display + " (its issues, projects, or data) or wants to connect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+		display + " (its issues, projects, or data) or wants to connect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself." +
+		GatewayToolDisclaimer
 	if status.NeedsReconnect {
 		description = display + " is connected but needs to be reconnected for this TrustGate MCP user. Call this tool when the user asks about " +
-			display + " or wants to reconnect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+			display + " or wants to reconnect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself." +
+			GatewayToolDisclaimer
 	}
 	raw, err := json.Marshal(map[string]any{
 		"name":        name,
@@ -185,9 +188,10 @@ func pendingConnectionDefinition(name string, status appoauth.ProviderStatus) (T
 		"outputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"connect_url": map[string]any{"type": "string", "format": "uri"},
-				"action":      map[string]any{"type": "string", "const": "user_confirmation_required"},
-				"tool":        map[string]any{"type": "string"},
+				"connect_url":   map[string]any{"type": "string", "format": "uri"},
+				"connect_label": map[string]any{"type": "string"},
+				"action":        map[string]any{"type": "string", "const": "user_confirmation_required"},
+				"tool":          map[string]any{"type": "string"},
 			},
 			"required":             []string{"connect_url", "action"},
 			"additionalProperties": false,

@@ -16,7 +16,9 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
@@ -31,6 +33,8 @@ type CreateInput struct {
 	Type      domain.Type
 	Enabled   bool
 	Config    domain.Config
+	// ExpiresAt retires an api key on its own. Nil is no expiry.
+	ExpiresAt *time.Time
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=auth_creator_mock.go --case=underscore --with-expecter
@@ -84,7 +88,10 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 
 func (c *creator) build(in CreateInput) (*domain.Auth, error) {
 	if in.Type == domain.TypeAPIKey {
-		return domain.NewAPIKeyAuth(in.GatewayID, in.Name, in.Enabled)
+		return domain.NewAPIKeyAuth(in.GatewayID, in.Name, in.Enabled, in.ExpiresAt)
+	}
+	if in.ExpiresAt != nil {
+		return nil, fmt.Errorf("%w: only api_key auths expire", domain.ErrInvalidType)
 	}
 	return domain.NewAuth(in.GatewayID, in.Name, in.Type, in.Enabled, in.Config)
 }

@@ -30,14 +30,25 @@ var (
 	ErrInvalidType      = fmt.Errorf("consumer: invalid type: %w", commonerrors.ErrValidation)
 	ErrInvalidSlug      = fmt.Errorf("consumer: invalid slug: %w", commonerrors.ErrValidation)
 
-	ErrInvalidRoutingMode = fmt.Errorf("consumer: invalid routing_mode: %w", commonerrors.ErrValidation)
 	ErrInvalidLBConfig    = fmt.Errorf("consumer: invalid lb_config: %w", commonerrors.ErrValidation)
 	ErrSlugAlreadyExists  = fmt.Errorf("consumer: slug already exists: %w", commonerrors.ErrAlreadyExists)
 	ErrInvalidFallback    = fmt.Errorf("consumer: invalid fallback: %w", commonerrors.ErrValidation)
 	ErrInvalidModelPolicy = fmt.Errorf("consumer: invalid model policy: %w", commonerrors.ErrValidation)
 
 	ErrInvalidToolkit  = fmt.Errorf("consumer: invalid toolkit: %w", commonerrors.ErrValidation)
-	ErrInvalidFailMode = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
+	ErrInvalidIdentity = fmt.Errorf("consumer: invalid identity: %w", commonerrors.ErrValidation)
+
+	ErrInvalidAuthBinding = fmt.Errorf("consumer: invalid auth_binding: %w", commonerrors.ErrValidation)
+	ErrInvalidEndUser     = fmt.Errorf("consumer: invalid end user: %w", commonerrors.ErrValidation)
+	ErrInvalidFailMode    = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
 
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)
+
+	// ErrPolicyScopeDoesNotCross is returned when an mcp_scope would not
+	// survive the crossing into the plane of a non-MCP consumer. What decides
+	// it is the scope's own dimension and the plugin behind the policy, not
+	// the consumer's type: a scope that narrows by group alone is attachable
+	// to any consumer as long as its plugin does not resolve tool or registry
+	// names (RUN-1621, rules 2 and 7).
+	ErrPolicyScopeDoesNotCross = fmt.Errorf("consumer: this mcp_scope does not cross into the consumer's plane: %w", ErrPolicyProtocolMismatch)
 )

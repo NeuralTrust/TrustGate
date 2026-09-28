@@ -359,6 +359,7 @@ func TestNormalizeCacheIntent_OpenAIFamilyKeysFollowTheProvider(t *testing.T) {
 		{name: "mistral sends only the key", target: FormatMistral, provider: provider.Mistral, model: "mistral-large-latest", want: &CanonicalCacheOptions{Key: "k"}},
 		{name: "openrouter non-caching model gets nothing", target: FormatOpenRouter, provider: provider.OpenRouter, model: "meta-llama/llama-3.3-70b-instruct", want: nil},
 		{name: "cerebras shares the openai format but gets nothing", target: FormatOpenAI, provider: provider.Cerebras, model: "gpt-oss-120b", want: nil},
+		{name: "moonshot caches on its own and gets nothing", target: FormatOpenAI, provider: provider.Moonshot, model: "kimi-k2-0905-preview", want: nil},
 		{name: "openai_compatible gets nothing", target: FormatOpenAI, provider: provider.OpenAICompatible, model: "gpt-5.6", want: nil},
 		{name: "xai keys its cache by header", target: FormatXAI, provider: provider.XAI, model: "grok-4", want: nil},
 	}

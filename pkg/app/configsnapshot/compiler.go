@@ -30,7 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"golang.org/x/sync/errgroup"
 )
@@ -54,16 +54,45 @@ type Compiler struct {
 	registries RegistryReader
 	policies   PolicyReader
 	auths      AuthReader
-	roles      RoleReader
 	catalog    CatalogReader
-	logger     *slog.Logger
+	// grants is optional: the MCP Store's access grants ride the snapshot when a
+	// reader is wired (WithStoreGrants). Without one the snapshot carries no
+	// grants, which fails closed (nobody is granted under Selected access).
+	grants        StoreGrantReader
+	storePolicies StorePolicyReader
+	logger        *slog.Logger
 	// playgroundTokenKeys are stamped into every compiled snapshot so data
 	// planes can verify RS256 playground tokens without any local key config.
 	playgroundTokenKeys []readmodel.VerificationKey
 }
 
-// CompilerOption customizes an optional compiler input.
+// StoreGrantReader is the read side the compiler needs for MCP Store grants.
+type StoreGrantReader interface {
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Grant, error)
+	// List pages every grant across gateways (bulk collect path).
+	List(ctx context.Context, page, size int) ([]*storeaccessdomain.Grant, int, error)
+}
+
+// StorePolicyReader is the read side the compiler needs for per-principal MCP
+// Store access policies.
+type StorePolicyReader interface {
+	ListPoliciesByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Policy, error)
+	ListPolicies(ctx context.Context, page, size int) ([]*storeaccessdomain.Policy, int, error)
+}
+
+// CompilerOption tunes NewCompiler.
 type CompilerOption func(*Compiler)
+
+// WithStoreGrants includes the MCP Store access grants in every snapshot.
+func WithStoreGrants(r StoreGrantReader) CompilerOption {
+	return func(c *Compiler) { c.grants = r }
+}
+
+// WithStorePolicies includes the per-principal Store access policies in every
+// snapshot.
+func WithStorePolicies(r StorePolicyReader) CompilerOption {
+	return func(c *Compiler) { c.storePolicies = r }
+}
 
 // WithPlaygroundTokenKeys sets the verification keys every compiled snapshot
 // carries for RS256 playground tokens.
@@ -79,7 +108,6 @@ func NewCompiler(
 	registries RegistryReader,
 	policies PolicyReader,
 	auths AuthReader,
-	roles RoleReader,
 	catalog CatalogReader,
 	logger *slog.Logger,
 	opts ...CompilerOption,
@@ -93,12 +121,13 @@ func NewCompiler(
 		registries: registries,
 		policies:   policies,
 		auths:      auths,
-		roles:      roles,
 		catalog:    catalog,
 		logger:     logger,
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil {
+			opt(c)
+		}
 	}
 	return c
 }
@@ -246,7 +275,8 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.Registries = append(dst.Registries, gwData.Registries...)
 	dst.Policies = append(dst.Policies, gwData.Policies...)
 	dst.Auths = append(dst.Auths, gwData.Auths...)
-	dst.Roles = append(dst.Roles, gwData.Roles...)
+	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
+	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 }
 
 func mergeCatalog(dst *readmodel.Data, catalog readmodel.Data) {
@@ -317,11 +347,12 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 // sorted before encoding, so grouping order never affects version hashes.
 func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readmodel.Data, error) {
 	var (
-		consumers  []*consumerdomain.Consumer
-		registries []*registrydomain.Registry
-		policies   []*policydomain.Policy
-		auths      []*authdomain.Auth
-		roles      []*roledomain.Role
+		consumers     []*consumerdomain.Consumer
+		registries    []*registrydomain.Registry
+		policies      []*policydomain.Policy
+		auths         []*authdomain.Auth
+		grants        []*storeaccessdomain.Grant
+		storePolicies []*storeaccessdomain.Policy
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
@@ -348,56 +379,56 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		})
 		return err
 	})
-	g.Go(func() (err error) {
-		roles, err = listAll(gctx, "roles", func(ctx context.Context, page int) ([]*roledomain.Role, int, error) {
-			return c.roles.List(ctx, roledomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	if c.grants != nil {
+		g.Go(func() (err error) {
+			grants, err = listAll(gctx, "store grants", func(ctx context.Context, page int) ([]*storeaccessdomain.Grant, int, error) {
+				return c.grants.List(ctx, page, compilerBulkPageSize)
+			})
+			return err
 		})
-		return err
-	})
+	}
+	if c.storePolicies != nil {
+		g.Go(func() (err error) {
+			storePolicies, err = listAll(gctx, "store policies", func(ctx context.Context, page int) ([]*storeaccessdomain.Policy, int, error) {
+				return c.storePolicies.ListPolicies(ctx, page, compilerBulkPageSize)
+			})
+			return err
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
 	byGateway := make(map[ids.GatewayID]*readmodel.Data)
-	bucket := func(id ids.GatewayID) *readmodel.Data {
-		d, ok := byGateway[id]
-		if !ok {
-			d = &readmodel.Data{}
-			byGateway[id] = d
-		}
-		return d
-	}
-	for _, x := range consumers {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Consumers = append(b.Consumers, *x)
-		}
-	}
-	for _, x := range registries {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Registries = append(b.Registries, *x)
-		}
-	}
-	for _, x := range policies {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Policies = append(b.Policies, *x)
-		}
-	}
-	for _, x := range auths {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Auths = append(b.Auths, *x)
-		}
-	}
-	for _, x := range roles {
-		if x != nil {
-			b := bucket(x.GatewayID)
-			b.Roles = append(b.Roles, *x)
-		}
-	}
+	groupByGateway(byGateway, consumers, func(x *consumerdomain.Consumer) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x consumerdomain.Consumer) { data.Consumers = append(data.Consumers, x) })
+	groupByGateway(byGateway, registries, func(x *registrydomain.Registry) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x registrydomain.Registry) { data.Registries = append(data.Registries, x) })
+	groupByGateway(byGateway, policies, func(x *policydomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x policydomain.Policy) { data.Policies = append(data.Policies, x) })
+	groupByGateway(byGateway, auths, func(x *authdomain.Auth) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x authdomain.Auth) { data.Auths = append(data.Auths, x) })
+	groupByGateway(byGateway, grants, func(x *storeaccessdomain.Grant) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Grant) { data.StoreGrants = append(data.StoreGrants, x) })
+	groupByGateway(byGateway, storePolicies, func(x *storeaccessdomain.Policy) ids.GatewayID { return x.GatewayID }, func(data *readmodel.Data, x storeaccessdomain.Policy) {
+		data.StorePolicies = append(data.StorePolicies, x)
+	})
 	return byGateway, nil
+}
+
+func groupByGateway[T any](
+	buckets map[ids.GatewayID]*readmodel.Data,
+	items []*T,
+	gatewayID func(*T) ids.GatewayID,
+	appendItem func(*readmodel.Data, T),
+) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		id := gatewayID(item)
+		bucket, ok := buckets[id]
+		if !ok {
+			bucket = &readmodel.Data{}
+			buckets[id] = bucket
+		}
+		appendItem(bucket, *item)
+	}
 }
 
 // listAll pages one entity table to exhaustion via fetch(page).
@@ -485,15 +516,29 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 	}
 	data.Auths = append(data.Auths, auths...)
 
-	roles, err := c.roles.ListByGateway(ctx, gatewayID)
-	if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
-		return fmt.Errorf("configsnapshot: list roles for gateway %s: %w", gatewayID, err)
-	}
-	for _, r := range roles {
-		if r == nil {
-			continue
+	if c.grants != nil {
+		grants, err := c.grants.ListByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store grants for gateway %s: %w", gatewayID, err)
 		}
-		data.Roles = append(data.Roles, *r)
+		for _, g := range grants {
+			if g == nil {
+				continue
+			}
+			data.StoreGrants = append(data.StoreGrants, *g)
+		}
+	}
+	if c.storePolicies != nil {
+		storePolicies, err := c.storePolicies.ListPoliciesByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store policies for gateway %s: %w", gatewayID, err)
+		}
+		for _, p := range storePolicies {
+			if p == nil {
+				continue
+			}
+			data.StorePolicies = append(data.StorePolicies, *p)
+		}
 	}
 	return nil
 }
@@ -590,7 +635,26 @@ func sortData(data *readmodel.Data) {
 	sort.SliceStable(data.Registries, func(i, j int) bool { return data.Registries[i].ID.String() < data.Registries[j].ID.String() })
 	sort.SliceStable(data.Policies, func(i, j int) bool { return data.Policies[i].ID.String() < data.Policies[j].ID.String() })
 	sort.SliceStable(data.Auths, func(i, j int) bool { return data.Auths[i].ID.String() < data.Auths[j].ID.String() })
-	sort.SliceStable(data.Roles, func(i, j int) bool { return data.Roles[i].ID.String() < data.Roles[j].ID.String() })
+	sort.SliceStable(data.StoreGrants, func(i, j int) bool {
+		a, b := data.StoreGrants[i], data.StoreGrants[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.CatalogCode != b.CatalogCode {
+			return a.CatalogCode < b.CatalogCode
+		}
+		return a.RegistryID.String() < b.RegistryID.String()
+	})
+	sort.SliceStable(data.StorePolicies, func(i, j int) bool {
+		a, b := data.StorePolicies[i], data.StorePolicies[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.PrincipalType != b.PrincipalType {
+			return a.PrincipalType < b.PrincipalType
+		}
+		return a.PrincipalID < b.PrincipalID
+	})
 	sort.SliceStable(data.Providers, func(i, j int) bool { return data.Providers[i].Code < data.Providers[j].Code })
 	sort.SliceStable(data.CatalogModels, func(i, j int) bool {
 		if data.CatalogModels[i].ProviderCode != data.CatalogModels[j].ProviderCode {

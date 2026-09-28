@@ -334,7 +334,9 @@ func TestGraftCostOnALargeBodyWithinCaps(t *testing.T) {
 		graft = shortest(graft, time.Since(start))
 	}
 	t.Logf("graft %v, decode and encode %v", graft, roundTrip)
-	assert.Less(t, graft, 3*roundTrip)
+	// The bound is on the shape of the cost, not a benchmark: go1.27's
+	// faster encoding/json round trip left the ratio near 3x on its own.
+	assert.Less(t, graft, 4*roundTrip)
 	assert.True(t, strings.HasPrefix(string(out), `{"model":"gpt-5","input":"hi","tools":[{"type":"function","name":"t1",`))
 	var decoded map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(out, &decoded))

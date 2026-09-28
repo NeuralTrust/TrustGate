@@ -120,3 +120,38 @@ func TestCreateConsumerRequest_ToRegistryBindings_RejectsWeightAboveMax(t *testi
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }
+
+func TestIdentityRequest_ToDomain(t *testing.T) {
+	t.Parallel()
+	var none *IdentityRequest
+	if none.ToDomain() != nil {
+		t.Fatal("an omitted identity maps to nil so the consumer keeps its default")
+	}
+	// The old fields are still accepted so a client written against them is not
+	// refused, and they no longer decide anything: who a request runs as is read
+	// from the request.
+	got := (&IdentityRequest{ActsForUsers: true, Source: " Platform ", EndUserHeader: true}).ToDomain()
+	if got == nil || *got != (domain.Identity{}) {
+		t.Fatalf("ToDomain() = %+v, want an empty identity", got)
+	}
+}
+
+func TestAuthBindingRequest_ToDomain(t *testing.T) {
+	t.Parallel()
+	var none *AuthBindingRequest
+	if none.ToDomain() != nil {
+		t.Fatal("an omitted binding maps to nil so the consumer keeps its current one")
+	}
+	src := &AuthBindingRequest{AllowedClientIDs: []string{"app-a"}, AllowedCertificateSubjects: []string{"svc"}}
+	got := src.ToDomain()
+	if got == nil || len(got.AllowedClientIDs) != 1 || got.AllowedClientIDs[0] != "app-a" || got.AllowedCertificateSubjects[0] != "svc" {
+		t.Fatalf("ToDomain() = %+v", got)
+	}
+	src.AllowedClientIDs[0] = "changed"
+	if got.AllowedClientIDs[0] != "app-a" {
+		t.Fatal("ToDomain must copy the lists, not alias the request")
+	}
+	if empty := (&AuthBindingRequest{}).ToDomain(); empty == nil || !empty.IsZero() {
+		t.Fatalf("an empty binding clears the lists, got %+v", empty)
+	}
+}

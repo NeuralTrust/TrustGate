@@ -100,9 +100,13 @@ func anthropicContentBlockStopEvent(index int) [][]byte {
 }
 
 func anthropicMessageEndEvents(finishReason string, usage *CanonicalUsage) [][]byte {
+	delta := anthropicSSEMessageDeltaBody{StopReason: anthropicStopReason(finishReason)}
+	if delta.StopReason == anthropicStopRefusal {
+		delta.StopDetails = &anthropicStopDetails{Type: anthropicStopRefusal}
+	}
 	data, _ := json.Marshal(anthropicSSEMessageDelta{
 		Type:  "message_delta",
-		Delta: anthropicSSEMessageDeltaBody{StopReason: anthropicStopReason(finishReason)},
+		Delta: delta,
 		Usage: anthropicSSEUsageFrom(usage),
 	})
 	lines := SSEEvent("message_delta", data)
@@ -132,6 +136,13 @@ func AnthropicStopReasonUnmapped(finishReason string) bool {
 
 // anthropicStopReason maps a canonical finish reason to an Anthropic
 // stop_reason. Gemini block reasons reach the canonical model verbatim.
+//
+// The buffered and the streamed encode share it so a cut cannot be honest on
+// one path and a lie on the other. content_filter maps to refusal rather than
+// falling through to end_turn, which would make a guardrail cut
+// indistinguishable from a normal finish. It is also the only channel the cut
+// travels on: StreamBlockedEvent emits nothing for Anthropic, because its SDKs
+// raise on a trailing `event: error` instead of reading it.
 func anthropicStopReason(finishReason string) string {
 	switch finishReason {
 	case "length":
@@ -144,7 +155,7 @@ func anthropicStopReason(finishReason string) string {
 		return "model_context_window_exceeded"
 	default:
 		if refusalFinish(finishReason) {
-			return "refusal"
+			return anthropicStopRefusal
 		}
 		return "end_turn"
 	}

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/valuecopy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -88,6 +89,25 @@ type MCPAttrs struct {
 	UpstreamStatus int
 	RPCErrorCode   int
 	AccountRef     string
+	PolicyScope    *MCPPolicyScope
+}
+
+// MCPPolicyScope records how the scoped policies of a consumer applied to one
+// tools/call: how many were evaluated, the ids of those that entered the plan
+// and those left out with the dimension that rejected them. Unscoped policies
+// are never listed.
+type MCPPolicyScope struct {
+	Evaluated int
+	Matched   []string
+	Skipped   []MCPSkippedPolicy
+}
+
+// MCPSkippedPolicy names a scoped policy that did not run and why:
+// destination, principal or except.
+type MCPSkippedPolicy struct {
+	ID     string
+	Name   string
+	Reason string
 }
 
 type Span struct {
@@ -258,11 +278,20 @@ func (s *Span) HasDecision() bool {
 	return s.Plugin != nil && s.Plugin.Decision != ""
 }
 
+// SetExtras records a plugin's own metadata on the span, taking ownership of it.
+//
+// The copy is the point. What arrives here is the very struct or map the plugin
+// built, and the span outlives the request: the metrics worker marshals these
+// extras later, from events.SanitizeExtras. Keeping the plugin's map would mean
+// the encoder walking something the request path can still mutate, which under
+// Go 1.27 is a process-level panic rather than a garbled field — see the
+// valuecopy package and RUN-1261.
 func (s *Span) SetExtras(extras any) {
+	owned := valuecopy.Deep(extras)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensurePlugin()
-	s.Plugin.Extras = extras
+	s.Plugin.Extras = owned
 }
 
 func (s *Span) SetScore(score float64, label string) {
@@ -324,6 +353,23 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
+}
+
+// SetMCPPolicyScope stamps the scope decision of a tools/call next to the
+// upstream. The span takes its own copy of the slices, so the caller may reuse
+// them once this returns.
+func (s *Span) SetMCPPolicyScope(scope MCPPolicyScope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	stored := MCPPolicyScope{Evaluated: scope.Evaluated}
+	if len(scope.Matched) > 0 {
+		stored.Matched = append([]string(nil), scope.Matched...)
+	}
+	if len(scope.Skipped) > 0 {
+		stored.Skipped = append([]MCPSkippedPolicy(nil), scope.Skipped...)
+	}
+	s.MCP.PolicyScope = &stored
 }
 
 func (s *Span) SetMCPAccountRef(accountRef string) {

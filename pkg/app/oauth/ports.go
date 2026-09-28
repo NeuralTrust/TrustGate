@@ -38,6 +38,11 @@ type ProviderClient interface {
 	ClientCredentials(ctx context.Context, cfg *registrydomain.MCPAuth) (*ProviderToken, error)
 }
 
+// ErrUpstreamRegistrationRejected: the upstream authorization server refused
+// the dynamic client registration. It is the upstream's answer, not a gateway
+// fault, so callers report it as a bad gateway rather than a 500.
+var ErrUpstreamRegistrationRejected = errors.New("oauth dcr: registration rejected")
+
 var ErrUpstreamNotDiscoverable = errors.New(
 	"oauth dcr: upstream does not publish OAuth protected-resource metadata; configure registration: manual with a pre-registered OAuth app")
 
@@ -68,6 +73,9 @@ type RegisteredClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
+	// ClientName is the client_name the client was registered with. Empty on
+	// rows written before the name became configurable (the default name).
+	ClientName string `json:"client_name,omitempty"`
 }
 
 type ClientStore interface {

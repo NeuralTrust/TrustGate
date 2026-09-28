@@ -26,6 +26,7 @@ import (
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
@@ -38,9 +39,15 @@ import (
 type fakeAPIKeyFinder struct {
 	auth *authdomain.Auth
 	err  error
+	// expect, when set, is the exact key the lookup must receive — the store
+	// matches on a digest, so a stray space or newline is a different key.
+	expect string
 }
 
-func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, _ string) (*authdomain.Auth, error) {
+func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, rawKey string) (*authdomain.Auth, error) {
+	if f.expect != "" && rawKey != f.expect {
+		return nil, authdomain.ErrNotFound
+	}
 	return f.auth, f.err
 }
 
@@ -195,7 +202,7 @@ func TestChain_OpaqueBearer_GoesToIntrospection(t *testing.T) {
 
 func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
 	jwtVal := &fakeTokenValidator{err: errors.New("bad signature")}
 	resolver := middleware.NewChainIdentityResolver(
@@ -211,7 +218,7 @@ func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.
 }
 
 func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "partner-key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "partner-key", true, nil)
 	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
@@ -243,13 +250,37 @@ func (f fakePathResolver) Match(context.Context, string, string) ([]appconsumer.
 	return f.matches, f.err
 }
 
+// pathMatchWith is a match on a consumer whose users sign in — the shape the
+// built-in identity provider is allowed to serve. Production always carries a
+// consumer on the match (pathResolver.load), so the fixtures do too.
 func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
-	m := appconsumer.PathMatch{}
+	m := appconsumer.PathMatch{Consumer: signInConsumer()}
 	if len(auths) > 0 {
 		m.GatewayID = auths[0].GatewayID
+		m.Consumer.GatewayID = auths[0].GatewayID
 	}
 	m.Auths = auths
 	return m
+}
+
+// signInConsumer is the one consumer the built-in identity provider may still
+// rescue: the MCP Store, which is entered by people signing in and carries no
+// credential to attach one to. Every other consumer is entered by what is
+// attached to it, so a consumer with nothing attached is entered by nobody.
+func signInConsumer() *consumerdomain.Consumer {
+	return consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())
+}
+
+// machineConsumer authenticates as the application itself: the built-in
+// provider must never stand in for its missing credential.
+func machineConsumer() *consumerdomain.Consumer {
+	return &consumerdomain.Consumer{
+		ID:     ids.New[ids.ConsumerKind](),
+		Name:   "machine",
+		Slug:   "machine",
+		Type:   consumerdomain.TypeMCP,
+		Active: true,
+	}
 }
 
 func resolveChallengeEligibility(
@@ -279,9 +310,9 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 	enabledOAuth := oauth2Auth(t, "https://idp.example.com", true)
 	disabledOAuth := oauth2Auth(t, "https://disabled.example.com", true)
 	disabledOAuth.Enabled = false
-	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
-	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false)
+	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false, nil)
 	require.NoError(t, err)
 	lookupErr := errors.New("lookup failed")
 	tests := []struct {
@@ -407,7 +438,7 @@ func TestChain_PathFirst_NoConsumerMatchRejectsJWT(t *testing.T) {
 }
 
 func TestChain_PathFirst_APIKeyMustBeAttached(t *testing.T) {
-	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
+	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true, nil)
 	require.NoError(t, err)
 	otherConsumerAuth := oauth2Auth(t, "https://idp.example.com", true)
 	resolver := middleware.NewChainIdentityResolver(
@@ -537,7 +568,7 @@ func TestChain_SessionToken_ResolvesByAuthID(t *testing.T) {
 	require.Equal(t, a.ID, id.AuthID)
 	require.NotNil(t, id.Principal)
 	require.Equal(t, "user-123", id.Principal.Subject)
-	require.Equal(t, identity.MethodJWT, id.Principal.Method)
+	require.Equal(t, identity.MethodOAuth, id.Principal.Method)
 	require.Equal(t, sessionIssuer, id.Principal.Issuer)
 	require.Equal(t, 0, jwtVal.calls)
 }
@@ -654,4 +685,122 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 
 	_, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
+// Most MCP clients can only send a credential as Authorization: Bearer, and the
+// proxy plane has always accepted an api key that way. The MCP chain used to
+// hand it to the OAuth2 validators instead and answer 401.
+func TestChain_APIKeyPresentedAsBearerAuthenticates(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "prod", true, nil)
+	require.NoError(t, err)
+	raw := apiKey.RawKey
+	require.NotEmpty(t, raw, "the generated key is returned once, in plain")
+
+	for _, tt := range []struct {
+		name   string
+		header map[string]string
+	}{
+		{name: "X-AG-API-Key", header: map[string]string{"X-AG-API-Key": raw}},
+		{name: "x-api-key", header: map[string]string{"x-api-key": raw}},
+		{name: "bearer", header: map[string]string{"Authorization": "Bearer " + raw}},
+		{name: "untrimmed", header: map[string]string{"X-AG-API-Key": raw + "\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{auth: apiKey, expect: raw},
+				fakeCredentialFinder{},
+				fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeTokenValidator{err: errors.New("an api key must not reach the token validators")},
+				&fakeMTLSValidator{},
+				nil, nil, nil, false,
+			)
+
+			id, err := resolveChain(t, resolver, tt.header)
+			require.NoError(t, err)
+			require.Equal(t, apiKey.ID, id.AuthID)
+			require.NotNil(t, id.Principal)
+			require.Equal(t, "prod", id.Principal.Subject)
+		})
+	}
+}
+
+// A subject is what an upstream account hangs off, so two callers with the same
+// subject are the same account. Three of those namespaces are the gateway's own
+// — an application, an end user it names, the account an instance holds for
+// everyone — and everything else here is whatever an identity provider put in a
+// token. Which claim that is read from is configurable per credential, so it can
+// be one a person edits about themselves.
+//
+// A token wearing one of those prefixes would be that application, and would
+// read the upstream accounts it had linked. Nothing legitimate arrives here
+// wearing them: the gateway builds them after this point, from the consumer it
+// just resolved.
+func TestChain_RefusesATokenClaimingAGatewayMintedSubject(t *testing.T) {
+	stolen := map[string]string{
+		"an application":                "app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"an end user of one":            "app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e:alice",
+		"the account an instance holds": "instance:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"the same, shouted":             "APP:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+		"the same, with room in front":  "  app:0199f1f0-4a4e-7c62-9a5d-6f1a2b3c4d5e",
+	}
+	for name, subject := range stolen {
+		t.Run(name, func(t *testing.T) {
+			a := oauth2Auth(t, "https://idp.example.com", true)
+			jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: subject, Method: identity.MethodJWT}}
+			resolver := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal,
+				&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+			)
+
+			_, err := resolveChain(t, resolver, map[string]string{
+				"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+			})
+
+			require.ErrorIs(t, err, apiresolver.ErrUnauthenticated,
+				"a verified token may not claim a subject the gateway mints")
+		})
+	}
+}
+
+// The verification itself still stands: an ordinary subject passes, so the
+// guard refuses a namespace rather than tokens in general.
+func TestChain_AdmitsAnOrdinarySubject(t *testing.T) {
+	a := oauth2Auth(t, "https://idp.example.com", true)
+	jwtVal := &fakeTokenValidator{principal: &identity.Principal{
+		Subject: "application-of-mine@corp.com", Method: identity.MethodJWT,
+	}}
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal,
+		&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+
+	id, err := resolveChain(t, resolver, map[string]string{
+		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "application-of-mine@corp.com", id.Principal.Subject)
+}
+
+// The guard is about subjects that arrive from outside. An api key's subject is
+// the name an admin gave it — a row in this gateway's own database, and one the
+// MCP plane replaces with the application's subject anyway — so a key somebody
+// happened to call "app:something" keeps working rather than failing closed on
+// a name that risks nothing.
+func TestChain_APIKeyNamedLikeAReservedSubjectStillAuthenticates(t *testing.T) {
+	key := &authdomain.Auth{
+		ID: ids.New[ids.AuthKind](), GatewayID: ids.New[ids.GatewayKind](),
+		Name: "app:billing", Type: authdomain.TypeAPIKey, Enabled: true,
+	}
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{auth: key}, fakeCredentialFinder{}, nil, &fakeTokenValidator{},
+		&fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+
+	id, err := resolveChain(t, resolver, map[string]string{"X-AG-API-Key": "ag_secret"})
+
+	require.NoError(t, err)
+	require.Equal(t, "app:billing", id.Principal.Subject)
 }

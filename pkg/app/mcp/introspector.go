@@ -20,6 +20,7 @@ import (
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Introspector interface {
@@ -45,10 +46,22 @@ func (i *introspector) ListRegistryTools(ctx context.Context, gatewayID ids.Gate
 	if !reg.IsMCP() || reg.MCPTarget == nil {
 		return nil, fmt.Errorf("%w: registry %s is not an MCP registry", ErrNoMCPRegistries, registryID)
 	}
+	if notIntrospectable(reg) {
+		return nil, fmt.Errorf("%w: registry %s", ErrRegistryNotIntrospectable, registryID)
+	}
 	up, err := i.dialer.Connect(ctx, StaticTarget(reg))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, err)
 	}
 	defer up.Close(ctx)
-	return up.ListTools(ctx)
+	tools, err := up.ListTools(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, err)
+	}
+	return tools, nil
+}
+
+// notIntrospectable reports whether dialing this registry needs a principal.
+func notIntrospectable(reg *registrydomain.Registry) bool {
+	return perPrincipalAuth(reg) || reg.MCPTarget.HasURLVariables()
 }

@@ -19,6 +19,7 @@ import (
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -162,7 +163,7 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.OIDCVerifier,
+		verifier appauth.JWTVerifier,
 		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
@@ -238,7 +239,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
+	if err := c.Provide(func(cfg *config.Config) *resolver.MTLSIdentityResolver {
+		return resolver.NewMTLSIdentityResolver(mtls.NewValidator(), mtls.NewXFCCExtractor(), cfg.Server.TrustXFCCFrom)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
@@ -272,8 +275,17 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
+		verifier appauth.JWTVerifier,
+		cfg *config.Config,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
+		// The platform token minted by the built-in default IdP is verified
+		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
+		// claims are trusted, and the sessions it brokers are bounded by
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
+			appoauth.WithIdPTokenVerifier(verifier),
+			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+		)
 	}); err != nil {
 		return err
 	}
@@ -287,7 +299,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -296,7 +308,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 		return oauthhttp.NewTokenHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -310,7 +322,15 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
+	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(provideWhoAmIHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
+		return oauthhttp.NewConfigureHandler(configure)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
@@ -319,13 +339,42 @@ func API(c *container.Container) error {
 	return nil
 }
 
-func provideAPIKeyConnectHandler(
+// provideWhoAmIHandler serves the MCP plane's /whoami. It needs the proxy
+// plane's base domain because the LLM consumer it reports lives over there,
+// on a host this plane never sees in a request of its own.
+//
+// On a host that names no gateway — the fixed entry point a client can start
+// from with nothing but its key — the key says which gateway it belongs to,
+// and those lookups are counted per source like the connect pages'.
+func provideWhoAmIHandler(
 	finder appgateway.Finder,
 	cfg *config.Config,
-	connect appoauth.APIKeyConnectService,
+	consumers appconsumer.APIKeyConsumers,
+	apiKeys appauth.APIKeyFinder,
 	limiter appoauth.ConnectAttemptLimiter,
-) *oauthhttp.APIKeyConnectHandler {
-	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+) *mcphttp.WhoAmIHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(
+		finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...,
+	)
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(peer, forwardedFor, cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
+	}
+	opts := []mcphttp.WhoAmIOption{
+		mcphttp.WithWhoAmIGatewayFromKey(apiKeys, finder, cfg.Server.MCPBaseDomain, limiter, resolveSource),
+	}
+	if !cfg.Server.ServeHybridGateways {
+		opts = append(opts, mcphttp.WithWhoAmIRefuseHybrid())
+	}
+	return mcphttp.NewWhoAmIHandler(gateways, consumers, cfg.Server.GatewayBaseDomain, opts...)
+}
+
+func provideEndUserConnectionsHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connections appoauth.EndUserConnectionsService,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.EndUserConnectionsHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain, cfg.Server.MCPExtraBaseDomains...)
 	resolveSource := func(peer, forwardedFor string) string {
 		return ratelimit.ResolveConnectSource(
 			peer,
@@ -333,5 +382,5 @@ func provideAPIKeyConnectHandler(
 			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
 		)
 	}
-	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
+	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
 }

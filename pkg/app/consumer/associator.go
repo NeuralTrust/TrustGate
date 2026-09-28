@@ -21,13 +21,12 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -35,8 +34,6 @@ import (
 type Associator interface {
 	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
-	AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
-	DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
 	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
@@ -48,9 +45,9 @@ var _ Associator = (*associator)(nil)
 type associator struct {
 	repo         domain.Repository
 	registryRepo registrydomain.Repository
-	roleRepo     roledomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
+	policyLevels apppolicy.LevelGuard
 	memoryCache  *cache.TTLMap
 	policyCache  *cache.TTLMap
 	publisher    cache.EventPublisher
@@ -62,9 +59,9 @@ type associator struct {
 func NewAssociator(
 	repo domain.Repository,
 	registryRepo registrydomain.Repository,
-	roleRepo roledomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
+	policyLevels apppolicy.LevelGuard,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -74,9 +71,9 @@ func NewAssociator(
 	return &associator{
 		repo:         repo,
 		registryRepo: registryRepo,
-		roleRepo:     roleRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
+		policyLevels: policyLevels,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		policyCache:  manager.GetTTLMap(cache.PolicyTTLName),
 		publisher:    publisher,
@@ -91,12 +88,6 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if err != nil {
 		return err
 	}
-	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		return fmt.Errorf(
-			"%w: consumer %s routes by role, registries can only be attached in inline routing;"+
-				" send routing_mode and registries together in PUT /v1/gateways/{gateway_id}/consumers/{id}",
-			commonerrors.ErrConflict, consumerID)
-	}
 	reg, err := a.registryInGateway(ctx, gatewayID, registryID)
 	if err != nil {
 		return err
@@ -104,6 +95,9 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if string(reg.Type) != string(cons.Type) {
 		return fmt.Errorf("%w: registry of type %s cannot be attached to a consumer of type %s",
 			registrydomain.ErrInvalidRegistryID, reg.Type, cons.Type)
+	}
+	if err := validatePerUserURLBinding(cons, reg); err != nil {
+		return err
 	}
 	if err := a.repo.AttachRegistry(ctx, consumerID, registryID, weight); err != nil {
 		return err
@@ -121,39 +115,6 @@ func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	return nil
 }
 
-func (a *associator) AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
-	if err != nil {
-		return err
-	}
-	if cons.RoutingMode == domain.RoutingModeInline {
-		return fmt.Errorf(
-			"%w: consumer %s routes inline, roles can only be attached in role_based routing;"+
-				" send routing_mode in PUT /v1/gateways/{gateway_id}/consumers/{id} first",
-			commonerrors.ErrConflict, consumerID)
-	}
-	if err := a.roleInGateway(ctx, gatewayID, roleID); err != nil {
-		return err
-	}
-	if err := a.repo.AttachRole(ctx, consumerID, roleID); err != nil {
-		return err
-	}
-	a.invalidate(ctx, cons)
-	return nil
-}
-
-func (a *associator) DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
-	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
-	if err != nil {
-		return err
-	}
-	if err := a.repo.DetachRole(ctx, consumerID, roleID); err != nil {
-		return err
-	}
-	a.invalidate(ctx, cons)
-	return nil
-}
-
 func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error {
 	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
@@ -163,30 +124,13 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err != nil {
 		return err
 	}
-	if err := domain.ValidateAuthType(cons.Type, cons.RoutingMode, au.Type); err != nil {
+	if err := domain.ValidateAuthConfig(cons, au); err != nil {
 		return err
-	}
-	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		if err := validateRoleBasedAuthCount(cons, au.ID); err != nil {
-			return err
-		}
 	}
 	if err := a.repo.AttachAuth(ctx, consumerID, authID); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
-	return nil
-}
-
-func validateRoleBasedAuthCount(cons *domain.Consumer, authID ids.AuthID) error {
-	for _, existing := range cons.AuthIDs {
-		if existing != authID {
-			return fmt.Errorf(
-				"%w: a role_based consumer can have at most one auth",
-				commonerrors.ErrConflict,
-			)
-		}
-	}
 	return nil
 }
 
@@ -211,15 +155,35 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
+	if err := a.validatePolicyScope(cons, pol); err != nil {
+		return err
+	}
 	if err := a.validatePolicyProtocol(cons, pol); err != nil {
 		return err
 	}
-	if err := a.repo.AttachPolicy(ctx, consumerID, policyID); err != nil {
+	if err := a.policyLevels.Check(ctx, attachedTo(pol, consumerID), func(ctx context.Context) error {
+		return a.repo.AttachPolicy(ctx, consumerID, policyID)
+	}); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
 	a.policyCache.Delete(policyID.String())
 	return nil
+}
+
+// validatePolicyScope delegates to the domain rule, which every path that can
+// put a scope next to a consumer shares — see consumer.ScopeRefusal.
+func (a *associator) validatePolicyScope(cons *domain.Consumer, pol *policydomain.Policy) error {
+	return domain.ScopeRefusal(cons, pol, a.resolver.InertSafe(pol.Slug))
+}
+
+// attachedTo is the policy as the attach would store it: the levels the write
+// takes are the ones this consumer adds, not the ones the policy already holds
+// through the consumers it is attached to.
+func attachedTo(pol *policydomain.Policy, consumerID ids.ConsumerID) *policydomain.Policy {
+	attached := *pol
+	attached.ConsumerIDs = []ids.ConsumerID{consumerID}
+	return &attached
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {
@@ -283,17 +247,6 @@ func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.Gatewa
 	return reg, nil
 }
 
-func (a *associator) roleInGateway(ctx context.Context, gatewayID ids.GatewayID, roleID ids.RoleID) error {
-	role, err := a.roleRepo.FindByID(ctx, roleID)
-	if err != nil {
-		return err
-	}
-	if role.GatewayID != gatewayID {
-		return roledomain.ErrNotFound
-	}
-	return nil
-}
-
 func (a *associator) authInGateway(ctx context.Context, gatewayID ids.GatewayID, authID ids.AuthID) (*authdomain.Auth, error) {
 	au, err := a.authRepo.FindByID(ctx, authID)
 	if err != nil {
@@ -322,4 +275,22 @@ func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}
+}
+
+// validatePerUserURLBinding no longer refuses anything.
+//
+// It used to refuse binding a server whose URL carries required per-user
+// variables to a consumer that acts as itself: those values live on a caller's
+// own Store installation, an application that acts as itself has none, and
+// every call would die at dial time with a missing-placeholder error nobody
+// could act on. The refusal could be made at admin time because the consumer
+// declared, in advance, whether it had users.
+//
+// It does not any more: the same application serves a person on one request and
+// nobody on the next, so whether the values exist is a property of the caller.
+// The dial-time error is the one that can still tell the truth, and it names
+// the variables that are missing.
+func validatePerUserURLBinding(cons *domain.Consumer, reg *registrydomain.Registry) error {
+	_, _ = cons, reg
+	return nil
 }

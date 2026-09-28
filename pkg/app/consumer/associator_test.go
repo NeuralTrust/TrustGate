@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
@@ -31,7 +32,6 @@ import (
 	policymocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	backendmocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
@@ -45,19 +45,49 @@ func newAssociator(
 	publisher *cachemocks.EventPublisher,
 	resolver ...*fakeProtocolResolver,
 ) appconsumer.Associator {
+	return newAssociatorWithGuard(repo, registryRepo, authRepo, policyRepo, publisher, &stubLevelGuard{}, resolver...)
+}
+
+// newAssociatorWithGuard is newAssociator with a level guard the test drives,
+// which is how the attach path is observed without a database.
+func newAssociatorWithGuard(
+	repo *repomocks.Repository,
+	registryRepo *backendmocks.Repository,
+	authRepo *authmocks.Repository,
+	policyRepo *policymocks.Repository,
+	publisher *cachemocks.EventPublisher,
+	levels apppolicy.LevelGuard,
+	resolver ...*fakeProtocolResolver,
+) appconsumer.Associator {
 	res := &fakeProtocolResolver{}
 	if len(resolver) > 0 {
 		res = resolver[0]
 	}
 	return appconsumer.NewAssociator(
-		repo, registryRepo, &roleRepositoryStub{}, authRepo, policyRepo,
+		repo, registryRepo, authRepo, policyRepo, levels,
 		newCacheManager(), publisher, newTestLogger(), nil, res,
 	)
+}
+
+// stubLevelGuard answers with err, and lets the write through when there is
+// none, recording the policy it was asked about.
+type stubLevelGuard struct {
+	err     error
+	checked *policydomain.Policy
+}
+
+func (g *stubLevelGuard) Check(ctx context.Context, p *policydomain.Policy, write func(context.Context) error) error {
+	g.checked = p
+	if g.err != nil {
+		return g.err
+	}
+	return write(ctx)
 }
 
 type fakeProtocolResolver struct {
 	protocols     map[string][]string
 	settingsError error
+	inertSafe     map[string]bool
 }
 
 func (f *fakeProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
@@ -69,46 +99,8 @@ func (f *fakeProtocolResolver) ValidateSettingsForProtocol(string, string, map[s
 	return f.settingsError
 }
 
-type roleRepositoryStub struct {
-	role *roledomain.Role
-	err  error
-}
-
-func (s *roleRepositoryStub) Save(context.Context, *roledomain.Role) error            { return nil }
-func (s *roleRepositoryStub) Update(context.Context, *roledomain.Role) error          { return nil }
-func (s *roleRepositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error { return nil }
-func (s *roleRepositoryStub) FindByID(context.Context, ids.RoleID) (*roledomain.Role, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.role == nil {
-		return nil, roledomain.ErrNotFound
-	}
-	return s.role, nil
-}
-func (s *roleRepositoryStub) FindByIDs(context.Context, ids.GatewayID, []ids.RoleID) ([]*roledomain.Role, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.role == nil {
-		return nil, nil
-	}
-	return []*roledomain.Role{s.role}, nil
-}
-func (s *roleRepositoryStub) List(context.Context, roledomain.ListFilter) ([]*roledomain.Role, int, error) {
-	return nil, 0, nil
-}
-func (s *roleRepositoryStub) ListByGateway(context.Context, ids.GatewayID) ([]*roledomain.Role, error) {
-	return nil, nil
-}
-func (s *roleRepositoryStub) AttachRegistry(context.Context, ids.RoleID, ids.RegistryID) error {
-	return nil
-}
-func (s *roleRepositoryStub) DetachRegistry(context.Context, ids.RoleID, ids.RegistryID) error {
-	return nil
-}
-func (s *roleRepositoryStub) DetachRegistryIfUnreferenced(context.Context, ids.GatewayID, ids.RoleID, ids.RegistryID) (*roledomain.Role, error) {
-	return s.role, s.err
+func (f *fakeProtocolResolver) InertSafe(slug string) bool {
+	return f.inertSafe[slug]
 }
 
 func TestAssociator_AttachRegistry_Success(t *testing.T) {
@@ -139,6 +131,87 @@ func TestAssociator_AttachRegistry_Success(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+// A server whose address is completed from per-user values has nowhere to read
+// them for an application that acts as itself: it never installs from the Store,
+// so it holds no config and no vault entries, and there is no admin-level place
+// to supply them. The binding used to be accepted and every call then died at
+// dial time on a missing placeholder.
+// Binding a server whose URL is completed per user is no longer refused here.
+//
+// It used to be, on a consumer that declared it had no users: the values live
+// on a caller's own Store installation and the call would die at dial time with
+// a placeholder nobody could fill. Nothing declares that any more — the same
+// application serves a person on one request and nobody on the next — so the
+// only place that can still tell the truth is the dial, per caller.
+func TestAssociator_AttachRegistry_AllowsPerUserURL(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	perUser := &registrydomain.Registry{
+		ID: registryID, GatewayID: gwID, Type: registrydomain.TypeMCP,
+		MCPTarget: &registrydomain.MCPTarget{
+			URL: "https://{account_url}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+			},
+		},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, mock.Anything).Return(nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByID(mock.Anything, registryID).Return(perUser, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
+	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1)); err != nil {
+		t.Fatalf("AttachRegistry: %v", err)
+	}
+}
+
+// The same server on a consumer that acts for users is fine: each caller brings
+// their own values.
+func TestAssociator_AttachRegistry_AllowsPerUserURLWhenActingForUsers(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	perUser := &registrydomain.Registry{
+		ID: registryID, GatewayID: gwID, Type: registrydomain.TypeMCP,
+		MCPTarget: &registrydomain.MCPTarget{
+			URL: "https://{account_url}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+			},
+		},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).Return(&domain.Consumer{
+		ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP,
+		Identity: domain.Identity{},
+	}, nil).Once()
+	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, intPtr(1)).Return(nil).Once()
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().FindByID(mock.Anything, registryID).Return(perUser, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).Once()
+
+	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
+	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1)); err != nil {
+		t.Fatalf("AttachRegistry error: %v", err)
+	}
+}
 
 func TestAssociator_AttachRegistry_RejectsForeignConsumer(t *testing.T) {
 	t.Parallel()
@@ -182,25 +255,6 @@ func TestAssociator_AttachRegistry_RejectsForeignRegistry(t *testing.T) {
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func TestAssociator_AttachRegistry_RejectsRoleBasedConsumer(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	registryID := ids.New[ids.RegistryKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
-	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
 func TestAssociator_DetachRegistry_RejectsDependentReferences(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
@@ -216,25 +270,6 @@ func TestAssociator_DetachRegistry_RejectsDependentReferences(t *testing.T) {
 	publisher := cachemocks.NewEventPublisher(t)
 	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
 	err := a.DetachRegistry(context.Background(), gwID, consumerID, registryID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
-func TestAssociator_AttachRole_RejectsInlineConsumer(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	roleID := ids.New[ids.RoleKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeInline}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
-	err := a.AttachRole(context.Background(), gwID, consumerID, roleID)
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
@@ -444,86 +479,10 @@ func TestAssociator_AttachAuth_Success(t *testing.T) {
 	}
 }
 
-func TestAssociator_AttachAuth_RoleBasedAcceptsIdP(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	authID := ids.New[ids.AuthKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
-	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
-
-	authRepo := authmocks.NewRepository(t)
-	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	publisher.EXPECT().
-		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
-		Return(nil).
-		Once()
-
-	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
-		t.Fatalf("AttachAuth error: %v", err)
-	}
-}
-
-func TestAssociator_AttachAuth_RoleBasedRejectsNonIdP(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	authID := ids.New[ids.AuthKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
-
-	authRepo := authmocks.NewRepository(t)
-	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeAPIKey}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
-func TestAssociator_AttachAuth_RoleBasedRejectsSecondAuth(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	existingAuthID := ids.New[ids.AuthKind]()
-	authID := ids.New[ids.AuthKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{
-			ID:          consumerID,
-			GatewayID:   gwID,
-			RoutingMode: domain.RoutingModeRoleBased,
-			AuthIDs:     []ids.AuthID{existingAuthID},
-		}, nil).Once()
-
-	authRepo := authmocks.NewRepository(t)
-	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
-func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
+// Attaching a provider stored under the deprecated alias to an MCP consumer is
+// accepted: the alias is oauth2. Capability gates what the gateway advertises
+// as an authorization server, not whether a credential may be attached.
+func TestAssociator_AttachAuth_MCPAcceptsAliasedIdP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	consumerID := ids.New[ids.ConsumerKind]()
@@ -537,13 +496,13 @@ func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
 		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {
@@ -560,38 +519,6 @@ func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
 		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	publisher.EXPECT().
-		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
-		Return(nil).
-		Once()
-
-	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
-		t.Fatalf("AttachAuth error: %v", err)
-	}
-}
-
-func TestAssociator_AttachAuth_RoleBasedReattachIsIdempotent(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	consumerID := ids.New[ids.ConsumerKind]()
-	authID := ids.New[ids.AuthKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{
-			ID:          consumerID,
-			GatewayID:   gwID,
-			RoutingMode: domain.RoutingModeRoleBased,
-			AuthIDs:     []ids.AuthID{authID},
-		}, nil).Once()
-	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
-
-	authRepo := authmocks.NewRepository(t)
-	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -625,5 +552,189 @@ func TestAssociator_DetachPolicy_Success(t *testing.T) {
 	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t), publisher)
 	if err := a.DetachPolicy(context.Background(), gwID, consumerID, policyID); err != nil {
 		t.Fatalf("DetachPolicy error: %v", err)
+	}
+}
+
+// The guard is about the scope's dimension and the plugin behind the policy,
+// not about the consumer's type: outside MCP a registry or a tool has no
+// meaning, and a plugin that resolves tool names would read an inert group as
+// "everyone". A group-only scope over a plugin that does not read names is the
+// one combination that crosses (RUN-1621, rules 2 and 7).
+func TestAssociator_AttachPolicy_ScopeMustCrossIntoTheConsumerPlane(t *testing.T) {
+	t.Parallel()
+	inertSafeSlug := "inert_safe_guard"
+	nameGatingSlug := "trustguard"
+	tests := []struct {
+		name         string
+		consumerType domain.Type
+		slug         string
+		scope        *policydomain.MCPScope
+		wantAttach   bool
+		wantReason   string
+	}{
+		{
+			name:         "reject registry scope on llm consumer even when the plugin is inert-safe",
+			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
+			scope:        &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}},
+			wantReason:   "names a registry or a tool",
+		},
+		{
+			name:         "reject tool scope on a2a consumer",
+			consumerType: domain.TypeA2A,
+			slug:         inertSafeSlug,
+			scope: &policydomain.MCPScope{Tools: []policydomain.MCPToolRef{
+				{RegistryID: ids.New[ids.RegistryKind](), Tool: "run_query"},
+			}},
+			wantReason: "names a registry or a tool",
+		},
+		{
+			name:         "reject pruned scope on llm consumer",
+			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
+			scope:        &policydomain.MCPScope{},
+			wantReason:   "empty and names nothing",
+		},
+		{
+			name:         "reject group-only scope when the plugin gates by name",
+			consumerType: domain.TypeLLM,
+			slug:         nameGatingSlug,
+			scope:        &policydomain.MCPScope{ExceptGroups: []string{"Finanzas"}},
+			wantReason:   "has not opted into running where the scope is inert",
+		},
+		{
+			name:         "allow group-only scope when the plugin is inert-safe",
+			consumerType: domain.TypeLLM,
+			slug:         inertSafeSlug,
+			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+			wantAttach:   true,
+		},
+		{
+			name:         "allow a name-gating plugin with any scope on an mcp consumer",
+			consumerType: domain.TypeMCP,
+			slug:         nameGatingSlug,
+			scope:        &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+			wantAttach:   true,
+		},
+		{
+			name:         "allow unscoped policy on llm consumer",
+			consumerType: domain.TypeLLM,
+			slug:         nameGatingSlug,
+			wantAttach:   true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			consumerID := ids.New[ids.ConsumerKind]()
+			policyID := ids.New[ids.PolicyKind]()
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, consumerID).
+				Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Once()
+			policyRepo := policymocks.NewRepository(t)
+			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, MCPScope: tt.scope}, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tt.wantAttach {
+				repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+				publisher.EXPECT().
+					Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+					Return(nil).
+					Once()
+			}
+			resolver := &fakeProtocolResolver{
+				protocols: map[string][]string{
+					nameGatingSlug: {"LLM", "MCP"},
+					inertSafeSlug:  {"LLM", "MCP"},
+				},
+				inertSafe: map[string]bool{inertSafeSlug: true},
+			}
+			a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, publisher, resolver)
+
+			err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+			if tt.wantAttach {
+				if err != nil {
+					t.Fatalf("AttachPolicy error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, domain.ErrPolicyScopeDoesNotCross) {
+				t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross", err)
+			}
+			if !errors.Is(err, domain.ErrPolicyProtocolMismatch) || !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want it to read as a protocol mismatch and a validation error", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantReason) {
+				t.Fatalf("err = %v, want it to give the reason %q", err, tt.wantReason)
+			}
+			if !strings.Contains(err.Error(), string(tt.consumerType)) {
+				t.Fatalf("err = %v, want it to name the consumer type", err)
+			}
+			repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// Attaching a consumer takes the levels that consumer adds, so it goes through
+// the level guard and the junction row is never written when it is refused.
+func TestAssociator_AttachPolicy_RefusesAnOccupiedLevel(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "cors", Enabled: true}, nil).Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo,
+		cachemocks.NewEventPublisher(t), levels)
+
+	err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+	if !errors.Is(err, policydomain.ErrPolicyLevelConflict) {
+		t.Fatalf("err = %v, want ErrPolicyLevelConflict", err)
+	}
+	repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+	if len(levels.checked.ConsumerIDs) != 1 || levels.checked.ConsumerIDs[0] != consumerID {
+		t.Fatalf("guard saw consumers %v, want only %s", levels.checked.ConsumerIDs, consumerID)
+	}
+}
+
+// Detaching a consumer only releases levels, so it never asks the guard.
+func TestAssociator_DetachPolicy_IsNotGuarded(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
+	repo.EXPECT().DetachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	levels := &stubLevelGuard{err: policydomain.ErrPolicyLevelConflict}
+	a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t),
+		policymocks.NewRepository(t), publisher, levels)
+
+	if err := a.DetachPolicy(context.Background(), gwID, consumerID, policyID); err != nil {
+		t.Fatalf("DetachPolicy error: %v", err)
+	}
+	if levels.checked != nil {
+		t.Fatal("detach must not consult the level guard")
 	}
 }

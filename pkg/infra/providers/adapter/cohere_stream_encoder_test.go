@@ -547,7 +547,7 @@ func TestCohereStreamEncoder_FailureCarriesError(t *testing.T) {
 	}{
 		{finish: "error", want: "upstream reported an error while generating the message"},
 		{finish: "MALFORMED_FUNCTION_CALL", want: "upstream generated a malformed tool call"},
-		{finish: "content_filter", want: "content filtered"},
+		{finish: "content_filter", want: defaultStreamBlockedMessage},
 		{finish: "stop"},
 	}
 	for _, tt := range tests {

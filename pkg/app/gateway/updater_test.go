@@ -512,3 +512,156 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
+
+// Opening the Store is now the decision someone has to make, so it is the one
+// that gets written down.
+func TestUpdater_Update_StoreModeOpenIsStamped(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.StoreMode() == domain.StoreModeOpen &&
+				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeOpen
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:        id,
+		StoreMode: ptr(domain.StoreModeOpen),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.StoreMode() != domain.StoreModeOpen {
+		t.Fatalf("StoreMode = %q, want open", got.StoreMode())
+	}
+}
+
+func TestUpdater_Update_StoreModeNonePersists(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.StoreMode() == domain.StoreModeNone &&
+				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeNone
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:        id,
+		StoreMode: ptr(domain.StoreModeNone),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.StoreMode() != domain.StoreModeNone {
+		t.Fatalf("StoreMode = %q, want none", got.StoreMode())
+	}
+}
+
+// curated is the default, so it is the one mode the metadata does not carry:
+// setting it clears the key, and a gateway with nothing stamped reads curated.
+func TestUpdater_Update_StoreModeCuratedClearsTheStamp(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = domain.WithStoreMode(nil, domain.StoreModeOpen)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			_, present := g.Metadata[domain.MetadataStoreModeKey]
+			return g.StoreMode() == domain.StoreModeCurated && !present
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:        id,
+		StoreMode: ptr(domain.StoreModeCurated),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.StoreMode() != domain.StoreModeCurated {
+		t.Fatalf("StoreMode = %q, want curated", got.StoreMode())
+	}
+}
+
+func TestUpdater_Update_StoreModePreservedWhenOmitted(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = domain.WithStoreMode(map[string]string{"env": "prod"}, domain.StoreModeCurated)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.StoreMode() == domain.StoreModeCurated && g.Metadata["env"] == "prod"
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:     id,
+		Status: ptr("paused"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.StoreMode() != domain.StoreModeCurated {
+		t.Fatalf("StoreMode = %q, want curated preserved", got.StoreMode())
+	}
+}

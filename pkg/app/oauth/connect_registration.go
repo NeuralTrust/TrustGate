@@ -20,27 +20,28 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
+func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gatewayID ids.GatewayID, principalSub string, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
 	cfg := forwardedAuth(reg)
 	if cfg == nil {
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
-		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
 		return manualAuth(effective, meta), nil
 	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +49,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -56,18 +57,23 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if cfg == nil {
 		return nil, ErrProviderNotFound
 	}
+	// A refresh runs on the dial path, as the principal the call is for.
+	principalSub := ""
+	if p := identity.PrincipalFromContext(ctx); p != nil {
+		principalSub = p.Subject
+	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		effective := withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
+		effective := withIdentityScopes(applyCatalog(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog))
 		if effective.AuthorizeURL != "" && effective.TokenURL != "" {
 			return effective, nil
 		}
-		meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+		meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 		if err != nil {
 			return nil, err
 		}
 		return manualAuth(effective, meta), nil
 	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+	meta, err := s.discover(ctx, gatewayID, principalSub, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +84,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return withIdentityScopes(autoAuth(applyCatalogScopes(cfg, reg, s.catalog), meta, client)), nil
+	return withIdentityScopes(autoAuth(applyCatalog(cfg, reg, s.catalog), meta, client)), nil
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {
@@ -105,12 +111,13 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	return &out
 }
 
-// applyCatalogScopes lets the curated catalog correct the scopes persisted on a
-// registry. Both registration paths need it: scopes are copied onto the registry
-// when it is created, so a registry created against an older catalog keeps
-// asking for scopes the upstream may since have dropped, and nothing else ever
-// rewrites them.
-func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
+// applyCatalog lets the curated catalog correct the scopes and resource
+// indicator persisted on a registry. Both registration paths need it: these are
+// copied onto the registry when it is created, so a registry created against an
+// older catalog keeps asking for scopes the upstream may since have dropped, or
+// naming a resource its authorization server rejects with invalid_target (Axiom
+// only accepts its root resource), and nothing else ever rewrites them.
+func applyCatalog(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
 	if cfg == nil || cat == nil {
 		return cfg
 	}
@@ -122,11 +129,20 @@ func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registr
 		code = strings.TrimSpace(cfg.Provider)
 	}
 	entry, ok := cat.GetByCode(code)
-	if !ok || entry.OAuth == nil || len(entry.OAuth.Scopes) == 0 {
+	if !ok || entry.OAuth == nil {
+		return cfg
+	}
+	resource := strings.TrimSpace(entry.OAuth.Resource)
+	if len(entry.OAuth.Scopes) == 0 && resource == "" {
 		return cfg
 	}
 	out := *cfg
-	out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	if len(entry.OAuth.Scopes) > 0 {
+		out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
+	}
+	if resource != "" {
+		out.Resource = resource
+	}
 	return &out
 }
 
@@ -158,6 +174,47 @@ func manualAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer) *registry
 	return &out
 }
 
+// clientKey caches a dynamically registered OAuth client under the same key the
+// credential it mints is stored under (registrydomain.ForwardedVaultProvider),
+// never under the registry id.
+//
+// A refresh token can only be redeemed by the client it was issued to. Keyed by
+// registry, two instances of one catalog code — the same provider, so one shared
+// credential — each registered their own client, and whichever instance a call
+// arrived through refreshed the other's token with the wrong client_id: the
+// upstream answered invalid_grant and the user was told their session had
+// expired while the connect page still said connected.
 func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
-	return gatewayID.String() + "|" + reg.ID.String()
+	return gatewayID.String() + "|" + registrydomain.ForwardedVaultProvider(reg)
+}
+
+// CredentialUsable reports whether a credential stored for this registry can
+// still be redeemed — everything the refresh needs beyond the credential
+// itself.
+//
+// For a dynamically registered client that means the registration: the refresh
+// token was issued to it and cannot be redeemed without it, and it lives in the
+// shared cache while the credential lives in the vault, so the credential
+// outlives it whenever that cache is lost. Until this was checked, the Portal
+// and the connect page read the vault alone and called such an account
+// connected while every tool call was refused with "user consent required".
+//
+// A registry whose client is configured (not registered on the fly) has nothing
+// that can go missing here, and neither has one that forwards no credential.
+// A lookup that fails answers "usable": a cache blip must not tell every user
+// to reconnect.
+func (s *connectService) CredentialUsable(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	reg *registrydomain.Registry,
+) (bool, error) {
+	cfg := forwardedAuth(reg)
+	if cfg == nil || cfg.Registration != registrydomain.RegistrationAuto || s.registrar == nil {
+		return true, nil
+	}
+	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
+	if err != nil {
+		return true, err
+	}
+	return client != nil, nil
 }

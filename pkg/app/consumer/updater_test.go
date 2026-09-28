@@ -21,7 +21,6 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -44,7 +43,6 @@ func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer 
 		Name:        "old",
 		Type:        domain.TypeLLM,
 		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeInline,
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{beID},
 		CreatedAt:   now,
@@ -64,7 +62,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
 			return c.ID == existing.ID && c.Name == "new" && c.Type == domain.TypeMCP &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
-		}), mock.Anything).
+		}), mock.Anything, mock.Anything).
 		Return(nil).
 		Once()
 
@@ -100,9 +98,9 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
 			return c.Name == "renamed" && c.Slug == "X84Yhsy8" &&
-				c.RoutingMode == domain.RoutingModeInline && c.Type == domain.TypeLLM &&
+				c.Type == domain.TypeLLM &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
-		}), (*domain.RegistryBindings)(nil)).
+		}), (*domain.RegistryBindings)(nil), (*[]ids.AuthID)(nil)).
 		Return(nil).
 		Once()
 
@@ -121,7 +119,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Slug != "X84Yhsy8" || got.RoutingMode != domain.RoutingModeInline {
+	if got.Slug != "X84Yhsy8" {
 		t.Fatalf("fields not preserved: %+v", got)
 	}
 	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
@@ -181,7 +179,7 @@ func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
@@ -258,7 +256,7 @@ func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
 			return c.Fallback != nil && !c.Fallback.Enabled && len(c.Fallback.Chain) == 0 &&
 				c.LBConfig != nil && !c.LBConfig.Enabled && len(c.LBConfig.Members) == 0
-		}), mock.Anything).
+		}), mock.Anything, mock.Anything).
 		Return(nil).
 		Once()
 
@@ -280,89 +278,12 @@ func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_SwitchToRoleBasedCleansInlineConfig(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	existing := existingConsumer(gwID, beID)
-	existing.Fallback = &domain.Fallback{Enabled: true, Chain: []ids.RegistryID{beID}, Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx}}
-	existing.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
-	existing.LBConfig = &domain.LBConfig{Enabled: true, Members: []domain.LBPoolMember{{RegistryID: beID, Models: []string{"gpt-4o"}}}}
-	mode := domain.RoutingModeRoleBased
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().
-		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.RoutingMode == domain.RoutingModeRoleBased &&
-				len(c.RegistryIDs) == 0 &&
-				c.Fallback == nil &&
-				c.LBConfig == nil &&
-				len(c.ModelPolicies) == 0
-		}), mock.Anything).
-		Return(nil).
-		Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	publisher.EXPECT().
-		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
-		Return(nil).
-		Once()
-
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
-	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:          existing.ID,
-		GatewayID:   gwID,
-		RoutingMode: &mode,
-	}); err != nil {
-		t.Fatalf("Update error: %v", err)
-	}
-}
-
-func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	now := time.Now().UTC()
-	existing := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "old",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeRoleBased,
-		Active:      true,
-		RoleIDs:     []ids.RoleID{ids.New[ids.RoleKind]()},
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	})
-	mode := domain.RoutingModeInline
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().
-		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.RoutingMode == domain.RoutingModeInline && len(c.RoleIDs) == 0
-		}), mock.Anything).
-		Return(nil).
-		Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	publisher.EXPECT().
-		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
-		Return(nil).
-		Once()
-
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
-	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:          existing.ID,
-		GatewayID:   gwID,
-		RoutingMode: &mode,
-	}); err != nil {
-		t.Fatalf("Update error: %v", err)
-	}
-}
-
-func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
+// Switching a consumer to MCP while it carries a provider stored under the
+// deprecated alias is accepted: the alias is oauth2, which is the type MCP
+// takes. Whether that provider can broker an interactive login is a capability
+// question the protected-resource metadata answers; it is not a reason to
+// refuse a credential a client may already hold a token for.
+func TestUpdater_Update_AllowsAliasedIdPAuthOnSwitchToMCP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
@@ -377,46 +298,17 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
 
+	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
 		Type:      ptr(domain.TypeMCP),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
-func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	authID := ids.New[ids.AuthKind]()
-	existing := existingConsumer(gwID, beID)
-	existing.AuthIDs = []ids.AuthID{authID}
-	mode := domain.RoutingModeRoleBased
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-	authRepo := authmocks.NewRepository(t)
-	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
-		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeAPIKey}}, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:          existing.ID,
-		GatewayID:   gwID,
-		RoutingMode: &mode,
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (role_based requires an identity-provider auth)", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
@@ -429,7 +321,7 @@ func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
@@ -451,64 +343,21 @@ func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_RejectsMultipleAuthsOnSwitchToRoleBased(t *testing.T) {
+func TestUpdater_Update_ReplacesRegistriesWithWeights(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
-	existing := existingConsumer(gwID, beID)
-	existing.AuthIDs = []ids.AuthID{ids.New[ids.AuthKind](), ids.New[ids.AuthKind]()}
-	mode := domain.RoutingModeRoleBased
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:          existing.ID,
-		GatewayID:   gwID,
-		RoutingMode: &mode,
-	})
-	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
-		t.Fatalf("err = %v, want ErrInvalidRoutingMode (role_based allows at most one auth)", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
-}
-
-func roleBasedConsumer(gwID ids.GatewayID) *domain.Consumer {
-	now := time.Now().UTC()
-	return domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "old",
-		Type:        domain.TypeLLM,
-		Slug:        "X84Yhsy8",
-		RoutingMode: domain.RoutingModeRoleBased,
-		Active:      true,
-		RoleIDs:     []ids.RoleID{ids.New[ids.RoleKind]()},
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	})
-}
-
-func TestUpdater_Update_SwitchToInlineAttachesRegistries(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	existing := roleBasedConsumer(gwID)
-	mode := domain.RoutingModeInline
+	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.RoutingMode == domain.RoutingModeInline &&
-				len(c.RoleIDs) == 0 &&
-				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID &&
+			return len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID &&
 				c.WeightFor(beID) == 30
 		}), mock.MatchedBy(func(b *domain.RegistryBindings) bool {
 			return b != nil && len(b.IDs) == 1 && b.IDs[0] == beID && b.Weights[beID] == 30
-		})).
+		}), (*[]ids.AuthID)(nil)).
 		Return(nil).
 		Once()
 
@@ -526,9 +375,8 @@ func TestUpdater_Update_SwitchToInlineAttachesRegistries(t *testing.T) {
 
 	updater := appconsumer.NewUpdater(repo, registryRepo, authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:          existing.ID,
-		GatewayID:   gwID,
-		RoutingMode: &mode,
+		ID:        existing.ID,
+		GatewayID: gwID,
 		Registries: &domain.RegistryBindings{
 			IDs:     []ids.RegistryID{beID},
 			Weights: map[ids.RegistryID]int{beID: 30},
@@ -556,7 +404,7 @@ func TestUpdater_Update_EmptyRegistriesDetachesAll(t *testing.T) {
 			return len(c.RegistryIDs) == 0
 		}), mock.MatchedBy(func(b *domain.RegistryBindings) bool {
 			return b != nil && len(b.IDs) == 0
-		})).
+		}), (*[]ids.AuthID)(nil)).
 		Return(nil).
 		Once()
 
@@ -574,28 +422,6 @@ func TestUpdater_Update_EmptyRegistriesDetachesAll(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-}
-
-func TestUpdater_Update_RejectsRegistriesInRoleBasedMode(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	existing := roleBasedConsumer(gwID)
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-	publisher := cachemocks.NewEventPublisher(t)
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:         existing.ID,
-		GatewayID:  gwID,
-		Registries: &domain.RegistryBindings{IDs: []ids.RegistryID{beID}},
-	})
-	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
-		t.Fatalf("err = %v, want ErrInvalidRoutingMode (registries need inline routing)", err)
-	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsRegistriesOutsideGateway(t *testing.T) {
@@ -648,4 +474,73 @@ func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
+
+func mcpConsumerWithAuths(gwID ids.GatewayID, beID ids.RegistryID, identity domain.Identity, authIDs []ids.AuthID) *domain.Consumer {
+	now := time.Now().UTC()
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "mcp",
+		Type:        domain.TypeMCP,
+		Slug:        "X84Yhsy8",
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		AuthIDs:     authIDs,
+		Identity:    identity,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+}
+
+// Replacing a consumer's auths still checks that every id it references exists
+// in its gateway. What is gone is the rule about which auth *types* an identity
+// allowed: a consumer no longer declares who calls it, so there is no pairing
+// left to break — an application may hold an api key and an identity provider
+// at once, and which of them a caller used is decided per request.
+func TestUpdater_Update_ReplacingAuthsChecksTheyExist(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	apiKeyID := ids.New[ids.AuthKind]()
+	missingID := ids.New[ids.AuthKind]()
+	apiKey := &authdomain.Auth{ID: apiKeyID, GatewayID: gwID, Type: authdomain.TypeAPIKey, Enabled: true}
+
+	t.Run("an auth of this gateway is accepted", func(t *testing.T) {
+		t.Parallel()
+		existing := mcpConsumerWithAuths(gwID, beID, domain.Identity{}, []ids.AuthID{apiKeyID})
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		authRepo := authmocks.NewRepository(t)
+		authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{apiKeyID}).
+			Return([]*authdomain.Auth{apiKey}, nil).Once()
+		publisher := cachemocks.NewEventPublisher(t)
+		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		u := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
+		auths := []ids.AuthID{apiKeyID}
+		if _, err := u.Update(context.Background(), appconsumer.UpdateInput{
+			ID: existing.ID, GatewayID: gwID, Auths: &auths,
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	})
+
+	t.Run("an auth that is not in this gateway is refused", func(t *testing.T) {
+		t.Parallel()
+		existing := mcpConsumerWithAuths(gwID, beID, domain.Identity{}, []ids.AuthID{apiKeyID})
+		repo := repomocks.NewRepository(t)
+		repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+		authRepo := authmocks.NewRepository(t)
+		authRepo.EXPECT().FindByIDs(mock.Anything, gwID, []ids.AuthID{missingID}).Return(nil, nil).Once()
+
+		u := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+		auths := []ids.AuthID{missingID}
+		if _, err := u.Update(context.Background(), appconsumer.UpdateInput{
+			ID: existing.ID, GatewayID: gwID, Auths: &auths,
+		}); err == nil {
+			t.Fatal("Update() = nil, want a refusal naming the missing auth")
+		}
+	})
 }

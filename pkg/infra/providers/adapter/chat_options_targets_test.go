@@ -115,6 +115,7 @@ func TestAdaptRequest_OpenAIChatOptionsStayWithinWhatEachTargetAccepts(t *testin
 		{name: "azure", source: FormatOpenAI, target: FormatAzure, provider: provider.Azure, passthrough: true},
 		{name: "xai", source: FormatOpenAI, target: FormatXAI, provider: provider.XAI, passthrough: true},
 		{name: "cerebras", source: FormatOpenAI, target: FormatOpenAI, provider: provider.Cerebras, passthrough: true},
+		{name: "moonshot", source: FormatOpenAI, target: FormatOpenAI, provider: provider.Moonshot, passthrough: true},
 		{name: "openai_compatible", source: FormatOpenAI, target: FormatOpenAI, provider: provider.OpenAICompatible, passthrough: true},
 		{name: "deepseek from openai", source: FormatOpenAI, target: FormatDeepSeek, provider: provider.DeepSeek, passthrough: true},
 	}

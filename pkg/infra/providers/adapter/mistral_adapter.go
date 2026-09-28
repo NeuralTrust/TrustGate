@@ -26,10 +26,6 @@ type MistralAdapter struct {
 	openai OpenAIAdapter
 }
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 // DecodeRequest reads a Chat body. Mistral has no store, so it is not
 // carried.
 func (a *MistralAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
@@ -93,10 +89,6 @@ func withMistralRandomSeed(body []byte, seed int64) ([]byte, error) {
 	return append(out, '}'), nil
 }
 
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
-
 func (a *MistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	return a.openai.DecodeResponse(body)
 }
@@ -105,10 +97,6 @@ func (a *MistralAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error)
 	return a.openai.EncodeResponse(resp)
 }
 
-// ---------------------------------------------------------------------------
-// Stream
-// ---------------------------------------------------------------------------
-
 func (a *MistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	return a.openai.DecodeStreamChunk(chunk)
 }
@@ -116,10 +104,6 @@ func (a *MistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 func (a *MistralAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	return encodeCompletionsStreamChunk(chunk, false)
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 // isValidMistralID checks whether id is exactly 9 alphanumeric characters.
 func isValidMistralID(id string) bool {

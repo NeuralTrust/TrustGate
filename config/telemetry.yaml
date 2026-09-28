@@ -7,7 +7,10 @@
 # TELEMETRY_EXPORTERS_RAW (YAML or JSON lists). An empty file or empty env lists
 # log a warning and start with no defaults; invalid config aborts boot.
 #
-# Copy this file to config/telemetry.yaml to get started.
+# This file is optional. Leave TELEMETRY_EXPORTERS_FILE empty to configure the
+# same exporter lists through TELEMETRY_EXPORTERS_METADATA and
+# TELEMETRY_EXPORTERS_RAW. Using this file's postgres exporter requires
+# SENSIBLE_PG_DSN in the environment.
 #
 exporters:
   metadata:

@@ -43,7 +43,6 @@ const PROTOCOLS: { value: ConsumerType; label: string }[] = [
 // The proxy route slug is generated server-side on creation; the UI surfaces it
 // but does not derive it from the name.
 function routingLabel(c: Consumer): string {
-  if (c.routing_mode === "role_based") return "role-based";
   if (c.fallback?.enabled) return "fallback";
   if (c.lb_config?.enabled) return c.lb_config.algorithm ?? "round-robin";
   return "single";

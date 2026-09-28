@@ -148,6 +148,18 @@ func TestEventToRecord_OmitsBodies(t *testing.T) {
 	assert.False(t, hasRequestBody)
 }
 
+func TestEventToRecord_SecurityUsesJSONString(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Security = []string{"code_injection", "prompt_injection"}
+	security := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.Equal(t, attribute.STRING, security.Type())
+	assert.JSONEq(t, `["code_injection","prompt_injection"]`, security.AsString())
+	evt.Security = nil
+	_, exists := attrsOf(eventToRecord(evt))[attrSecurity]
+	assert.False(t, exists)
+}
+
 func TestEventToRecord_Severity(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -298,4 +310,24 @@ func TestSensibleView_CarriesRetention(t *testing.T) {
 	evt.Retention = &events.Retention{Plan: "enterprise", ExpiresAt: 1_731_536_000_000}
 
 	assert.Equal(t, evt.Retention, evt.SensibleView().Retention)
+}
+
+// TestEventToRecord_PrincipalMethodPassesThroughVerbatim pins the RUN-1501
+// principal-method values on the wire. The attribute is a low-cardinality
+// string with no mapping table on either side, so whatever the gateway stamps
+// is exactly what an operator reads.
+func TestEventToRecord_PrincipalMethodPassesThroughVerbatim(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"oauth", "external_jwt", "api_key", "mtls", "introspection", "jwt"} {
+		t.Run(method, func(t *testing.T) {
+			rec := eventToRecord(&events.Event{
+				SchemaVersion:   events.SchemaVersion,
+				Kind:            events.KindLLM,
+				TraceID:         "trace-1",
+				GatewayID:       "gw-1",
+				PrincipalMethod: method,
+			})
+			assert.Equal(t, method, attrsOf(rec)[attrPrincipalMethod].AsString())
+		})
+	}
 }

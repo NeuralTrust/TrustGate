@@ -20,7 +20,6 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -29,20 +28,22 @@ type ChainedIdentityResolver struct {
 	playground IdentityResolver
 	apiKey     IdentityResolver
 	oauth2     IdentityResolver
-	oidc       IdentityResolver
+	mtls       *MTLSIdentityResolver
 }
 
+// NewIdentityResolver chains the proxy-plane identity resolvers. mtls may be
+// nil on a plane that never sees client certificates.
 func NewIdentityResolver(
 	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
-	oidc *OIDCIdentityResolver,
+	mtls *MTLSIdentityResolver,
 ) IdentityResolver {
 	return ChainedIdentityResolver{
 		playground: playground,
 		apiKey:     apiKey,
 		oauth2:     oauth2,
-		oidc:       oidc,
+		mtls:       mtls,
 	}
 }
 
@@ -57,14 +58,19 @@ func (r ChainedIdentityResolver) Resolve(
 	if APIKeyFromRequest(c) != "" {
 		return r.apiKey.Resolve(c, gw, rc)
 	}
+	// A client certificate authenticates a consumer that trusts a CA; an
+	// explicit credential (api key, bearer) still wins when both are present,
+	// so a TLS-terminating proxy's cert never shadows the application's own.
+	if r.mtls != nil && strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" &&
+		hasAttachedAuthType(rc, authdomain.TypeMTLS) && r.mtls.ClientCertificate(c) != nil {
+		return r.mtls.Resolve(c, gw, rc)
+	}
 	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
 		return nil, ErrUnauthenticated
 	}
-	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
-		return r.oauth2.Resolve(c, gw, rc)
-	}
-	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeOIDC) {
-		return nil, ErrForbidden
-	}
-	return r.oidc.Resolve(c, gw, rc)
+	// A bearer token resolves through one path for every identity provider the
+	// consumer carries: the provider is selected from the token's own issuer and
+	// audience hints, not from the auth's type. Branching on type left an auth
+	// unusable whenever a consumer carried both shapes.
+	return r.oauth2.Resolve(c, gw, rc)
 }

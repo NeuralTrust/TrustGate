@@ -1063,38 +1063,38 @@ func TestAdaptStream_ResponsesClientLogsWithheldToolCalls(t *testing.T) {
 	assert.Equal(t, 1, entry.Withheld)
 }
 
-type fakeStreamClock struct {
+type fakeKeepaliveClock struct {
 	mu    sync.Mutex
 	now   time.Time
 	ticks chan time.Time
 }
 
-func newFakeStreamClock() *fakeStreamClock {
-	return &fakeStreamClock{now: time.Unix(1_700_000_000, 0), ticks: make(chan time.Time)}
+func newFakeStreamClock() *fakeKeepaliveClock {
+	return &fakeKeepaliveClock{now: time.Unix(1_700_000_000, 0), ticks: make(chan time.Time)}
 }
 
-func (c *fakeStreamClock) Now() time.Time {
+func (c *fakeKeepaliveClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
 }
 
-func (c *fakeStreamClock) advance(d time.Duration) {
+func (c *fakeKeepaliveClock) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
 }
 
-func (c *fakeStreamClock) tick(d time.Duration) {
+func (c *fakeKeepaliveClock) tick(d time.Duration) {
 	c.advance(d)
 	c.ticks <- c.Now()
 }
 
-func (c *fakeStreamClock) Chan() <-chan time.Time { return c.ticks }
+func (c *fakeKeepaliveClock) Chan() <-chan time.Time { return c.ticks }
 
-func (c *fakeStreamClock) Stop() {}
+func (c *fakeKeepaliveClock) Stop() {}
 
-func (c *fakeStreamClock) option() streamOption {
+func (c *fakeKeepaliveClock) option() streamOption {
 	return withStreamClock(c.Now, func(time.Duration) streamTicker { return c })
 }
 

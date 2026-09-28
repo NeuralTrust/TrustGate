@@ -17,6 +17,7 @@ package response
 import (
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -31,15 +32,29 @@ type AuthResponse struct {
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
 	// Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk" + "Rv8Q").
-	KeyPrefix string    `json:"key_prefix,omitempty"`
-	KeySuffix string    `json:"key_suffix,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"key_prefix,omitempty"`
+	KeySuffix string `json:"key_suffix,omitempty"`
+	// When the key retires itself. Absent means it never does.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	// Consumers are the consumers this auth reaches, which is what a caller
+	// needs before revoking one: a key can be attached to several, so
+	// disabling it stops more than the endpoint the reader was looking at.
+	// Empty means it reaches none, which is an answer rather than a gap.
+	Consumers []AuthConsumerResponse `json:"consumers"`
+}
+
+// AuthConsumerResponse names one consumer an auth reaches.
+type AuthConsumerResponse struct {
+	ID   ids.ConsumerID `json:"id"`
+	Name string         `json:"name"`
+	Slug string         `json:"slug"`
+	Type string         `json:"type"`
 }
 
 type ConfigResponse struct {
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfigResponse   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
 }
 
@@ -47,6 +62,7 @@ type OAuth2ConfigResponse struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -59,16 +75,6 @@ type OAuth2ConfigResponse struct {
 	TokenURL         string   `json:"token_url,omitempty"`
 }
 
-type OIDCConfigResponse struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
-}
-
 type MTLSConfigResponse struct {
 	CACert              string   `json:"ca_cert,omitempty"`
 	AllowedCommonNames  []string `json:"allowed_common_names,omitempty"`
@@ -76,8 +82,24 @@ type MTLSConfigResponse struct {
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
+// FromAuthWithConsumers is FromAuth with the consumers the auth reaches.
+func FromAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuth(a)
+	res.Consumers = make([]AuthConsumerResponse, 0, len(held))
+	for _, c := range held {
+		res.Consumers = append(res.Consumers, AuthConsumerResponse{
+			ID:   c.ID,
+			Name: c.Name,
+			Slug: c.Slug,
+			Type: string(c.Type),
+		})
+	}
+	return res
+}
+
 func FromAuth(a *domain.Auth) AuthResponse {
 	return AuthResponse{
+		Consumers: []AuthConsumerResponse{},
 		ID:        a.ID,
 		GatewayID: a.GatewayID,
 		Name:      a.Name,
@@ -86,6 +108,7 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Config:    fromConfig(a.Config),
 		KeyPrefix: a.KeyPrefix,
 		KeySuffix: a.KeySuffix,
+		ExpiresAt: a.ExpiresAt,
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}
@@ -97,6 +120,15 @@ func FromCreatedAuth(a *domain.Auth) AuthResponse {
 	return res
 }
 
+// FromCreatedAuthWithConsumers carries the one-time secret and the consumers
+// the auth reaches. Rotation needs both: the secret because it is the only time
+// it is readable, and the consumers because they are what the rotation cut off.
+func FromCreatedAuthWithConsumers(a *domain.Auth, held []appconsumer.AuthConsumer) AuthResponse {
+	res := FromAuthWithConsumers(a, held)
+	res.APIKey = a.RawKey
+	return res
+}
+
 func fromConfig(c domain.Config) ConfigResponse {
 	out := ConfigResponse{}
 	if c.OAuth2 != nil {
@@ -104,6 +136,7 @@ func fromConfig(c domain.Config) ConfigResponse {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),
@@ -114,17 +147,6 @@ func fromConfig(c domain.Config) ConfigResponse {
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
-		}
-	}
-	if c.OIDC != nil {
-		out.OIDC = &OIDCConfigResponse{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

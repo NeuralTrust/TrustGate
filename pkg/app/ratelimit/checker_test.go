@@ -258,8 +258,8 @@ func TestExceededBodyExplainsReason(t *testing.T) {
 		t.Fatalf("retry_after_seconds = %v", payload["retry_after_seconds"])
 	}
 	msg, _ := payload["message"].(string)
-	if msg == "" || !strings.Contains(msg, "burst") {
-		t.Fatalf("message = %q, want burst explanation", msg)
+	if want := "TrustGate blocked this request: gateway burst rate limit exceeded. Retry in 42s."; msg != want {
+		t.Fatalf("message = %q, want %q", msg, want)
 	}
 }
 

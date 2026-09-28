@@ -25,10 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Canonical roundtrip: OpenAI → Canonical → OpenAI
-// ---------------------------------------------------------------------------
-
 func TestCanonical_OpenAI_Roundtrip(t *testing.T) {
 	input := `{
 		"model": "gpt-4",
@@ -60,10 +56,6 @@ func TestCanonical_OpenAI_Roundtrip(t *testing.T) {
 	assert.Len(t, msgs, 2) // system re-injected + user
 	assert.Equal(t, "system", msgs[0].(map[string]interface{})["role"])
 }
-
-// ---------------------------------------------------------------------------
-// Response roundtrip: OpenAI → Canonical → OpenAI
-// ---------------------------------------------------------------------------
 
 func TestCanonical_OpenAI_ResponseRoundtrip(t *testing.T) {
 	input := `{
@@ -183,6 +175,16 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105},
 		},
 		{
+			name:  "moonshot top-level cached tokens",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"cached_tokens":64}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 64},
+		},
+		{
+			name:  "moonshot cached tokens reported twice counts once",
+			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"cached_tokens":64,"prompt_tokens_details":{"cached_tokens":64}}`,
+			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 64},
+		},
+		{
 			name:  "deepseek hit with zero cached details",
 			usage: `{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20,"prompt_tokens_details":{"cached_tokens":0}}`,
 			want:  &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 80},
@@ -212,6 +214,24 @@ func TestUsageCache_OpenAIFamilyChat(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Moonshot sends the usage of a stream on its last choice, not on the chunk.
+func TestUsageCache_MoonshotStreamUsageOnTheChoice(t *testing.T) {
+	chunk := []byte(`{"id":"c1","object":"chat.completion.chunk","model":"kimi-k2","choices":[{"index":0,"delta":{},"finish_reason":"stop",` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"cached_tokens":64}}]}`)
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk(chunk)
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "stop", sc.FinishReason)
+	assert.Equal(t, &CanonicalUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CachedInputTokens: 64}, sc.Usage)
+
+	chunk = []byte(`{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}],` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105}}`)
+	sc, err = (&OpenAIAdapter{}).DecodeStreamChunk(chunk)
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, 100, sc.Usage.InputTokens, "the chunk's usage wins over the choice's")
 }
 
 func TestUsageCache_OpenAIChat_IncludeUsageChunkWrite(t *testing.T) {
@@ -570,57 +590,44 @@ func TestCanonical_OpenAI_Completions_CustomToolIsNamedForPlugins(t *testing.T) 
 	assert.Equal(t, "custom", out.Tools[0]["type"])
 }
 
-func TestEncodeCompletionsRequest_DropsNamelessTools(t *testing.T) {
-	custom := func(name string) CanonicalTool {
-		return CanonicalTool{Kind: ToolKindCustom, Name: name, Format: json.RawMessage(`{"type":"text"}`)}
-	}
+func TestCompletionsTerminalStreamChunk(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		name           string
-		tools          []CanonicalTool
-		toolChoice     *CanonicalToolChoice
-		wantNames      []string
-		wantToolChoice bool
+		name      string
+		first     *CanonicalStreamChunk
+		wantID    string
+		wantModel string
 	}{
-		{name: "nameless tool among named ones is dropped", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}, {Name: "Write"}}, wantNames: []string{"Read", "Write"}},
-		{name: "all nameless drops tools and tool_choice", tools: []CanonicalTool{{Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "auto"}},
-		{name: "named tool_choice to a kept tool survives", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: "Read"}, wantNames: []string{"Read"}, wantToolChoice: true},
-		{name: "named tool_choice to a dropped tool is omitted", tools: []CanonicalTool{{Name: "Read"}, {Name: ""}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: ""}, wantNames: []string{"Read"}},
-		{name: "nothing dropped leaves an unknown tool_choice alone", tools: []CanonicalTool{{Name: "Read"}}, toolChoice: &CanonicalToolChoice{Type: "tool", Name: "Nope"}, wantNames: []string{"Read"}, wantToolChoice: true},
-		{name: "whitespace-only name is blank", tools: []CanonicalTool{{Name: "  "}, {Name: "Read"}}, wantNames: []string{"Read"}},
-		{name: "nameless custom tool is dropped", tools: []CanonicalTool{custom(""), custom("grep")}, wantNames: []string{"grep"}},
+		{
+			name:      "carries id and model from the first chunk",
+			first:     &CanonicalStreamChunk{ID: "chatcmpl-123", Model: "gpt-4o-mini", Role: "assistant", Delta: "hi"},
+			wantID:    "chatcmpl-123",
+			wantModel: "gpt-4o-mini",
+		},
+		{
+			name:  "tolerates a stream cut before the first chunk",
+			first: nil,
+		},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := &CanonicalRequest{
-				Model:      "gpt-5",
-				Messages:   []CanonicalMessage{{Role: "user", Content: "hi"}},
-				Tools:      tc.tools,
-				ToolChoice: tc.toolChoice,
-			}
-			out, err := (&OpenAIAdapter{}).EncodeRequest(req)
+			t.Parallel()
+			terminal := CompletionsTerminalStreamChunk(tc.first, "content_filter")
+			require.Equal(t, tc.wantID, terminal.ID)
+			require.Equal(t, tc.wantModel, terminal.Model)
+			require.Equal(t, "content_filter", terminal.FinishReason)
+			assert.Empty(t, terminal.Delta)
+
+			lines, err := encodeCompletionsStreamChunk(terminal, true)
 			require.NoError(t, err)
+			require.Len(t, lines, 2)
+			payload, ok := bytes.CutPrefix(lines[0], []byte("data: "))
+			require.True(t, ok)
 
-			var got struct {
-				Tools []struct {
-					Function *struct{ Name string } `json:"function"`
-					Custom   *struct{ Name string } `json:"custom"`
-				} `json:"tools"`
-				ToolChoice json.RawMessage `json:"tool_choice"`
-			}
-			require.NoError(t, json.Unmarshal(out, &got))
-
-			var names []string
-			for _, tool := range got.Tools {
-				switch {
-				case tool.Function != nil:
-					names = append(names, tool.Function.Name)
-				case tool.Custom != nil:
-					names = append(names, tool.Custom.Name)
-				}
-			}
-			assert.Equal(t, tc.wantNames, names)
-			assert.Equal(t, tc.wantToolChoice, len(got.ToolChoice) > 0, "tool_choice presence")
+			decoded, err := decodeCompletionsStreamChunk(payload)
+			require.NoError(t, err)
+			require.NotNil(t, decoded)
+			assert.Equal(t, terminal, decoded)
 		})
 	}
 }

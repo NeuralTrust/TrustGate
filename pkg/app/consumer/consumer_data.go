@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 type RoutableConsumer struct {
@@ -29,24 +28,39 @@ type RoutableConsumer struct {
 	Registries []*registrydomain.Registry
 
 	FallbackBackends []*registrydomain.Registry
-	Policies         []*policydomain.Policy
 	Auths            []*authdomain.Auth
-	PolicyPlan       *appplugins.StagePlan
+
+	// Policies and PolicyPlan hold the same set of policies, always. The
+	// executor accepts both and rebuilds the chain from Policies whenever
+	// PolicyPlan is nil, so a set that appears in one and not the other would
+	// be executed under an ordering the plan never agreed to. For a non-MCP
+	// consumer PolicyPlan is therefore never nil: its set includes the
+	// group-only policies whose specificity only the inert plan flattens
+	// (RUN-1621, rule 4).
+	Policies   []*policydomain.Policy
+	PolicyPlan *appplugins.StagePlan
+
+	// ScopedPolicies are the policies carrying an MCPScope, kept apart so the
+	// MCP tools/call path can select among them per destination. A non-MCP
+	// consumer also carries them, and they are inert there: only the subset
+	// that crosses planes is folded into Policies and PolicyPlan.
+	ScopedPolicies []*policydomain.Policy
+
+	// MCPPlans are the precompiled per-destination plans the MCP tools/call
+	// path selects from; nil for consumers that are not MCP.
+	MCPPlans *PolicyPlans
 }
 
 type Data struct {
-	GatewayID    ids.GatewayID
-	Consumers    []RoutableConsumer
-	Roles        []*roledomain.Role
-	bySlug       map[string]*RoutableConsumer
-	registryByID map[ids.RegistryID]*registrydomain.Registry
+	GatewayID     ids.GatewayID
+	Consumers     []RoutableConsumer
+	StoreConsumer *RoutableConsumer
+	bySlug        map[string]*RoutableConsumer
+	registryByID  map[ids.RegistryID]*registrydomain.Registry
 }
 
-func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*roledomain.Role) *Data {
+func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
-	if len(roles) > 0 {
-		d.Roles = roles[0]
-	}
 	d.indexBySlug()
 	d.indexRegistries()
 	return d
@@ -78,39 +92,13 @@ func (d *Data) indexRegistries() {
 	}
 }
 
+// EffectiveRegistries returns the registries a consumer routes to. Every
+// consumer routes inline over its own registry associations.
 func (d *Data) EffectiveRegistries(rc *RoutableConsumer) []*registrydomain.Registry {
 	if rc == nil || rc.Consumer == nil {
 		return nil
 	}
-	if rc.Consumer.RoutingMode != domain.RoutingModeRoleBased {
-		return rc.Registries
-	}
-	assigned := make(map[ids.RoleID]struct{}, len(rc.Consumer.RoleIDs))
-	for _, id := range rc.Consumer.RoleIDs {
-		assigned[id] = struct{}{}
-	}
-	seen := make(map[ids.RegistryID]struct{})
-	out := make([]*registrydomain.Registry, 0)
-	for _, role := range d.Roles {
-		if role == nil {
-			continue
-		}
-		if _, ok := assigned[role.ID]; !ok {
-			continue
-		}
-		for _, id := range role.RegistryIDs {
-			reg, ok := d.RegistryByID(id)
-			if !ok || !reg.IsMCP() {
-				continue
-			}
-			if _, dup := seen[reg.ID]; dup {
-				continue
-			}
-			seen[reg.ID] = struct{}{}
-			out = append(out, reg)
-		}
-	}
-	return out
+	return rc.Registries
 }
 
 func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {

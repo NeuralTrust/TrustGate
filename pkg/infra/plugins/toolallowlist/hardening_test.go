@@ -249,14 +249,30 @@ func TestPlugin_Execute_ForwardsOnlyTheToolsItJudged(t *testing.T) {
 		gemini  = `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],`
 	)
 	tool := func(shape, name string) string { return fmt.Sprintf(shape, name) }
-	cases := []struct{ name, format, body string }{
+	// A second spelling or a repeat of a top-level tool key is refused
+	// outright (invalid_tools_field); every other ambiguity is forwarded as
+	// the plugin decoded it.
+	refused := []struct{ name, format, body string }{
 		{"chat tools then TOOLS", "openai", chat + `"tools":[` + tool(chatFn, "rm_rf") + `],"TOOLS":[` + tool(chatFn, "get_weather") + `]}`},
 		{"chat repeated tools", "openai", chat + `"tools":[` + tool(chatFn, "rm_rf") + `],"tools":[` + tool(chatFn, "get_weather") + `]}`},
-		{"chat function Name", "openai", chat + `"tools":[{"type":"function","function":{"name":"rm_rf","Name":"get_weather","parameters":{"type":"object"}}}]}`},
 		{"responses tools then Tools", "openai_responses", resp + `"tools":[` + tool(respFn, "rm_rf") + `],"Tools":[` + tool(respFn, "get_weather") + `]}`},
 		{"anthropic tools then Tools", "anthropic", ant + `"tools":[` + tool(antFn, "rm_rf") + `],"Tools":[` + tool(antFn, "get_weather") + `]}`},
 		{"bedrock toolConfig then toolconfig", "bedrock", bedrock + `"toolConfig":{"tools":[{"toolSpec":{"name":"rm_rf","inputSchema":{"json":{"type":"object"}}}}]},"toolconfig":{"tools":[{"toolSpec":{"name":"get_weather","inputSchema":{"json":{"type":"object"}}}}]}}`},
 		{"gemini tools then Tools", "google", gemini + `"tools":[{"functionDeclarations":[{"name":"rm_rf"}]}],"Tools":[{"functionDeclarations":[{"name":"get_weather"}]}]}`},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []any{"get_weather"}}, reqFor(tc.format, tc.body))
+			require.NoError(t, err)
+			require.True(t, res.StopUpstream)
+			assert.Equal(t, 400, res.StatusCode)
+			assert.Contains(t, string(res.Body), errInvalidToolsField)
+		})
+	}
+
+	cases := []struct{ name, format, body string }{
+		{"chat function Name", "openai", chat + `"tools":[{"type":"function","function":{"name":"rm_rf","Name":"get_weather","parameters":{"type":"object"}}}]}`},
 		{"chat legacy functions beside tools", "openai", chat + `"tools":[` + tool(chatFn, "get_weather") + `],"functions":[{"name":"rm_rf","parameters":{"type":"object"}}],"function_call":{"name":"rm_rf"}}`},
 	}
 	for _, tc := range cases {

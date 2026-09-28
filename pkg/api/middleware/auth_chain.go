@@ -115,15 +115,52 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if cert := r.clientCertificate(c); cert != nil {
-		return r.resolveMTLS(c.UserContext(), cert, scope)
+		return ownSubjectsOnly(r.resolveMTLS(c.UserContext(), cert, scope))
 	}
-	if token := bearerToken(c); token != "" {
-		return r.resolveBearer(c.UserContext(), token, scope)
+	// An api key presented as a bearer token is an api key, not a token to hand
+	// to the IdP validators: most MCP clients can only send Authorization, and
+	// the proxy plane has always accepted that form. A bearer without the api-key
+	// marker keeps its precedence over the key headers.
+	if token := bearerToken(c); token != "" && !authdomain.HasAPIKeyPrefix(token) {
+		return ownSubjectsOnly(r.resolveBearer(c.UserContext(), token, scope))
 	}
-	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
+	if rawKey := resolver.APIKeyFromRequest(c); rawKey != "" {
+		// Not guarded: an api key's subject is the name an admin gave the key,
+		// a row in this gateway's own database, and the MCP plane replaces it
+		// with the application's subject anyway. Refusing it would only lock
+		// out a key somebody happened to call "app:something".
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
 	return Identity{}, resolver.ErrUnauthenticated
+}
+
+// ownSubjectsOnly refuses a credential whose subject claims a namespace only
+// the gateway mints.
+//
+// A subject is what an upstream account hangs off, so two callers with the same
+// subject are the same account. The gateway mints app:<consumer_id> for an
+// application, app:<consumer_id>:<end_user> for someone it names, and
+// instance:<registry_id> for the account a server's instance holds for
+// everyone. Everything else here is whatever an identity provider put in a
+// token — and which claim that is read from is configurable per credential, so
+// it can be one a person edits about themselves.
+//
+// A token saying "app:<the other team's consumer>" would otherwise be that
+// application, and would read the upstream accounts it had linked. Nothing
+// legitimate arrives here wearing these prefixes: the gateway builds them after
+// this point, from the consumer it just resolved, never from the wire.
+//
+// It guards the credentials whose subject comes from outside — a token an
+// identity provider signed, a certificate a CA issued. An api key's subject is
+// this gateway's own label for it and is left alone (see Resolve).
+func ownSubjectsOnly(id Identity, err error) (Identity, error) {
+	if err != nil {
+		return id, err
+	}
+	if id.Principal != nil && identity.ReservedSubject(id.Principal.Subject) {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	return id, nil
 }
 
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
@@ -143,7 +180,11 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	hasOAuth2 := false
 	hasEnabledOAuth2 := false
 	hasEnabledAuth := false
+	signInMatch := false
 	for _, m := range matches {
+		if m.Consumer.WantsSignIn() {
+			signInMatch = true
+		}
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
 			if a.Enabled {
@@ -157,11 +198,17 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 			}
 		}
 	}
-	// The built-in provider bootstraps consumers that carry no credential of
-	// their own. Once a path has an enabled one — an api key, mTLS, or its own
-	// oauth2 IdP — that credential is the only way in: falling back here would
-	// let any platform login reach the consumer without it.
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
+	// The built-in provider bootstraps consumers whose *users sign in* and that
+	// carry no identity provider of their own. Two things exclude it. An enabled
+	// credential on the path — an api key, mTLS, or its own oauth2 IdP — is then
+	// the only way in: falling back here would let any platform login reach the
+	// consumer without it. And a consumer that is not entered by a person —
+	// acts_for_users off, or the app source, where the application authenticates
+	// as itself and names its end users — must not be rescued when it holds no
+	// credential: revoking its last api key would otherwise not lock it down but
+	// open it up, since an empty auth binding accepts any client the provider
+	// verifies.
+	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth && signInMatch
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
@@ -201,49 +248,72 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 	return r.resolveOpaque(ctx, token, candidates, scope)
 }
 
+// sessionRejected turns a refusal into the one opaque error the caller gets,
+// and writes down which check failed.
+//
+// Every exit below returns the same 401 — right for a client, useless for the
+// operator reading a pod log, where a brokered login that dies here leaves
+// nothing but `"error":"unauthenticated"` and no way to tell an expired token
+// from an audience mismatch from a session minted for another gateway. The
+// reason is a fixed string and the attrs are claims, never the token.
+func sessionRejected(ctx context.Context, reason string, attrs ...slog.Attr) (Identity, error) {
+	slog.LogAttrs(ctx, slog.LevelWarn, "mcp auth: session token rejected",
+		append([]slog.Attr{slog.String("reason", reason)}, attrs...)...)
+	return Identity{}, resolver.ErrUnauthenticated
+}
+
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "path matches no consumer")
 	}
 	principal, err := r.session.Verify(ctx, token)
 	if err != nil {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token does not verify", slog.String("error", err.Error()))
 	}
 	if principal.Subject == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token has no subject")
 	}
 	if use, _ := principal.Claims["token_use"].(string); use != "mcp_session" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token is not an mcp session", slog.String("token_use", use))
 	}
 	authID, _ := principal.Claims["authid"].(string)
 	if authID == "" {
-		return Identity{}, resolver.ErrUnauthenticated
+		return sessionRejected(ctx, "token carries no authid")
 	}
 	for _, a := range candidates {
-		if a.ID.String() != authID || !scope.allows(a.ID) {
+		if a.ID.String() != authID {
 			continue
+		}
+		if !scope.allows(a.ID) {
+			return sessionRejected(ctx, "authid is not in the path's scope", slog.String("authid", authID))
 		}
 		cfg := a.Config.OAuth2
 		if cfg == nil {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "matched auth has no oauth2 config", slog.String("authid", authID))
 		}
-		if !identity.AudienceMatches(identity.AudiencesFromClaim(principal.Claims["aud"]), cfg.Audiences) {
-			return Identity{}, resolver.ErrUnauthenticated
+		have := identity.AudiencesFromClaim(principal.Claims["aud"])
+		if !identity.AudienceMatches(have, cfg.Audiences) {
+			return sessionRejected(ctx, "audience mismatch",
+				slog.String("authid", authID),
+				slog.String("token_aud", strings.Join(have, ",")),
+				slog.String("want_aud", strings.Join(cfg.Audiences, ",")))
 		}
 		if !principal.HasScopes(cfg.RequiredScopes) {
-			return Identity{}, resolver.ErrUnauthenticated
+			return sessionRejected(ctx, "token is missing a required scope",
+				slog.String("authid", authID),
+				slog.String("want_scopes", strings.Join(cfg.RequiredScopes, " ")))
 		}
 		gatewayID := a.GatewayID
 		if appauth.IsDefaultIdP(a) {
 			gw, err := gatewayFromClaim(principal.Claims["gwid"])
 			if err != nil {
-				return Identity{}, resolver.ErrUnauthenticated
+				return sessionRejected(ctx, "default-idp session carries no usable gwid")
 			}
 			gatewayID = gw
 		}
 		return Identity{GatewayID: gatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, resolver.ErrUnauthenticated
+	return sessionRejected(ctx, "authid matches no enabled oauth2 auth", slog.String("authid", authID))
 }
 
 func gatewayFromClaim(v any) (ids.GatewayID, error) {

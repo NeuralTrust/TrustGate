@@ -113,7 +113,11 @@ func TestAnthropicStopReason_SharedByEveryEncoder(t *testing.T) {
 			lines := anthropicMessageEndEvents(tt.finish, &CanonicalUsage{OutputTokens: 5})
 			require.Len(t, lines, 6)
 			assert.Equal(t, "event: message_delta", string(lines[0]))
-			assert.JSONEq(t, `{"type":"message_delta","delta":{"stop_reason":"`+tt.want+`","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":5}}`, strings.TrimPrefix(string(lines[1]), "data: "))
+			details := ""
+			if tt.want == anthropicStopRefusal {
+				details = `,"stop_details":{"type":"refusal"}`
+			}
+			assert.JSONEq(t, `{"type":"message_delta","delta":{"stop_reason":"`+tt.want+`","stop_sequence":null`+details+`},"usage":{"input_tokens":0,"output_tokens":5}}`, strings.TrimPrefix(string(lines[1]), "data: "))
 			assert.Equal(t, "event: message_stop", string(lines[3]))
 			assert.JSONEq(t, `{"type":"message_stop"}`, strings.TrimPrefix(string(lines[4]), "data: "))
 
