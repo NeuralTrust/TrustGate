@@ -565,8 +565,10 @@ const trustGuardStreamFastGuardDelay = 5 * time.Millisecond
 // inside the provider span — the block loop runs during drain — so provider_ms
 // is reported net of it; left in both buckets the remainder went negative and
 // gateway_ms clamped to zero on every streamed request. gateway_ms is defined
-// as total_ms minus the other two, so the sum is exact unless it clamped:
-// asserting the three reconcile is asserting it did not.
+// as total_ms minus provider_ms and the *blocking* share of policies_ms, so the
+// sum is exact unless it clamped: asserting the reconciliation is asserting it
+// did not. The route carries a post_response policy too, so the async share has
+// to come out of policies_ms before the identity holds.
 func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
@@ -612,12 +614,22 @@ func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
 	assert.Less(t, leg.AddedLatencyMs, evt.Latency.TotalMs,
 		"added_latency_ms sums per-block worst cases; it is not a second copy of the request")
 
-	// No post_response policy runs on this route, so policies_ms is entirely
-	// the blocking share and the identity is the plain three-way one.
+	// gateway_ms discounts the post_response share, so the identity is against
+	// the blocking part of policies_ms, not all of it. The async entries are
+	// derived from the chain exactly as the contract doc tells an operator to.
+	var asyncMs int64
+	for _, entry := range evt.PolicyChain {
+		if entry.Stage == "post_response" {
+			asyncMs += entry.LatencyMs
+		}
+	}
+	blockingMs := evt.Latency.PoliciesMs - asyncMs
 	assert.Equal(t, evt.Latency.TotalMs,
-		evt.Latency.ProviderMs+evt.Latency.PoliciesMs+evt.Latency.GatewayMs,
-		"the buckets must reconcile on a streamed leg: total %dms, provider %dms, policies %dms, gateway %dms",
-		evt.Latency.TotalMs, evt.Latency.ProviderMs, evt.Latency.PoliciesMs, evt.Latency.GatewayMs)
+		evt.Latency.ProviderMs+blockingMs+evt.Latency.GatewayMs,
+		"the buckets must reconcile on a streamed leg: total %dms, provider %dms, "+
+			"policies %dms (blocking %dms, async %dms), gateway %dms",
+		evt.Latency.TotalMs, evt.Latency.ProviderMs, evt.Latency.PoliciesMs,
+		blockingMs, asyncMs, evt.Latency.GatewayMs)
 	assert.Less(t, evt.Latency.ProviderMs, evt.Latency.TotalMs,
 		"provider_ms is the drain net of the guard's hold, so it cannot be the whole request")
 }
