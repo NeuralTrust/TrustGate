@@ -249,7 +249,7 @@ func periodicLines(size, lines int) (before, after string) {
 }
 
 func TestDiffTextStaysFastOnRepetitiveText(t *testing.T) {
-	if raceEnabled || testing.Short() {
+	if skipTimingTests() {
 		t.Skip("timing")
 	}
 	for _, size := range []int{1 << 20, 7 << 20} {
@@ -295,7 +295,7 @@ func TestDiffTextPlacesSpreadEditsInPlainText(t *testing.T) {
 }
 
 func TestGraftCostOnALargeBodyWithinCaps(t *testing.T) {
-	if raceEnabled || testing.Short() {
+	if skipTimingTests() {
 		t.Skip("timing")
 	}
 	var sb strings.Builder

@@ -538,6 +538,52 @@ func TestHandle_Streaming_MidStreamError(t *testing.T) {
 	}
 }
 
+func TestHandle_Streaming_GeminiClientGetsTheGeminiErrorObject(t *testing.T) {
+	const geminiFrame = `data: {"error":{"code":500,"message":"upstream stream terminated unexpectedly","status":"INTERNAL"}}`
+	const chunk = `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}]}`
+	paths := map[string]string{
+		"gemini": "/" + consumerSlug + "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		"vertex": "/" + consumerSlug + "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+	}
+	tests := map[string]func(yield func([]byte, error) bool){
+		"mid-stream error": func(yield func([]byte, error) bool) {
+			if yield([]byte(chunk), nil) {
+				yield(nil, errors.New("upstream reset"))
+			}
+		},
+		"panic": func(yield func([]byte, error) bool) {
+			if yield([]byte(chunk), nil) {
+				panic("reader exploded")
+			}
+		},
+	}
+	for format, path := range paths {
+		for name, stream := range tests {
+			t.Run(format+" "+name, func(t *testing.T) {
+				fwd := proxymocks.NewForwarder(t)
+				app := fiber.New()
+				app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+				app.All("/*", proxyhttp.NewForwardedHandler(fwd).WithLogger(slog.New(slog.DiscardHandler)).Handle)
+				fwd.EXPECT().
+					Forward(mock.Anything, mock.Anything).
+					Return(&appproxy.ForwardResult{StatusCode: 200, Stream: stream}, nil).
+					Once()
+
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"contents":[]}`))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				if err != nil {
+					t.Fatalf("app.Test: %v", err)
+				}
+				body, _ := io.ReadAll(resp.Body)
+				if want := chunk + "\n" + geminiFrame + "\n"; strings.TrimRight(string(body), "\n")+"\n" != want {
+					t.Fatalf("body = %q, want %q", string(body), want)
+				}
+			})
+		}
+	}
+}
+
 func TestHandle_Streaming_PanicEndsWithErrorEventAndCancels(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	var logs bytes.Buffer

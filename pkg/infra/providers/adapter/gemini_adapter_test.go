@@ -1497,3 +1497,35 @@ func TestGeminiFinishReason_BufferedAndStreamedAgree(t *testing.T) {
 		})
 	}
 }
+
+func TestGemini_EncodeSendsEmptyArgsForCallsWithoutArguments(t *testing.T) {
+	a := &GeminiAdapter{}
+	for _, arguments := range []string{"", "{}", "null"} {
+		t.Run(arguments, func(t *testing.T) {
+			body, err := a.EncodeResponse(&CanonicalResponse{
+				ToolCalls:    []CanonicalToolCall{{ID: "call_1", Name: "get_time", Arguments: arguments}},
+				FinishReason: "tool_calls",
+			})
+			require.NoError(t, err)
+			assert.Contains(t, string(body), `"functionCall":{"id":"call_1","name":"get_time","args":{}}`, "buffered")
+
+			lines, err := a.EncodeStreamChunk(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{
+				{ID: "call_1", Name: "get_time", ArgumentsDelta: arguments},
+			}})
+			require.NoError(t, err)
+			assert.Contains(t, string(lines[0]), `"functionCall":{"id":"call_1","name":"get_time","args":{}}`, "stream")
+		})
+	}
+}
+
+func TestGemini_EncodeRequestSendsEmptyArgsForCallsWithoutArguments(t *testing.T) {
+	body, err := (&GeminiAdapter{}).EncodeRequest(&CanonicalRequest{
+		Model: "gemini-2.5-flash",
+		Messages: []CanonicalMessage{
+			{Role: "user", Content: "what time is it"},
+			{Role: "assistant", ToolCalls: []CanonicalToolCall{{ID: "call_1", Name: "get_time"}}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"name":"get_time","args":{}`)
+}
