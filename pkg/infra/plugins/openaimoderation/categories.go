@@ -16,14 +16,13 @@ package openaimoderation
 
 import "sort"
 
-// Known models. Category sets per model are transcribed from OpenAI's
-// moderation guide and have not yet been confirmed against a live API call -
-// RUN-1711 QA item open.
+// Known models, confirmed against a live /v1/moderations call on 2026-09-28:
+// both return all 13 categories in every result, image-only input included.
+// text-moderation-latest and text-moderation-stable now answer 400 "Invalid
+// value for 'model'", so they are left out and treated as unknown.
 const (
 	ModelOmniLatest   = "omni-moderation-latest"
 	ModelOmni20240926 = "omni-moderation-2024-09-26"
-	ModelTextLatest   = "text-moderation-latest"
-	ModelTextStable   = "text-moderation-stable"
 )
 
 const (
@@ -51,26 +50,13 @@ var omniCategories = []string{
 	CategoryViolence, CategoryViolenceGraphic,
 }
 
-// textCategories is omniCategories minus illicit and illicit/violent, which
-// the older text-moderation models never scored.
-var textCategories = []string{
-	CategoryHarassment, CategoryHarassmentThreatening,
-	CategoryHate, CategoryHateThreatening,
-	CategorySelfHarm, CategorySelfHarmIntent, CategorySelfHarmInstructions,
-	CategorySexual, CategorySexualMinors,
-	CategoryViolence, CategoryViolenceGraphic,
-}
-
 var modelCategorySets = buildModelCategorySets()
 
 func buildModelCategorySets() map[string]map[string]struct{} {
 	omni := toSet(omniCategories)
-	text := toSet(textCategories)
 	return map[string]map[string]struct{}{
 		ModelOmniLatest:   omni,
 		ModelOmni20240926: omni,
-		ModelTextLatest:   text,
-		ModelTextStable:   text,
 	}
 }
 
