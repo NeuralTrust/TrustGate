@@ -266,6 +266,53 @@ func (_c *Registry_ValidateMode_Call) RunAndReturn(run func(string, policy.Mode)
 	return _c
 }
 
+// ValidateSettingsWrite provides a mock function with given fields: name, settings
+func (_m *Registry) ValidateSettingsWrite(name string, settings map[string]interface{}) error {
+	ret := _m.Called(name, settings)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ValidateSettingsWrite")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
+		r0 = rf(name, settings)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Registry_ValidateSettingsWrite_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ValidateSettingsWrite'
+type Registry_ValidateSettingsWrite_Call struct {
+	*mock.Call
+}
+
+// ValidateSettingsWrite is a helper method to define mock.On call
+//   - name string
+//   - settings map[string]interface{}
+func (_e *Registry_Expecter) ValidateSettingsWrite(name interface{}, settings interface{}) *Registry_ValidateSettingsWrite_Call {
+	return &Registry_ValidateSettingsWrite_Call{Call: _e.mock.On("ValidateSettingsWrite", name, settings)}
+}
+
+func (_c *Registry_ValidateSettingsWrite_Call) Run(run func(name string, settings map[string]interface{})) *Registry_ValidateSettingsWrite_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(map[string]interface{}))
+	})
+	return _c
+}
+
+func (_c *Registry_ValidateSettingsWrite_Call) Return(_a0 error) *Registry_ValidateSettingsWrite_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Registry_ValidateSettingsWrite_Call) RunAndReturn(run func(string, map[string]interface{}) error) *Registry_ValidateSettingsWrite_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ValidateStages provides a mock function with given fields: name, selected
 func (_m *Registry) ValidateStages(name string, selected []policy.Stage) error {
 	ret := _m.Called(name, selected)

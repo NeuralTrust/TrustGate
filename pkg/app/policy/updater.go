@@ -111,6 +111,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if in.Description != nil {
 		existing.Description = *in.Description
 	}
+	slugChanged := in.Slug != nil && *in.Slug != existing.Slug
 	if in.Slug != nil {
 		existing.Slug = *in.Slug
 	}
@@ -139,12 +140,15 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	// Write-time rules apply only when the update carries settings or points
+	// the stored ones at another plugin, so a disable or rename still succeeds.
 	if err := validatePlugin(
 		u.registry,
 		existing.Slug,
 		existing.Stages,
 		existing.Mode,
 		existing.Settings,
+		in.Settings != nil || slugChanged,
 	); err != nil {
 		return nil, err
 	}

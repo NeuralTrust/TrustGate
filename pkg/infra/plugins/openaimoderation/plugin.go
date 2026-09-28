@@ -84,6 +84,25 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects an explicit block_on_flagged: false with no
+// thresholds. parseConfig keeps that value as sent, and evaluate() then has
+// no path to a violation: the policy would call OpenAI and never act.
+func (p *Plugin) ValidateSettingsWrite(settings map[string]any) error {
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Thresholds) == 0 && !cfg.BlockOnFlagged {
+		return fmt.Errorf(
+			"openai_moderation: block_on_flagged is explicitly false with no thresholds configured; " +
+				"this policy could never block or report a violation - set thresholds or block_on_flagged: true",
+		)
+	}
+	return nil
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

@@ -26,12 +26,15 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// validatePlugin runs ValidateSettingsWrite only when settingsWritten is true:
+// on create, and on an update that carries settings.
 func validatePlugin(
 	reg appplugins.Registry,
 	slug string,
 	stages []domain.Stage,
 	mode domain.Mode,
 	settings map[string]any,
+	settingsWritten bool,
 ) error {
 	if err := reg.ValidateStages(slug, stages); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
@@ -41,6 +44,11 @@ func validatePlugin(
 	}
 	if err := reg.Validate(slug, settings); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
+	}
+	if settingsWritten {
+		if err := reg.ValidateSettingsWrite(slug, settings); err != nil {
+			return errors.Join(commonerrors.ErrValidation, err)
+		}
 	}
 	return nil
 }

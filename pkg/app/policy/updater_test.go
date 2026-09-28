@@ -20,7 +20,9 @@ import (
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -164,6 +166,130 @@ func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
 	}
 	if got.Mode != domain.ModeThrottle {
 		t.Fatalf("Mode = %q, want throttle", got.Mode)
+	}
+}
+
+// TestUpdater_Update_RejectsInertSettingsWriteWhenSettingsCarried covers the
+// RUN-1701 rule: an update that carries Settings must be treated the same as
+// a create for the write-time-only rule, so a plugin's SettingsWriteValidator
+// error (e.g. openai_moderation's explicit block_on_flagged: false with no
+// thresholds) must block the update.
+func TestUpdater_Update_RejectsInertSettingsWriteWhenSettingsCarried(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	sentinel := errors.New("policy could never block or report a violation")
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(sentinel).Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:       existing.ID,
+		Settings: &map[string]any{"limit": 100},
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the plugin's sentinel error", err)
+	}
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want it to wrap ErrValidation", err)
+	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestUpdater_Update_DisableOnlyDoesNotTriggerSettingsWriteValidation is the
+// other half of the RUN-1701 constraint: an update that only disables (or
+// renames) an existing, already-inert policy must still succeed, because it
+// never carries settings. The registry mock below deliberately has no
+// ValidateSettingsWrite expectation configured, so an unexpected call fails
+// the test immediately (mock.Mock.Test(t) turns it into t.FailNow(), not a
+// silent pass) - proving the updater does not call it for this input.
+func TestUpdater_Update_DisableOnlyDoesNotTriggerSettingsWriteValidation(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
+		return !p.Enabled
+	}), false).Return(nil).Once()
+
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:      existing.ID,
+		Enabled: ptr(false),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+// A slug change re-targets the stored settings at another plugin, so it is a
+// settings write even though the update carries no Settings.
+func TestUpdater_Update_SlugChangeTriggersSettingsWriteValidation(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	sentinel := errors.New("policy could never block or report a violation")
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite("openai_moderation", mock.Anything).Return(sentinel).Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr("openai_moderation"),
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the plugin's sentinel error", err)
+	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Echoing the current slug back, as a full-form save does, is not a change.
+func TestUpdater_Update_UnchangedSlugDoesNotTriggerSettingsWriteValidation(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Slug: ptr(existing.Slug),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
 	}
 }
 
