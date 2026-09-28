@@ -31,7 +31,8 @@ import (
 )
 
 const (
-	defaultAppEnv = "dev"
+	defaultAppEnv         = "dev"
+	serverSecretKeyMinLen = 32
 
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
@@ -41,6 +42,10 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
+	// org/groups/store_access claims are a login-time snapshot re-minted on
+	// refresh, so the snapshot must expire and force a fresh platform login.
+	defaultMCPDefaultIdPSessionMaxAge = 24 * time.Hour
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -113,6 +118,8 @@ const (
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
+	defaultModelArmorTimeout = 15 * time.Second
+
 	defaultConfigSyncDataPlaneEnabled  = false
 	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
 	defaultConfigSyncPollInterval      = 5 * time.Minute
@@ -142,6 +149,7 @@ const (
 )
 
 type Config struct {
+	ClientIP            ClientIPConfig
 	AppEnv              string
 	Server              ServerConfig
 	Database            DatabaseConfig
@@ -161,6 +169,7 @@ type Config struct {
 	TrustGuard          TrustGuardConfig
 	FirewallComplexity  FirewallComplexityConfig
 	OpenAIModeration    OpenAIModerationConfig
+	ModelArmor          ModelArmorConfig
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
@@ -247,17 +256,29 @@ type ServerConfig struct {
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
+	// MCPExtraBaseDomains lists further host suffixes this deployment answers
+	// on, beyond MCPBaseDomain. A gateway keeps publishing its URL under
+	// MCPBaseDomain; these only widen what the request router recognises, for
+	// when the same cluster is also reachable under a second domain.
+	MCPExtraBaseDomains []string
 	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
 	// redirect_uri base for upstream MCP connect (authorize + code exchange +
 	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
 	// so a single Google/Entra app can allowlist one host across tenants.
 	// Example: https://oauth.mcp.neuraltrust.ai
 	MCPOAuthPublicBaseURL string
-	STSIssuer             string
-	STSSigningKey         string
-	TrustXFCCFrom         []string
-	MCPDefaultIdP         MCPDefaultIdPConfig
-	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
+	// MCPOAuthClientName is the client_name the gateway registers with upstream
+	// MCP authorization servers through dynamic client registration — the app
+	// name a user sees on the upstream's consent screen and the admin sees in
+	// its third-party application list. Give each environment its own name so
+	// a dev gateway never collides with the prod app registered at the same
+	// upstream. Defaults to "TrustGate MCP Gateway".
+	MCPOAuthClientName string
+	STSIssuer          string
+	STSSigningKey      string
+	TrustXFCCFrom      []string
+	MCPDefaultIdP      MCPDefaultIdPConfig
+	GoogleWorkspaceMCP GoogleWorkspaceMCPConfig
 	// ServeHybridGateways marks a proxy deployment as allowed to serve gateways
 	// whose entitlements say data_plane=hybrid. Defaults to true only on
 	// config-sync data planes (the customer-run deployment those gateways belong
@@ -276,6 +297,10 @@ type MCPDefaultIdPConfig struct {
 	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 	Audiences    []string
 	Scopes       []string
+	// SessionMaxAge is the absolute lifetime of an MCP session brokered through
+	// the built-in identity provider. Refreshing past it forces a new platform
+	// login so org, groups and store_access are re-derived.
+	SessionMaxAge time.Duration
 }
 
 type GoogleWorkspaceMCPConfig struct {
@@ -430,6 +455,16 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
+// ModelArmorConfig configures the REST client used by the google_model_armor
+// guardrail plugin (pkg/infra/plugins/googlemodelarmor). BaseURL overrides Model
+// Armor's regional host — Model Armor has no global endpoint — for tests or
+// a private egress proxy; leave it empty in production so each call
+// addresses the region its own request names.
+type ModelArmorConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
 type RateLimitConfig struct {
 	Enabled bool
 }
@@ -443,11 +478,16 @@ type MCPConnectRateLimitConfig struct {
 }
 
 func LoadConfig() (*Config, error) {
+	clientIP, err := getClientIPConfig()
+	if err != nil {
+		return nil, err
+	}
 	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &Config{
+		ClientIP:            clientIP,
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
 		Server:              getServerConfig(),
 		Database:            getDatabaseConfig(),
@@ -467,6 +507,7 @@ func LoadConfig() (*Config, error) {
 		TrustGuard:          getTrustGuardConfig(),
 		FirewallComplexity:  getFirewallComplexityConfig(),
 		OpenAIModeration:    getOpenAIModerationConfig(),
+		ModelArmor:          getModelArmorConfig(),
 		ConfigSync:          getConfigSyncConfig(),
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
@@ -500,20 +541,23 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
+		MCPExtraBaseDomains:   splitCSV(getEnv("MCP_EXTRA_BASE_DOMAINS", "")),
 		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		MCPOAuthClientName:    strings.TrimSpace(getEnv("MCP_OAUTH_CLIENT_NAME", "")),
 		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
-			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
-			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
-			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
-			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
-			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
-			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
-			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
-			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:      getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:       getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:      getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret:  getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:     splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:        splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", defaultMCPDefaultIdPSessionMaxAge),
 		},
 		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
 			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
@@ -776,6 +820,17 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	}
 }
 
+// getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT. Unlike
+// OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
+// an empty value tells the client to derive the host per call from the
+// request's own location instead of pinning one region.
+func getModelArmorConfig() ModelArmorConfig {
+	return ModelArmorConfig{
+		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
+		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
+	}
+}
+
 func getConfigSyncConfig() ConfigSyncConfig {
 	return ConfigSyncConfig{
 		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
@@ -1003,6 +1058,9 @@ func (c *Config) Validate() error {
 	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
 		return err
 	}
+	if err := c.validateServerSecretKey(); err != nil {
+		return err
+	}
 	if !c.ConfigSync.DataPlaneEnabled {
 		if c.Database.Host == "" {
 			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
@@ -1040,9 +1098,6 @@ func (c *Config) Validate() error {
 		if c.Redis.Username == "" {
 			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
 		}
-	}
-	if len(c.Kafka.Brokers) == 0 {
-		return fmt.Errorf("%w: KAFKA_BROKERS must contain at least one broker", errors.ErrInvalidConfig)
 	}
 	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
 		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
@@ -1120,6 +1175,21 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
+}
+
+func (c *Config) validateServerSecretKey() error {
+	env := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	if env == "prod" || env == "production" {
+		return nil
+	}
+	if len(strings.TrimSpace(c.Server.SecretKey)) < serverSecretKeyMinLen {
+		return fmt.Errorf(
+			"%w: SERVER_SECRET_KEY must be at least %d bytes of random data; generate one with: openssl rand -base64 32",
+			errors.ErrInvalidConfig,
+			serverSecretKeyMinLen,
+		)
+	}
+	return nil
 }
 
 func (c *Config) isDeployed() bool {

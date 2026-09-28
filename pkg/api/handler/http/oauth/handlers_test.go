@@ -89,6 +89,11 @@ func (s *memFlowStore) GetGatewayClient(_ context.Context, id string) (*appoauth
 	return &c, nil
 }
 
+func (s *memFlowStore) DeleteGatewayClient(_ context.Context, id string) error {
+	delete(s.clients, id)
+	return nil
+}
+
 func (s *memFlowStore) SaveSession(context.Context, string, appoauth.SessionRecord) error {
 	return nil
 }
@@ -106,7 +111,15 @@ func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 	app.Get(WellKnownProtectedResourcePath, pr.Handle)
 	app.Get(WellKnownProtectedResourcePath+"/*", pr.Handle)
 	app.Get(WellKnownAuthorizationServerPath, NewAuthorizationServerHandler(svc).Handle)
-	app.Post(RegisterPath, NewRegisterHandler(svc).Handle)
+	reg := NewRegisterHandler(svc)
+	app.Post(RegisterPath, reg.Handle)
+	// Registered in the same order as mcpRouter, ahead of the catch-alls that
+	// would otherwise swallow the management URI.
+	app.Get(RegisterClientPath, reg.Read)
+	app.Put(RegisterClientPath, reg.Update)
+	app.Delete(RegisterClientPath, reg.Delete)
+	app.Get("/*", func(c *fiber.Ctx) error { return c.SendString("mcp stream") })
+	app.Delete("/*", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusMethodNotAllowed) })
 	return app
 }
 
@@ -120,7 +133,9 @@ func oauth2Auth(issuer, clientID string) *authdomain.Auth {
 
 func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(oauth2Auth("https://idp.example.com", ""))
+	// This case is about resource path scoping, so the provider is one the
+	// gateway can broker against; advertisement is gated on that.
+	app := newTestApp(oauth2Auth("https://idp.example.com", "mcp-public-client"))
 
 	for path, wantResource := range map[string]string{
 		"/.well-known/oauth-protected-resource":            "http://gw.example.com",
@@ -144,6 +159,9 @@ func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 		}
 		if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "http://gw.example.com" {
 			t.Fatalf("%s: unexpected authorization_servers %v", path, meta.AuthorizationServers)
+		}
+		if meta.ScopesSupported == nil {
+			t.Fatalf("%s: scopes_supported must be present even when empty", path)
 		}
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -44,9 +45,26 @@ type Rule struct {
 	Multiline       bool   `mapstructure:"multiline"`
 }
 
+// Streaming defaults. The rules run locally, but they run over the whole
+// prefix on every block — a pattern can straddle a block boundary, so the
+// delta alone is not safe to match against — which makes the work quadratic in
+// the length of the response. The cadence is what bounds it, so blocks are
+// deliberately larger here than the cost of one pass would suggest.
+var streamingDefaults = pluginutil.StreamingDefaults{
+	HeadChars:            400,
+	MinCharsBetweenEvals: 2048,
+	MaxHoldMS:            500,
+	MaxAccumulatedBytes:  262144,
+	GuardTimeout:         time.Second,
+}
+
 type Settings struct {
 	Target string `mapstructure:"target"`
 	Rules  []Rule `mapstructure:"rules"`
+	// Streaming opts the pre_response leg into per-block rewriting. Absent, a
+	// streamed response is not rewritten at all, which is what this plugin did
+	// before the block loop existed.
+	Streaming pluginutil.StreamingSettings `mapstructure:"streaming"`
 
 	compiled []compiledRule
 }
@@ -61,6 +79,12 @@ func parseConfig(settings map[string]any) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	// The buffered leg cannot fail: the rules are local and a rewrite that does
+	// not apply leaves the text alone. The stream leg inherits fail_closed all
+	// the same, because there its one failure mode is a rewrite that cannot
+	// reach text already released, and releasing unmasked text is what the
+	// rules exist to prevent.
+	cfg.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}
@@ -84,7 +108,7 @@ func (s *Settings) validate() error {
 			return fmt.Errorf("%w: rule %d", ErrEmptyPattern, i)
 		}
 	}
-	return nil
+	return s.Streaming.Validate(PluginName)
 }
 
 func (s *Settings) compile() error {

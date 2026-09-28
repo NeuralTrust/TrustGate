@@ -146,13 +146,14 @@ func cohereMessageEnd(finishReason, errMessage string, usage *CanonicalUsage) []
 // cohereFinish maps a canonical finish to a Cohere finish_reason and the
 // delta.error message that goes with ERROR. Cohere has no content-filter
 // reason, and COMPLETE would hide that the answer was withheld, so a refusal
-// or content filter ends with ERROR "content filtered".
+// or content filter ends with ERROR and the blocked-stream message, the same
+// words a guardrail cut carries.
 func cohereFinish(reason string) (string, string) {
 	if message, failed := FinishFailure(reason); failed {
-		return "ERROR", message
+		return cohereFinishError, message
 	}
 	if refusalFinish(reason) {
-		return "ERROR", "content filtered"
+		return cohereFinishError, defaultStreamBlockedMessage
 	}
 	return canonicalFinishToCohere(reason), ""
 }

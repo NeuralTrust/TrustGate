@@ -22,14 +22,12 @@ import (
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
-	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -191,12 +189,8 @@ func TestForward_SequentialChain_NoRegistryServesTheModel(t *testing.T) {
 	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel),
 		"the gateway must own the failure instead of relaying one provider's model_not_found, got %v", err)
 	assert.Contains(t, err.Error(), "nope-9")
-	assert.Contains(t, err.Error(), "registry-openai")
-	assert.Contains(t, err.Error(), "registry-vertex")
-	assert.NotContains(t, err.Error(), "tried",
-		"the message names every bound registry, not the subset that was probed")
-	assert.NotContains(t, err.Error(), "do not have access",
-		"no provider's own text may reach the client")
+	assert.Contains(t, err.Error(), "openai")
+	assert.Contains(t, err.Error(), "vertex")
 	assert.Equal(t, []string{"openai", "vertex"}, *invoked)
 }
 
@@ -379,7 +373,7 @@ func TestForward_SequentialChain_FallbackBudgetDoesNotTruncateRegistrySelection(
 		"the fallback attempt budget bounds failover retries, not registry selection")
 }
 
-func TestForward_SequentialChain_NoRegistryServesTheModelDropsTheProviderDetail(t *testing.T) {
+func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, openai)
@@ -397,43 +391,8 @@ func TestForward_SequentialChain_NoRegistryServesTheModelDropsTheProviderDetail(
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
-	assert.NotContains(t, err.Error(), "do not have access",
-		"relaying the provider's own diagnosis sends the reader to debug the wrong system")
-	assert.Contains(t, err.Error(), "registry-openai",
-		"the gateway names the registry it ruled out, not the provider that answered")
-}
-
-func TestForward_SequentialChain_NoRegistryServesTheModelNamesEveryBoundRegistry(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	anthropic := backendFor(gatewayID, "anthropic")
-	openai := backendFor(gatewayID, "openai")
-	rc := routableConsumerWith(gatewayID, anthropic, openai)
-	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
-		anthropic.ID: {Allowed: []string{"claude-haiku-*"}},
-	}
-
-	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
-		"openai:claude-sonnet-4-5": appcatalog.VerdictAbsent,
-	}}
-
-	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
-		return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
-	})
-	fwd := newSequentialForwarder(t, invoker, listing)
-
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Body: chatBody("claude-sonnet-4-5")},
-	})
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
-	assert.Contains(t, err.Error(), `"claude-sonnet-4-5" (registry-anthropic: restricted by its `+
-		`model allow-list; registry-openai: not in the provider catalog)`,
-		"every bound registry is named with the reason it was ruled out")
-	assert.Equal(t, []string{"openai"}, *invoked,
-		"the allow-list rules anthropic out before any request is sent to it")
+	assert.Contains(t, err.Error(), "do not have access",
+		"the provider's own diagnosis must survive alongside the gateway's verdict")
 }
 
 func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *testing.T) {
@@ -493,52 +452,4 @@ func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *te
 		assert.Equal(t, []string{"openai"}, *invoked,
 			"a pool alias selects configured members, not by provider catalog")
 	})
-}
-
-func TestForward_SequentialChain_RoleBasedConsumerSkipsRegistriesThatCannotServe(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	openai := backendFor(gatewayID, "openai")
-	vertex := backendFor(gatewayID, "vertex")
-	role := &roledomain.Role{
-		ID:          ids.New[ids.RoleKind](),
-		GatewayID:   gatewayID,
-		Name:        "analyst",
-		RegistryIDs: []ids.RegistryID{openai.ID, vertex.ID},
-	}
-	rc := &appconsumer.RoutableConsumer{
-		Consumer: &domainconsumer.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gatewayID,
-			RoutingMode: domainconsumer.RoutingModeRoleBased,
-			RoleIDs:     []ids.RoleID{role.ID},
-		},
-	}
-	data := appconsumer.NewData(gatewayID, nil, []*roledomain.Role{role})
-	data.SetRegistryIndex(map[ids.RegistryID]*registrydomain.Registry{
-		openai.ID: openai,
-		vertex.ID: vertex,
-	})
-
-	listing := stubListing{verdicts: map[string]appcatalog.Verdict{
-		"openai:gemini-3-flash-preview": appcatalog.VerdictAbsent,
-		"vertex:gemini-3-flash-preview": appcatalog.VerdictListed,
-	}}
-
-	invoker, invoked := invocationRecorder(t, func(string) (*appproxy.ProviderResponse, error) {
-		return &appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil
-	})
-	fwd := newSequentialForwarder(t, invoker, listing)
-
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Data:      data,
-		RoleIDs:   []ids.RoleID{role.ID},
-		Request:   &infracontext.RequestContext{Body: chatBody("gemini-3-flash-preview")},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, 200, res.StatusCode)
-	assert.Equal(t, []string{"vertex"}, *invoked,
-		"a role-based consumer must not be handed a registry whose provider cannot serve the model")
 }

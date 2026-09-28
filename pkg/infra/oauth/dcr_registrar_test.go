@@ -152,3 +152,115 @@ func TestEnsureClient_RedirectURIChangeReplacesClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, moved.ClientID, stored.ClientID)
 }
+
+// A configured client name goes out in the registration and a later name change
+// re-registers, so each environment owns its own upstream app. Rows written
+// before the name was recorded stay valid under the default name.
+func TestEnsureClient_ClientNameIsConfigurableAndChangesReregister(t *testing.T) {
+	t.Parallel()
+	var issued atomic.Int64
+	var names []string
+	var mu sync.Mutex
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			ClientName string `json:"client_name"`
+		}
+		_ = json.NewDecoder(req.Body).Decode(&body)
+		mu.Lock()
+		names = append(names, body.ClientName)
+		mu.Unlock()
+		n := issued.Add(1)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": fmt.Sprintf("client-%d", n)})
+	}))
+	defer idp.Close()
+
+	store := newClaimStore()
+	meta := &appoauth.UpstreamAuthServer{RegistrationEndpoint: idp.URL}
+	ctx := context.Background()
+	redirect := "https://gw.example.com/oauth/callback/p"
+
+	// Legacy row: registered before the name was recorded.
+	require.NoError(t, store.SaveClient(ctx, "gw|reg", appoauth.RegisteredClient{ClientID: "legacy", RedirectURI: redirect}))
+
+	// Default name: the legacy row is reused, nothing is registered.
+	def := infraoauth.NewUpstreamRegistrar(store, idp.Client())
+	kept, err := def.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, "legacy", kept.ClientID)
+	require.EqualValues(t, 0, issued.Load())
+
+	// A dev-specific name: re-registers under that name.
+	dev := infraoauth.NewUpstreamRegistrar(store, idp.Client(), infraoauth.WithClientName("TrustGate MCP Gateway - dev"))
+	renamed, err := dev.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.NotEqual(t, "legacy", renamed.ClientID)
+	require.Equal(t, "TrustGate MCP Gateway - dev", renamed.ClientName)
+	mu.Lock()
+	require.Equal(t, []string{"TrustGate MCP Gateway - dev"}, names)
+	mu.Unlock()
+
+	// Same name again: reused.
+	again, err := dev.EnsureClient(ctx, "gw|reg", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, renamed.ClientID, again.ClientID)
+	require.EqualValues(t, 1, issued.Load())
+
+	// A blank option keeps the default name.
+	blank := infraoauth.NewUpstreamRegistrar(newClaimStore(), idp.Client(), infraoauth.WithClientName("  "))
+	fresh, err := blank.EnsureClient(ctx, "gw|other", meta, redirect)
+	require.NoError(t, err)
+	require.Equal(t, infraoauth.DefaultClientName, fresh.ClientName)
+}
+
+// Calendly refuses a client_name with anything but letters, digits, hyphens and
+// spaces, and refuses the whole registration with it. A configured name is
+// reduced to that set so one strict upstream cannot break every connect.
+func TestEnsureClient_ClientNameIsReducedToPortableCharacters(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"TrustGate MCP Gateway (dev)": "TrustGate MCP Gateway dev",
+		"TrustGate_MCP.Gateway":       "TrustGate MCP Gateway",
+		"  NeuralTrust -  sandbox ":   "NeuralTrust - sandbox",
+		"()":                          infraoauth.DefaultClientName,
+	}
+	for configured, want := range cases {
+		t.Run(configured, func(t *testing.T) {
+			t.Parallel()
+			var got string
+			idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				var body struct {
+					ClientName string `json:"client_name"`
+				}
+				_ = json.NewDecoder(req.Body).Decode(&body)
+				got = body.ClientName
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "c"})
+			}))
+			defer idp.Close()
+			r := infraoauth.NewUpstreamRegistrar(newClaimStore(), idp.Client(), infraoauth.WithClientName(configured))
+			client, err := r.EnsureClient(context.Background(), "gw|reg",
+				&appoauth.UpstreamAuthServer{RegistrationEndpoint: idp.URL}, "https://gw.example.com/oauth/callback/p")
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+			require.Equal(t, want, client.ClientName)
+		})
+	}
+}
+
+// An upstream that refuses the registration answers with a 4xx; the error has
+// to say so in a way callers can tell apart from a gateway fault.
+func TestEnsureClient_RejectedRegistrationIsTyped(t *testing.T) {
+	t.Parallel()
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_client_metadata"}`))
+	}))
+	defer idp.Close()
+	r := infraoauth.NewUpstreamRegistrar(newClaimStore(), idp.Client())
+	_, err := r.EnsureClient(context.Background(), "gw|reg",
+		&appoauth.UpstreamAuthServer{RegistrationEndpoint: idp.URL}, "https://gw.example.com/oauth/callback/p")
+	require.ErrorIs(t, err, appoauth.ErrUpstreamRegistrationRejected)
+	require.Contains(t, err.Error(), "status 400")
+	require.Contains(t, err.Error(), "invalid_client_metadata")
+}

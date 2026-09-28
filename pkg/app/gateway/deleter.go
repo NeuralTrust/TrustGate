@@ -42,7 +42,6 @@ type deleter struct {
 	loadBalancerCache *cache.TTLMap
 	authCache         *cache.TTLMap
 	consumerPathCache *cache.TTLMap
-	roleCache         *cache.TTLMap
 	publisher         cache.EventPublisher
 	logger            *slog.Logger
 	signaler          configsyncport.SnapshotSignaler
@@ -67,7 +66,6 @@ func NewDeleter(
 		loadBalancerCache: manager.GetTTLMap(cache.LoadBalancerTTLName),
 		authCache:         manager.GetTTLMap(cache.AuthTTLName),
 		consumerPathCache: manager.GetTTLMap(cache.ConsumerPathTTLName),
-		roleCache:         manager.GetTTLMap(cache.RoleTTLName),
 		publisher:         publisher,
 		logger:            logger,
 		signaler:          signaler,
@@ -132,9 +130,6 @@ func (d *deleter) evictGatewayScopedCaches(id ids.GatewayID) {
 	}
 	if d.consumerPathCache != nil {
 		d.consumerPathCache.Clear()
-	}
-	if d.roleCache != nil {
-		d.roleCache.Clear()
 	}
 }
 

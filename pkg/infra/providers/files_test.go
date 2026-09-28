@@ -80,6 +80,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderCerebras,
 		providers.ProviderOpenRouter,
 		providers.ProviderCohere,
+		providers.ProviderMoonshot,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {

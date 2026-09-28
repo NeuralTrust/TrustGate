@@ -18,13 +18,117 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
-func wrapUnreachable(url string, err error) error {
-	return fmt.Errorf("%w: %s: %w", appmcp.ErrUnreachable, url, err)
+// wrapUnreachable classifies a failed connect. Both the URL it prints and the
+// underlying error's text are redacted: catalog servers such as Bright Data or
+// Browserbase carry the user's API token as a query variable (?token={token}),
+// and this error is logged by the composer and, before the handler learned to
+// map it, was returned verbatim to the MCP client.
+func wrapUnreachable(rawURL string, err error) error {
+	return fmt.Errorf("%w: %s: %w", appmcp.ErrUnreachable, redactURL(rawURL), redactError(err, rawURL))
+}
+
+// redactURL returns a form of the URL that is safe to log or return: userinfo
+// and the fragment are dropped and every query value is replaced by the
+// redaction marker. Keys are kept so the shape of the request stays
+// recognisable to an operator.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		if i := strings.IndexAny(raw, "?#"); i >= 0 {
+			return raw[:i]
+		}
+		return raw
+	}
+	u.User = nil
+	u.Fragment = ""
+	u.RawFragment = ""
+	if u.RawQuery == "" {
+		return u.String()
+	}
+	q := u.Query()
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, url.QueryEscape(k)+"="+secret.Redacted)
+	}
+	if len(parts) == 0 {
+		u.RawQuery = secret.Redacted
+	} else {
+		u.RawQuery = strings.Join(parts, "&")
+	}
+	return u.String()
+}
+
+// redactError rewrites an upstream error's text so a secret carried in the
+// target URL cannot leak through it. net/http's *url.Error embeds the full
+// request URL — query string included — in its message, so redacting only the
+// URL we print ourselves is not enough. The chain is preserved (Unwrap) so
+// errors.Is on ErrUpstreamUnauthorized and friends keeps working.
+func redactError(err error, rawURL string) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	clean := redactText(msg, rawURL)
+	if clean == msg {
+		return err
+	}
+	return &redactedError{msg: clean, cause: err}
+}
+
+type redactedError struct {
+	msg   string
+	cause error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.cause }
+
+// minRedactedValueLen keeps the literal-value pass from mangling error text over
+// trivially short query values ("1", "true"); the URL pass still hides those
+// wherever they appear inside a URL.
+const minRedactedValueLen = 6
+
+var urlInText = regexp.MustCompile(`https?://[^\s"'<>` + "`" + `]+`)
+
+// redactText masks, in free text, (1) every literal query value and password of
+// rawURL, raw and percent-escaped, longest first, and (2) the query of any URL
+// embedded in the text.
+func redactText(text, rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		var values []string
+		for _, vs := range u.Query() {
+			for _, v := range vs {
+				if len(v) >= minRedactedValueLen {
+					values = append(values, v, url.QueryEscape(v))
+				}
+			}
+		}
+		if u.User != nil {
+			if pw, ok := u.User.Password(); ok && pw != "" {
+				values = append(values, pw)
+			}
+		}
+		sort.SliceStable(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+		for _, v := range values {
+			text = strings.ReplaceAll(text, v, secret.Redacted)
+		}
+	}
+	return urlInText.ReplaceAllStringFunc(text, redactURL)
 }
 
 func mapRPCError(err error) error {

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Server, KeyRound, ShieldCheck, ArrowUp, ArrowDown, X, UsersRound } from "lucide-react";
+import { Check, Server, KeyRound, ShieldCheck, ArrowUp, ArrowDown, X } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
 import { useAllList, useInvalidate, errorMessage } from "@/lib/hooks";
@@ -27,7 +27,7 @@ import {
   toolkitRowsFrom,
   type ToolkitRow,
 } from "./toolkit-editor";
-import type { Consumer, Registry, Algorithm, ModelPolicy, RoutingMode } from "@/lib/types";
+import type { Consumer, Registry, Algorithm, ModelPolicy } from "@/lib/types";
 
 const TRIGGERS = ["http_5xx", "http_429", "timeout", "provider_error", "plugin_rejection"];
 
@@ -181,26 +181,15 @@ function useConsumerInvalidate(consumerId: string) {
 }
 
 function BindingsTab({ consumer }: { consumer: Consumer }) {
-  const roleBased = consumer.routing_mode === "role_based";
   return (
     <div className="flex flex-col gap-6">
-      {roleBased ? (
-        <BindingSection
-          consumer={consumer}
-          kind="roles"
-          title="Roles"
-          icon={<UsersRound className="h-4 w-4" />}
-          boundIds={consumer.role_ids}
-        />
-      ) : (
-        <BindingSection
-          consumer={consumer}
-          kind="registries"
-          title="Registries"
-          icon={<Server className="h-4 w-4" />}
-          boundIds={consumer.registry_ids}
-        />
-      )}
+      <BindingSection
+        consumer={consumer}
+        kind="registries"
+        title="Registries"
+        icon={<Server className="h-4 w-4" />}
+        boundIds={consumer.registry_ids}
+      />
       <BindingSection
         consumer={consumer}
         kind="auths"
@@ -236,7 +225,7 @@ function BindingSection({
   isPolicyBound,
 }: {
   consumer: Consumer;
-  kind: "registries" | "roles" | "auths" | "policies";
+  kind: "registries" | "auths" | "policies";
   title: string;
   icon: React.ReactNode;
   boundIds: string[];
@@ -391,7 +380,6 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
 
   const emb = consumer.lb_config?.embedding_config;
-  const [mode, setMode] = useState<RoutingMode>(consumer.routing_mode);
   const [strategy, setStrategy] = useState<Strategy>(strategyOf(consumer));
   const [embProvider, setEmbProvider] = useState(emb?.provider ?? "");
   const [embModel, setEmbModel] = useState(emb?.model ?? "");
@@ -467,23 +455,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
   async function save() {
     const base = `${gatewayScope(gatewayId)}/consumers/${consumer.id}`;
-
-    if (mode === "role_based") {
-      setSaving(true);
-      try {
-        await api.put(base, { routing_mode: "role_based" });
-        toast({ variant: "success", title: "Switched to role-based routing" });
-        invalidate();
-        onClose();
-      } catch (err) {
-        toast({ variant: "error", title: "Save failed", description: errorMessage(err) });
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-
-    const body: Record<string, unknown> = { routing_mode: "inline" };
+    const body: Record<string, unknown> = {};
 
     if (isLoadBalanced(strategy)) {
       if (attached.length === 0) {
@@ -600,23 +572,6 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
   return (
     <div className="flex flex-col gap-4">
-      <Field label="Access mode">
-        <Select value={mode} onChange={(e) => setMode(e.target.value as RoutingMode)}>
-          <option value="inline">Inline (registries)</option>
-          <option value="role_based">Role-based (identity)</option>
-        </Select>
-      </Field>
-
-      {mode === "role_based" && (
-        <div className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 text-[12px] text-muted">
-          Routing is governed by the roles bound in the <span className="text-fg">Bindings</span> tab.
-          A role-based consumer needs a single OIDC or OAuth2 auth and at least one role; each role
-          carries its own registries and model policies.
-        </div>
-      )}
-
-      {mode === "inline" && (
-        <>
       <Field label="Strategy">
         <Select value={strategy} onChange={(e) => setStrategy(e.target.value as Strategy)}>
           <optgroup label="Without distribution">
@@ -906,8 +861,6 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
           )}
         </div>
       )}
-        </>
-      )}
 
       <div className="flex justify-end pt-2">
         <Button variant="primary" onClick={save} loading={saving}>
@@ -973,8 +926,7 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
   );
 }
 
-// The MCP policy (toolkit + fail_mode) lives on the consumer only in inline
-// mode; a role-based consumer takes it from the roles it resolves to.
+// The MCP policy (toolkit + fail_mode) lives on the consumer.
 function ToolkitTab({ consumer, onClose }: { consumer: Consumer; onClose: () => void }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
@@ -1011,14 +963,6 @@ function ToolkitTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
     } finally {
       setSaving(false);
     }
-  }
-
-  if (consumer.routing_mode === "role_based") {
-    return (
-      <p className="text-[13px] text-faint py-8 text-center">
-        This consumer resolves its access through roles — configure the toolkit on each role instead.
-      </p>
-    );
   }
 
   if (attached.length === 0 && rows.length === 0) {

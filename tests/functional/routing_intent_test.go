@@ -668,11 +668,10 @@ func TestRoutingIntent_SequentialChainHardening(t *testing.T) {
 		assert.Equal(t, 1, allowed.Hits())
 	})
 
-	t.Run("the gateway error carries no provider's own diagnosis", func(t *testing.T) {
+	t.Run("the gateway error carries the provider's own diagnosis", func(t *testing.T) {
 		a := newModelNotFoundUpstream(t)
-		name := uniqueName("be-a")
 		apiKey, path := setupChain(t, nil,
-			openaiCompatibleBackendPayload(name, a.URL()),
+			openaiCompatibleBackendPayload(uniqueName("be-a"), a.URL()),
 		)
 
 		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("nope-9"))
@@ -680,41 +679,7 @@ func TestRoutingIntent_SequentialChainHardening(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
 		assert.Contains(t, string(body), "model_not_supported")
 		assert.Contains(t, string(body), "nope-9")
-		assert.Contains(t, string(body), name, "the gateway names the registry it ruled out")
-		assert.NotContains(t, string(body), "do not have access",
-			"relaying the provider's message sends the reader to debug the wrong system")
-	})
-
-	t.Run("the error names every bound registry and why each was ruled out", func(t *testing.T) {
-		if !openaiCatalogListsModel(t, "gpt-4o-mini") {
-			t.Skip("provider catalog is empty in this environment; VerdictAbsent cannot be produced")
-		}
-		restricted := newJSONUpstream(t, "must-not-serve")
-		catalogAbsent := newModelNotFoundUpstream(t)
-		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("reasons-gw")})
-		restrictedName := uniqueName("be-restricted")
-		absentName := uniqueName("be-absent")
-		restrictedID := CreateRegistry(t, gatewayID,
-			openaiCompatibleBackendPayload(restrictedName, restricted.URL()))
-		absentID := CreateRegistry(t, gatewayID, openaiBackendPayload(absentName, catalogAbsent.URL()))
-		coID := CreateConsumer(t, gatewayID, map[string]any{
-			"name": uniqueName("cons"),
-			"registries": []map[string]any{
-				{"id": restrictedID, "model_policies": map[string]any{"allowed": []string{"claude-haiku-*"}}},
-				{"id": absentID},
-			},
-		})
-		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-
-		status, _, body := proxyPost(t, apiKey, chatCompletionsPath(t, coID),
-			chatRequestModel("claude-sonnet-4-5"))
-
-		assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
-		assert.Contains(t, string(body), "model_not_supported")
-		assert.Contains(t, string(body), restrictedName+": restricted by its model allow-list")
-		assert.Contains(t, string(body), absentName+": not in the provider catalog")
-		assert.NotContains(t, string(body), "do not have access")
-		assert.Equal(t, 0, restricted.Hits(),
-			"the allow-list rules the registry out before any request is sent to it")
+		assert.Contains(t, string(body), "do not have access",
+			"the provider's message must survive alongside the gateway's verdict")
 	})
 }

@@ -1,0 +1,334 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package auth_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	authmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+)
+
+const candidateToken = "header.payload.signature"
+
+func oauth2IdP(name, issuer string, audiences []string) *domain.Auth {
+	return &domain.Auth{
+		ID:      ids.New[ids.AuthKind](),
+		Name:    name,
+		Type:    domain.TypeOAuth2,
+		Enabled: true,
+		Config: domain.Config{
+			OAuth2: &domain.OAuth2Config{Issuer: issuer, Audiences: audiences},
+		},
+	}
+}
+
+func legacyOIDCIdP(t *testing.T, name, issuer string, audiences, publicKeys []string) *domain.Auth {
+	t.Helper()
+	legacy := map[string]any{"issuer": issuer, "audiences": audiences}
+	if len(publicKeys) > 0 {
+		legacy["public_keys"] = publicKeys
+	}
+	payload, err := json.Marshal(map[string]any{"oidc": legacy})
+	if err != nil {
+		t.Fatalf("marshal legacy oidc payload: %v", err)
+	}
+	var cfg domain.Config
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		t.Fatalf("unmarshal legacy oidc payload: %v", err)
+	}
+	return &domain.Auth{
+		ID:      ids.New[ids.AuthKind](),
+		Name:    name,
+		Type:    domain.NormalizeType(domain.TypeOIDC),
+		Enabled: true,
+		Config:  cfg,
+	}
+}
+
+func candidateNames(auths []*domain.Auth) []string {
+	names := make([]string, 0, len(auths))
+	for _, a := range auths {
+		names = append(names, a.Name)
+	}
+	return names
+}
+
+func equalNames(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestIdentityProviderFinder_FindCandidates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		auths     []*domain.Auth
+		hints     appauth.TokenHints
+		wantNames []string
+	}{
+		{
+			name:      "no auths yields no candidates",
+			auths:     nil,
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{},
+		},
+		{
+			name:      "issuer mismatch excludes the only auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://other.example", Audiences: []string{"client-id"}},
+			wantNames: []string{},
+		},
+		{
+			name:      "audience mismatch excludes the only auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"another-client"}},
+			wantNames: []string{},
+		},
+		{
+			name:      "single matching auth is the only candidate",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name: "several matching auths keep declaration order",
+			auths: []*domain.Auth{
+				oauth2IdP("first", "https://issuer.example", []string{"client-id"}),
+				oauth2IdP("second", "https://issuer.example", []string{"client-id"}),
+				oauth2IdP("third", "https://issuer.example", []string{"client-id"}),
+			},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"first", "second", "third"},
+		},
+		{
+			name: "non matching auths are filtered out of an ordered set",
+			auths: []*domain.Auth{
+				oauth2IdP("other-issuer", "https://other.example", []string{"client-id"}),
+				oauth2IdP("match", "https://issuer.example", []string{"client-id"}),
+				oauth2IdP("other-audience", "https://issuer.example", []string{"another-client"}),
+			},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"match"},
+		},
+		{
+			name:      "empty configured audiences keeps the auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", nil)},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "empty token audiences keeps the auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example"},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "empty configured issuer keeps the auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "empty token issuer keeps the auth",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Audiences: []string{"client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "resource uri token audience matches a bare identifier config",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"api://client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "bare token audience matches a resource uri config",
+			auths:     []*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"api://client-id"})},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"entra"},
+		},
+		{
+			name:      "auth decoded from a legacy oidc payload is selected",
+			auths:     []*domain.Auth{legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"legacy-oidc"},
+		},
+		{
+			name:      "auth decoded from a legacy oidc payload matches a resource uri token audience",
+			auths:     []*domain.Auth{legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"api://client-id"}},
+			wantNames: []string{"legacy-oidc"},
+		},
+		{
+			name: "legacy oidc auth whose only key material is public keys is selected",
+			auths: []*domain.Auth{legacyOIDCIdP(
+				t,
+				"air-gapped-oidc",
+				"https://issuer.example",
+				[]string{"client-id"},
+				[]string{"-----BEGIN PUBLIC KEY-----"},
+			)},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"air-gapped-oidc"},
+		},
+		{
+			name: "legacy and native auths are both candidates in declaration order",
+			auths: []*domain.Auth{
+				legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil),
+				oauth2IdP("unified", "https://issuer.example", []string{"client-id"}),
+			},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"legacy-oidc", "unified"},
+		},
+		{
+			name: "disabled nil and non identity provider auths are skipped",
+			auths: []*domain.Auth{
+				nil,
+				disable(oauth2IdP("disabled", "https://issuer.example", []string{"client-id"})),
+				{
+					ID:      ids.New[ids.AuthKind](),
+					Name:    "api-key",
+					Type:    domain.TypeAPIKey,
+					Enabled: true,
+				},
+				{
+					ID:      ids.New[ids.AuthKind](),
+					Name:    "configless-oauth2",
+					Type:    domain.TypeOAuth2,
+					Enabled: true,
+				},
+				oauth2IdP("enabled", "https://issuer.example", []string{"client-id"}),
+			},
+			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
+			wantNames: []string{"enabled"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			verifier := authmocks.NewJWTVerifier(t)
+			verifier.EXPECT().Peek(candidateToken).Return(tt.hints, nil).Once()
+
+			finder := appauth.NewIdentityProviderFinder(verifier)
+			got, err := finder.FindCandidates(context.Background(), tt.auths, candidateToken)
+			if err != nil {
+				t.Fatalf("FindCandidates: unexpected error %v", err)
+			}
+			if names := candidateNames(got); !equalNames(names, tt.wantNames) {
+				t.Fatalf("FindCandidates candidates = %v, want %v", names, tt.wantNames)
+			}
+		})
+	}
+}
+
+func disable(a *domain.Auth) *domain.Auth {
+	a.Enabled = false
+	return a
+}
+
+func TestIdentityProviderFinder_PeekFailurePropagates(t *testing.T) {
+	t.Parallel()
+	errPeek := errors.New("token is not a parseable jwt")
+	verifier := authmocks.NewJWTVerifier(t)
+	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{}, errPeek).Once()
+
+	finder := appauth.NewIdentityProviderFinder(verifier)
+	got, err := finder.FindCandidates(
+		context.Background(),
+		[]*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+		candidateToken,
+	)
+	if !errors.Is(err, errPeek) {
+		t.Fatalf("FindCandidates error = %v, want it to wrap %v", err, errPeek)
+	}
+	if got != nil {
+		t.Fatalf("FindCandidates candidates = %v, want nil on peek failure", got)
+	}
+}
+
+func TestIdentityProviderFinder_CancelledContextIsHonoured(t *testing.T) {
+	t.Parallel()
+	verifier := authmocks.NewJWTVerifier(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	finder := appauth.NewIdentityProviderFinder(verifier)
+	got, err := finder.FindCandidates(
+		ctx,
+		[]*domain.Auth{oauth2IdP("entra", "https://issuer.example", []string{"client-id"})},
+		candidateToken,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("FindCandidates error = %v, want context.Canceled", err)
+	}
+	if got != nil {
+		t.Fatalf("FindCandidates candidates = %v, want nil on cancelled context", got)
+	}
+}
+
+func TestIdentityProviderFinder_ReturnsLegacyAuthInstanceUncopied(t *testing.T) {
+	t.Parallel()
+	verifier := authmocks.NewJWTVerifier(t)
+	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
+		Issuer:    "https://issuer.example",
+		Audiences: []string{"client-id"},
+	}, nil).Once()
+
+	stored := legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)
+
+	finder := appauth.NewIdentityProviderFinder(verifier)
+	got, err := finder.FindCandidates(context.Background(), []*domain.Auth{stored}, candidateToken)
+	if err != nil {
+		t.Fatalf("FindCandidates: %v", err)
+	}
+	if len(got) != 1 || got[0] != stored {
+		t.Fatalf("FindCandidates = %v, want the stored auth instance", got)
+	}
+}
+
+func TestIdentityProviderFinder_ReturnsStoredAuthWhenOAuth2ConfigPresent(t *testing.T) {
+	t.Parallel()
+	verifier := authmocks.NewJWTVerifier(t)
+	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
+		Issuer:    "https://issuer.example",
+		Audiences: []string{"client-id"},
+	}, nil).Once()
+
+	stored := oauth2IdP("unified", "https://issuer.example", []string{"client-id"})
+
+	finder := appauth.NewIdentityProviderFinder(verifier)
+	got, err := finder.FindCandidates(context.Background(), []*domain.Auth{stored}, candidateToken)
+	if err != nil {
+		t.Fatalf("FindCandidates: %v", err)
+	}
+	if len(got) != 1 || got[0] != stored {
+		t.Fatalf("FindCandidates = %v, want the stored auth instance", got)
+	}
+}

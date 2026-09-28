@@ -14,7 +14,10 @@
 
 package identity
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestHasScopes(t *testing.T) {
 	t.Parallel()
@@ -72,5 +75,41 @@ func TestPrincipalEmail(t *testing.T) {
 				t.Fatalf("Email() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGroupsFromClaim(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value any
+		want  []string
+	}{
+		{name: "string", value: " eng  sre eng ", want: []string{"eng", "sre"}},
+		{name: "string slice", value: []string{" eng ", "", "sre", "eng"}, want: []string{"eng", "sre"}},
+		{name: "JSON array", value: []any{" eng ", 42, "sre", "eng"}, want: []string{"eng", "sre"}},
+		{name: "unsupported", value: 42},
+		{name: "nil"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := GroupsFromClaim(test.value); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("GroupsFromClaim() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPrincipalGroups(t *testing.T) {
+	t.Parallel()
+	var nilPrincipal *Principal
+	if got := nilPrincipal.Groups(); got != nil {
+		t.Fatalf("nil principal Groups() = %#v, want nil", got)
+	}
+	p := &Principal{Claims: map[string]any{ClaimGroups: "platform security"}}
+	if got := p.Groups(); !reflect.DeepEqual(got, []string{"platform", "security"}) {
+		t.Fatalf("Groups() = %#v", got)
 	}
 }

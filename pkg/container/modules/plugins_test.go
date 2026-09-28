@@ -54,7 +54,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"model_allowlist":       {appplugins.ProtocolLLM},
 		"prompt_template":       {appplugins.ProtocolLLM},
 		"tool_injection":        {appplugins.ProtocolLLM},
-		"tool_allowlist":        {appplugins.ProtocolLLM},
+		"tool_allowlist":        {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"openai_moderation":     {appplugins.ProtocolLLM},
 		"bedrock_guardrail":     {appplugins.ProtocolLLM},
 		"azure_content_safety":  {appplugins.ProtocolLLM},

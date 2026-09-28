@@ -14,12 +14,20 @@
 
 package regexreplace
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
 
 const (
 	decisionRewritten = "rewritten"
 	decisionObserved  = "observed"
 	decisionNoMatch   = "no_match"
+	// decisionRewriteUnapplied is a streamed response that ended because a
+	// rewrite could not reach text already released. It is not a policy
+	// decision to block, and reporting it as one would read like a guardrail
+	// this plugin does not have.
+	decisionRewriteUnapplied = "rewrite_unapplied"
 )
 
 type Data struct {
@@ -28,6 +36,9 @@ type Data struct {
 	Mode     string `json:"mode,omitempty"`
 	Decision string `json:"decision,omitempty"`
 	Changed  bool   `json:"changed,omitempty"`
+	// Streaming is present only on a streamed response leg, written once when
+	// the stream closes.
+	Streaming *pluginutil.StreamData `json:"streaming,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {

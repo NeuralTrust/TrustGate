@@ -98,6 +98,7 @@ type anthropicResponse struct {
 	Content      []anthropicContentBlock `json:"content"`
 	StopReason   string                  `json:"stop_reason"`
 	StopSequence *string                 `json:"stop_sequence"` // null or the matched stop sequence
+	StopDetails  *anthropicStopDetails   `json:"stop_details,omitempty"`
 	Usage        *anthropicUsage         `json:"usage,omitempty"`
 }
 
@@ -260,8 +261,17 @@ type anthropicSSEMessageDelta struct {
 }
 
 type anthropicSSEMessageDeltaBody struct {
-	StopReason   string  `json:"stop_reason"`
-	StopSequence *string `json:"stop_sequence"`
+	StopReason   string                `json:"stop_reason"`
+	StopSequence *string               `json:"stop_sequence"`
+	StopDetails  *anthropicStopDetails `json:"stop_details,omitempty"`
+}
+
+// anthropicStopDetails is the RefusalStopDetails the real API pairs with a
+// refusal stop reason. Only type is required; category is a closed enum of
+// Anthropic's own policy buckets, which a gateway guardrail cannot claim, so it
+// is left off. The accumulator in both SDKs copies this onto the final Message.
+type anthropicStopDetails struct {
+	Type string `json:"type"`
 }
 
 type anthropicSSESimple struct {
@@ -582,6 +592,12 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 		if t.Custom != nil {
 			name, desc, schema = t.Custom.Name, t.Custom.Description, t.Custom.InputSchema
 		}
+		// RUN-1553: Anthropic server tools are declared by type alone. Every
+		// other format requires a name, and a synthesised one would name a tool
+		// the model can call and the gateway cannot route.
+		if name == "" {
+			continue
+		}
 		cr.Tools = append(cr.Tools, CanonicalTool{
 			Name:        name,
 			Description: desc,
@@ -727,6 +743,10 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 
 // Response: Encode (Canonical → Anthropic response)
 
+// anthropicStopRefusal is the stop_reason a guardrail cut carries, and the
+// discriminant of the stop_details the API pairs with it.
+const anthropicStopRefusal = "refusal"
+
 func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
 	var content []anthropicContentBlock
 	// Prepend thinking blocks if present (Anthropic extended thinking)
@@ -758,6 +778,9 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 		Model:      resp.Model,
 		Content:    content,
 		StopReason: anthropicStopReason(resp.FinishReason),
+	}
+	if out.StopReason == anthropicStopRefusal {
+		out.StopDetails = &anthropicStopDetails{Type: anthropicStopRefusal}
 	}
 
 	if resp.Usage != nil {
@@ -910,11 +933,11 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 			lines = append(lines, emitToolUseBlocks(chunk.ToolCallDeltas)...)
 		} else if chunk.Delta != "" {
 			// Role + text in same chunk
-			lines = append(lines, anthropicTextBlockStartEvent(0)...)
-			lines = append(lines, anthropicContentBlockDeltaEvent(0, anthropicBlockText, chunk.Delta)...)
+			lines = append(lines, anthropicTextBlockStartEvent(chunk.ContentBlockIndex)...)
+			lines = append(lines, anthropicContentBlockDeltaEvent(chunk.ContentBlockIndex, anthropicBlockText, chunk.Delta)...)
 		} else {
 			// Role only (text response will follow in next chunks)
-			lines = append(lines, anthropicTextBlockStartEvent(0)...)
+			lines = append(lines, anthropicTextBlockStartEvent(chunk.ContentBlockIndex)...)
 		}
 		return lines, nil
 	}
@@ -928,12 +951,15 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 	// --- text content_block_delta --------------------------------------------
 	if chunk.Delta != "" {
-		return anthropicContentBlockDeltaEvent(0, anthropicBlockText, chunk.Delta), nil
+		return anthropicContentBlockDeltaEvent(chunk.ContentBlockIndex, anthropicBlockText, chunk.Delta), nil
 	}
 
 	// --- finish_reason → content_block_stop + message_delta + message_stop ----
 	if chunk.FinishReason != "" {
-		lines := anthropicContentBlockStopEvent(0)
+		var lines [][]byte
+		if !chunk.ContentBlockClosed {
+			lines = anthropicContentBlockStopEvent(chunk.ContentBlockIndex)
+		}
 		return append(lines, anthropicMessageEndEvents(chunk.FinishReason, chunk.Usage)...), nil
 	}
 

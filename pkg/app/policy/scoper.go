@@ -35,6 +35,7 @@ var _ Scoper = (*scoper)(nil)
 
 type scoper struct {
 	repo        domain.Repository
+	levels      LevelGuard
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
@@ -43,6 +44,7 @@ type scoper struct {
 
 func NewScoper(
 	repo domain.Repository,
+	levels LevelGuard,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -50,6 +52,7 @@ func NewScoper(
 ) Scoper {
 	return &scoper{
 		repo:        repo,
+		levels:      levels,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		publisher:   publisher,
 		logger:      logger,
@@ -76,7 +79,7 @@ func (s *scoper) setGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.
 	if existing.Global == global {
 		return existing, nil
 	}
-	if err := s.repo.SetGlobal(ctx, gatewayID, id, global); err != nil {
+	if err := s.write(ctx, gatewayID, id, existing, global); err != nil {
 		return nil, err
 	}
 	existing.Global = global
@@ -86,4 +89,20 @@ func (s *scoper) setGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.
 		s.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+// write persists the flag, guarded when it is a promotion. Promoting moves the
+// policy to the all-traffic level, which a policy of the same plugin may
+// already hold; demoting only releases levels, so it needs no guard and must
+// not be refused by one.
+func (s *scoper) write(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, existing *domain.Policy, global bool) error {
+	save := func(ctx context.Context) error {
+		return s.repo.SetGlobal(ctx, gatewayID, id, global)
+	}
+	if !global {
+		return save(ctx)
+	}
+	promoted := *existing
+	promoted.Global = true
+	return s.levels.Check(ctx, &promoted, save)
 }

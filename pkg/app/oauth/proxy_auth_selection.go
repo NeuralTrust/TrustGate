@@ -110,8 +110,10 @@ type resourceMatch struct {
 	gatewayID ids.GatewayID
 	// matched reports whether the resource addressed a known consumer.
 	matched bool
-	// protected reports whether the consumer carries an enabled credential of
-	// its own, which rules out any identity-provider fallback.
+	// protected reports whether the consumer authenticates with a credential of
+	// its own, so no identity-provider fallback applies. Keyed on
+	// Consumer.WantsSignIn rather than on any enabled auth: for a consumer whose
+	// users sign in, only an identity provider of its own counts.
 	protected bool
 }
 
@@ -145,17 +147,28 @@ func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceM
 }
 
 // pathOAuth2Auths returns the usable OAuth2 providers attached to the matched
-// paths, and whether those paths carry an enabled credential of their own.
+// paths, and whether those paths rule out brokering a login here.
+//
+// The predicate is Consumer.WantsSignIn, the same one the request-time auth
+// chain asks: a consumer whose users sign in only presents its own identity
+// provider as a reason not to broker, because for it an api key or a client
+// certificate is a residual row the chain ignores rather than the credential.
+// Reading ActsForUsers here instead let an app-source consumer advertise a
+// login the chain then refused (RUN-1501). An unmatched consumer is nil, so
+// this stays protected and fails closed.
 func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool) {
 	var providers []*authdomain.Auth
 	protected := false
 	for _, m := range matches {
+		wantsSignIn := m.Consumer.WantsSignIn()
 		for _, a := range m.Auths {
 			if !a.Enabled {
 				continue
 			}
-			protected = true
-			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
+			if !wantsSignIn || a.Type.IsIdentityProvider() {
+				protected = true
+			}
+			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2.Interactive() {
 				providers = append(providers, a)
 			}
 		}
@@ -171,6 +184,9 @@ func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorizati
 		}
 		for _, a := range auths {
 			if a.ID.String() == pending.AuthID {
+				if !a.Config.OAuth2.Interactive() {
+					return nil, oauthErr("invalid_request", "the identity provider behind this authorization no longer supports interactive login")
+				}
 				return a, nil
 			}
 		}
@@ -269,7 +285,7 @@ func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 		return nil, ErrAmbiguousAuthorizationServer
 	}
 	for _, a := range real {
-		if a.Config.OAuth2 != nil && a.Config.OAuth2.Issuer == issuers[0] {
+		if a.Config.OAuth2.Interactive() && a.Config.OAuth2.Issuer == issuers[0] {
 			return a, nil
 		}
 	}

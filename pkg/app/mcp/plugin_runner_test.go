@@ -28,6 +28,7 @@ import (
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,10 @@ func preResponsePolicy(stages ...policydomain.Stage) *policydomain.Policy {
 		Mode:    policydomain.ModeEnforce,
 		Stages:  stages,
 	}
+}
+
+func unboundCall() ToolCall {
+	return ToolCall{Exposed: testToolName, NativeTool: testToolName, Arguments: json.RawMessage(testToolArgs)}
 }
 
 func TestPluginRunner_PreRequest(t *testing.T) {
@@ -148,7 +153,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 			runner := NewPluginRunner(exec, discardLogger())
 
-			_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+			_, err := runner.PreRequest(context.Background(), rc, unboundCall())
 
 			assertStageInput(t, captured, policydomain.StagePreRequest, rc)
 			assert.Nil(t, captured.Response)
@@ -249,13 +254,7 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			rc := routableMCPConsumer(preResponsePolicy(tt.plan...))
 			runner := NewPluginRunner(exec, discardLogger())
 
-			_, err := runner.PreResponse(
-				context.Background(),
-				rc,
-				testToolName,
-				json.RawMessage(testToolArgs),
-				json.RawMessage(testResult),
-			)
+			_, err := runner.PreResponse(context.Background(), rc, unboundCall(), json.RawMessage(testResult))
 
 			assertStageInput(t, captured, policydomain.StagePreResponse, rc)
 			require.NotNil(t, captured.Response)
@@ -279,12 +278,132 @@ func TestPluginRunner_NilExecutor(t *testing.T) {
 	runner := NewPluginRunner(nil, discardLogger())
 	rc := routableMCPConsumer()
 
-	_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	_, err := runner.PreRequest(context.Background(), rc, unboundCall())
 	require.NoError(t, err)
-	_, err = runner.PreResponse(
-		context.Background(), rc, testToolName, json.RawMessage(testToolArgs), json.RawMessage(testResult),
-	)
+	_, err = runner.PreResponse(context.Background(), rc, unboundCall(), json.RawMessage(testResult))
 	require.NoError(t, err)
+}
+
+// A resolved call travels to the plugins with the binding Resolve fixed:
+// RegistryID and the native tool in metadata, while Body.name stays the exposed
+// name the caller used. A plugin decides on the native tool; the gateway keeps
+// routing on the resolved target, so a rewritten name has nowhere to go.
+func TestPluginRunner_ResolvedCall_CarriesNativeBinding(t *testing.T) {
+	t.Parallel()
+	reg := mcpRegistry(t, "snowflake", "https://snowflake.example.com/mcp")
+	call := ToolCall{
+		Exposed:    "mcp_ab12_run_query_9f8e",
+		Registry:   reg,
+		NativeTool: "run_query",
+		Arguments:  json.RawMessage(testToolArgs),
+	}
+	wantBody := `{"name":"mcp_ab12_run_query_9f8e","arguments":` + testToolArgs + `}`
+
+	assertBinding := func(t *testing.T, in appplugins.StageInput) {
+		t.Helper()
+		require.NotNil(t, in.Request)
+		assert.Equal(t, reg.ID.String(), in.Request.RegistryID)
+		assert.Equal(t, "run_query", in.Request.Metadata[infracontext.MetadataMCPTool])
+		assert.Equal(t, reg.ID.String(), in.Request.Metadata[infracontext.MetadataMCPRegistryID])
+		assert.Equal(t, "snowflake", in.Request.Metadata[infracontext.MetadataMCPRegistryName])
+		assert.Equal(t, "mcp_ab12_run_query_9f8e", in.Request.Metadata[infracontext.MetadataMCPExposedTool])
+		assert.JSONEq(t, wantBody, string(in.Request.Body))
+	}
+
+	t.Run("pre_request", func(t *testing.T) {
+		t.Parallel()
+		exec := pluginmocks.NewExecutor(t)
+		var captured appplugins.StageInput
+		exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+			Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
+			Return(&appplugins.StageOutcome{}, nil).Once()
+		runner := NewPluginRunner(exec, discardLogger())
+
+		_, err := runner.PreRequest(context.Background(), routableMCPConsumer(), call)
+		require.NoError(t, err)
+		assert.Equal(t, policydomain.StagePreRequest, captured.Stage)
+		assertBinding(t, captured)
+	})
+
+	t.Run("pre_response", func(t *testing.T) {
+		t.Parallel()
+		exec := pluginmocks.NewExecutor(t)
+		var captured appplugins.StageInput
+		exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+			Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
+			Return(&appplugins.StageOutcome{}, nil).Once()
+		runner := NewPluginRunner(exec, discardLogger())
+
+		_, err := runner.PreResponse(context.Background(), routableMCPConsumer(), call, json.RawMessage(testResult))
+		require.NoError(t, err)
+		assert.Equal(t, policydomain.StagePreResponse, captured.Stage)
+		assertBinding(t, captured)
+		require.NotNil(t, captured.Response)
+		assert.JSONEq(t, testResult, string(captured.Response.Body))
+	})
+}
+
+// A call without a Registry has no binding to report: RegistryID and Metadata
+// stay empty, and the body is byte-identical to what the runner has always
+// sent.
+func TestPluginRunner_UnboundCall_CarriesNoBinding(t *testing.T) {
+	t.Parallel()
+	exec := pluginmocks.NewExecutor(t)
+	var captured appplugins.StageInput
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
+		Return(&appplugins.StageOutcome{}, nil).Once()
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
+
+	_, err := runner.PreRequest(context.Background(), rc, unboundCall())
+	require.NoError(t, err)
+	assertStageInput(t, captured, policydomain.StagePreRequest, rc)
+	assert.Empty(t, captured.Request.RegistryID)
+	assert.Nil(t, captured.Request.Metadata)
+}
+
+// The plan PlanFor picked for the destination is what the executor runs, and
+// it runs alone: Policies stays empty so the executor cannot fall back to
+// rebuilding the consumer-wide chain. Without a plan the stage keeps today's
+// inputs, so a consumer without MCPPlans still resolves through in.Policies.
+func TestPluginRunner_StagePlanSelection(t *testing.T) {
+	t.Parallel()
+	scoped := &appplugins.StagePlan{}
+	basePlan := &appplugins.StagePlan{}
+	newRC := func() *appconsumer.RoutableConsumer {
+		rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest, policydomain.StagePreResponse))
+		rc.PolicyPlan = basePlan
+		return rc
+	}
+
+	tests := []struct {
+		name         string
+		plan         *appplugins.StagePlan
+		wantPlan     *appplugins.StagePlan
+		wantPolicies bool
+	}{
+		{name: "resolved plan is used as is", plan: scoped, wantPlan: scoped},
+		{name: "nil plan falls back to the consumer plan", wantPlan: basePlan, wantPolicies: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rc := newRC()
+			exec := pluginmocks.NewExecutor(t)
+			exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+				return in.Plan == tt.wantPlan && (len(in.Policies) > 0) == tt.wantPolicies
+			})).Return(&appplugins.StageOutcome{}, nil).Twice()
+			runner := NewPluginRunner(exec, discardLogger())
+			call := ToolCall{Exposed: testToolName, NativeTool: testToolName, Arguments: json.RawMessage(testToolArgs), Plan: tt.plan}
+
+			_, err := runner.PreRequest(context.Background(), rc, call)
+			require.NoError(t, err)
+			_, err = runner.PreResponse(context.Background(), rc, call, json.RawMessage(testResult))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func assertStageInput(t *testing.T, in appplugins.StageInput, stage policydomain.Stage, rc *appconsumer.RoutableConsumer) {
@@ -328,7 +447,7 @@ func TestPluginRunner_PreRequest_ReturnsMaskedArguments(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 
-	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	got, err := runner.PreRequest(context.Background(), rc, unboundCall())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.JSONEq(t, `{"q":"[REDACTED]"}`, string(got.Arguments))
@@ -345,7 +464,7 @@ func TestPluginRunner_PreRequest_NoRewriteLeavesArgumentsEmpty(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 
-	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	got, err := runner.PreRequest(context.Background(), rc, unboundCall())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Nil(t, got.Arguments)
@@ -367,10 +486,7 @@ func TestPluginRunner_PreResponse_MaskedResultReplacesOutput(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
 
-	got, err := runner.PreResponse(
-		context.Background(), rc, testToolName,
-		json.RawMessage(testToolArgs), json.RawMessage(testResult),
-	)
+	got, err := runner.PreResponse(context.Background(), rc, unboundCall(), json.RawMessage(testResult))
 	require.NoError(t, err, "a masked result must not fail the call")
 	require.NotNil(t, got)
 	assert.JSONEq(t, masked, string(got.Result))
@@ -390,10 +506,7 @@ func TestPluginRunner_PreResponse_NonSuccessShortCircuitBlocks(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
 
-	_, err := runner.PreResponse(
-		context.Background(), rc, testToolName,
-		json.RawMessage(testToolArgs), json.RawMessage(testResult),
-	)
+	_, err := runner.PreResponse(context.Background(), rc, unboundCall(), json.RawMessage(testResult))
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	assert.True(t, IsPolicyBlockedCode(rpcErr.Code))

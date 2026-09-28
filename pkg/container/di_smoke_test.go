@@ -15,15 +15,13 @@
 package container_test
 
 import (
-	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
 
 	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
-	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
-	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -38,6 +36,7 @@ import (
 )
 
 func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	cases := []struct {
 		plane  string
 		dbless bool
@@ -55,53 +54,8 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 		}
 	}
 }
-
-func TestDISmoke_MCPAPIKeyConnectModuleSets(t *testing.T) {
-	t.Run("full registers API and MCP providers", func(t *testing.T) {
-		c, err := container.New(modules.All("mcp", false)...)
-		if err != nil {
-			t.Fatalf("New(modules.All(mcp, false)...): %v", err)
-		}
-
-		var graph bytes.Buffer
-		if err := dig.Visualize(c.Container, &graph); err != nil {
-			t.Fatalf("Visualize(full mcp graph): %v", err)
-		}
-		for _, provider := range []string{"provideAPIKeyConnectService", "provideAPIKeyConnectHandler"} {
-			if !strings.Contains(graph.String(), provider) {
-				t.Fatalf("full mcp graph does not register %s", provider)
-			}
-		}
-	})
-
-	t.Run("DB-less resolves API and MCP composition", func(t *testing.T) {
-		setDBLessSmokeEnv(t)
-		c, err := container.New(modules.All("mcp", true)...)
-		if err != nil {
-			t.Fatalf("New(modules.All(mcp, true)...): %v", err)
-		}
-
-		if err := c.Invoke(func(
-			service appoauth.APIKeyConnectService,
-			handler *oauthhttp.APIKeyConnectHandler,
-			serverParam dblessMCPServerParam,
-		) {
-			if service == nil {
-				t.Fatal("DB-less mcp graph resolved a nil API-key connect service")
-			}
-			if handler == nil {
-				t.Fatal("DB-less mcp graph resolved a nil API-key connect handler")
-			}
-			if serverParam.Srv == nil {
-				t.Fatal("DB-less mcp graph resolved a nil MCP server")
-			}
-		}); err != nil {
-			t.Fatalf("Invoke(DB-less API-key connect composition): %v", err)
-		}
-	})
-}
-
 func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	t.Setenv("POSTGRES_LOGIN", "aws")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
@@ -172,8 +126,10 @@ func setDBLessSmokeEnv(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_TLS_INSECURE", "true")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("SERVER_SECRET_KEY", strings.Repeat("smoke-server-secret-", 3))
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 }
+
+func smokeSecretKey() string { return strings.Repeat("smoke-server-secret-", 3) }
 
 func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 	setDBLessSmokeEnv(t)
@@ -216,6 +172,12 @@ func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
 			var invErr error
 			switch plane {
 			case "proxy":
+				// The forwarder is resolved explicitly: its provider now takes
+				// the adapter registry for the stream guard, and a missing
+				// binding there would otherwise only surface at runtime.
+				if err := c.Invoke(func(appproxy.Forwarder) {}); err != nil {
+					t.Fatalf("Invoke(appproxy.Forwarder): %v", err)
+				}
 				invErr = c.Invoke(func(p dblessProxyServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
 			case "mcp":
 				invErr = c.Invoke(func(p dblessMCPServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
@@ -242,6 +204,7 @@ type dblessMCPServerParam struct {
 }
 
 func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {
+	t.Setenv("SERVER_SECRET_KEY", smokeSecretKey())
 	for _, plane := range []string{"admin", "run"} {
 		t.Run(plane, func(t *testing.T) {
 			c, err := container.New(modules.All(plane, false)...)

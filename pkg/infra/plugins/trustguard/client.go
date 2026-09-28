@@ -87,10 +87,24 @@ type client struct {
 	http *http.Client
 }
 
-func newClient(timeout time.Duration) *client {
+type clientConfig struct {
+	baseTransport http.RoundTripper
+}
+
+type clientOption func(*clientConfig)
+
+func withBaseTransport(base http.RoundTripper) clientOption {
+	return func(cfg *clientConfig) { cfg.baseTransport = base }
+}
+
+func newClient(timeout time.Duration, opts ...clientOption) *client {
+	cfg := clientConfig{baseTransport: http.DefaultTransport}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return &client{http: &http.Client{
 		Timeout:   timeout,
-		Transport: o11y.InternalTransport(peerService, evaluateSpanName),
+		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, evaluateSpanName),
 	}}
 }
 

@@ -17,4 +17,5 @@ package consumer
 type pluginProtocolResolver interface {
 	SupportedProtocols(slug string) ([]string, bool)
 	ValidateSettingsForProtocol(slug string, protocol string, settings map[string]any) error
+	InertSafe(slug string) bool
 }

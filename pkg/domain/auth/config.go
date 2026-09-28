@@ -27,14 +27,40 @@ import (
 
 type Config struct {
 	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfig   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfig   `json:"mtls,omitempty"`
+}
+
+// UnmarshalJSON accepts the deprecated "oidc" payload as an alias of "oauth2".
+// Both shapes share their JSON keys, so a stored row or snapshot written before
+// the types were unified decodes straight into OAuth2Config. Dropping the
+// payload instead would strip an identity provider of its key material at
+// runtime rather than failing loudly.
+func (c *Config) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		OAuth2 *OAuth2Config   `json:"oauth2"`
+		OIDC   json.RawMessage `json:"oidc"`
+		MTLS   *MTLSConfig     `json:"mtls"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return fmt.Errorf("auth config: unmarshal: %w", err)
+	}
+	*c = Config{OAuth2: aux.OAuth2, MTLS: aux.MTLS}
+	if c.OAuth2 != nil || len(aux.OIDC) == 0 || string(aux.OIDC) == "null" {
+		return nil
+	}
+	legacy := &OAuth2Config{}
+	if err := json.Unmarshal(aux.OIDC, legacy); err != nil {
+		return fmt.Errorf("auth config: unmarshal oidc payload: %w", err)
+	}
+	c.OAuth2 = legacy
+	return nil
 }
 
 type OAuth2Config struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -45,16 +71,6 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
-}
-
-type OIDCConfig struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
 }
 
 type MTLSConfig struct {
@@ -77,16 +93,11 @@ func (c Config) Validate(t Type) error {
 			return fmt.Errorf("%w: api_key auth does not accept a config payload", ErrInvalidConfig)
 		}
 		return nil
-	case TypeOAuth2:
+	case TypeOAuth2, TypeOIDC:
 		if c.OAuth2 == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the oauth2 config payload must be set for type %q", ErrInvalidConfig, t)
 		}
 		return c.OAuth2.validate()
-	case TypeOIDC:
-		if c.OIDC == nil || c.populatedCount() != 1 {
-			return fmt.Errorf("%w: exactly the oidc config payload must be set for type %q", ErrInvalidConfig, t)
-		}
-		return c.OIDC.validate()
 	case TypeMTLS:
 		if c.MTLS == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the mtls config payload must be set for type %q", ErrInvalidConfig, t)
@@ -99,7 +110,7 @@ func (c Config) Validate(t Type) error {
 
 func (c Config) populatedCount() int {
 	count := 0
-	for _, set := range []bool{c.OAuth2 != nil, c.OIDC != nil, c.MTLS != nil} {
+	for _, set := range []bool{c.OAuth2 != nil, c.MTLS != nil} {
 		if set {
 			count++
 		}
@@ -144,15 +155,53 @@ func (c *OAuth2Config) validate() error {
 	if err := c.validateAuthorizationEndpoints(); err != nil {
 		return err
 	}
-	if !c.SessionMode && strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
-		// Without an explicit endpoint the JWKS is resolved via OIDC
-		// discovery, which needs the issuer to be a resolvable http(s) URL.
-		u, err := url.Parse(strings.TrimSpace(c.Issuer))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
+	for _, alg := range c.Algorithms {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
+			return fmt.Errorf("%w: oauth2.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
+		}
+	}
+	if !c.SessionMode &&
+		strings.TrimSpace(c.JWKSURL) == "" &&
+		strings.TrimSpace(c.IntrospectionURL) == "" &&
+		!c.HasInlineKeys() {
+		// Without an explicit endpoint or inline keys the JWKS is resolved via
+		// OIDC discovery, which needs the issuer to be a resolvable http(s) URL.
+		if !isHTTPURL(c.Issuer) {
+			return fmt.Errorf("%w: oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
 	return nil
+}
+
+// HasInlineKeys reports whether inline verification keys are configured. It is
+// the single predicate for that question so runtime discovery-skip cannot drift
+// from admin-time validation, whitespace-only entries included.
+func (c *OAuth2Config) HasInlineKeys() bool {
+	return c != nil && len(trimmedNonEmpty(c.PublicKeys)) > 0
+}
+
+// Interactive reports whether this identity provider can broker a user login:
+// the gateway needs a client registered at the provider (client_id) to run the
+// authorization-code flow. A validation-only config (issuer + JWKS, no client)
+// can verify tokens an application obtained by itself, but nobody can sign in
+// through it.
+func (c *OAuth2Config) Interactive() bool {
+	if c == nil || strings.TrimSpace(c.ClientID) == "" {
+		return false
+	}
+	// A registered client is not enough on its own: the flow also needs a way
+	// to reach the authorization and token endpoints, either explicitly or
+	// through discovery on an http(s) issuer. Without one, /authorize fails
+	// against the provider after the client has already been sent there.
+	if strings.TrimSpace(c.AuthorizeURL) != "" && strings.TrimSpace(c.TokenURL) != "" {
+		return true
+	}
+	return isHTTPURL(c.Issuer)
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used
@@ -179,24 +228,6 @@ func (c *OAuth2Config) validateAuthorizationEndpoints() error {
 	}
 	c.AuthorizeURL = authorizeURL
 	c.TokenURL = tokenURL
-	return nil
-}
-
-func (c *OIDCConfig) validate() error {
-	if strings.TrimSpace(c.Issuer) == "" {
-		return fmt.Errorf("%w: oidc.issuer is required", ErrInvalidConfig)
-	}
-	if len(trimmedNonEmpty(c.Audiences)) == 0 {
-		return fmt.Errorf("%w: oidc.audiences is required", ErrInvalidConfig)
-	}
-	if strings.TrimSpace(c.JWKSURL) == "" && len(trimmedNonEmpty(c.PublicKeys)) == 0 {
-		return fmt.Errorf("%w: oidc requires jwks_url or public_keys", ErrInvalidConfig)
-	}
-	for _, alg := range c.AllowedAlgorithms {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
-			return fmt.Errorf("%w: oidc.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
-		}
-	}
 	return nil
 }
 

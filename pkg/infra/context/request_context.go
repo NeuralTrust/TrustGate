@@ -22,6 +22,23 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
+// Metadata keys the MCP tools/call path sets on RequestContext once the tool
+// has been bound to its upstream. Body.name stays the exposed (possibly
+// federated) name; these describe the native binding for plugins that only
+// read metadata, and for telemetry. They are advisory: the executor merges
+// metadata back out of isolated requests, so a plugin can overwrite them. A
+// plugin that gates the call must read RequestContext.MCPTool instead.
+const (
+	// MetadataMCPTool is the upstream-native tool name.
+	MetadataMCPTool = "mcp.tool"
+	// MetadataMCPRegistryID is the id of the registry that owns the tool.
+	MetadataMCPRegistryID = "mcp.registry_id"
+	// MetadataMCPRegistryName is the display name of the registry that owns the tool.
+	MetadataMCPRegistryName = "mcp.registry_name"
+	// MetadataMCPExposedTool is the name the caller used, as listed by tools/list.
+	MetadataMCPExposedTool = "mcp.exposed_tool"
+)
+
 type Attachment struct {
 	Filename    string
 	ContentType string
@@ -61,6 +78,22 @@ type RequestContext struct {
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
+	// MCPTool is the upstream-native tool name a resolved tools/call is bound
+	// to, "" on any other request. A plugin deciding whether to allow the call
+	// must read it here and not from MetadataMCPTool: Metadata is a channel
+	// plugins write to and the executor merges back, so an earlier plugin in
+	// the chain could name a different tool there. Scalar fields are never
+	// merged out of an isolated request, so this one is the binding the
+	// dispatcher fixed.
+	MCPTool string
+	// MCPToolCallID is the LLM tool_call_id a client volunteered for a
+	// tools/call, "" when it sent none. It correlates one tool execution seen
+	// on the MCP path with the `role: tool` message the same execution produces
+	// on the LLM path, so a plugin counting executions can recognise the two
+	// observations as one (ENG-1579). It is a caller hint, not an identity:
+	// nothing stops a client from repeating or inventing one, so it may only
+	// suppress a duplicate count, never a charge no other path makes.
+	MCPToolCallID string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

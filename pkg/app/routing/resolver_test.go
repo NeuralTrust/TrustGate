@@ -23,7 +23,6 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 )
 
@@ -39,31 +38,10 @@ func inlineConsumer(registries []*registrydomain.Registry, policies consumerdoma
 	return &appconsumer.RoutableConsumer{
 		Consumer: &consumerdomain.Consumer{
 			ID:            ids.New[ids.ConsumerKind](),
-			RoutingMode:   consumerdomain.RoutingModeInline,
 			ModelPolicies: policies,
 			LBConfig:      lb,
 		},
 		Registries: registries,
-	}
-}
-
-func roleBasedConsumer() *appconsumer.RoutableConsumer {
-	return &appconsumer.RoutableConsumer{
-		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			RoutingMode: consumerdomain.RoutingModeRoleBased,
-		},
-	}
-}
-
-func lookupFor(registries ...*registrydomain.Registry) approuting.RegistryLookup {
-	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(registries))
-	for _, reg := range registries {
-		byID[reg.ID] = reg
-	}
-	return func(id ids.RegistryID) (*registrydomain.Registry, bool) {
-		reg, ok := byID[id]
-		return reg, ok
 	}
 }
 
@@ -164,82 +142,5 @@ func TestResolver_InlineUnknownPoolAlias(t *testing.T) {
 	})
 	if !errors.Is(err, routingdomain.ErrUnknownPoolAlias) {
 		t.Fatalf("expected ErrUnknownPoolAlias, got %v", err)
-	}
-}
-
-func TestResolver_RoleBasedMergesRoles(t *testing.T) {
-	t.Parallel()
-	openai := newRegistry("openai")
-	anthropic := newRegistry("anthropic")
-	roleA := &roledomain.Role{
-		Name:          "analyst",
-		RegistryIDs:   []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5"}}},
-	}
-	roleB := &roledomain.Role{
-		Name:          "writer",
-		RegistryIDs:   []ids.RegistryID{openai.ID, anthropic.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5-mini"}}, anthropic.ID: {Allowed: []string{"claude-4"}}},
-	}
-
-	cs, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Consumer:   roleBasedConsumer(),
-		Roles:      []*roledomain.Role{roleA, roleB},
-		Registries: lookupFor(openai, anthropic),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cs.Len() != 2 {
-		t.Fatalf("expected merged candidates, got %d", cs.Len())
-	}
-	merged, _ := cs.ForRegistry(openai.ID)
-	if len(merged.Allowed) != 2 {
-		t.Fatalf("expected union of role allow-lists, got %v", merged.Allowed)
-	}
-	if len(merged.Sources) != 2 {
-		t.Fatalf("expected provenance from both roles, got %v", merged.Sources)
-	}
-}
-
-func TestResolver_RoleBasedDeniedOutsideRoles(t *testing.T) {
-	t.Parallel()
-	openai := newRegistry("openai")
-	role := &roledomain.Role{
-		Name:          "analyst",
-		RegistryIDs:   []ids.RegistryID{openai.ID},
-		ModelPolicies: roledomain.ModelPolicies{openai.ID: {Allowed: []string{"gpt-5"}}},
-	}
-
-	_, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:     routingdomain.Intent{Provider: "openai", Model: "gpt-4o"},
-		Consumer:   roleBasedConsumer(),
-		Roles:      []*roledomain.Role{role},
-		Registries: lookupFor(openai),
-	})
-	if !errors.Is(err, routingdomain.ErrModelDenied) {
-		t.Fatalf("expected ErrModelDenied, got %v", err)
-	}
-}
-
-func TestResolver_RoleBasedRejectsPoolAlias(t *testing.T) {
-	t.Parallel()
-	_, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.Intent{PoolAlias: "fast"},
-		Consumer: roleBasedConsumer(),
-	})
-	if !errors.Is(err, routingdomain.ErrUnknownPoolAlias) {
-		t.Fatalf("expected ErrUnknownPoolAlias, got %v", err)
-	}
-}
-
-func TestResolver_RoleBasedNoRolesYieldsEmptySet(t *testing.T) {
-	t.Parallel()
-	cs, err := approuting.NewResolver().Resolve(approuting.ResolveInput{Consumer: roleBasedConsumer()})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cs.Len() != 0 {
-		t.Fatalf("expected empty set, got %d", cs.Len())
 	}
 }

@@ -66,6 +66,16 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 		{"static without value", func(m *MCPTarget) *MCPTarget { m.Auth = &MCPAuth{Mode: MCPAuthModeStatic, Header: "X"}; return m }},
 		{"none with value", func(m *MCPTarget) *MCPTarget { m.Auth = &MCPAuth{Mode: MCPAuthModeNone, Value: "v"}; return m }},
 		{"unknown mode", func(m *MCPTarget) *MCPTarget { m.Auth = &MCPAuth{Mode: "oauth"}; return m }},
+		{"unknown account", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "linear", Registration: RegistrationAuto, Account: "everyone"}
+			return m
+		}},
+		// A static header and a client-credentials grant are already the same
+		// for every caller, so "whose account" is not a question they answer.
+		{"account on a static auth", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{Mode: MCPAuthModeStatic, Header: "X", Value: "v", Account: MCPAccountShared}
+			return m
+		}},
 		{"passthrough without expected_audience", func(m *MCPTarget) *MCPTarget {
 			m.Auth = &MCPAuth{Mode: MCPAuthModePassthrough}
 			return m
@@ -134,6 +144,22 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 				t.Fatalf("error = %v, want validation error", err)
 			}
 		})
+	}
+}
+
+func TestMCPAuth_ForwardedAccount(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	for _, account := range []MCPAccount{"", MCPAccountUser, MCPAccountShared} {
+		target := validMCPTarget()
+		target.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "notion", Registration: RegistrationAuto, Account: account}
+		reg, err := NewMCPRegistry(gwID, "notion", "", target)
+		if err != nil {
+			t.Fatalf("account %q: %v", account, err)
+		}
+		if got := reg.MCPTarget.Auth.Shared(); got != (account == MCPAccountShared) {
+			t.Fatalf("account %q: Shared() = %v", account, got)
+		}
 	}
 }
 

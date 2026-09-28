@@ -9,6 +9,11 @@ resources:
 - cloudflare-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
+# PSC edge (ENG-1601) — parented to psc-gateway in the gateway-psc namespace
+- psc-services.yaml
+- psc-httproutes.yaml
+- psc-healthchecks.yaml
+- psc-backendpolicies.yaml
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml

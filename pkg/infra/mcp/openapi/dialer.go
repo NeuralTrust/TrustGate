@@ -17,6 +17,7 @@ package openapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,11 +43,12 @@ const (
 )
 
 type Dialer struct {
-	remote   appmcp.Dialer
-	compiler appopenapi.Compiler
-	cache    sync.Map
-	flight   singleflight.Group
-	client   *http.Client
+	remote       appmcp.Dialer
+	compiler     appopenapi.Compiler
+	cache        sync.Map
+	flight       singleflight.Group
+	client       *http.Client
+	publicClient *http.Client
 }
 
 type compiledDocument struct {
@@ -65,16 +67,16 @@ func NewDialer(remote appmcp.Dialer, compiler appopenapi.Compiler) appmcp.Dialer
 	return NewDialerWithClient(remote, compiler, infraopenapi.NewSafeHTTPClient(30*time.Second))
 }
 
-// NewDialerWithClient returns a multiplexing dialer using the supplied REST client.
 func NewDialerWithClient(
 	remote appmcp.Dialer,
 	compiler appopenapi.Compiler,
 	client *http.Client,
 ) appmcp.Dialer {
 	return &Dialer{
-		remote:   remote,
-		compiler: compiler,
-		client:   client,
+		remote:       remote,
+		compiler:     compiler,
+		client:       client,
+		publicClient: infraopenapi.NewPublicHTTPClient(30 * time.Second),
 	}
 }
 
@@ -82,24 +84,29 @@ func (d *Dialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upst
 	if target.OpenAPI == nil {
 		return d.remote.Connect(ctx, target)
 	}
-	key := target.Revision
-	if key == "" {
-		key = target.OpenAPI.SpecURL + "|" + target.OpenAPI.BaseURL
-	} else {
-		d.evictStaleRevisions(key)
-	}
+	key := compilationCacheKey(target)
 	compiled, err := d.load(ctx, key, *target.OpenAPI)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", appmcp.ErrUnreachable, err)
 	}
+	client := d.client
+	if target.RestrictPrivateNetwork {
+		client = d.publicClient
+	}
 	return &upstream{
 		compiled: compiled,
 		headers:  target.Headers,
-		client:   d.client,
+		client:   client,
 	}, nil
 }
 
+func compilationCacheKey(target appmcp.Target) string {
+	source := []byte(target.OpenAPI.SpecURL + "\x00" + target.OpenAPI.BaseURL)
+	return fmt.Sprintf("%s\x00%x", target.Revision, sha256.Sum256(source))
+}
+
 func (d *Dialer) evictStaleRevisions(current string) {
+	current, _, _ = strings.Cut(current, "\x00")
 	separator := strings.IndexByte(current, ':')
 	if separator < 0 {
 		return
@@ -107,7 +114,8 @@ func (d *Dialer) evictStaleRevisions(current string) {
 	prefix := current[:separator+1]
 	d.cache.Range(func(key, _ any) bool {
 		cachedKey, ok := key.(string)
-		if ok && cachedKey != current && strings.HasPrefix(cachedKey, prefix) {
+		cachedRevision, _, _ := strings.Cut(cachedKey, "\x00")
+		if ok && cachedRevision != current && strings.HasPrefix(cachedRevision, prefix) {
 			d.cache.Delete(cachedKey)
 		}
 		return true
@@ -118,6 +126,18 @@ func (d *Dialer) load(ctx context.Context, key string, source appopenapi.Source)
 	if cached, ok := d.cached(key); ok {
 		return cached, nil
 	}
+	if stale, ok := d.stale(key); ok {
+		go func() {
+			refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			_, _ = d.refresh(refreshCtx, key, source)
+		}()
+		return stale, nil
+	}
+	return d.refresh(ctx, key, source)
+}
+
+func (d *Dialer) refresh(ctx context.Context, key string, source appopenapi.Source) (*compiledDocument, error) {
 	value, err, _ := d.flight.Do(key, func() (any, error) {
 		if cached, ok := d.cached(key); ok {
 			return cached, nil
@@ -130,6 +150,7 @@ func (d *Dialer) load(ctx context.Context, key string, source appopenapi.Source)
 		if err != nil {
 			return nil, err
 		}
+		d.evictStaleRevisions(key)
 		d.pruneCache()
 		d.cache.Store(key, cacheEntry{compiled: compiled, expiresAt: time.Now().Add(compileCacheTTL)})
 		return compiled, nil
@@ -147,10 +168,17 @@ func (d *Dialer) cached(key string) (*compiledDocument, bool) {
 	}
 	entry := value.(cacheEntry)
 	if time.Now().After(entry.expiresAt) {
-		d.cache.Delete(key)
 		return nil, false
 	}
 	return entry.compiled, true
+}
+
+func (d *Dialer) stale(key string) (*compiledDocument, bool) {
+	value, ok := d.cache.Load(key)
+	if !ok {
+		return nil, false
+	}
+	return value.(cacheEntry).compiled, true
 }
 
 func (d *Dialer) pruneCache() {
@@ -240,7 +268,7 @@ func (u *upstream) CallTool(ctx context.Context, name string, arguments json.Raw
 	} else if err := json.Unmarshal(arguments, &args); err != nil {
 		return nil, &appmcp.RPCError{Code: -32602, Message: "invalid tool arguments"}
 	}
-	validationOptions := []openapi3.SchemaValidationOption{}
+	var validationOptions []openapi3.SchemaValidationOption
 	if strings.HasPrefix(u.compiled.document.Version, "3.1") ||
 		strings.HasPrefix(u.compiled.document.Version, "3.2") {
 		validationOptions = append(validationOptions, openapi3.EnableJSONSchema2020())

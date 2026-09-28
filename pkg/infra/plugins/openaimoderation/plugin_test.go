@@ -96,6 +96,15 @@ func blockSettings() map[string]any {
 	}
 }
 
+// noThresholdSettings mirrors what the console sends: only api_key, model and
+// stages. With no thresholds configured, applyDefaults must turn
+// BlockOnFlagged on, or a flagged category can never produce a violation.
+func noThresholdSettings() map[string]any {
+	return map[string]any{
+		"api_key": "secret",
+	}
+}
+
 func requestContext() *infracontext.RequestContext {
 	return &infracontext.RequestContext{
 		Provider:     "openai",
@@ -255,6 +264,47 @@ func TestExecuteAllowPassesThrough(t *testing.T) {
 	assert.Equal(t, "allowed", span.PluginAttrsCopy().Decision)
 	assert.InDelta(t, 0.10, data.MaxScore, 1e-9)
 	assert.Equal(t, "hate", data.MaxScoreCategory)
+}
+
+func TestExecuteEnforceNoThresholdsFlaggedBlocks(t *testing.T) {
+	t.Parallel()
+	f := &fakeModerator{response: flaggedHateResponse()}
+	srv := newModeratorServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, noThresholdSettings(), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+
+	require.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "expected *PluginError, got %v", err)
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.Equal(t, typeContentFlagged, pe.Type)
+
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok, "expected ModerationData extras")
+	assert.Equal(t, decisionBlock, data.Decision)
+}
+
+func TestExecuteObserveNoThresholdsFlaggedReports(t *testing.T) {
+	t.Parallel()
+	f := &fakeModerator{response: flaggedHateResponse()}
+	srv := newModeratorServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, noThresholdSettings(), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.False(t, res.StopUpstream)
+
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok, "expected ModerationData extras")
+	assert.Equal(t, decisionReported, data.Decision)
 }
 
 func TestExecutePreResponseBlock(t *testing.T) {

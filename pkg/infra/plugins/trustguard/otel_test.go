@@ -65,7 +65,7 @@ func evaluateHeaders(t *testing.T, ctx context.Context, traceID string) http.Hea
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := newClient(time.Second).Guard(
+	if _, err := newTestClient(t, time.Second).Guard(
 		ctx, srv.URL, "token", traceID, sampleRequest(), false,
 	); err != nil {
 		t.Fatalf("Guard: %v", err)

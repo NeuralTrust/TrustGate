@@ -26,7 +26,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 )
 
@@ -57,7 +56,6 @@ func twoTenantCompiler(t *testing.T, acme, globex ids.GatewayID, acmeConsumer, g
 		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
 		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{providers: []catalogdomain.Provider{{Code: "openai"}}},
 		nil,
 	)
@@ -179,8 +177,6 @@ func TestCompileForIsolatesEveryChildObjectType(t *testing.T) {
 	globexPolicy := mustID[ids.PolicyKind](t, "bbbb4444-4444-4444-4444-444444444444")
 	acmeAuth := mustID[ids.AuthKind](t, "aaaa5555-5555-5555-5555-555555555555")
 	globexAuth := mustID[ids.AuthKind](t, "bbbb6666-6666-6666-6666-666666666666")
-	acmeRole := mustID[ids.RoleKind](t, "aaaa7777-7777-7777-7777-777777777777")
-	globexRole := mustID[ids.RoleKind](t, "bbbb8888-8888-8888-8888-888888888888")
 
 	compiler := appsnapshot.NewCompiler(
 		fakeGateways{items: []*gatewaydomain.Gateway{
@@ -200,10 +196,6 @@ func TestCompileForIsolatesEveryChildObjectType(t *testing.T) {
 			acme.String():   {{ID: acmeAuth, GatewayID: acme}},
 			globex.String(): {{ID: globexAuth, GatewayID: globex}},
 		}},
-		fakeRoles{byGateway: map[string][]*roledomain.Role{
-			acme.String():   {{ID: acmeRole, GatewayID: acme}},
-			globex.String(): {{ID: globexRole, GatewayID: globex}},
-		}},
 		fakeCatalog{},
 		nil,
 	)
@@ -222,9 +214,6 @@ func TestCompileForIsolatesEveryChildObjectType(t *testing.T) {
 	}
 	if len(data.Auths) != 1 || data.Auths[0].ID != acmeAuth {
 		t.Fatalf("auths leaked across scope: %+v", data.Auths)
-	}
-	if len(data.Roles) != 1 || data.Roles[0].ID != acmeRole {
-		t.Fatalf("roles leaked across scope: %+v", data.Roles)
 	}
 	for _, r := range data.Registries {
 		if r.GatewayID == globex {

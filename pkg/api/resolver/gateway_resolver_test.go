@@ -289,3 +289,61 @@ func (f *fakeGatewayFinder) FindBySlug(_ context.Context, slug string) (*gateway
 func (f *fakeGatewayFinder) List(_ context.Context, _ gatewaydomain.ListFilter) ([]*gatewaydomain.Gateway, int, error) {
 	return nil, 0, nil
 }
+
+// A deployment can be reachable under more than one suffix — the canonical one
+// its gateways publish, plus another put in front of the same cluster. Only the
+// first was recognised, and the miss was not merely a routing failure: the MCP
+// OAuth authorize path reads the resolved gateway to stamp a session, so a host
+// it did not recognise produced a session bound to no gateway and an opaque 401
+// after a login that had looked successful.
+func TestSubdomainGatewayResolver_AcceptsExtraBaseDomains(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+
+	tests := []struct {
+		name    string
+		host    string
+		wantErr bool
+	}{
+		{name: "canonical domain", host: "acme.gw.neuraltrust.ai"},
+		{name: "extra domain", host: "acme.gw.sandbox.neuraltrust.ai"},
+		{name: "a suffix nobody listed", host: "acme.gw.evil.com", wantErr: true},
+		// The extra is a suffix, not a substring: a domain that merely ends with
+		// the same letters is a different domain.
+		{name: "lookalike of the extra", host: "acme.gw.sandbox.neuraltrust.ai.evil.com", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
+			resolver := NewSubdomainGatewayResolver(&finder, testBaseDomain, "gw.sandbox.neuraltrust.ai")
+
+			var (
+				got    *gatewaydomain.Gateway
+				gotErr error
+				req    = httptest.NewRequest(fiber.MethodGet, "/", nil)
+				app    = fiber.New()
+			)
+			app.Get("/", func(c *fiber.Ctx) error {
+				got, gotErr = resolver.Resolve(c)
+				return c.SendStatus(fiber.StatusOK)
+			})
+			req.Host = tt.host
+			if _, err := app.Test(req); err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			if tt.wantErr {
+				if gotErr == nil {
+					t.Fatalf("expected %q to resolve no gateway", tt.host)
+				}
+				return
+			}
+			if gotErr != nil {
+				t.Fatalf("Resolve error: %v", gotErr)
+			}
+			if got != gw {
+				t.Fatalf("host %q did not resolve to the gateway", tt.host)
+			}
+		})
+	}
+}

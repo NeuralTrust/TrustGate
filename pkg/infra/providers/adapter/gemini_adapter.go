@@ -17,6 +17,7 @@ package adapter
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -35,10 +36,6 @@ type GeminiAdapter struct {
 func NewVertexAdapter() *GeminiAdapter {
 	return &GeminiAdapter{vertex: true}
 }
-
-// ---------------------------------------------------------------------------
-// Provider-specific typed structs
-// ---------------------------------------------------------------------------
 
 type geminiRequest struct {
 	Model             string            `json:"model,omitempty"`
@@ -326,10 +323,6 @@ func geminiUsageFromCanonical(u *CanonicalUsage) *geminiUsage {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Request: Decode (Gemini → Canonical)
-// ---------------------------------------------------------------------------
-
 func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	var req geminiRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -340,7 +333,6 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		Model: req.Model,
 	}
 
-	// systemInstruction → system
 	if req.SystemInstruction != nil {
 		for _, p := range req.SystemInstruction.Parts {
 			if cr.System != "" {
@@ -350,7 +342,6 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		}
 	}
 
-	// contents → messages (Gemini "user" with functionResponse must become canonical "tool" for OpenAI)
 	pending := geminiPendingCalls{}
 	ids := newGeminiCallIDs(req.Tools)
 	for _, c := range req.Contents {
@@ -402,11 +393,9 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 				Content: strings.Join(textParts, "\n"),
 			})
 		}
-		// Emit tool result messages so OpenAI gets role "tool" after assistant tool_calls.
 		cr.Messages = append(cr.Messages, toolResults...)
 	}
 
-	// generationConfig
 	if gc := req.GenerationConfig; gc != nil {
 		if gc.MaxOutputTokens != nil {
 			cr.MaxTokens = *gc.MaxOutputTokens
@@ -419,7 +408,6 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		}
 	}
 
-	// tools — convert Gemini UPPER_CASE types to JSON Schema lowercase
 	for _, tg := range req.Tools {
 		for _, d := range tg.declarations() {
 			cr.Tools = append(cr.Tools, CanonicalTool{
@@ -432,10 +420,6 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 
 	return cr, nil
 }
-
-// ---------------------------------------------------------------------------
-// Request: Encode (Canonical → Gemini)
-// ---------------------------------------------------------------------------
 
 var generatedToolUseID = regexp.MustCompile(`^toolu_[A-Z2-7]+_[0-9]+$`)
 
@@ -461,14 +445,12 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		Model: req.Model,
 	}
 
-	// systemInstruction
 	if req.System != "" {
 		out.SystemInstruction = &geminiContent{
 			Parts: []geminiPart{{Text: req.System}},
 		}
 	}
 
-	// contents (canonical "tool" → Gemini "user" with functionResponse)
 	toolNames := map[string]string{}
 	lastWasToolResult := false
 	for _, m := range req.Messages {
@@ -483,10 +465,13 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		if m.Content != "" && m.ToolCallID == "" {
 			parts = append(parts, geminiPart{Text: m.Content})
 		}
-		// Tool calls from assistant → functionCall parts
 		for i, tc := range m.ToolCalls {
 			var args map[string]interface{}
-			_ = json.Unmarshal([]byte(tc.Arguments), &args)
+			if strings.TrimSpace(tc.Arguments) != "" {
+				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+					return nil, fmt.Errorf("encode Gemini tool call %q arguments: %w", tc.Name, err)
+				}
+			}
 			part := geminiPart{
 				FunctionCall: &geminiFunctionCall{
 					Name: tc.Name,
@@ -504,7 +489,6 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 				toolNames[tc.ID] = tc.Name
 			}
 		}
-		// Tool result → functionResponse part
 		if m.ToolCallID != "" {
 			var resp map[string]interface{}
 			if json.Unmarshal([]byte(m.Content), &resp) != nil {
@@ -538,7 +522,6 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		lastWasToolResult = isToolResult
 	}
 
-	// generationConfig
 	var gc geminiGenConfig
 	hasGC := false
 	if req.MaxTokens > 0 {
@@ -565,25 +548,23 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		out.GenerationConfig = &gc
 	}
 
-	// tools — convert JSON Schema lowercase types to Gemini UPPER_CASE
 	if len(req.Tools) > 0 {
 		var decls []geminiFuncDecl
 		for _, t := range req.Tools {
-			decls = append(decls, geminiFuncDecl{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  jsonSchemaToGeminiSchema(t.Schema),
-			})
+			decl := geminiFuncDecl{Name: t.Name, Description: t.Description}
+			// A declaration without parameters is a function that takes none;
+			// it stays without them rather than gaining an OBJECT schema, so a
+			// re-encoded Gemini body grafts back unchanged.
+			if t.Schema != nil {
+				decl.Parameters = sanitizeGeminiParameters(t.Schema)
+			}
+			decls = append(decls, decl)
 		}
 		out.Tools = []geminiToolGroup{{FunctionDeclarations: decls}}
 	}
 
 	return json.Marshal(out)
 }
-
-// ---------------------------------------------------------------------------
-// Response: Decode (Gemini response → Canonical)
-// ---------------------------------------------------------------------------
 
 func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	var resp geminiResponse
@@ -628,14 +609,13 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 			cr.Reasoning = &CanonicalReasoning{
 				ThinkingText: strings.Join(thinkingParts, "\n\n"),
 			}
-			// If the model returned only thought blocks (e.g. Gemini 2.5 thinking mode),
-			// use that as content so the client gets a non-empty response.
+			// A response of only thought blocks (Gemini 2.5 thinking mode) uses
+			// them as content so the client gets a non-empty response.
 			if cr.Content == "" && len(cr.ToolCalls) == 0 {
 				cr.Content = strings.Join(thinkingParts, "\n\n")
 			}
 		}
 
-		// finishReason mapping
 		if len(cr.ToolCalls) > 0 {
 			cr.FinishReason = "tool_calls"
 		} else {
@@ -657,15 +637,10 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
-// Response: Encode (Canonical → Gemini response)
-// ---------------------------------------------------------------------------
-
 func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
 	fr := cmp.Or(geminiFinishReason(resp.FinishReason), geminiFinishStop)
 
 	var parts []geminiPart
-	// Prepend thinking part if present (Gemini thinking/reasoning)
 	if resp.Reasoning != nil && resp.Reasoning.ThinkingText != "" {
 		parts = append(parts, geminiPart{
 			Text:    resp.Reasoning.ThinkingText,
@@ -702,10 +677,6 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 
 	return json.Marshal(out)
 }
-
-// ---------------------------------------------------------------------------
-// Stream: Decode (Gemini SSE chunk → Canonical)
-// ---------------------------------------------------------------------------
 
 func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var resp geminiResponse
@@ -770,12 +741,7 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 	return sc, nil
 }
 
-// ---------------------------------------------------------------------------
-// Stream: Encode (Canonical → Gemini SSE chunk)
-// ---------------------------------------------------------------------------
-
 func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	// Emit for Role (assistant start), Delta (text), ToolCallDeltas (complete tool calls), or FinishReason.
 	hasContent := chunk.Delta != "" || chunk.FinishReason != "" || chunk.Role != "" || len(chunk.ToolCallDeltas) > 0
 	if !hasContent {
 		return nil, nil
@@ -786,7 +752,15 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		role = "model" // Gemini stream expects "model"
 	}
 
-	var parts []geminiPart
+	// @google/genai does not distinguish a null parts from an absent one:
+	// chats.ts guards with `parts === undefined || parts.length === 0`, so a JSON
+	// null falls through to `null.length` and throws a TypeError inside
+	// sendMessageStream before the first chunk is yielded. A chunk that carries
+	// only a role or only a finish reason has no parts, so it has to encode as an
+	// empty array. omitempty on geminiContent.Parts would also work here, but the
+	// struct is shared with the buffered response encoder, where it would drop
+	// the key from a response that legitimately has no parts.
+	parts := []geminiPart{}
 	if chunk.Delta != "" {
 		parts = append(parts, geminiPart{Text: chunk.Delta})
 	}
@@ -824,7 +798,7 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 const (
 	geminiFinishStop      = "STOP"
 	geminiFinishMaxTokens = "MAX_TOKENS"
-	geminiFinishSafety    = "SAFETY"
+	geminiFinishBlocked   = "PROHIBITED_CONTENT"
 	geminiFinishOther     = "OTHER"
 	geminiFinishBadCall   = "MALFORMED_FUNCTION_CALL"
 )
@@ -832,8 +806,8 @@ const (
 // geminiFinishReasons are the Gemini FinishReason values, which reach the
 // canonical model verbatim from a Gemini upstream.
 var geminiFinishReasons = map[string]struct{}{
-	geminiFinishStop: {}, geminiFinishMaxTokens: {}, geminiFinishSafety: {}, "RECITATION": {},
-	"LANGUAGE": {}, geminiFinishOther: {}, "BLOCKLIST": {}, "PROHIBITED_CONTENT": {}, "SPII": {},
+	geminiFinishStop: {}, geminiFinishMaxTokens: {}, "SAFETY": {}, "RECITATION": {},
+	"LANGUAGE": {}, geminiFinishOther: {}, "BLOCKLIST": {}, geminiFinishBlocked: {}, "SPII": {},
 	geminiFinishBadCall: {}, "IMAGE_SAFETY": {}, "UNEXPECTED_TOOL_CALL": {}, "TOO_MANY_TOOL_CALLS": {},
 	"IMAGE_PROHIBITED_CONTENT": {}, "NO_IMAGE": {}, "IMAGE_RECITATION": {}, "IMAGE_OTHER": {},
 }
@@ -841,6 +815,21 @@ var geminiFinishReasons = map[string]struct{}{
 // geminiFinishReason maps a canonical finish reason to a Gemini FinishReason.
 // Gemini clients parse it as an enum, so a reason Gemini has no value for is
 // sent as OTHER rather than verbatim.
+//
+// content_filter becomes PROHIBITED_CONTENT rather than SAFETY. The choice is
+// between two kinds of legacy exposure, and SAFETY is the worse one:
+//
+//   - The legacy JS SDK @google/generative-ai hardcodes a blocklist
+//     (src/requests/response-helpers.ts): RECITATION, SAFETY and LANGUAGE.
+//     hadBadFinishReason and the text() helper read it, so on 0.24.1 a SAFETY
+//     finish makes .text() throw GoogleGenerativeAIResponseError, while
+//     PROHIBITED_CONTENT and BLOCKLIST both return "".
+//   - PROHIBITED_CONTENT is in the final legacy generations
+//     (google-ai-generativelanguage 0.6.9+, @google/generative-ai 0.22.0+), so
+//     only clients pinned below those see an unknown enum member — a narrower
+//     window than the throw, and an unknown member degrades to a string rather
+//     than raising.
+//   - Legacy Python raises on both, so it does not discriminate.
 func geminiFinishReason(reason string) string {
 	switch reason {
 	case "":
@@ -850,7 +839,7 @@ func geminiFinishReason(reason string) string {
 	case "length", "max_tokens", "model_context_window_exceeded":
 		return geminiFinishMaxTokens
 	case "content_filter", "refusal":
-		return geminiFinishSafety
+		return geminiFinishBlocked
 	case "malformed_tool_use":
 		return geminiFinishBadCall
 	}
@@ -860,13 +849,6 @@ func geminiFinishReason(reason string) string {
 	return geminiFinishOther
 }
 
-// ---------------------------------------------------------------------------
-// Gemini ↔ JSON Schema type mapping helpers
-//
-// Gemini uses UPPER_CASE type names: STRING, OBJECT, NUMBER, INTEGER, BOOLEAN, ARRAY
-// JSON Schema (OpenAI, Anthropic, etc.) uses lower_case: string, object, number, integer, boolean, array
-// ---------------------------------------------------------------------------
-
 var geminiToJSONSchemaType = map[string]string{
 	"STRING":  "string",
 	"OBJECT":  "object",
@@ -874,6 +856,7 @@ var geminiToJSONSchemaType = map[string]string{
 	"INTEGER": "integer",
 	"BOOLEAN": "boolean",
 	"ARRAY":   "array",
+	"NULL":    "null",
 }
 
 var jsonSchemaToGeminiType = map[string]string{
@@ -883,10 +866,9 @@ var jsonSchemaToGeminiType = map[string]string{
 	"integer": "INTEGER",
 	"boolean": "BOOLEAN",
 	"array":   "ARRAY",
+	"null":    "NULL",
 }
 
-// geminiSchemaToJSONSchema recursively converts Gemini UPPER_CASE types to
-// standard JSON Schema lowercase types in a schema map.
 func geminiSchemaToJSONSchema(schema map[string]interface{}) map[string]interface{} {
 	if schema == nil {
 		return nil
@@ -901,7 +883,6 @@ func geminiSchemaToJSONSchema(schema map[string]interface{}) map[string]interfac
 				}
 			}
 		}
-		// Recurse into nested objects
 		switch val := v.(type) {
 		case map[string]interface{}:
 			out[k] = geminiSchemaToJSONSchema(val)
@@ -910,43 +891,6 @@ func geminiSchemaToJSONSchema(schema map[string]interface{}) map[string]interfac
 			for i, item := range val {
 				if m, ok := item.(map[string]interface{}); ok {
 					arr[i] = geminiSchemaToJSONSchema(m)
-				} else {
-					arr[i] = item
-				}
-			}
-			out[k] = arr
-		default:
-			out[k] = v
-		}
-	}
-	return out
-}
-
-// jsonSchemaToGeminiSchema recursively converts standard JSON Schema lowercase
-// types to Gemini UPPER_CASE types.
-func jsonSchemaToGeminiSchema(schema map[string]interface{}) map[string]interface{} {
-	if schema == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(schema))
-	for k, v := range schema {
-		if k == "type" {
-			if s, ok := v.(string); ok {
-				if upper, found := jsonSchemaToGeminiType[s]; found {
-					out[k] = upper
-					continue
-				}
-			}
-		}
-		// Recurse into nested objects
-		switch val := v.(type) {
-		case map[string]interface{}:
-			out[k] = jsonSchemaToGeminiSchema(val)
-		case []interface{}:
-			arr := make([]interface{}, len(val))
-			for i, item := range val {
-				if m, ok := item.(map[string]interface{}); ok {
-					arr[i] = jsonSchemaToGeminiSchema(m)
 				} else {
 					arr[i] = item
 				}

@@ -27,7 +27,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -75,60 +75,26 @@ func (Codec) Version(raw []byte) string {
 func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	msg := &snapshotpb.Snapshot{Version: data.Version}
 
-	for i := range data.Gateways {
-		blob, err := json.Marshal(&data.Gateways[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal gateway: %w", err)
-		}
-		msg.Gateways = append(msg.Gateways, &snapshotpb.Gateway{Json: blob})
+	var err error
+	if msg.Gateways, err = encodeJSON(data.Gateways, "gateway", func(_ int, blob []byte) *snapshotpb.Gateway { return &snapshotpb.Gateway{Json: blob} }); err != nil {
+		return nil, err
 	}
-
-	for i := range data.Consumers {
-		blob, err := json.Marshal(&data.Consumers[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal consumer: %w", err)
-		}
-		msg.Consumers = append(msg.Consumers, &snapshotpb.Consumer{Json: blob})
+	if msg.Consumers, err = encodeJSON(data.Consumers, "consumer", func(_ int, blob []byte) *snapshotpb.Consumer { return &snapshotpb.Consumer{Json: blob} }); err != nil {
+		return nil, err
 	}
-
-	for i := range data.Registries {
-		blob, err := json.Marshal(&data.Registries[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal registry: %w", err)
-		}
-		msg.Registries = append(msg.Registries, &snapshotpb.Registry{Json: blob})
+	if msg.Registries, err = encodeJSON(data.Registries, "registry", func(_ int, blob []byte) *snapshotpb.Registry { return &snapshotpb.Registry{Json: blob} }); err != nil {
+		return nil, err
 	}
-
-	for i := range data.Policies {
-		blob, err := json.Marshal(&data.Policies[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal policy: %w", err)
-		}
-		msg.Policies = append(msg.Policies, &snapshotpb.Policy{Json: blob})
+	if msg.Policies, err = encodeJSON(data.Policies, "policy", func(_ int, blob []byte) *snapshotpb.Policy { return &snapshotpb.Policy{Json: blob} }); err != nil {
+		return nil, err
 	}
-
-	for i := range data.Auths {
-		blob, err := json.Marshal(&data.Auths[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal auth: %w", err)
-		}
-		msg.Auths = append(msg.Auths, &snapshotpb.Auth{Json: blob, KeyHash: data.Auths[i].KeyHash})
+	if msg.Auths, err = encodeJSON(data.Auths, "auth", func(i int, blob []byte) *snapshotpb.Auth {
+		return &snapshotpb.Auth{Json: blob, KeyHash: data.Auths[i].KeyHash}
+	}); err != nil {
+		return nil, err
 	}
-
-	for i := range data.Roles {
-		blob, err := json.Marshal(&data.Roles[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal role: %w", err)
-		}
-		msg.Roles = append(msg.Roles, &snapshotpb.Role{Json: blob})
-	}
-
-	for i := range data.Providers {
-		blob, err := json.Marshal(&data.Providers[i])
-		if err != nil {
-			return nil, fmt.Errorf("configsnapshot: marshal provider: %w", err)
-		}
-		msg.Providers = append(msg.Providers, &snapshotpb.Provider{Json: blob})
+	if msg.Providers, err = encodeJSON(data.Providers, "provider", func(_ int, blob []byte) *snapshotpb.Provider { return &snapshotpb.Provider{Json: blob} }); err != nil {
+		return nil, err
 	}
 
 	for i := range data.CatalogModels {
@@ -142,6 +108,12 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	if msg.StoreGrants, err = encodeJSON(data.StoreGrants, "store grant", func(_ int, blob []byte) *snapshotpb.StoreGrant { return &snapshotpb.StoreGrant{Json: blob} }); err != nil {
+		return nil, err
+	}
+	if msg.StorePolicies, err = encodeJSON(data.StorePolicies, "store policy", func(_ int, blob []byte) *snapshotpb.StorePolicy { return &snapshotpb.StorePolicy{Json: blob} }); err != nil {
+		return nil, err
+	}
 	for i := range data.PlaygroundTokenKeys {
 		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
 			Kid: data.PlaygroundTokenKeys[i].KID,
@@ -152,67 +124,49 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 	return msg, nil
 }
 
+func encodeJSON[T any, P any](items []T, entity string, wrap func(int, []byte) P) ([]P, error) {
+	out := make([]P, 0, len(items))
+	for i := range items {
+		blob, err := json.Marshal(&items[i])
+		if err != nil {
+			return nil, fmt.Errorf("configsnapshot: marshal %s: %w", entity, err)
+		}
+		out = append(out, wrap(i, blob))
+	}
+	return out, nil
+}
+
 func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	data := readmodel.Data{Version: msg.GetVersion()}
 
-	for _, m := range msg.GetGateways() {
-		var g gatewaydomain.Gateway
-		if err := json.Unmarshal(m.GetJson(), &g); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal gateway: %w", err)
-		}
+	var err error
+	if data.Gateways, err = decodeJSON[*snapshotpb.Gateway, gatewaydomain.Gateway](msg.GetGateways(), "gateway", func(m *snapshotpb.Gateway) []byte { return m.GetJson() }, func(_ *snapshotpb.Gateway, g *gatewaydomain.Gateway) {
 		if strings.TrimSpace(g.Entitlements.Tier) == "" {
 			g.Entitlements = gatewaydomain.DefaultEntitlements()
 		}
-		data.Gateways = append(data.Gateways, g)
+	}); err != nil {
+		return readmodel.Data{}, err
 	}
-
-	for _, m := range msg.GetConsumers() {
-		var c consumerdomain.Consumer
-		if err := json.Unmarshal(m.GetJson(), &c); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal consumer: %w", err)
-		}
-		data.Consumers = append(data.Consumers, c)
+	if data.Consumers, err = decodeJSON[*snapshotpb.Consumer, consumerdomain.Consumer](msg.GetConsumers(), "consumer", func(m *snapshotpb.Consumer) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
 	}
-
-	for _, m := range msg.GetRegistries() {
-		var r registrydomain.Registry
-		if err := json.Unmarshal(m.GetJson(), &r); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal registry: %w", err)
-		}
-		data.Registries = append(data.Registries, r)
+	if data.Registries, err = decodeJSON[*snapshotpb.Registry, registrydomain.Registry](msg.GetRegistries(), "registry", func(m *snapshotpb.Registry) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
 	}
-
-	for _, m := range msg.GetPolicies() {
-		var p policydomain.Policy
-		if err := json.Unmarshal(m.GetJson(), &p); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal policy: %w", err)
-		}
-		data.Policies = append(data.Policies, p)
+	if data.Policies, err = decodeJSON[*snapshotpb.Policy, policydomain.Policy](msg.GetPolicies(), "policy", func(m *snapshotpb.Policy) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
 	}
-
-	for _, m := range msg.GetAuths() {
-		var a authdomain.Auth
-		if err := json.Unmarshal(m.GetJson(), &a); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal auth: %w", err)
-		}
+	if data.Auths, err = decodeJSON[*snapshotpb.Auth, authdomain.Auth](msg.GetAuths(), "auth", func(m *snapshotpb.Auth) []byte { return m.GetJson() }, func(m *snapshotpb.Auth, a *authdomain.Auth) {
+		// A snapshot published before the types were unified carries the
+		// deprecated type; canonicalizing on read keeps a mixed-version fleet
+		// from resolving the same auth differently per reader.
+		a.Type = authdomain.NormalizeType(a.Type)
 		a.KeyHash = m.GetKeyHash()
-		data.Auths = append(data.Auths, a)
+	}); err != nil {
+		return readmodel.Data{}, err
 	}
-
-	for _, m := range msg.GetRoles() {
-		var r roledomain.Role
-		if err := json.Unmarshal(m.GetJson(), &r); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal role: %w", err)
-		}
-		data.Roles = append(data.Roles, r)
-	}
-
-	for _, m := range msg.GetProviders() {
-		var p catalogdomain.Provider
-		if err := json.Unmarshal(m.GetJson(), &p); err != nil {
-			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal provider: %w", err)
-		}
-		data.Providers = append(data.Providers, p)
+	if data.Providers, err = decodeJSON[*snapshotpb.Provider, catalogdomain.Provider](msg.GetProviders(), "provider", func(m *snapshotpb.Provider) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
 	}
 
 	for _, m := range msg.GetCatalogModels() {
@@ -226,6 +180,12 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		})
 	}
 
+	if data.StoreGrants, err = decodeJSON[*snapshotpb.StoreGrant, storeaccessdomain.Grant](msg.GetStoreGrants(), "store grant", func(m *snapshotpb.StoreGrant) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
+	}
+	if data.StorePolicies, err = decodeJSON[*snapshotpb.StorePolicy, storeaccessdomain.Policy](msg.GetStorePolicies(), "store policy", func(m *snapshotpb.StorePolicy) []byte { return m.GetJson() }, nil); err != nil {
+		return readmodel.Data{}, err
+	}
 	for _, m := range msg.GetPlaygroundTokenKeys() {
 		data.PlaygroundTokenKeys = append(data.PlaygroundTokenKeys, readmodel.VerificationKey{
 			KID: m.GetKid(),
@@ -234,4 +194,19 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 	}
 
 	return data, nil
+}
+
+func decodeJSON[M any, T any](messages []M, entity string, raw func(M) []byte, adjust func(M, *T)) ([]T, error) {
+	out := make([]T, 0, len(messages))
+	for _, message := range messages {
+		var item T
+		if err := json.Unmarshal(raw(message), &item); err != nil {
+			return nil, fmt.Errorf("configsnapshot: unmarshal %s: %w", entity, err)
+		}
+		if adjust != nil {
+			adjust(message, &item)
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }

@@ -16,6 +16,7 @@ package adapters
 
 import (
 	"context"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -62,12 +63,92 @@ func (r *registryRepository) Update(_ context.Context, _ *domain.Registry) error
 	return configsync.ErrReadOnly
 }
 
-func (r *registryRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.RegistryID) error {
-	return configsync.ErrReadOnly
+func (r *registryRepository) Delete(
+	_ context.Context,
+	_ ids.GatewayID,
+	_ ids.RegistryID,
+) (domain.PruneReport, error) {
+	return domain.PruneReport{}, configsync.ErrReadOnly
 }
 
-func (r *registryRepository) List(_ context.Context, _ domain.ListFilter) ([]*domain.Registry, int, error) {
-	return nil, 0, configsync.ErrReadOnly
+// List returns a paginated defensive copy of a gateway's registries.
+func (r *registryRepository) List(_ context.Context, filter domain.ListFilter) ([]*domain.Registry, int, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, 0, nil
+	}
+	all := snap.RegistriesByGateway(filter.GatewayID)
+	if name := strings.ToLower(strings.TrimSpace(filter.NameContains)); name != "" {
+		filtered := all[:0:0]
+		for _, reg := range all {
+			if reg != nil && strings.Contains(strings.ToLower(reg.Name), name) {
+				filtered = append(filtered, reg)
+			}
+		}
+		all = filtered
+	}
+	total := len(all)
+	page := paginate(all, filter.Page, filter.Size)
+	cloned, err := cloneSlice(page)
+	if err != nil {
+		return nil, 0, err
+	}
+	return cloned, total, nil
+}
+
+// ListByGateway returns immutable snapshot registries through the Store fast path.
+func (r *registryRepository) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByGateway(gatewayID), nil
+}
+
+// ListByGatewayAndCatalogCode resolves Store registries through the catalog index.
+func (r *registryRepository) ListByGatewayAndCatalogCode(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	code string,
+) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByCatalogCode(gatewayID, strings.TrimSpace(code)), nil
+}
+
+// ListByGatewayAndIDs resolves Store registries through the gateway ID index.
+func (r *registryRepository) ListByGatewayAndIDs(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	registryIDs []ids.RegistryID,
+) ([]*domain.Registry, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return snap.RegistriesByIDs(gatewayID, registryIDs), nil
+}
+
+// paginate returns the 1-based Page window of size Size. A non-positive size
+// returns everything (the installer/scoper ask for a single large page).
+func paginate(items []*domain.Registry, page, size int) []*domain.Registry {
+	if size <= 0 {
+		return items
+	}
+	if page <= 0 {
+		page = 1
+	}
+	start := (page - 1) * size
+	if start >= len(items) {
+		return nil
+	}
+	end := start + size
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
 
 var _ domain.Repository = (*registryRepository)(nil)

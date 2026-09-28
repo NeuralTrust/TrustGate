@@ -166,7 +166,7 @@ func (e *exchanger) mint(principal *identity.Principal, cfg *registrydomain.MCPA
 }
 
 func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
-	if principal.RawToken == "" || principal.Method != identity.MethodJWT {
+	if principal.RawToken == "" || !principal.Method.IsExternalIdPAssertion() {
 		return nil, ErrNoUserIdentity
 	}
 	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)
@@ -185,7 +185,7 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 
 func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" ||
-		(principal.Method != identity.MethodJWT && principal.Method != identity.MethodIntrospection) {
+		(!principal.Method.IsExternalIdPAssertion() && principal.Method != identity.MethodIntrospection) {
 		return nil, ErrNoUserIdentity
 	}
 	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)

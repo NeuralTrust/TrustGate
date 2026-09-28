@@ -652,24 +652,22 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 // URL host is a DNS name (cluster-internal FQDNs) and blocked when it is a
 // literal IP.
 func NewSafeHTTPClient(timeout time.Duration) *http.Client {
+	return newSafeHTTPClient(timeout, false)
+}
+
+// NewPublicHTTPClient restricts requests to public IP addresses, including DNS answers.
+func NewPublicHTTPClient(timeout time.Duration) *http.Client {
+	return newSafeHTTPClient(timeout, true)
+}
+
+func newSafeHTTPClient(timeout time.Duration, publicOnly bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if publicOnly {
+		transport.Proxy = nil
+	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, resolved := range ips {
-			if blockedDestination(host, resolved.IP) {
-				continue
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
-		}
-		return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
+		return resolveAndDial(ctx, network, address, publicOnly, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
 	return &http.Client{
 		Transport: transport,
@@ -684,6 +682,59 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 			return nil
 		},
 	}
+}
+
+func resolveAndDial(
+	ctx context.Context, network, address string, publicOnly bool,
+	lookup func(context.Context, string) ([]net.IPAddr, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if publicOnly {
+		for _, resolved := range ips {
+			if !publicDestination(resolved.IP) {
+				return nil, fmt.Errorf("host %q resolves to a blocked address", host)
+			}
+		}
+	}
+	for _, resolved := range ips {
+		if blockedDestination(host, resolved.IP) {
+			continue
+		}
+		return dial(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+	}
+	return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
+}
+
+func publicDestination(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnatIP(ip) || ipAlwaysBlocked(ip) {
+		return false
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	address = address.Unmap()
+	for _, prefix := range publicBlockedPrefixes {
+		if prefix.Contains(address) {
+			return false
+		}
+	}
+	return true
+}
+
+var publicBlockedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
 }
 
 func blockedDestination(host string, ip net.IP) bool {

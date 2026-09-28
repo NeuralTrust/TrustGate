@@ -44,7 +44,7 @@ func TestScoper_SetGlobal_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	scoper := apppolicy.NewScoper(repo, freeLevels(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -67,7 +67,7 @@ func TestScoper_SetGlobal_AlreadyGlobalIsNoop(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	scoper := apppolicy.NewScoper(repo, freeLevels(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -89,7 +89,7 @@ func TestScoper_SetGlobal_RejectsForeignGateway(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	scoper := apppolicy.NewScoper(repo, freeLevels(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := scoper.SetGlobal(context.Background(), ids.New[ids.GatewayKind](), existing.ID)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -114,7 +114,7 @@ func TestScoper_UnsetGlobal_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	scoper := apppolicy.NewScoper(repo, freeLevels(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.UnsetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("UnsetGlobal error: %v", err)

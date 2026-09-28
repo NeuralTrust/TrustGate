@@ -95,29 +95,35 @@ func TestBodyCarriesModelNotFound(t *testing.T) {
 	}
 }
 
-func TestBodyRequiresReasoningEffortNone(t *testing.T) {
+func TestBodyExceedsMaxTokens(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		body string
-		want bool
+		want int
+		ok   bool
 	}{
+		{"empty", "", 0, false},
+		{"not json", "plain", 0, false},
 		{
-			name: "openai tool and reasoning conflict",
-			body: `{"error":{"message":"Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.","type":"invalid_request_error","param":"reasoning_effort"}}`,
-			want: true,
+			"openai max_tokens",
+			`{"error":{"type":"invalid_request_error","param":"max_tokens","message":"max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."}}`,
+			16384, true,
 		},
-		{name: "ambiguous none", body: `{"error":{"message":"Function tools with reasoning_effort are not supported; none of these models supports them"}}`, want: false},
-		{name: "different error type", body: `{"error":{"type":"server_error","message":"Function tools with reasoning_effort are not supported; set reasoning_effort to 'none'"}}`, want: false},
-		{name: "different parameter", body: `{"error":{"type":"invalid_request_error","param":"tools","message":"Function tools with reasoning_effort are not supported; set reasoning_effort to 'none'"}}`, want: false},
-		{name: "plain text is not trusted", body: "set reasoning_effort to none", want: false},
-		{name: "unrelated invalid request", body: `{"error":{"message":"reasoning_effort is invalid"}}`, want: false},
-		{name: "missing error envelope", body: `{"message":"Function tools with reasoning_effort are not supported; use none"}`, want: false},
+		{
+			"openai max_completion_tokens param",
+			`{"error":{"type":"invalid_request_error","param":"max_completion_tokens","message":"This model supports at most 4096"}}`,
+			4096, true,
+		},
+		{"wrong param", `{"error":{"type":"invalid_request_error","param":"messages","message":"This model supports at most 16384"}}`, 0, false},
+		{"wrong type", `{"error":{"type":"overloaded_error","message":"This model supports at most 16384"}}`, 0, false},
+		{"no number", `{"error":{"type":"invalid_request_error","param":"max_tokens","message":"too many tokens"}}`, 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := BodyRequiresReasoningEffortNone([]byte(tc.body)); got != tc.want {
-				t.Errorf("BodyRequiresReasoningEffortNone(%q) = %v, want %v", tc.body, got, tc.want)
+			got, ok := BodyExceedsMaxTokens([]byte(tc.body))
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("BodyExceedsMaxTokens() = (%d,%v), want (%d,%v)", got, ok, tc.want, tc.ok)
 			}
 		})
 	}

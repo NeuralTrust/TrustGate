@@ -160,8 +160,9 @@ func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 }
 
 // rewriteMCPResponse writes the masked text back into a CallToolResult: first the
-// text content blocks, then the string leaves of structuredContent, in the exact
-// order mcpOutputText collected them. The result is patched in place on a generic
+// content blocks that carry text — text blocks and embedded resources alike —
+// then the string leaves of structuredContent, in the exact order mcpOutputText
+// collected them. The result is patched in place on a generic
 // decode rather than re-encoded from a typed struct, so fields the gateway does
 // not model (_meta, annotations) survive the rewrite.
 //
@@ -175,8 +176,9 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 		return nil, false
 	}
 
-	// Same selection as mcpOutputText: text blocks with non-blank text, in order.
-	textBlocks := make([]map[string]any, 0)
+	// Same selection as mcpOutputText: text blocks and embedded resources with
+	// non-blank text, in content order.
+	holders := make([]map[string]any, 0)
 	parts := make([]string, 0)
 	if blocks, ok := generic["content"].([]any); ok {
 		for _, raw := range blocks {
@@ -184,14 +186,11 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 			if !ok {
 				continue
 			}
-			text, ok := block["text"].(string)
+			holder, text, ok := blockTextHolder(block)
 			if !ok || strings.TrimSpace(text) == "" {
 				continue
 			}
-			if kind, ok := block["type"].(string); ok && kind != "" && kind != "text" {
-				continue
-			}
-			textBlocks = append(textBlocks, block)
+			holders = append(holders, holder)
 			parts = append(parts, text)
 		}
 	}
@@ -213,12 +212,12 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	for i, block := range textBlocks {
-		block["text"] = maskedParts[i]
+	for i, holder := range holders {
+		holder["text"] = maskedParts[i]
 	}
 	if structuredLeaves > 0 {
 		idx := 0
-		patched, ok := replaceArgumentStrings(structured, maskedParts[len(textBlocks):], &idx)
+		patched, ok := replaceArgumentStrings(structured, maskedParts[len(holders):], &idx)
 		if !ok || idx != structuredLeaves {
 			return nil, false
 		}
@@ -229,6 +228,39 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+// blockTextHolder returns the map that owns the inspectable "text" key of a
+// content block, the text itself, and whether the block contributes any.
+//
+// It is the write-side mirror of blockInspectableText in mcp.go: the block
+// itself for a text block, the embedded resource object for a resource block.
+// Returning the holder rather than the text alone is what lets the masked value
+// be written back into resource.text without the caller knowing which shape it
+// is looking at. The two functions must stay in step — a block inspected here
+// and not there, or vice versa, misaligns redistribute.
+func blockTextHolder(block map[string]any) (map[string]any, string, bool) {
+	kind, _ := block["type"].(string)
+	if kind == "resource" {
+		resource, ok := block["resource"].(map[string]any)
+		if !ok {
+			return nil, "", false
+		}
+		text, ok := resource["text"].(string)
+		if !ok {
+			return nil, "", false
+		}
+		return resource, text, true
+	}
+	// A blank type is a text block when it carries text, matching blockIsText.
+	if kind != "" && kind != "text" {
+		return nil, "", false
+	}
+	text, ok := block["text"].(string)
+	if !ok {
+		return nil, "", false
+	}
+	return block, text, true
 }
 
 // mcpToolName reads the tool name from the gateway's tools/call body.

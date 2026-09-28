@@ -42,20 +42,50 @@ type Type string
 const (
 	TypeAPIKey Type = "api_key"
 	TypeOAuth2 Type = "oauth2"
-	TypeOIDC   Type = "oidc"
 	TypeMTLS   Type = "mtls"
+
+	// TypeOIDC is the deprecated wire and storage alias of TypeOAuth2. It is
+	// never the canonical type of an auth: NormalizeType maps it away on the
+	// way in, and StoredTypes expands to it on the way out so rows written
+	// before the two types were unified stay reachable.
+	TypeOIDC Type = "oidc"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeMTLS:
 		return true
 	}
 	return false
+}
+
+// NormalizeType maps the deprecated "oidc" type onto TypeOAuth2 and returns
+// every other type unchanged.
+func NormalizeType(t Type) Type {
+	if t == TypeOIDC {
+		return TypeOAuth2
+	}
+	return t
+}
+
+// StoredTypes returns every type value a persisted row may carry for the
+// canonical type t, so a query filtering on t also matches rows written under
+// a deprecated alias.
+func StoredTypes(t Type) []Type {
+	if NormalizeType(t) == TypeOAuth2 {
+		return []Type{TypeOAuth2, TypeOIDC}
+	}
+	return []Type{t}
+}
+
+// IdentityProviderTypes returns every auth type that carries an identity
+// provider, deprecated aliases included.
+func IdentityProviderTypes() []Type {
+	return []Type{TypeOAuth2, TypeOIDC}
 }
 
 func (t Type) IsIdentityProvider() bool {
@@ -76,11 +106,21 @@ type Auth struct {
 	KeyHash   string        `json:"-"`
 	// KeyPrefix / KeySuffix are a non-secret recognition hint for api_key auths
 	// (e.g. "ag_3dlXk" + "Rv8Q"). Never used for authentication.
-	KeyPrefix string    `json:"-"`
-	KeySuffix string    `json:"-"`
-	RawKey    string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	KeyPrefix string `json:"-"`
+	KeySuffix string `json:"-"`
+	RawKey    string `json:"-"`
+	// ExpiresAt retires the credential on its own. Nil is the default and means
+	// the key never expires, which is what every key written before the column
+	// existed is: an expiry nobody asked for would have retired them all.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// IsExpired reports whether the credential has passed its expiry. An auth
+// without one never does.
+func (a *Auth) IsExpired(now time.Time) bool {
+	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
@@ -93,7 +133,9 @@ func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, 
 		ID:        id,
 		GatewayID: gatewayID,
 		Name:      name,
-		Type:      authType,
+		// Canonicalized here so a caller posting the deprecated alias never
+		// creates a row under it, and every plane sees one type.
+		Type:      NormalizeType(authType),
 		Enabled:   enabled,
 		Config:    config,
 		CreatedAt: now,
@@ -105,7 +147,7 @@ func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, 
 	return a, nil
 }
 
-func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, error) {
+func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool, expiresAt *time.Time) (*Auth, error) {
 	rawKey, err := GenerateAPIKey()
 	if err != nil {
 		return nil, fmt.Errorf("auth: generate api key: %w", err)
@@ -114,10 +156,57 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, e
 	if err != nil {
 		return nil, err
 	}
+	if err := a.SetExpiry(expiresAt); err != nil {
+		return nil, err
+	}
 	a.RawKey = rawKey
 	a.KeyHash = HashAPIKey(rawKey)
 	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
 	return a, nil
+}
+
+// SetExpiry attaches or clears the expiry. An expiry already in the past is
+// refused rather than stored: a key that is dead the moment it is handed over
+// is never what was meant, and the error says so at the point the mistake was
+// made instead of at the first request that fails.
+func (a *Auth) SetExpiry(expiresAt *time.Time) error {
+	if expiresAt == nil {
+		a.ExpiresAt = nil
+		return nil
+	}
+	if a.Type != TypeAPIKey {
+		return fmt.Errorf("%w: only api_key auths expire; an identity provider's tokens carry their own lifetime", ErrInvalidType)
+	}
+	if !expiresAt.After(time.Now().UTC()) {
+		return ErrExpiryInThePast
+	}
+	utc := expiresAt.UTC()
+	a.ExpiresAt = &utc
+	return nil
+}
+
+// RotateAPIKey mints a new secret for an existing api_key auth and returns the
+// hash the old secret was looked up by, so callers can evict it from the key
+// cache: an api key is authenticated by digest, and leaving the old digest
+// cached would keep a rotated-away secret working until the entry expired.
+//
+// Everything else about the auth is untouched — its id, its name and every
+// consumer it is attached to — which is what separates rotating from revoking
+// and issuing again: the application keeps its key, the key gets a new secret.
+func (a *Auth) RotateAPIKey() (previousHash string, err error) {
+	if a.Type != TypeAPIKey {
+		return "", fmt.Errorf("%w: only api_key auths carry a secret to rotate", ErrInvalidType)
+	}
+	rawKey, err := GenerateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("auth: generate api key: %w", err)
+	}
+	previousHash = a.KeyHash
+	a.RawKey = rawKey
+	a.KeyHash = HashAPIKey(rawKey)
+	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
+	a.UpdatedAt = time.Now().UTC()
+	return previousHash, nil
 }
 
 func GenerateAPIKey() (string, error) {

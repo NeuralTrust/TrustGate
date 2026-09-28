@@ -20,6 +20,7 @@ import (
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -27,9 +28,10 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
@@ -50,8 +52,11 @@ type compilerReaders struct {
 	Registries registrydomain.Repository
 	Policies   policydomain.Repository
 	Auths      authdomain.Repository
-	Roles      roledomain.Repository
 	Catalog    catalogdomain.Repository
+	// Grants and Policies put the MCP Store access grants and per-principal
+	// levels into every snapshot.
+	Grants        storeaccessdomain.Repository
+	StorePolicies storeaccessdomain.PolicyRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -69,7 +74,9 @@ func ControlConfigSync(c *container.Container) error {
 			return nil, err
 		}
 		return appsnapshot.NewCompiler(
-			r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Roles, r.Catalog, logger,
+			r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Catalog, logger,
+			appsnapshot.WithStoreGrants(r.Grants),
+			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
 		), nil
 	}); err != nil {
@@ -116,14 +123,19 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(repo installationdomain.Repository, ensurer appstore.RegistryEnsurer, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.StoreInstallationsServer {
+		return configsyncgrpc.NewInstallationsService(repo, ensurer, gateways, logger)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(configsyncgrpc.NewAuthInterceptor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
+	if err := c.Provide(func(cfg *config.Config, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *configsyncgrpc.AuthInterceptor, logger *slog.Logger) (*configsyncgrpc.Server, error) {
 		if cfg.IsDeployed() && (cfg.ConfigSync.GRPCTLSCertPath == "" || cfg.ConfigSync.GRPCTLSKeyPath == "") {
 			return nil, fmt.Errorf("%w: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY are required on the control plane in deployed environments", commonerrors.ErrInvalidConfig)
 		}
-		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, auth, logger)
+		return configsyncgrpc.NewServer(cfg.ConfigSync, svc, installations, auth, logger)
 	}); err != nil {
 		return err
 	}

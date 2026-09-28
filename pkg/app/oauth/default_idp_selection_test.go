@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
 )
@@ -78,23 +79,107 @@ func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
 		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
 	})
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true)
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true, nil)
 	require.NoError(t, err)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
-		"/api-key/mcp": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
-		"/bare/mcp":    {{GatewayID: gw}},
+		"/api-key/mcp":  {{GatewayID: gw, Consumer: mcpConsumer(gw), Auths: []*authdomain.Auth{apiKey}}},
+		"/nil-consumer": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":     {{GatewayID: gw}},
 	}}
 	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
 
-	_, err = p.authForResource(t.Context(), "https://gw.example.com/api-key/mcp")
-	var oauthError *OAuthError
-	require.True(t, errors.As(err, &oauthError))
-	require.Equal(t, "invalid_target", oauthError.Code)
+	for _, resource := range []string{"https://gw.example.com/api-key/mcp", "https://gw.example.com/nil-consumer"} {
+		_, err = p.authForResource(t.Context(), resource)
+		var oauthError *OAuthError
+		require.True(t, errors.As(err, &oauthError), resource)
+		require.Equal(t, "invalid_target", oauthError.Code, resource)
+	}
 
 	// A consumer with no credential of its own still reaches the default.
 	auth, err := p.authForResource(t.Context(), "https://gw.example.com/bare/mcp")
 	require.NoError(t, err)
 	require.True(t, appauth.IsDefaultIdP(auth))
+}
+
+// Whether a login may be brokered here is decided by Consumer.WantsSignIn,
+// the same predicate the request-time auth chain asks. So the identity source
+// is load-bearing, not just acts_for_users: a platform-source consumer's
+// residual api key or client certificate is not its credential and must not
+// suppress the login, while for an app-source consumer the api key is the only
+// legal credential and the login must stay refused — advertising one there
+// walked the user through a flow the chain then 401'd (RUN-1501).
+func TestAuthForResource_SignInConsumerIgnoresResidualCredential(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "residual", true, nil)
+	require.NoError(t, err)
+	mtls := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeMTLS,
+		Enabled:   true,
+	}
+	validationOnlyIdP := &authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: gw,
+		Type:      authdomain.TypeOAuth2,
+		Enabled:   true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
+
+	// Only the Store is entered by people signing in with nothing attached, so
+	// only the Store may be rescued by the built-in identity provider. Every
+	// other consumer is entered by what it holds: bringing a credential, or
+	// holding none, both keep the default out.
+	tests := []struct {
+		name        string
+		store       bool
+		auths       []*authdomain.Auth
+		wantDefault bool
+	}{
+		{name: "store consumer with residual api key", store: true, auths: []*authdomain.Auth{apiKey}, wantDefault: true},
+		{name: "store consumer with a residual client certificate", store: true, auths: []*authdomain.Auth{mtls}, wantDefault: true},
+		{name: "store consumer with no links", store: true, wantDefault: true},
+		// The operator pinned this provider; overriding an explicit pin with the
+		// built-in default would widen who gets in on the gateway's own
+		// initiative, so it stays a dead end (RUN-1501).
+		{name: "store consumer with a validation only idp stays a dead end", store: true, auths: []*authdomain.Auth{validationOnlyIdP}},
+		{name: "an ordinary consumer brings its own credential", auths: []*authdomain.Auth{apiKey}},
+		{name: "an ordinary consumer brings its own client certificate", auths: []*authdomain.Auth{mtls}},
+		// Authorize time, not request time: with nothing attached there is no
+		// provider pinned to contradict, so the default is still offered here —
+		// what the chain does with the token it issues is the chain's rule.
+		{name: "an ordinary consumer with nothing attached", wantDefault: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cons := mcpConsumer(gw)
+			if tt.store {
+				cons = consumerdomain.BuildStoreConsumer(gw)
+			}
+			paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+				"/v1/mcp/app": {{GatewayID: gw, Consumer: cons, Auths: tt.auths}},
+			}}
+			p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
+
+			auth, err := p.authForResource(t.Context(), "https://gw.example.com/v1/mcp/app")
+			if tt.wantDefault {
+				require.NoError(t, err)
+				require.True(t, appauth.IsDefaultIdP(auth))
+				require.Equal(t, gw, auth.GatewayID)
+				return
+			}
+			var oauthError *OAuthError
+			require.True(t, errors.As(err, &oauthError))
+			require.Equal(t, "invalid_target", oauthError.Code)
+		})
+	}
 }
 
 func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {

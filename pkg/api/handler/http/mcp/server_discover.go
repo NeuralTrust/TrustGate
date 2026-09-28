@@ -20,18 +20,20 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []string) map[string]any {
+func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, version string) map[string]any {
 	return map[string]any{
-		"resultType":        "complete",
+		"resultType":        resultTypeComplete,
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
 		"capabilities":      configuredCapabilities(rc),
-		// Reconnect is the only refresh signal until the stateless gateway can emit list_changed.
-		"ttlMs":      discoverCacheTTLMs,
-		"cacheScope": "private",
+		// Nothing here may be cached past the moment it is read: the version
+		// below is the client's cache key, and a stale copy of it is exactly
+		// what keeps a freshly connected server out of the tool list.
+		"ttlMs":      surfaceCacheTTLMs,
+		"cacheScope": cacheScopePrivate,
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
-				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
+				"version": serverVersion + "+" + version,
 			},
 		},
 	}
@@ -63,6 +65,14 @@ func configuredCapabilities(rc *appconsumer.RoutableConsumer) map[string]any {
 }
 
 func addCapability(capabilities map[string]any, kind string) {
+	if kind == "tools" {
+		// The gateway watches the tool surface and announces a move on a
+		// subscriptions/listen stream, which is how a client on this revision
+		// learns that an install or a connect gave the user new tools. Nothing
+		// else it serves moves on its own, so nothing else claims to.
+		capabilities[kind] = map[string]any{"listChanged": true}
+		return
+	}
 	capabilities[kind] = map[string]any{}
 }
 

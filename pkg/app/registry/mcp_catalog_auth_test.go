@@ -17,6 +17,7 @@ package registry
 import (
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
@@ -261,6 +262,171 @@ func gmailCatalog(shared map[string]stubSharedOAuth) stubCatalog {
 					TokenURL:     "https://oauth2.googleapis.com/token",
 					Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
 					Resource:     "https://gmailmcp.googleapis.com/mcp/v1",
+				},
+			},
+		},
+		shared: shared,
+	}
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_StaticAcceptedOnDualAuthEntry(t *testing.T) {
+	t.Parallel()
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{
+		Mode:   domain.MCPAuthModeStatic,
+		Header: "Authorization",
+		Value:  "Bearer ghp_token",
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, githubCatalog(nil)))
+	require.Equal(t, domain.MCPAuthModeStatic, target.Auth.Mode)
+	require.Equal(t, "Authorization", target.Auth.Header)
+	require.Equal(t, "Bearer ghp_token", target.Auth.Value)
+	require.NoError(t, target.Validate())
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_StaticFillsHeaderFromCatalog(t *testing.T) {
+	t.Parallel()
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Value: "Bearer ghp_token"}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, githubCatalog(nil)))
+	require.Equal(t, "Authorization", target.Auth.Header)
+	require.NoError(t, target.Validate())
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_StaticClearsOAuthFields(t *testing.T) {
+	t.Parallel()
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{
+		Mode:                    domain.MCPAuthModeStatic,
+		Header:                  "Authorization",
+		Value:                   "Bearer ghp_token",
+		Provider:                "com.github/copilot-mcp",
+		Registration:            domain.RegistrationManual,
+		ClientID:                "gh-client",
+		ClientSecret:            "***masked",
+		AuthorizeURL:            "https://github.com/login/oauth/authorize",
+		TokenURL:                "https://github.com/login/oauth/access_token",
+		Scopes:                  []string{"repo"},
+		Resource:                "https://api.githubcopilot.com/mcp/",
+		TokenEndpointAuthMethod: domain.TokenEndpointAuthClientSecretBasic,
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, githubCatalog(nil)))
+	require.Empty(t, target.Auth.Provider)
+	require.Empty(t, target.Auth.Registration)
+	require.Empty(t, target.Auth.ClientID)
+	require.Empty(t, target.Auth.ClientSecret)
+	require.Empty(t, target.Auth.AuthorizeURL)
+	require.Empty(t, target.Auth.TokenURL)
+	require.Empty(t, target.Auth.Scopes)
+	require.Empty(t, target.Auth.Resource)
+	require.Empty(t, target.Auth.TokenEndpointAuthMethod)
+	require.NoError(t, target.Validate())
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_ForwardedToStaticUpdate(t *testing.T) {
+	t.Parallel()
+	shared := map[string]stubSharedOAuth{
+		"com.github/copilot-mcp": {clientID: "nt-client", clientSecret: "nt-secret"},
+	}
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{
+		Mode:         domain.MCPAuthModeStatic,
+		Value:        "Bearer ghp_token",
+		Provider:     "com.github/copilot-mcp",
+		Registration: domain.RegistrationManual,
+		ClientID:     "nt-client",
+		ClientSecret: "***masked",
+	}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, githubCatalog(shared)))
+	require.Equal(t, domain.MCPAuthModeStatic, target.Auth.Mode)
+	require.Empty(t, target.Auth.ClientID)
+	require.Empty(t, target.Auth.ClientSecret)
+	require.NoError(t, target.Validate())
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_EmptyModeStillCanonicalizesToForwarded(t *testing.T) {
+	t.Parallel()
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{}
+	require.NoError(t, CanonicalizeMCPAuthFromCatalog(target, githubCatalog(nil)))
+	require.Equal(t, domain.MCPAuthModeForwarded, target.Auth.Mode)
+	require.Equal(t, "com.github/copilot-mcp", target.Auth.Provider)
+	require.Equal(t, domain.RegistrationManual, target.Auth.Registration)
+	require.Equal(t, "https://github.com/login/oauth/authorize", target.Auth.AuthorizeURL)
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_RejectsStaticOnOAuthOnlyEntry(t *testing.T) {
+	t.Parallel()
+	target := &domain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer x"},
+	}
+	err := CanonicalizeMCPAuthFromCatalog(target, gmailCatalog(nil))
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	require.ErrorContains(t, err, "accepts auth mode forwarded")
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_RejectsStaticWithoutCatalogAuthHeader(t *testing.T) {
+	t.Parallel()
+	cat := githubCatalog(nil)
+	entry := cat.entries["com.github/copilot-mcp"]
+	entry.AuthHeaders = nil
+	cat.entries["com.github/copilot-mcp"] = entry
+	target := githubTarget()
+	target.Auth = &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer x"}
+	err := CanonicalizeMCPAuthFromCatalog(target, cat)
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	require.ErrorContains(t, err, "declares no auth header")
+}
+
+func TestCanonicalizeMCPAuthFromCatalog_ClientCredentialsEntryStillRejectsStatic(t *testing.T) {
+	t.Parallel()
+	cat := stubCatalog{entries: map[string]catalogdomain.MCPServer{
+		"com.sectigo/mcp": {
+			Code: "com.sectigo/mcp",
+			OAuth: &catalogdomain.MCPOAuth{
+				Required:  true,
+				GrantType: "client_credentials",
+				TokenURL:  "https://auth.sso.sectigo.com/token",
+			},
+		},
+	}}
+	target := &domain.MCPTarget{
+		Code: "com.sectigo/mcp",
+		URL:  "https://mcp.enterprise.sectigo.com/mcp",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer x"},
+	}
+	err := CanonicalizeMCPAuthFromCatalog(target, cat)
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	require.ErrorContains(t, err, "accepts auth mode client_credentials")
+}
+
+func githubTarget() *domain.MCPTarget {
+	return &domain.MCPTarget{
+		Code:      "com.github/copilot-mcp",
+		URL:       "https://api.githubcopilot.com/mcp/",
+		Transport: domain.MCPTransportStreamableHTTP,
+	}
+}
+
+func githubCatalog(shared map[string]stubSharedOAuth) stubCatalog {
+	return stubCatalog{
+		entries: map[string]catalogdomain.MCPServer{
+			"com.github/copilot-mcp": {
+				Code:        "com.github/copilot-mcp",
+				URL:         "https://api.githubcopilot.com/mcp/",
+				AuthMethods: []string{"static", "oauth"},
+				AuthHeaders: []catalogdomain.MCPAuthHeader{
+					{Name: "Authorization", Required: true, Secret: true, Scheme: "Bearer"},
+				},
+				OAuth: &catalogdomain.MCPOAuth{
+					Required:     true,
+					Registration: "manual",
+					AuthorizeURL: "https://github.com/login/oauth/authorize",
+					TokenURL:     "https://github.com/login/oauth/access_token",
+					Scopes:       []string{"repo", "read:org"},
+					Resource:     "https://api.githubcopilot.com/mcp/",
 				},
 			},
 		},

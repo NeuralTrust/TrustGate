@@ -54,6 +54,59 @@ func (g *Gateway) TenantID() string {
 	return g.Metadata[MetadataTenantIDKey]
 }
 
+// MetadataStoreModeKey holds the MCP Store curation mode for the gateway.
+const MetadataStoreModeKey = "store_mode"
+
+// Store curation modes. These are the three access scopes an admin sets for the
+// gateway's MCP Store (surfaced in the Access → Users "default access" control):
+// All, Selected and None.
+const (
+	// StoreModeOpen ("All"): the whole catalog is browsable; servers not on the
+	// shelf can be requested.
+	StoreModeOpen = "open"
+	// StoreModeCurated ("Selected"): only shelf (store.available) servers are
+	// shown. This is the default: a gateway nobody has governed yet holds
+	// everyone to what an admin has granted them, rather than opening the whole
+	// catalog to an org that has not decided anything.
+	StoreModeCurated = "curated"
+	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
+	// and self-service install is disabled. Per-group/per-user grants on a registry
+	// are a separate, additive layer and are unaffected.
+	StoreModeNone = "none"
+)
+
+// StoreMode returns the gateway's Store curation mode as stamped by its admin,
+// defaulting to curated. Governance is available on every plan, and the default
+// is the governed one: a fresh gateway grants nobody anything until an admin
+// says so, which is the only default that cannot leak. An admin widens it to
+// open (or narrows it to none) per principal from Access.
+func (g *Gateway) StoreMode() string {
+	if g == nil || g.Metadata == nil {
+		return StoreModeCurated
+	}
+	switch g.Metadata[MetadataStoreModeKey] {
+	case StoreModeOpen:
+		return StoreModeOpen
+	case StoreModeNone:
+		return StoreModeNone
+	default:
+		return StoreModeCurated
+	}
+}
+
+// WithStoreMode stamps the Store curation mode into gateway metadata. An
+// unrecognised mode falls back to open.
+func WithStoreMode(metadata map[string]string, mode string) map[string]string {
+	if mode != StoreModeCurated && mode != StoreModeNone {
+		mode = StoreModeOpen
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataStoreModeKey] = mode
+	return metadata
+}
+
 // RetentionWindow is the stamped trace-retention window for this gateway, and
 // whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
 // runs on requests where the gateway never resolved.

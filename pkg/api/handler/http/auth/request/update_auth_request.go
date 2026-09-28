@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
@@ -27,6 +28,9 @@ type UpdateAuthRequest struct {
 	Type    *string        `json:"type,omitempty"`
 	Enabled *bool          `json:"enabled,omitempty"`
 	Config  *ConfigRequest `json:"config,omitempty"`
+	// ExpiresAt is left alone when absent, cleared by an empty string, and set
+	// by an RFC 3339 instant.
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 func (r UpdateAuthRequest) Validate() error {
@@ -41,7 +45,20 @@ func (r UpdateAuthRequest) Validate() error {
 	if r.Type != nil && strings.TrimSpace(*r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
+	if _, err := expiryChange(r.ExpiresAt); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ToExpiry returns the expiry change this request asks for, or nil when it
+// asks for none.
+func (r UpdateAuthRequest) ToExpiry() *appauth.ExpiryChange {
+	change, err := expiryChange(r.ExpiresAt)
+	if err != nil {
+		return nil
+	}
+	return change
 }
 
 func (r UpdateAuthRequest) ToType() *domain.Type {

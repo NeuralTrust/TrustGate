@@ -33,10 +33,6 @@ type OpenAIAdapter struct{}
 // automatically produces Responses API wire format for the client.
 type OpenAIResponsesAdapter struct{}
 
-// ---------------------------------------------------------------------------
-// Format detection helpers
-// ---------------------------------------------------------------------------
-
 func isResponsesAPIRequest(body []byte) bool {
 	var probe struct {
 		Messages json.RawMessage `json:"messages"`
@@ -68,10 +64,6 @@ func isResponsesAPIStreamChunk(chunk []byte) bool {
 	return strings.HasPrefix(probe.Type, "response.")
 }
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
-
 func (a *OpenAIAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	if isResponsesAPIRequest(body) {
 		return decodeResponsesRequest(body)
@@ -82,10 +74,6 @@ func (a *OpenAIAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 func (a *OpenAIAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	return encodeCompletionsRequest(req)
 }
-
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
 
 func (a *OpenAIAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	if isResponsesAPIResponse(body) {
@@ -98,10 +86,6 @@ func (a *OpenAIAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 	return encodeCompletionsResponse(resp)
 }
 
-// ---------------------------------------------------------------------------
-// Stream
-// ---------------------------------------------------------------------------
-
 func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	if isResponsesAPIStreamChunk(chunk) {
 		return decodeResponsesStreamChunk(chunk)
@@ -112,10 +96,6 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	return encodeCompletionsStreamChunk(chunk, true)
 }
-
-// ---------------------------------------------------------------------------
-// Shared helpers (used by both sub-adapters)
-// ---------------------------------------------------------------------------
 
 func decodeOpenAIToolChoice(raw json.RawMessage) *CanonicalToolChoice {
 	if raw == nil {
@@ -274,10 +254,6 @@ func decodeStopField(raw json.RawMessage) []string {
 }
 
 func boolPtr(b bool) *bool { return &b }
-
-// ---------------------------------------------------------------------------
-// OpenAIResponsesAdapter — full ProviderAdapter for Responses API wire format
-// ---------------------------------------------------------------------------
 
 func (a *OpenAIResponsesAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	return decodeResponsesRequest(body)

@@ -74,7 +74,10 @@ type MCPAuthRequest struct {
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
 
-	Provider                string   `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	// Account is whose account a forwarded credential is: the caller's own
+	// (empty, or "user") or the one the instance holds for everyone ("shared").
+	Account                 string   `json:"account,omitempty"`
 	Registration            string   `json:"registration,omitempty"`
 	ClientID                string   `json:"client_id,omitempty"`
 	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117
@@ -252,6 +255,7 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 			Scope:                   t.Auth.Scope,
 			Actor:                   t.Auth.Actor,
 			Provider:                t.Auth.Provider,
+			Account:                 domain.MCPAccount(t.Auth.Account),
 			Registration:            domain.MCPClientRegistration(t.Auth.Registration),
 			ClientID:                t.Auth.ClientID,
 			ClientSecret:            t.Auth.ClientSecret,
