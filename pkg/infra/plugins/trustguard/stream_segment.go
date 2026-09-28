@@ -47,7 +47,7 @@ func (p *Plugin) inspectSegment(
 		p.recordStreamOutcome(ctx, in, seg)
 		return segmentAllow(), nil
 	}
-	if p.baseURL == "" || !p.tokens.configured() || p.registry == nil {
+	if p.baseURL == "" || p.registry == nil {
 		return segmentAllow(), nil
 	}
 	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
@@ -56,6 +56,10 @@ func (p *Plugin) inspectSegment(
 
 	payload, ok := p.segmentPayload(ctx, in, seg)
 	if !ok {
+		return segmentAllow(), nil
+	}
+	if !p.tokens.configured() {
+		recordEvaluateFailure(ctx, failureReasonCredentialsMissing)
 		return segmentAllow(), nil
 	}
 	traceID := gatewayTraceID(ctx)
@@ -259,10 +263,14 @@ func (p *Plugin) requestTools(req *infracontext.RequestContext) []adapter.Canoni
 
 // segmentFailure splits the guard's failures into the ones the caller may
 // weigh against streaming.on_error and the ones it may not. A rejection the
-// engine issued deliberately — 401/403, 429, 503 — comes back as a blocking
-// verdict, which no configuration can relax, matching what Execute does on the
-// buffered path. Everything else is returned as an error for the caller to
-// resolve.
+// engine issued deliberately — 401/403, 429, 503 from evaluate, 400/401/403
+// from the token endpoint — comes back as a blocking verdict, which no
+// configuration can relax, matching what Execute does on the buffered path.
+// Everything else is returned as an error for the caller to resolve. That
+// includes a token rejection that arrives after streaming.guard_timeout: the
+// caller stopped waiting before it could be told, and the rejection is not
+// cached, so a token endpoint slower than the block budget leaves the stream
+// to on_error. The buffered legs wait out TRUSTGUARD_TIMEOUT and still see it.
 func (p *Plugin) segmentFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,

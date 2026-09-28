@@ -200,14 +200,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	if !p.tokens.configured() {
-		p.warn(ctx, "trustguard client credentials not configured, failing open",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-		)
-		return passThrough(), nil
-	}
-
 	if in.Request == nil {
 		return passThrough(), nil
 	}
@@ -233,6 +225,25 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	payload, tgt, skip := p.inspectionPayload(ctx, in, direction, mcpMode)
 	if skip {
+		return passThrough(), nil
+	}
+
+	// Checked only once there is something to inspect, so the failure count is
+	// the traffic that went through unguarded and not every request the policy
+	// would have skipped anyway.
+	if !p.tokens.configured() {
+		recordEvaluateFailure(ctx, failureReasonCredentialsMissing)
+		p.warn(ctx, "trustguard client credentials not configured, failing open",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", direction),
+		)
+		setExtras(in.Event, guardData{
+			Direction:     direction,
+			Decision:      decisionFailedOpen,
+			FailedOpen:    true,
+			FailureReason: failureReasonCredentialsMissing,
+		})
 		return passThrough(), nil
 	}
 
