@@ -92,11 +92,11 @@ func unauthorizedError(err *authRejectedError) *appplugins.PluginError {
 	}
 }
 
-// missingCredentialsError is unauthorizedError without an upstream status:
-// the gateway had no credentials to present, so TrustGuard was never asked.
-// The caller gets the same generic type and message; which configuration is
+// notConfiguredError is unauthorizedError without an upstream status: the
+// gateway had no URL or no credentials, so TrustGuard was never asked. The
+// caller gets the same generic type and message; which configuration is
 // missing is the operator's to read, in the log and the trace.
-func missingCredentialsError() *appplugins.PluginError {
+func notConfiguredError() *appplugins.PluginError {
 	body, _ := json.Marshal(map[string]any{
 		"error":   typeUnauthorized,
 		"message": unauthorizedMessage,

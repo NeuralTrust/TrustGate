@@ -448,7 +448,7 @@ func TestTrustGuardSchema(t *testing.T) {
 	require.True(t, ok, "trustguard schema must expose on_timeout")
 	assert.Equal(t, FieldTypeEnum, onTimeout.Type)
 	assert.Equal(t, []string{"fail_open", "fail_closed"}, enumValues(onTimeout.Enum))
-	assert.Equal(t, "fail_closed", onTimeout.Default)
+	assert.Equal(t, "fail_open", onTimeout.Default)
 
 	timeoutField, ok := fieldByKey(fields, "timeout")
 	require.True(t, ok, "trustguard schema must expose timeout")

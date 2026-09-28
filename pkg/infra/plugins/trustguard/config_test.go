@@ -321,3 +321,32 @@ func TestSelectsStage(t *testing.T) {
 		})
 	}
 }
+
+// An unset on_timeout inherits on_error, so a policy that asked for fail_closed
+// does not quietly fail open on the one failure a caller can bring about, and
+// the default for both stays fail_open.
+func TestOnTimeoutInheritsOnError(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		settings map[string]any
+		want     string
+	}{
+		{map[string]any{}, onErrorFailOpen},
+		{map[string]any{"on_error": onErrorFailClosed}, onErrorFailClosed},
+		{map[string]any{"on_error": onErrorFailClosed, "on_timeout": onErrorFailOpen}, onErrorFailOpen},
+		{map[string]any{"on_timeout": onErrorFailClosed}, onErrorFailClosed},
+	} {
+		set := map[string]any{"collector_id": testCollectorID}
+		for k, v := range tc.settings {
+			set[k] = v
+		}
+		cfg, err := parseConfig(set)
+		if err != nil {
+			t.Fatalf("parseConfig(%v): %v", tc.settings, err)
+		}
+		if cfg.OnTimeout != tc.want {
+			t.Fatalf("on_timeout for %v = %q, want %q", tc.settings, cfg.OnTimeout, tc.want)
+		}
+	}
+}
