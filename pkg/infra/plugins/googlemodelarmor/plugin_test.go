@@ -141,19 +141,35 @@ func openAIResponse() []byte {
 	return []byte(`{"id":"r1","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"the answer"},"finish_reason":"stop"}]}`)
 }
 
+// A template enabling every filter answers for every filter, match or not;
+// these fixtures follow the captured live responses in client_test.go. A
+// response with an empty filterResults is what a template enabling none of
+// them returns, not a clean verdict.
 const (
-	allowResponse = `{"sanitizationResult":{"filterMatchState":"NO_MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{}}}`
+	noMatchSDP     = `"sdp":{"sdpFilterResult":{"inspectResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}}`
+	noMatchRAI     = `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+	noMatchPI      = `"pi_and_jailbreak":{"piAndJailbreakFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+	noMatchURIs    = `"malicious_uris":{"maliciousUriFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+	noMatchCSAM    = `"csam":{"csamFilterFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+	noMatchNonSDP  = noMatchRAI + `,` + noMatchPI + `,` + noMatchURIs + `,` + noMatchCSAM
+	noMatchNonRAI  = noMatchSDP + `,` + noMatchPI + `,` + noMatchURIs + `,` + noMatchCSAM
+	sanitizeOpen   = `{"sanitizationResult":{"invocationResult":"SUCCESS","filterResults":{`
+	sanitizeClose  = `}}}`
+	matchRAI       = `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"MATCH_FOUND"}}`
+	allowResponse  = sanitizeOpen + noMatchSDP + `,` + noMatchNonSDP + sanitizeClose
+	sdpOnlyAllow   = sanitizeOpen + noMatchSDP + sanitizeClose
+	sdpOnlyRAIHits = sanitizeOpen + noMatchSDP + `,` + matchRAI + sanitizeClose
 
-	raiBlockResponse = `{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{` +
-		`"rai":{"raiFilterResult":{"matchState":"MATCH_FOUND"}}}}}`
+	raiBlockResponse = sanitizeOpen + matchRAI + `,` + noMatchNonRAI + sanitizeClose
 
 	invocationFailureResponse = `{"sanitizationResult":{"filterMatchState":"NO_MATCH_FOUND","invocationResult":"FAILURE","filterResults":{}}}`
 )
 
 func sdpAnonymizeResponse(masked string) string {
 	raw, _ := json.Marshal(masked)
-	return `{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{` +
-		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":` + string(raw) + `}}}}}}}`
+	return sanitizeOpen +
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":` + string(raw) + `}}}},` +
+		noMatchNonSDP + sanitizeClose
 }
 
 func assertPassThrough(t *testing.T, res *appplugins.Result, err error) {
@@ -346,6 +362,105 @@ func TestExecuteInvocationFailureObservePassesThrough(t *testing.T) {
 	in := execInput(policy.StagePreRequest, policy.ModeObserve, modelArmorSettings(), reqCtx(openAIRequest()), nil)
 	res, err := p.Execute(context.Background(), in)
 	assertPassThrough(t, res, err)
+}
+
+// RUN-1667: the default block_on selects every filter, so against a template
+// that only enables SDP the other four produced no verdict and used to pass as
+// clean. Enforce must reject, and the event must say which filter was missing
+// and why, or the operator has nothing to act on.
+func TestExecuteFilterAbsentFromTemplateEnforceFailsClosed(t *testing.T) {
+	t.Parallel()
+	stub := newModelArmorStub(t, http.StatusOK, sdpOnlyAllow)
+	p := pluginWithStub(stub)
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on fail-closed, got %+v", res)
+	}
+	if err == nil {
+		t.Fatal("expected an error when a block_on filter is absent from the response")
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != decisionFailedClosed || data.Filter != filterRAI || data.FailureReason != reasonFilterNotInTemplate {
+		t.Fatalf("event = decision %q filter %q reason %q, want %q %q %q",
+			data.Decision, data.Filter, data.FailureReason, decisionFailedClosed, filterRAI, reasonFilterNotInTemplate)
+	}
+}
+
+func TestExecuteFilterAbsentFromTemplateObserveRecordsIt(t *testing.T) {
+	t.Parallel()
+	stub := newModelArmorStub(t, http.StatusOK, sdpOnlyAllow)
+	p := pluginWithStub(stub)
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != decisionFailedClosed || data.Filter != filterRAI || data.FailureReason != reasonFilterNotInTemplate {
+		t.Fatalf("event = decision %q filter %q reason %q", data.Decision, data.Filter, data.FailureReason)
+	}
+}
+
+// block_on that only names the filters the template enables passes: an
+// unselected filter is ignored whether it is present or absent.
+func TestExecuteFilterAbsentButNotSelectedPasses(t *testing.T) {
+	t.Parallel()
+	stub := newModelArmorStub(t, http.StatusOK, sdpOnlyAllow)
+	p := pluginWithStub(stub)
+
+	settings := modelArmorSettings()
+	settings["block_on"] = []string{filterSDP}
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil)
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+}
+
+// A filter that ran and matched is a real verdict and is reported as the
+// block, not buried under the filter that happened to be missing.
+func TestExecuteMatchWinsOverAbsentFilter(t *testing.T) {
+	t.Parallel()
+	stub := newModelArmorStub(t, http.StatusOK, sdpOnlyRAIHits)
+	p := pluginWithStub(stub)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.Type != typeModelArmorBlocked {
+		t.Fatalf("expected a Model Armor block, got %v", err)
+	}
+}
+
+// An SDP anonymize must not let a call through that a selected filter never
+// looked at: absence still fails closed.
+func TestExecuteAnonymizeDoesNotMaskAbsentFilter(t *testing.T) {
+	t.Parallel()
+	body := sanitizeOpen +
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":"hello {EMAIL}"}}}}` +
+		sanitizeClose
+	stub := newModelArmorStub(t, http.StatusOK, body)
+	p := pluginWithStub(stub)
+
+	settings := modelArmorSettings()
+	settings["sdp_action"] = sdpActionAnonymize
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings, reqCtx(openAIRequest()), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil || err == nil {
+		t.Fatalf("expected fail-closed, got res %+v err %v", res, err)
+	}
+	if _, isBlock := appplugins.AsPluginError(err); isBlock {
+		t.Fatalf("expected a fail-closed error, not a block: %v", err)
+	}
 }
 
 func TestExecuteAnonymizeEnforcePreRequestRewritesBody(t *testing.T) {

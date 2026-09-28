@@ -264,6 +264,75 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	}
 }
 
+// RUN-1667 on the streaming leg: a block_on filter absent from the response
+// (a template that never enabled it) or present but not executed must reach
+// the guard as an error, so streaming.on_error decides, instead of releasing
+// the block as clean.
+func TestInspectSegmentFailsWhenABlockOnFilterProducedNoVerdict(t *testing.T) {
+	t.Parallel()
+	notExecuted := sanitizeOpen + noMatchSDP + `,` +
+		`"rai":{"raiFilterResult":{"executionState":"EXECUTION_SKIPPED","matchState":"NO_MATCH_FOUND"}}` + sanitizeClose
+	cases := []struct {
+		name, body, want string
+	}{
+		{"absent from template", sdpOnlyAllow, reasonFilterNotInTemplate},
+		{"not executed", notExecuted, reasonFilterNotExecuted},
+		{"invocation failure", invocationFailureResponse, "invocationResult FAILURE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pluginWithStub(newModelArmorStub(t, http.StatusOK, tc.body))
+
+			got, err := p.InspectSegment(context.Background(),
+				streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(3, "some text"))
+
+			if err == nil {
+				t.Fatalf("expected an error for the guard, got verdict %+v", got)
+			}
+			if got != nil {
+				t.Errorf("verdict = %+v, want nil so the guard resolves on_error", got)
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "block 3") {
+				t.Errorf("error %q should name the block and %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestInspectSegmentMatchWinsOverAbsentFilter(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, sdpOnlyRAIHits))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(1, "some text"))
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	if !got.Block {
+		t.Errorf("a real match must block, got %+v", got)
+	}
+}
+
+// block_on naming only what the template enables streams through.
+func TestInspectSegmentIgnoresAbsentFilterNotInBlockOn(t *testing.T) {
+	t.Parallel()
+	p := pluginWithStub(newModelArmorStub(t, http.StatusOK, sdpOnlyAllow))
+
+	settings := streamSettings(nil)
+	settings["block_on"] = []string{filterSDP}
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, settings, nil), segment(1, "some text"))
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	if got.Block || got.HasTransform {
+		t.Errorf("clean text must pass, got %+v", got)
+	}
+}
+
 func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
 	t.Parallel()
 	stub := newModelArmorStub(t, http.StatusOK, raiBlockResponse)
