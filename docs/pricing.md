@@ -93,11 +93,11 @@ current list prices Anthropic reads at 0.1x input, OpenAI's `gpt-4o` at 0.5x,
 
 Anthropic's one-hour cache TTL bills above its five-minute default, and no
 catalog publishes a rate for it. The one-hour share is reported separately on the
-usage view and priced from `cache_write_1h` when an override sets it, falling
-back to the five-minute rate otherwise. Set it explicitly on any registry whose
-traffic uses the long TTL — without it those writes are under-billed, and the
-multiplier is deliberately not inferred, because it is an Anthropic fact rather
-than a universal one.
+usage view and priced from `cache_write_1h` when an override sets it. Without an
+override, one-hour writes on the `anthropic` and `bedrock` providers are priced at
+twice the input rate, which is what both charge for Claude; every other provider
+falls back to the five-minute write rate, since the multiplier is an Anthropic
+fact rather than a universal one.
 
 Streaming providers report usage in pieces: Anthropic sends the prompt and both
 cache buckets on the first event and the completion on the last. Usage is merged
