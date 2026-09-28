@@ -123,6 +123,36 @@ func TestRegistry_Validate(t *testing.T) {
 	require.ErrorIs(t, reg.Validate("missing", map[string]any{}), ErrUnknownPlugin)
 }
 
+// settingsWriteValidatingPlugin is a fakePlugin that also opts into
+// SettingsWriteValidator, so the registry's optional dispatch can be exercised
+// against a plugin that implements it and one (plain fakePlugin) that does not.
+type settingsWriteValidatingPlugin struct {
+	*fakePlugin
+	fn func(map[string]any) error
+}
+
+func (p *settingsWriteValidatingPlugin) ValidateSettingsWrite(settings map[string]any) error {
+	return p.fn(settings)
+}
+
+func TestRegistry_ValidateSettingsWrite(t *testing.T) {
+	sentinel := errors.New("policy could never block or report")
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreRequest}}))
+	require.NoError(t, reg.Register(&settingsWriteValidatingPlugin{
+		fakePlugin: &fakePlugin{name: "picky", stages: []policy.Stage{policy.StagePreRequest}},
+		fn:         func(map[string]any) error { return sentinel },
+	}))
+
+	// A plugin that does not implement SettingsWriteValidator is a no-op: the
+	// rule is opt-in, not blanket.
+	require.NoError(t, reg.ValidateSettingsWrite("plain", map[string]any{}))
+	// A plugin that implements it has its rule enforced.
+	require.ErrorIs(t, reg.ValidateSettingsWrite("picky", map[string]any{}), sentinel)
+	// Unknown plugin behaves like Validate.
+	require.ErrorIs(t, reg.ValidateSettingsWrite("missing", map[string]any{}), ErrUnknownPlugin)
+}
+
 func TestRegistry_Register_RejectsMandatoryOutsideSupported(t *testing.T) {
 	reg := NewRegistry()
 	err := reg.Register(&stagePlugin{

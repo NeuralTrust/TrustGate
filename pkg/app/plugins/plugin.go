@@ -69,6 +69,14 @@ func inertSafe(d PluginDescriptor) bool {
 	return ok && s.ScopeInertSafe()
 }
 
+// SettingsWriteValidator is implemented by plugins with rules that apply only
+// when settings are written, never when a stored policy is loaded. It can
+// reject a shape ValidateConfig must still accept, such as one saved before
+// the rule existed.
+type SettingsWriteValidator interface {
+	ValidateSettingsWrite(settings map[string]any) error
+}
+
 // IsInertSafe reports whether the plugin registered under slug opted into
 // running on a plane where the scope does not gate. It is the same predicate
 // inertSafe applies, reachable from the config load path so the decision has a
