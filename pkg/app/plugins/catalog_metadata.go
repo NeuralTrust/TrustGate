@@ -59,10 +59,14 @@ type catalogMeta struct {
 // because those structs are private, use mapstructure tags, and carry semantic
 // validation that reflection cannot express.
 var pluginCatalogMeta = map[string]catalogMeta{
+	// Throttle's name promises more than it does: the delay is capped and the
+	// request is then admitted, so the description says so.
 	"rate_limiter": {
-		name:        "Rate Limiter",
-		group:       groupTrafficControl,
-		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition.",
+		name:  "Rate Limiter",
+		group: groupTrafficControl,
+		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
+			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
+			" and then lets it through, so it smooths bursts but does not cap the rate.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
