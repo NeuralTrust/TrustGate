@@ -344,12 +344,14 @@ func TestAdaptStream_GeminiClientWithholdsCallsThatMayBeCut(t *testing.T) {
 		lines      []string
 		wantParts  []string
 		wantFinish string
+		wantError  string
 	}{
 		{
 			name:      "bedrock ends mid arguments",
 			target:    adapter.FormatBedrock,
 			lines:     bedrockCall,
 			wantParts: []string{"text Searching."},
+			wantError: "upstream stream ended before the message finished",
 		},
 		{
 			name:   "bedrock max_tokens",
@@ -363,10 +365,10 @@ func TestAdaptStream_GeminiClientWithholdsCallsThatMayBeCut(t *testing.T) {
 			wantFinish: "MAX_TOKENS",
 		},
 		{
-			name:       "openai [DONE] without a finish mid arguments",
-			target:     adapter.FormatOpenAI,
-			lines:      append(append([]string{}, openAICall...), `data: [DONE]`),
-			wantFinish: "",
+			name:      "openai [DONE] without a finish mid arguments",
+			target:    adapter.FormatOpenAI,
+			lines:     append(append([]string{}, openAICall...), `data: [DONE]`),
+			wantError: "upstream stream ended before its tool call arguments were complete",
 		},
 		{
 			name:   "openai [DONE] without a finish after whole arguments",
@@ -404,10 +406,11 @@ func TestAdaptStream_GeminiClientWithholdsCallsThatMayBeCut(t *testing.T) {
 					finishes = append(finishes, r)
 				}
 			}
-			if tt.wantFinish == "" {
-				assert.Empty(t, finishes)
+			if tt.wantError != "" {
+				s.assertFailedWith(t, tt.wantError)
 				return
 			}
+			assert.Empty(t, s.errors, "a finished stream gets no error object")
 			assert.Equal(t, []string{tt.wantFinish}, finishes)
 			s.assertOneFinishLast(t, tt.wantFinish)
 		})
@@ -441,10 +444,15 @@ func TestAdaptStream_GeminiClientWithholdsCallsOnUpstreamFailure(t *testing.T) {
 
 func (s geminiClientStream) assertFailed(t *testing.T) {
 	t.Helper()
+	s.assertFailedWith(t, "upstream stream failed")
+}
+
+func (s geminiClientStream) assertFailedWith(t *testing.T, message string) {
+	t.Helper()
 	require.Len(t, s.errors, 1, "the client gets one error object")
 	assert.Equal(t, 500, s.errors[0].Error.Code)
 	assert.Equal(t, "INTERNAL", s.errors[0].Error.Status)
-	assert.Equal(t, "upstream stream failed", s.errors[0].Error.Message, "the client does not get the upstream's message")
+	assert.Equal(t, message, s.errors[0].Error.Message, "the client does not get the upstream's message")
 	for _, c := range s.chunks {
 		assert.Empty(t, c.Candidates[0].FinishReason, "a failed stream has no finish")
 	}
@@ -550,4 +558,44 @@ func TestAdaptStream_GeminiClientWithholdsCallsOnContextWindowExceeded(t *testin
 
 	assert.Empty(t, s.parts, "a call cut at the context window is withheld")
 	s.assertOneFinishLast(t, "MAX_TOKENS")
+}
+
+func TestAdaptStream_GeminiClientGetsAnErrorObjectWhenTheUpstreamEndsWithoutAFinish(t *testing.T) {
+	tests := map[string]struct {
+		target    adapter.Format
+		lines     []string
+		wantParts []string
+	}{
+		"openai text": {
+			target: adapter.FormatOpenAI,
+			lines: []string{
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+			},
+			wantParts: []string{"text hi"},
+		},
+		"openai whole call": {
+			target: adapter.FormatOpenAI,
+			lines: []string{
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"delete_all","arguments":"{}"}}]}}]}`,
+			},
+		},
+		"anthropic before message_delta": {
+			target: adapter.FormatAnthropic,
+			lines: []string{
+				`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","usage":{"input_tokens":10,"output_tokens":1}}}`,
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_time","input":{}}}`,
+				`data: {"type":"content_block_stop","index":0}`,
+			},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			lines, err := collectLinesAndError(adaptStream(linesSeq(tt.lines...), adapter.NewRegistry(), adapter.FormatGemini, tt.target, slog.Default(), nil))
+
+			require.NoError(t, err)
+			s := decodeGeminiClientStream(t, lines)
+			assert.Equal(t, tt.wantParts, s.parts, "no held call reaches the client")
+			s.assertFailedWith(t, "upstream stream ended before the message finished")
+		})
+	}
 }

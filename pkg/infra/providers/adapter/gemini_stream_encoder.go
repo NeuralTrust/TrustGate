@@ -29,7 +29,8 @@ import (
 // only if the upstream finished normally: a length, context window or content
 // filter stop, a failure finish, or an upstream that ended or failed without a
 // finish may have cut the arguments short, and a client executes the calls it
-// gets, so those calls are withheld, as the Responses encoder withholds them.
+// gets, so those calls are withheld, as the Responses encoder withholds them,
+// and a stream that ended or failed without a finish ends with an error object.
 // A call that never got a name is dropped. It is not safe for concurrent use.
 type GeminiStreamEncoder struct {
 	codec     GeminiAdapter
@@ -97,20 +98,10 @@ func (e *GeminiStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	return append(lines, e.encode(chunk)...)
 }
 
-// Abort ends the stream of an upstream that ended without a finish: the held
-// tool calls are withheld and nothing more is sent.
-func (e *GeminiStreamEncoder) Abort() {
-	if e.done {
-		return
-	}
-	e.done = true
-	e.withhold()
-}
-
-// Fail ends the stream of an upstream that failed before its finish: the held
-// tool calls are withheld and the client gets the error object the Gemini API
-// sends mid-stream, with an INTERNAL status and code 500, which Gemini SDKs
-// raise as a server error. Nothing is sent once the stream has ended.
+// Fail ends the stream of an upstream that failed or ended before its finish:
+// the held tool calls are withheld and the client gets the error object the
+// Gemini API sends mid-stream, which Gemini SDKs raise as a server error.
+// Nothing is sent once the stream has ended.
 func (e *GeminiStreamEncoder) Fail(message string) [][]byte {
 	if e.done {
 		return nil
@@ -118,16 +109,12 @@ func (e *GeminiStreamEncoder) Fail(message string) [][]byte {
 	e.done = true
 	e.failed = true
 	e.withhold()
-	data, err := json.Marshal(geminiStreamError{Error: geminiStreamErrorBody{
-		Code:    geminiErrorCode,
-		Message: message,
-		Status:  geminiErrorStatus,
-	}})
+	lines, err := GeminiStreamErrorEvent(message)
 	if err != nil {
 		e.encodeErr = err
 		return nil
 	}
-	return SSEData(data)
+	return lines
 }
 
 // Failed reports whether the client got an error object from Fail.
@@ -235,6 +222,22 @@ func (e *GeminiStreamEncoder) encode(chunk *CanonicalStreamChunk) [][]byte {
 		return nil
 	}
 	return lines
+}
+
+// GeminiStreamErrorEvent returns the SSE event of the error object the Gemini
+// API sends when a stream fails after it started: code 500 with an INTERNAL
+// status. google-genai raises it as a ServerError; an error object without a
+// code makes it fail with a TypeError instead.
+func GeminiStreamErrorEvent(message string) ([][]byte, error) {
+	data, err := json.Marshal(geminiStreamError{Error: geminiStreamErrorBody{
+		Code:    geminiErrorCode,
+		Message: message,
+		Status:  geminiErrorStatus,
+	}})
+	if err != nil {
+		return nil, err
+	}
+	return SSEData(data), nil
 }
 
 const (

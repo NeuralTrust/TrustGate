@@ -90,17 +90,6 @@ func TestGeminiStreamEncoder_WithholdsCallsOnAnUnfinishedStream(t *testing.T) {
 			assert.Equal(t, 1, e.Withheld())
 		})
 	}
-
-	t.Run("abort", func(t *testing.T) {
-		e := NewGeminiStreamEncoder()
-		e.Content(&CanonicalStreamChunk{ToolCallDeltas: []StreamToolCallDelta{{Index: 0, ID: "a", Name: "search", ArgumentsDelta: `{"q":"x"}`}}})
-
-		e.Abort()
-
-		assert.Equal(t, 1, e.Withheld())
-		assert.Empty(t, e.Content(&CanonicalStreamChunk{Delta: "late"}))
-		assert.Empty(t, e.Finish(&CanonicalStreamChunk{FinishReason: "stop"}))
-	})
 }
 
 func TestGeminiStreamEncoder_HeldCallsCompleteTakesNoArgumentBytesAsNoArguments(t *testing.T) {
