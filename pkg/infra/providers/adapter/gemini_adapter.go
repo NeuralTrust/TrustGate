@@ -72,13 +72,15 @@ type geminiContent struct {
 type geminiPart struct {
 	Text             string              `json:"text,omitempty"`
 	Thought          bool                `json:"thought,omitempty"` // true if this part is reasoning/thinking
+	InlineData       *geminiBlob         `json:"inlineData,omitempty"`
+	FileData         *geminiFileData     `json:"fileData,omitempty"`
 	FunctionCall     *geminiFunctionCall `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
 	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
 }
 
-// UnmarshalJSON also reads the snake_case function_call and
-// function_response parts.
+// UnmarshalJSON also reads the snake_case function_call, function_response,
+// inline_data and file_data spellings.
 func (p *geminiPart) UnmarshalJSON(b []byte) error {
 	type plain geminiPart
 	var in struct {
@@ -86,6 +88,8 @@ func (p *geminiPart) UnmarshalJSON(b []byte) error {
 		FunctionCall     *geminiFunctionCall `json:"function_call"`
 		FunctionResponse *geminiFuncResponse `json:"function_response"`
 		ThoughtSignature string              `json:"thought_signature"`
+		InlineData       *geminiBlob         `json:"inline_data"`
+		FileData         *geminiFileData     `json:"file_data"`
 	}
 	if err := json.Unmarshal(b, &in); err != nil {
 		return err
@@ -94,7 +98,95 @@ func (p *geminiPart) UnmarshalJSON(b []byte) error {
 	p.FunctionCall = cmp.Or(p.FunctionCall, in.FunctionCall)
 	p.FunctionResponse = cmp.Or(p.FunctionResponse, in.FunctionResponse)
 	p.ThoughtSignature = cmp.Or(p.ThoughtSignature, in.ThoughtSignature)
+	p.InlineData = cmp.Or(p.InlineData, in.InlineData)
+	p.FileData = cmp.Or(p.FileData, in.FileData)
 	return nil
+}
+
+// geminiBlob is inlineData: media given as base64 bytes directly in the
+// request/response body.
+type geminiBlob struct {
+	MimeType string `json:"mimeType,omitempty"`
+	Data     string `json:"data,omitempty"`
+}
+
+// UnmarshalJSON also reads the snake_case mime_type spelling; real SDK
+// output pairs a camelCase "inlineData" key with a snake_case "mime_type"
+// inside it (see testdata/sdk_requests/google/gemini.function_calling_history.json).
+func (b *geminiBlob) UnmarshalJSON(raw []byte) error {
+	type plain geminiBlob
+	var in struct {
+		plain
+		MimeType string `json:"mime_type"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return err
+	}
+	*b = geminiBlob(in.plain)
+	b.MimeType = cmp.Or(b.MimeType, in.MimeType)
+	return nil
+}
+
+// geminiFileData is fileData: a reference to media Gemini/Vertex resolves
+// itself, either a Cloud Storage object (gs://...) or a Gemini Files API URI.
+type geminiFileData struct {
+	MimeType string `json:"mimeType,omitempty"`
+	FileURI  string `json:"fileUri,omitempty"`
+}
+
+// UnmarshalJSON also reads the snake_case mime_type and file_uri spellings
+// (see testdata/sdk_requests/google/gemini.code_execution_history.json).
+func (f *geminiFileData) UnmarshalJSON(raw []byte) error {
+	type plain geminiFileData
+	var in struct {
+		plain
+		MimeType string `json:"mime_type"`
+		FileURI  string `json:"file_uri"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return err
+	}
+	*f = geminiFileData(in.plain)
+	f.MimeType = cmp.Or(f.MimeType, in.MimeType)
+	f.FileURI = cmp.Or(f.FileURI, in.FileURI)
+	return nil
+}
+
+// geminiImageMediaType reports whether mimeType names an image, the only
+// attachment kind the canonical model has a home for (CanonicalImage). A
+// non-image inlineData/fileData part (PDF, audio, video) is left for
+// geminiImageFromPart to drop, the same treatment any other part type this
+// adapter does not model already gets.
+func geminiImageMediaType(mimeType string) bool {
+	return strings.HasPrefix(mimeType, "image/")
+}
+
+// geminiImageFromPart reads an inlineData or fileData part as a
+// CanonicalImage when its mimeType names an image.
+func geminiImageFromPart(p geminiPart) (CanonicalImage, bool) {
+	if b := p.InlineData; b != nil && geminiImageMediaType(b.MimeType) && b.Data != "" {
+		return CanonicalImage{MediaType: normalizeImageMediaType(b.MimeType), Data: b.Data}, true
+	}
+	if f := p.FileData; f != nil && geminiImageMediaType(f.MimeType) && f.FileURI != "" {
+		return CanonicalImage{MediaType: normalizeImageMediaType(f.MimeType), URL: f.FileURI}, true
+	}
+	return CanonicalImage{}, false
+}
+
+// geminiImagePart encodes a canonical image back as inlineData (base64) or
+// fileData (a Cloud Storage/Files API reference). A URL-only image whose URL
+// is not one of those two Gemini/Vertex can resolve is dropped rather than
+// sent as a fileData Gemini would reject: an ordinary http(s) image URL,
+// such as one that arrived from an OpenAI/Anthropic-sourced cross-format
+// request, has no Gemini request shape at all.
+func geminiImagePart(img CanonicalImage) (geminiPart, bool) {
+	if img.Data != "" {
+		return geminiPart{InlineData: &geminiBlob{MimeType: img.MediaType, Data: img.Data}}, true
+	}
+	if img.URL != "" && isGeminiFileURI(img.URL) {
+		return geminiPart{FileData: &geminiFileData{MimeType: img.MediaType, FileURI: img.URL}}, true
+	}
+	return geminiPart{}, false
 }
 
 type geminiFunctionCall struct {
@@ -369,12 +461,16 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		var textParts []string
 		var toolCalls []CanonicalToolCall
 		var toolResults []CanonicalMessage
+		var images []CanonicalImage
 		for _, p := range c.Parts {
 			if p.Thought {
 				continue
 			}
 			if p.Text != "" {
 				textParts = append(textParts, p.Text)
+			}
+			if img, ok := geminiImageFromPart(p); ok {
+				images = append(images, img)
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
@@ -402,11 +498,15 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 				Role:      "assistant",
 				Content:   strings.Join(textParts, "\n"),
 				ToolCalls: toolCalls,
+				Images:    images,
 			})
-		} else if len(textParts) > 0 {
+		} else if len(textParts) > 0 || len(images) > 0 {
+			// An image-only turn (no text part at all) must still produce a
+			// message, or its inlineData/fileData parts vanish entirely (RUN-1678).
 			cr.Messages = append(cr.Messages, CanonicalMessage{
 				Role:    role,
 				Content: strings.Join(textParts, "\n"),
+				Images:  images,
 			})
 		}
 		cr.Messages = append(cr.Messages, toolResults...)
@@ -478,6 +578,22 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			role = "user"
 		}
 		var parts []geminiPart
+		// Images go before the text part, the same order Anthropic and Bedrock
+		// encode them in; the canonical model does not track their position
+		// relative to the text more precisely than that (see bedrock_adapter.go).
+		//
+		// Unlike those two, Gemini also accepts inlineData/fileData in a model
+		// turn: an image-generation model (e.g. Gemini 2.5 Flash Image) returns
+		// inlineData in its response, and a client replaying that turn as
+		// history sends it back the same way. A tool-result message (Role ==
+		// "tool") never carries images, so this is user/assistant only.
+		if m.Role == "user" || m.Role == "assistant" {
+			for _, img := range m.Images {
+				if part, ok := geminiImagePart(img); ok {
+					parts = append(parts, part)
+				}
+			}
+		}
 		if m.Content != "" && m.ToolCallID == "" {
 			parts = append(parts, geminiPart{Text: m.Content})
 		}

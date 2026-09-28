@@ -85,3 +85,21 @@ func isHTTPImageURL(raw string) bool {
 	}
 	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
+
+// isGeminiFileURI reports whether raw names a file only Gemini or Vertex can
+// resolve: a Cloud Storage object (gs://) or a Gemini Files API reference
+// (https://generativelanguage.googleapis.com/.../files/...). Both need the
+// caller's own Google credentials to fetch, so unlike a plain image_url they
+// are not a portable reference another provider could dereference; a
+// cross-format adaptation into a non-Gemini target must drop them rather
+// than forward an unusable URL (RUN-1678).
+func isGeminiFileURI(raw string) bool {
+	if strings.HasPrefix(raw, "gs://") {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host == "generativelanguage.googleapis.com"
+}
