@@ -25,9 +25,43 @@ import (
 const (
 	OpenAIAPICompletions = "completions"
 	OpenAIAPIResponses   = "responses"
+	AzureAPIDeployments  = "deployments"
+	AzureAPIOpenAIV1     = "openai_v1"
+	AzureAPIResponses    = "responses"
+	AzureAPIAnthropic    = "anthropic"
 
 	vertexDefaultAPIVersion = "v1"
 )
+
+type AzureOptions struct {
+	API string `mapstructure:"api"`
+}
+
+func DecodeAzureOptions(options map[string]any) (AzureOptions, error) {
+	var opts AzureOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return AzureOptions{}, fmt.Errorf("azure: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.API = strings.TrimSpace(opts.API)
+	switch opts.API {
+	case "", AzureAPIDeployments:
+		opts.API = AzureAPIDeployments
+	case AzureAPIOpenAIV1, AzureAPIResponses, AzureAPIAnthropic:
+	default:
+		return AzureOptions{}, fmt.Errorf(
+			"azure: provider_options.api must be %q, %q, %q, or %q, got %q",
+			AzureAPIDeployments,
+			AzureAPIOpenAIV1,
+			AzureAPIResponses,
+			AzureAPIAnthropic,
+			opts.API,
+		)
+	}
+	return opts, nil
+}
 
 type OpenAICompatibleOptions struct {
 	BaseURL string            `mapstructure:"base_url"`

@@ -28,6 +28,7 @@ import (
 	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type stubModelLister struct {
@@ -46,6 +47,16 @@ func openaiRegistry(auth *registrydomain.TargetAuth) *registrydomain.Registry {
 		ID: ids.New[ids.RegistryKind](),
 		LLMTarget: &registrydomain.LLMTarget{
 			Provider: providers.ProviderOpenAI,
+			Auth:     auth,
+		},
+	}
+}
+
+func azureRegistry(auth *registrydomain.TargetAuth) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID: ids.New[ids.RegistryKind](),
+		LLMTarget: &registrydomain.LLMTarget{
+			Provider: providers.ProviderAzure,
 			Auth:     auth,
 		},
 	}
@@ -167,6 +178,41 @@ func TestLiveAvailabilityFilter_FallsBackOnEmptyIntersection(t *testing.T) {
 
 	// A naming mismatch must not empty the picker.
 	assert.Equal(t, slugsOf(models), slugsOf(got))
+}
+
+func TestLiveAvailabilityFilter_AzureReturnsDeploymentNames(t *testing.T) {
+	t.Parallel()
+
+	finder := regmocks.NewFinder(t)
+	locator := factorymocks.NewProviderLocator(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	lister := &stubModelLister{models: []providers.LiveModel{
+		{ID: "sonnet-prod", DisplayName: "sonnet-prod", ProviderModel: "claude-sonnet-4-6"},
+		{ID: "codex-prod", DisplayName: "codex-prod", ProviderModel: "gpt-5-codex"},
+	}}
+	locator.EXPECT().GetModelLister(providers.ProviderAzure).Return(lister, nil)
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(azureRegistry(apiKeyAuth("azure-key")), nil).Once()
+
+	filter := appcatalog.NewLiveAvailabilityFilter(finder, locator, discardLogger())
+	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderAzure,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models: []catalogdomain.Model{
+			{Slug: "claude-sonnet-4-6", DisplayName: "Claude Sonnet", InputPrice: "3", Enabled: true},
+			{Slug: "gpt-5-codex", DisplayName: "Codex", InputPrice: "2", Enabled: true},
+		},
+	})
+
+	require.Len(t, got, 2)
+	assert.Equal(t, "sonnet-prod", got[0].Slug)
+	assert.Equal(t, "sonnet-prod", got[0].ExternalID)
+	assert.Equal(t, "sonnet-prod", got[0].DisplayName)
+	assert.Equal(t, "3", got[0].InputPrice)
+	assert.Equal(t, "codex-prod", got[1].Slug)
+	assert.Equal(t, "2", got[1].InputPrice)
 }
 
 func TestLiveAvailabilityFilter_LeavesBedrockToServerlessFilter(t *testing.T) {
