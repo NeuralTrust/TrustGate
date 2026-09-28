@@ -65,7 +65,7 @@ type config struct {
 	CacheOnlyOnStatus  []int  `mapstructure:"cache_only_on_status"`
 	BypassHeader       string `mapstructure:"bypass_header"`
 	SkipIfToolsPresent *bool  `mapstructure:"skip_if_tools_present"`
-	SkipIfStreaming    bool   `mapstructure:"skip_if_streaming"`
+	SkipIfStreaming    *bool  `mapstructure:"skip_if_streaming"`
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
@@ -187,6 +187,19 @@ func (c *config) skipIfTools() bool {
 		return true
 	}
 	return *c.SkipIfToolsPresent
+}
+
+// skipIfStreaming defaults to true: a cache hit short-circuits the chain, and
+// the short circuit is served as application/json whatever the client asked
+// for. Answering a request that set stream: true with a single JSON body is a
+// protocol violation, so the cache stays out of a streamed leg unless an
+// operator says otherwise. The pointer is what separates an absent setting from
+// an explicit false, which is the escape hatch.
+func (c *config) skipIfStreaming() bool {
+	if c.SkipIfStreaming == nil {
+		return true
+	}
+	return *c.SkipIfStreaming
 }
 
 func (c *config) cacheableStatus(code int) bool {
