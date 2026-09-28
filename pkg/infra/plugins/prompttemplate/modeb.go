@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,11 @@ type modeBResult struct {
 	changed          bool
 	resolvedTemplate string
 	discarded        int
+	// droppedClientVars names the client-supplied variables that collided
+	// with a gateway-resolved context variable of the same name and were
+	// dropped in its favour, so the collision is visible to the caller and
+	// the operator instead of a silent, invisible substitution.
+	droppedClientVars []string
 }
 
 func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars map[string]string) (modeBResult, error) {
@@ -65,7 +71,8 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	}
 
 	escape := cfg.EscapeJSONControlChars == nil || *cfg.EscapeJSONControlChars
-	rendered, err := renderTemplateContent(version, clientVars, ctxVars, escape, cfg.OnMissingClientVariable)
+	rendered, dropped, err := renderTemplateContent(version, clientVars, ctxVars, escape, cfg.OnMissingClientVariable)
+	result.droppedClientVars = dropped
 	if err != nil {
 		return result, err
 	}
@@ -123,20 +130,33 @@ func resolveVersion(nt namedTemplate, label, defaultLabel string) (*templateVers
 	return nil, false
 }
 
-func renderTemplateContent(version *templateVersion, clientVars map[string]any, ctxVars map[string]string, escape bool, onMissing onMissingClient) (string, error) {
+// renderTemplateContent merges the client-supplied and gateway-resolved
+// variables and renders the template. A context variable is resolved by the
+// gateway from a trusted header or a JWT claim, so it must win over a client
+// variable of the same name: writing clientVars first and ctxVars second
+// means the later write is the one that lands. Every client variable
+// overridden this way is reported back in dropped so the collision is not
+// silently invisible to the caller or the operator (mirrors tool_injection's
+// gateway_wins conflict handling in inject.go's applyInjections).
+func renderTemplateContent(version *templateVersion, clientVars map[string]any, ctxVars map[string]string, escape bool, onMissing onMissingClient) (string, []string, error) {
 	jsonContext := strings.HasPrefix(strings.TrimSpace(version.Content), "[")
 	vars := make(map[string]string, len(ctxVars)+len(clientVars))
-	for k, v := range ctxVars {
-		vars[k] = escapeValue(v, escape, jsonContext)
-	}
 	for k, v := range clientVars {
 		vars[k] = escapeValue(scalarToString(v), escape, jsonContext)
 	}
+	var dropped []string
+	for k, v := range ctxVars {
+		if _, collides := vars[k]; collides {
+			dropped = append(dropped, k)
+		}
+		vars[k] = escapeValue(v, escape, jsonContext)
+	}
+	sort.Strings(dropped)
 	rendered, missing := renderTemplate(version.Content, vars)
 	if len(missing) > 0 && onMissing == onMissingClientError {
-		return "", reject(http.StatusBadRequest, typeVariableMissing, fmt.Sprintf("client variable %q is missing", missing[0]))
+		return "", dropped, reject(http.StatusBadRequest, typeVariableMissing, fmt.Sprintf("client variable %q is missing", missing[0]))
 	}
-	return rendered, nil
+	return rendered, dropped, nil
 }
 
 func escapeValue(s string, escape, jsonContext bool) string {

@@ -302,6 +302,57 @@ and its observe-mode failures used to say `failed_closed`. `google_model_armor`'
 values now travel in `failure_detail`, next to `failure_reason: verdict_incomplete`.
 `openai_moderation`'s enforce failures used to say `unavailable`.
 
+### TrustGuard failures
+
+`trustguard` treats a failure of TrustGuard itself differently from the providers above:
+it **fails open by default**, so a TrustGuard problem never cuts the client's request.
+A policy opts into refusing with `on_error: fail_closed`, and `on_timeout: fail_closed`
+for timeouts. An unset `on_timeout` inherits `on_error`. A TrustGuard block (a finding)
+and a 429 rate limit are the guard's answers, not failures, and always block.
+
+| `on_error` / `on_timeout` | `decision` | Request |
+|---------------------------|------------|---------|
+| `fail_open` (default) | `failed_open` | Forwarded uninspected; the chain carries on |
+| `fail_closed` | `failed_closed` | Refused (502, 503 or 504 depending on the reason) |
+
+`extras.failed_open` / `extras.failed_closed` is set to match, and `extras.failure_reason`
+names the cause. The same token labels `trustguard_evaluate_failures_total{reason}`:
+
+| `failure_reason` | Cause |
+|------------------|-------|
+| `transport` | The call failed, or returned a non-2xx status other than the ones below |
+| `timeout` | The call did not answer within the policy's `timeout` (governed by `on_timeout`) |
+| `unauthorized` | `/v1/evaluate` answered 401 (after one token refresh) or 403, or `/v1/token` answered 400, 401 or 403 |
+| `entitlements_unavailable` | `/v1/evaluate` answered 503 |
+| `credentials_missing` | The gateway has no `TRUSTGUARD_CLIENT_ID` / `TRUSTGUARD_CLIENT_SECRET` |
+| `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
+| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed. Under `fail_open` the content is forwarded **unmasked**. Under `fail_closed` the request is blocked and the decision is `blocked`, because TrustGuard did find something |
+| `config_invalid` | The stored settings could not be parsed. Always `failed_open`: there is no `on_error` to read |
+| `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
+| `payload_unreadable` | The gateway could not read the body. Always `failed_open` |
+
+On a streamed response leg the plugin resolves `streaming.on_error` itself. Under
+`fail_open` it allows the block, so later policies in the chain still inspect it, and the
+closing event carries `decision: failed_open` with the last `failure_reason`. After three
+failed blocks in a row the policy stops calling TrustGuard for the rest of that stream, and
+the closing event also carries `streaming.fallback_reason: segmentation_unavailable`. A block
+the guard does answer resets the count. A stream that was cut reports `blocked` even if earlier
+blocks failed open; those still count in `trustguard_evaluate_failures_total`. Under
+`fail_closed` the block is returned as a failure and the stream is cut. The
+`trustguard_stream_evals_total` / `trustguard_stream_responses_total` metrics label such a
+stream `outcome="failed_open"`, ranked just below `blocked`; the label reflects the policy
+that reports the stream, so on a route with two TrustGuard policies read the other one's span.
+Without a stream identity (telemetry disabled, so no trace) nothing is recorded per stream:
+each failed block fails open on its own and inspection never retires.
+
+**Changed in RUN-1725.** Rejected or missing credentials, a missing base URL and a 503 used
+to always fail closed, and an unappliable mask always blocked; all now follow `on_error`.
+`on_timeout` used to default to `fail_closed`; it now inherits `on_error`, whose default is
+`fail_open`. Policies saved through the console since `on_timeout` was added hold an
+explicit `on_timeout: fail_closed` and keep it. On a stream these failures used to be
+reported as `degraded_reason: guard_timeout`; they now appear as `failed_open` on the
+closing event.
+
 ### Savings semantics
 
 `trustgate.cost.savings_usd` is what smart routing avoided spending on this

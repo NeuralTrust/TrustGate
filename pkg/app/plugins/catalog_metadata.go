@@ -863,22 +863,25 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "on_error",
-					Label:       "On Error",
-					Type:        FieldTypeEnum,
-					Description: "What to do when the guard cannot be reached. Auth rejections always fail closed regardless of this.",
-					Enum:        enumOptions("fail_open", "fail_closed"),
-					Default:     "fail_open",
+					Key:   "on_error",
+					Label: "On Error",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard cannot inspect the request: a transport failure, a server error, " +
+						"rejected or missing credentials, a missing base URL, unavailable entitlements, or a mask that " +
+						"could not be applied. fail_open lets the request through uninspected and marks it failed_open " +
+						"with the reason. A block or a rate limit is the guard's answer and is never affected.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
 				},
 				{
 					Key:   "on_timeout",
 					Label: "On Timeout",
 					Type:  FieldTypeEnum,
-					Description: "What to do when the guard does not answer in time. Defaults to fail_closed, " +
-						"unlike on_error: a refused connection is not something a caller can bring about, " +
-						"but a large enough payload can push the detector past the deadline.",
+					Description: "What to do when the guard does not answer in time. Defaults to fail_open, like on_error. " +
+						"A large enough payload can push the detector past the deadline, so fail_closed is the " +
+						"stricter choice for a policy that must never let text through uninspected.",
 					Enum:    enumOptions("fail_open", "fail_closed"),
-					Default: "fail_closed",
+					Default: "fail_open",
 				},
 				{
 					Key:   "timeout",
