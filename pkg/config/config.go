@@ -94,6 +94,8 @@ const (
 	defaultTopicClassifierIntakeWorkers      = 2
 	defaultTopicClassifierIntakeMaxBodyBytes = 2 << 20
 	defaultTopicClassifierEnqueueTimeout     = 500 * time.Millisecond
+	defaultTopicClassifierTimeout            = 5 * time.Second
+	defaultTopicClassifierCacheTTL           = time.Hour
 
 	defaultPlaygroundTraceStoreEnabled = true
 	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
@@ -408,6 +410,8 @@ type TopicClassifierConfig struct {
 	IntakeWorkers      int
 	IntakeMaxBodyBytes int
 	EnqueueTimeout     time.Duration
+	ClassifierTimeout  time.Duration
+	CacheTTL           time.Duration
 }
 
 type PlaygroundConfig struct {
@@ -745,6 +749,8 @@ func getTopicClassifierConfig() TopicClassifierConfig {
 		IntakeWorkers:      getEnvInt("TOPIC_CLASSIFIER_INTAKE_WORKERS", defaultTopicClassifierIntakeWorkers),
 		IntakeMaxBodyBytes: getEnvInt("TOPIC_CLASSIFIER_INTAKE_MAX_BODY_BYTES", defaultTopicClassifierIntakeMaxBodyBytes),
 		EnqueueTimeout:     getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
+		ClassifierTimeout:  getEnvDuration("TOPIC_CLASSIFIER_TIMEOUT", defaultTopicClassifierTimeout),
+		CacheTTL:           getEnvDuration("TOPIC_CLASSIFIER_CACHE_TTL", defaultTopicClassifierCacheTTL),
 	}
 }
 

@@ -31,6 +31,25 @@ type Queue interface {
 	Enqueue(ctx context.Context, req topic.Request) error
 }
 
+// Classifier scores texts that share a catalog and threshold against
+// topic-guard. Results are index-aligned with texts.
+//
+//go:generate mockery --name=Classifier --dir=. --output=./mocks --filename=classifier_mock.go --case=underscore --with-expecter
+type Classifier interface {
+	Classify(ctx context.Context, topics []topic.Topic, threshold *float64, texts []string) ([]topic.Classification, error)
+	// ModelVersion identifies the model and calibration currently serving,
+	// so cached results from an older one are not reused.
+	ModelVersion(ctx context.Context) (string, error)
+}
+
+// Cache remembers classifications under topic.CacheKey.
+//
+//go:generate mockery --name=Cache --dir=. --output=./mocks --filename=cache_mock.go --case=underscore --with-expecter
+type Cache interface {
+	Get(ctx context.Context, key string) (topic.Classification, bool, error)
+	Set(ctx context.Context, key string, c topic.Classification) error
+}
+
 // RequestDecoder turns a provider request body into its canonical form.
 //
 //go:generate mockery --name=RequestDecoder --dir=. --output=./mocks --filename=request_decoder_mock.go --case=underscore --with-expecter
