@@ -152,8 +152,9 @@ func TestExecutePreRequestTransformMessagesKeepsSystemWhitespace(t *testing.T) {
 }
 
 // A messages[] echo that does not line up with what was sent is ambiguous, so
-// the transform still fails closed rather than forwarding an unmasked secret.
-func TestExecutePreRequestTransformMessagesMismatchBlocks(t *testing.T) {
+// the mask cannot be applied. That is a failure on our side and follows
+// on_error: by default the request goes on unmasked and the span says why.
+func TestExecutePreRequestTransformMessagesMismatchFailsOpen(t *testing.T) {
 	t.Parallel()
 	cases := map[string][]any{
 		"missing message": {
@@ -175,8 +176,11 @@ func TestExecutePreRequestTransformMessagesMismatchBlocks(t *testing.T) {
 			resp.TransformedPayload = map[string]any{"messages": msgs}
 			f := &fakeGuard{response: resp}
 			res, extras, err := runTransform(t, f, chatBody(t, "be safe", "key "+testOpenAIKey))
-			if res != nil || err == nil {
-				t.Fatalf("expected block, got res=%+v err=%v", res, err)
+			if err != nil || res == nil || res.StopUpstream || res.RequestBody != nil {
+				t.Fatalf("expected an untouched pass-through, got res=%+v err=%v", res, err)
+			}
+			if !extras.FailedOpen || extras.FailureReason != failureReasonTransformFailed {
+				t.Fatalf("extras = %+v, want failed_open %q", extras, failureReasonTransformFailed)
 			}
 			if extras.DegradedReason != reasonTransformEncodeFailed {
 				t.Fatalf("degraded_reason = %q, want %q", extras.DegradedReason, reasonTransformEncodeFailed)

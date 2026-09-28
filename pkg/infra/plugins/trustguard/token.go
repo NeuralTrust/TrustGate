@@ -221,13 +221,13 @@ func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntr
 
 // tokenStatusError sorts a non-2xx token answer. 400, 401 and 403 are the
 // endpoint refusing these credentials: TrustGuard answers a wrong platform
-// secret with 400 invalid_scope and empty ones with 401 invalid_client. No
-// retry and no on_error fallback fixes that, so they are typed as the same
-// rejection a 401/403 from /v1/evaluate is and fail closed. Every other status
-// stays on the transport path: 5xx and 429 are transient, and a 404 or 421 is
-// an ingress or a wrong base URL answering rather than the guard, which is how
-// evaluate treats them too. It is never errUnauthorized: that one sends guard
-// to refetch the token, which is the call that just refused.
+// secret with 400 invalid_scope and empty ones with 401 invalid_client. They
+// are typed as the same rejection a 401/403 from /v1/evaluate is, so both legs
+// report reason unauthorized and follow on_error the same way. Every other
+// status stays on the transport path: 5xx and 429 are transient, and a 404 or
+// 421 is an ingress or a wrong base URL answering rather than the guard. It is
+// never errUnauthorized: that one sends guard to refetch the token, which is
+// the call that just refused.
 func tokenStatusError(status int, body []byte) error {
 	switch status {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
