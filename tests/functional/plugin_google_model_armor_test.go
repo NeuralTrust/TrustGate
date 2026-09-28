@@ -118,14 +118,28 @@ func newModelArmorStub(t *testing.T) *modelArmorStub {
 	return s
 }
 
-const modelArmorAllowResponse = `{"sanitizationResult":{"filterMatchState":"NO_MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{}}}`
+// The stub plays a template enabling every filter, so it answers for every
+// filter, match or not. An empty filterResults is what a template enabling
+// none of them returns, and the plugin fails that closed (RUN-1667).
+const (
+	modelArmorNoMatchSDP  = `"sdp":{"sdpFilterResult":{"inspectResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}}`
+	modelArmorNoMatchRAI  = `"rai":{"raiFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+	modelArmorNoMatchRest = `"pi_and_jailbreak":{"piAndJailbreakFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}},` +
+		`"malicious_uris":{"maliciousUriFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}},` +
+		`"csam":{"csamFilterFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"NO_MATCH_FOUND"}}`
+)
+
+const modelArmorAllowResponse = `{"sanitizationResult":{"filterMatchState":"NO_MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{` +
+	modelArmorNoMatchSDP + `,` + modelArmorNoMatchRAI + `,` + modelArmorNoMatchRest + `}}}`
 
 const modelArmorRAIBlockResponse = `{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{` +
-	`"rai":{"raiFilterResult":{"matchState":"MATCH_FOUND"}}}}}`
+	`"rai":{"raiFilterResult":{"executionState":"EXECUTION_SUCCESS","matchState":"MATCH_FOUND"}},` +
+	modelArmorNoMatchSDP + `,` + modelArmorNoMatchRest + `}}}`
 
 var modelArmorPIIAnonymizeResponse = fmt.Sprintf(
 	`{"sanitizationResult":{"filterMatchState":"MATCH_FOUND","invocationResult":"SUCCESS","filterResults":{`+
-		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":%q}}}}}}}`,
+		`"sdp":{"sdpFilterResult":{"deidentifyResult":{"matchState":"MATCH_FOUND","infoTypes":["EMAIL_ADDRESS"],"data":{"text":%q}}}},`+
+		modelArmorNoMatchRAI+`,`+modelArmorNoMatchRest+`}}}`,
 	"my email is "+modelArmorPIIMasked+" please reply",
 )
 
