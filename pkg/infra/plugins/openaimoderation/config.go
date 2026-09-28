@@ -69,6 +69,13 @@ func parseConfig(settings map[string]any) (Settings, error) {
 		return Settings{}, err
 	}
 	cfg.applyDefaults()
+	// With no thresholds, evaluate() can only raise a violation through
+	// BlockOnFlagged. A console-created policy omits both, so it would call
+	// OpenAI and never block or report; the flagged verdict decides instead.
+	// An explicit block_on_flagged is kept as sent.
+	if v, set := settings["block_on_flagged"]; (!set || v == nil) && len(cfg.Thresholds) == 0 {
+		cfg.BlockOnFlagged = true
+	}
 	if err := cfg.validate(); err != nil {
 		return Settings{}, err
 	}
@@ -81,6 +88,13 @@ func (s *Settings) applyDefaults() {
 	}
 	if len(s.Stages) == 0 {
 		s.Stages = []string{stagePreRequest, stagePreResponse}
+	}
+	// With no thresholds, evaluate() can only raise a violation through
+	// BlockOnFlagged. Left false, the policy calls OpenAI and never blocks or
+	// reports, which is what a console-created policy sends, so the flagged
+	// verdict decides. Configs with thresholds keep their own value.
+	if len(s.Thresholds) == 0 {
+		s.BlockOnFlagged = true
 	}
 	// The buffered leg already fails closed in enforce mode when the endpoint
 	// is unreachable, so the stream leg inherits that rather than a laxer
