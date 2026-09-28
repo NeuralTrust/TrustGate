@@ -71,6 +71,13 @@ type PluginAttrs struct {
 	Score      *float64
 	ScoreLabel string
 	Extras     any
+	// Streamed marks a policy that inspected the response block by block while
+	// it drained. Stage alone cannot say so: the stream chain is forced to
+	// pre_response, so a streamed leg is indistinguishable from one that ran
+	// before the response was sent. The metrics fold needs the difference
+	// because a streamed leg's latency elapses inside the provider span and is
+	// therefore already counted in provider_ms.
+	Streamed bool
 }
 
 type MCPAttrs struct {
@@ -180,6 +187,21 @@ func (s *Span) SetLatency(d time.Duration) {
 	s.latencySet = true
 }
 
+// SetLatencyDefault records d only if nothing has set the latency yet, leaving
+// an explicit figure untouched. A stream span opens on the first block and ends
+// when the stream does, so falling back to its wall clock would charge the
+// policy the whole drain; the stream chain uses this to guarantee a figure even
+// when the inspector that would have set one failed first.
+func (s *Span) SetLatencyDefault(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.latencySet {
+		return
+	}
+	s.latency = d
+	s.latencySet = true
+}
+
 func (s *Span) SetStatusCode(code int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,6 +278,15 @@ func (s *Span) SetStage(stage string) {
 	defer s.mu.Unlock()
 	s.ensurePlugin()
 	s.Plugin.Stage = stage
+}
+
+// SetStreamed marks the span as a policy that ran during stream drain. It is
+// set once, when the stream opens the span, and never cleared.
+func (s *Span) SetStreamed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensurePlugin()
+	s.Plugin.Streamed = true
 }
 
 func (s *Span) SetMode(mode string) {
