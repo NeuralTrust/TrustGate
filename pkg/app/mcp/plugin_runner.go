@@ -132,7 +132,7 @@ func (r *PluginRunner) PreRequest(
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(rc, call)
+	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
@@ -216,7 +216,7 @@ func (r *PluginRunner) PreResponse(
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(rc, call)
+	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
@@ -337,13 +337,26 @@ func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage polic
 // metadata, but a plugin can overwrite those, so gating decisions read the
 // fields.
 //
-// Headers carries a synthetic Content-Length: MCP tools/call requests have no
-// transport-level headers at all, but the marshaled body's length is known
-// right here, so a plugin that requires Content-Length (RUN-1674) sees the
-// real size instead of an absent header it can never obtain on this plane.
-// Every other header stays unset — this does not fabricate a full header set,
-// only the one value that is both meaningful and knowable for this plane.
+// Headers starts from the real inbound HTTP request headers (the transport
+// tools/call actually arrived on, stashed on ctx by the HTTP handler via
+// infracontext.WithInboundHeaders) so a header-keyed setting — Rate Limiter's
+// Group by header — partitions MCP the same way it partitions LLM (RUN-1674):
+// the LLM plane's own RequestContext.Headers is every header off the real
+// request verbatim (pkg/api/handler/http/proxy/proxy_handler.go
+// buildRequestContext), with no filtering, so mirroring that here means no
+// filtering either. Content-Length is then always overwritten with a
+// synthetic value: the real header (when the transport sent one at all)
+// describes the outer JSON-RPC envelope's length, not the marshaled
+// {name, arguments} body this RequestContext actually carries in Body and
+// that request_size_limiter measures — keeping the real value here would
+// satisfy the "header present" check with a number that describes a
+// different payload, which is not meaningfully true of this synthetic
+// request. ctx may be nil (kept accepted for callers without one); a request
+// with no stashed headers — nil ctx, or a caller that never went through the
+// HTTP handler — simply carries only the synthetic Content-Length, same as
+// before this header propagation existed.
 func (r *PluginRunner) buildRequestContext(
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	call ToolCall,
 ) (*infracontext.RequestContext, error) {
@@ -351,6 +364,11 @@ func (r *PluginRunner) buildRequestContext(
 	if err != nil {
 		return nil, fmt.Errorf("mcp: marshal tools/call params: %w", err)
 	}
+	headers := cloneInboundHeaders(ctx)
+	if headers == nil {
+		headers = make(map[string][]string, 1)
+	}
+	headers["Content-Length"] = []string{strconv.Itoa(len(body))}
 	reqCtx := &infracontext.RequestContext{
 		GatewayID:      rc.Consumer.GatewayID.String(),
 		ConsumerID:     rc.Consumer.ID.String(),
@@ -362,9 +380,7 @@ func (r *PluginRunner) buildRequestContext(
 		MCP:            true,
 		MCPToolCallID:  call.ClientToolCallID,
 		Body:           body,
-		Headers: map[string][]string{
-			"Content-Length": {strconv.Itoa(len(body))},
-		},
+		Headers:        headers,
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
@@ -377,6 +393,30 @@ func (r *PluginRunner) buildRequestContext(
 		}
 	}
 	return reqCtx, nil
+}
+
+// cloneInboundHeaders returns a fresh shallow copy of the headers
+// infracontext.WithInboundHeaders stashed on ctx (nil when none were stashed,
+// or ctx is nil — a caller with no HTTP request behind it, e.g. a unit test
+// building a ToolCall directly). Copying again on top of the clone
+// WithInboundHeaders already made keeps buildRequestContext's Content-Length
+// override from mutating the map a concurrent stage call sharing the same
+// ctx might still be reading; the value slices themselves are never mutated,
+// only the map's "Content-Length" entry is replaced wholesale, so sharing
+// those is safe.
+func cloneInboundHeaders(ctx context.Context) map[string][]string {
+	if ctx == nil {
+		return nil
+	}
+	src := infracontext.InboundHeadersFromContext(ctx)
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
