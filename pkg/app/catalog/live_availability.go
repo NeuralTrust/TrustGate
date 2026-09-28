@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ const (
 	// liveModelsTimeout bounds the provider GET so a slow provider cannot hold
 	// the admin API request open.
 	liveModelsTimeout = 8 * time.Second
+	liveCatalogSource = "live"
 )
 
 // LiveAvailabilityFilter narrows a catalog listing to the models a registry's
@@ -125,6 +127,9 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 		f.debugSkip(in, "provider reported no models", nil)
 		return in.Models
 	}
+	if in.ProviderCode == providers.ProviderAzure {
+		return azureDeploymentModels(in.Models, live)
+	}
 
 	liveIDs := make(map[string]struct{}, len(live))
 	for _, model := range live {
@@ -162,6 +167,45 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 	return kept
 }
 
+func azureDeploymentModels(catalogModels []domain.Model, live []providers.LiveModel) []domain.Model {
+	capHint := len(catalogModels)
+	if capHint <= math.MaxInt/2 {
+		capHint *= 2
+	}
+	byProviderModel := make(map[string]domain.Model, capHint)
+	for _, model := range catalogModels {
+		for _, candidate := range SlugCandidates(model.Slug, model.ExternalID) {
+			byProviderModel[strings.ToLower(candidate)] = model
+		}
+	}
+
+	seen := make(map[string]struct{}, len(live))
+	out := make([]domain.Model, 0, len(live))
+	for _, model := range live {
+		deployment := strings.TrimSpace(model.ID)
+		if deployment == "" {
+			continue
+		}
+		key := strings.ToLower(deployment)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		entry, matched := byProviderModel[strings.ToLower(strings.TrimSpace(model.ProviderModel))]
+		if !matched {
+			entry = domain.Model{Enabled: true, Source: liveCatalogSource}
+		}
+		entry.Slug = deployment
+		entry.ExternalID = deployment
+		entry.DisplayName = strings.TrimSpace(model.DisplayName)
+		if entry.DisplayName == "" {
+			entry.DisplayName = deployment
+		}
+		out = append(out, entry)
+	}
+	return out
+}
 func (f *liveAvailabilityFilter) liveModels(
 	ctx context.Context,
 	providerCode string,

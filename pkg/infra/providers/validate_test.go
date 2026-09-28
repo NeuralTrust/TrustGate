@@ -47,6 +47,14 @@ func TestValidateProviderOptions(t *testing.T) {
 		{name: "openai invalid base_url", provider: ProviderOpenAI, options: map[string]any{"base_url": "host/v1"}, errContains: "base_url"},
 		{name: "openai non-string api", provider: ProviderOpenAI, options: map[string]any{"api": 123}, errContains: "openai"},
 
+		{name: "azure defaults to deployments", provider: ProviderAzure, options: nil},
+		{name: "azure deployments", provider: ProviderAzure, options: map[string]any{"api": AzureAPIDeployments}},
+		{name: "azure openai v1", provider: ProviderAzure, options: map[string]any{"api": AzureAPIOpenAIV1}},
+		{name: "azure responses", provider: ProviderAzure, options: map[string]any{"api": AzureAPIResponses}},
+		{name: "azure anthropic", provider: ProviderAzure, options: map[string]any{"api": AzureAPIAnthropic}},
+		{name: "azure invalid api", provider: ProviderAzure, options: map[string]any{"api": "chat"}, errContains: "api"},
+		{name: "azure non-string api", provider: ProviderAzure, options: map[string]any{"api": 123}, errContains: "azure"},
+
 		{name: "vertex valid", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "us-central1"}},
 		{name: "vertex custom version", provider: ProviderVertex, options: map[string]any{"project": "p", "location": "eu-west1", "version": "v1beta1"}},
 		{name: "vertex missing project", provider: ProviderVertex, options: map[string]any{"location": "us-central1"}, errContains: "project"},

@@ -22,6 +22,7 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -33,8 +34,10 @@ import (
 )
 
 const (
-	defaultAPIVersion = "2024-10-21"
-	azureTokenScope   = "https://ai.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
+	defaultAPIVersion        = "2024-10-21"
+	anthropicVersion         = "2023-06-01"
+	azureFoundryTokenScope   = "https://ai.azure.com/.default"                // #nosec G101 -- OAuth audience scope, not a credential value
+	azureCognitiveTokenScope = "https://cognitiveservices.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
 )
 
 type client struct {
@@ -58,11 +61,16 @@ func NewAzureClient() providers.Client {
 	}
 }
 
-type azureTokenSource func(context.Context, *providers.Azure) (string, error)
+type azureTokenSource func(context.Context, *providers.Azure, string) (string, error)
 
 type authHeader struct {
 	name  string
 	value string
+}
+
+type chatTarget struct {
+	url string
+	api string
 }
 
 // Completions sends reqBody raw to the Azure OpenAI endpoint (non-streaming).
@@ -83,14 +91,17 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("model (deployment ID) is required")
 	}
 
-	auth, err := c.resolveAuth(ctx, config)
+	target, err := c.resolveChatTarget(config, model)
 	if err != nil {
 		return nil, err
 	}
 
-	url := c.buildURL(config, model)
+	auth, err := c.resolveAuthForAPI(ctx, config, target.api)
+	if err != nil {
+		return nil, err
+	}
 
-	return c.rawPost(ctx, url, auth, reqBody)
+	return c.rawPostForAPI(ctx, target.url, target.api, auth, reqBody)
 }
 
 func (c *client) Embeddings(
@@ -251,6 +262,10 @@ func (c *client) Files(
 }
 
 func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
+	return c.rawPostForAPI(ctx, url, providers.AzureAPIDeployments, auth, reqBody)
+}
+
+func (c *client) rawPostForAPI(ctx context.Context, url, api string, auth authHeader, reqBody []byte) ([]byte, error) {
 	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
@@ -259,6 +274,9 @@ func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBo
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	auth.apply(httpReq)
+	if api == providers.AzureAPIAnthropic {
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+	}
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -295,13 +313,20 @@ func (c *client) CompletionsStream(
 		return nil, fmt.Errorf("model (deployment ID) is required")
 	}
 
-	auth, err := c.resolveAuth(ctx, config)
+	target, err := c.resolveChatTarget(config, model)
 	if err != nil {
 		return nil, err
 	}
 
-	url := c.buildURL(config, model)
+	auth, err := c.resolveAuthForAPI(ctx, config, target.api)
+	if err != nil {
+		return nil, err
+	}
 
+	return c.postStream(ctx, target.url, target.api, auth, reqBody)
+}
+
+func (c *client) postStream(ctx context.Context, url, api string, auth authHeader, reqBody []byte) (iter.Seq2[[]byte, error], error) {
 	httpClient := c.pool.GetStream(providers.ProviderAzure)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -309,6 +334,9 @@ func (c *client) CompletionsStream(
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	auth.apply(httpReq)
+	if api == providers.AzureAPIAnthropic {
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+	}
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -329,15 +357,23 @@ func (h authHeader) apply(req *http.Request) {
 }
 
 func (c *client) resolveAuth(ctx context.Context, config *providers.Config) (authHeader, error) {
+	return c.resolveAuthForAPI(ctx, config, providers.AzureAPIDeployments)
+}
+
+func (c *client) resolveAuthForAPI(ctx context.Context, config *providers.Config, api string) (authHeader, error) {
 	az := config.Credentials.Azure
 	switch azureAuthMode(az) {
 	case providers.AzureAuthModeAPIKey:
 		if config.Credentials.ApiKey == "" {
 			return authHeader{}, fmt.Errorf("API key is required for Azure API key authentication")
 		}
-		return authHeader{name: "api-key", value: config.Credentials.ApiKey}, nil
+		header := "api-key"
+		if api == providers.AzureAPIAnthropic {
+			header = "x-api-key"
+		}
+		return authHeader{name: header, value: config.Credentials.ApiKey}, nil
 	case providers.AzureAuthModeServicePrincipal, providers.AzureAuthModeDefaultAzureCredential:
-		token, err := c.bearerToken(ctx, az)
+		token, err := c.bearerToken(ctx, az, azureScope(config, api))
 		if err != nil {
 			slog.WarnContext(ctx, "azure bearer token acquisition failed",
 				slog.String("auth_mode", string(azureAuthMode(az))),
@@ -351,16 +387,31 @@ func (c *client) resolveAuth(ctx context.Context, config *providers.Config) (aut
 	}
 }
 
-func (c *client) bearerToken(ctx context.Context, az *providers.Azure) (string, error) {
+func (c *client) bearerToken(ctx context.Context, az *providers.Azure, scope string) (string, error) {
 	tokenSource := c.tokenSource
 	if tokenSource == nil {
 		tokenSource = getAzureBearerToken
 	}
-	token, err := tokenSource(ctx, az)
+	token, err := tokenSource(ctx, az, scope)
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to get Azure bearer token: %w", registry.ErrCredentialAcquisition, err)
 	}
 	return token, nil
+}
+
+func azureScope(config *providers.Config, api string) string {
+	if api == providers.AzureAPIAnthropic {
+		return azureFoundryTokenScope
+	}
+	endpoint, err := url.Parse(config.Credentials.Azure.Endpoint)
+	if err != nil {
+		return azureFoundryTokenScope
+	}
+	host := strings.ToLower(endpoint.Hostname())
+	if strings.HasSuffix(host, ".openai.azure.com") || strings.HasSuffix(host, ".cognitiveservices.azure.com") {
+		return azureCognitiveTokenScope
+	}
+	return azureFoundryTokenScope
 }
 
 func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
@@ -376,8 +427,23 @@ func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
 	return providers.AzureAuthModeAPIKey
 }
 
-func (c *client) buildURL(config *providers.Config, model string) string {
-	return c.buildDeploymentURL(config, model, "chat/completions")
+func (c *client) resolveChatTarget(config *providers.Config, model string) (chatTarget, error) {
+	opts, err := providers.DecodeAzureOptions(config.Options)
+	if err != nil {
+		return chatTarget{}, err
+	}
+	switch opts.API {
+	case providers.AzureAPIDeployments:
+		return chatTarget{url: c.buildDeploymentURL(config, model, "chat/completions"), api: opts.API}, nil
+	case providers.AzureAPIOpenAIV1:
+		return chatTarget{url: azureConfiguredEndpoint(config.Credentials.Azure.Endpoint) + "/openai/v1/chat/completions", api: opts.API}, nil
+	case providers.AzureAPIResponses:
+		return chatTarget{url: azureConfiguredEndpoint(config.Credentials.Azure.Endpoint) + "/openai/v1/responses", api: opts.API}, nil
+	case providers.AzureAPIAnthropic:
+		return chatTarget{url: azureRESTEndpoint(config.Credentials.Azure.Endpoint) + "/anthropic/v1/messages", api: opts.API}, nil
+	default:
+		return chatTarget{}, fmt.Errorf("unsupported Azure API surface %q", opts.API)
+	}
 }
 
 func (c *client) buildEmbeddingsURL(config *providers.Config, model string) string {
@@ -415,23 +481,27 @@ func (c *client) buildDeploymentURL(config *providers.Config, model, operation s
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
 	return fmt.Sprintf("%s/openai/deployments/%s/%s?api-version=%s",
-		endpoint, model, operation, apiVersion)
+		endpoint, url.PathEscape(model), operation, apiVersion)
 }
 
 func azureRESTEndpoint(endpoint string) string {
 	if idx := strings.Index(endpoint, "/api/projects/"); idx >= 0 {
 		return endpoint[:idx]
 	}
+	return azureConfiguredEndpoint(endpoint)
+}
+
+func azureConfiguredEndpoint(endpoint string) string {
 	return strings.TrimRight(endpoint, "/")
 }
 
-func getAzureBearerToken(ctx context.Context, az *providers.Azure) (string, error) {
+func getAzureBearerToken(ctx context.Context, az *providers.Azure, scope string) (string, error) {
 	cred, err := azureCredential(az)
 	if err != nil {
 		return "", err
 	}
 	token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
-		Scopes: []string{azureTokenScope},
+		Scopes: []string{scope},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to get token: %w", err)
