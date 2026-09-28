@@ -419,11 +419,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     true,
 				},
 				{
-					Key:         "skip_if_streaming",
-					Label:       "Skip If Streaming",
-					Type:        FieldTypeBoolean,
-					Description: "Skip caching for streaming requests and responses.",
-					Default:     false,
+					Key:   "skip_if_streaming",
+					Label: "Skip If Streaming",
+					Type:  FieldTypeBoolean,
+					Description: "Skip caching for streaming requests and responses. " +
+						"Turning this off lets a cache hit answer a request that asked for a " +
+						"stream with a single non-streamed body.",
+					Default: true,
 				},
 				{
 					Key:         "ttl",
