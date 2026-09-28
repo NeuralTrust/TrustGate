@@ -17,6 +17,7 @@ package azurecontentsafety
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -133,6 +134,52 @@ func (s Settings) thresholdBounds() (int, int) {
 
 func (s Settings) thresholdFor(category string) int {
 	return s.CategorySeverity[category]
+}
+
+// requestCategories is the set of categories Execute asks Azure to analyze:
+// Categories plus every category_severity key, so a thresholded category is
+// always requested even on a policy saved before ValidateSettingsWrite
+// started rejecting that gap. Deterministic order (Categories first, then
+// the extra threshold keys sorted) keeps the outbound request stable across
+// calls with the same settings.
+func (s Settings) requestCategories() []string {
+	seen := make(map[string]struct{}, len(s.Categories)+len(s.CategorySeverity))
+	out := make([]string, 0, len(s.Categories)+len(s.CategorySeverity))
+	for _, c := range s.Categories {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	extra := make([]string, 0, len(s.CategorySeverity))
+	for c := range s.CategorySeverity {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		extra = append(extra, c)
+	}
+	sort.Strings(extra)
+	return append(out, extra...)
+}
+
+// unrequestedThresholds returns, in deterministic (sorted) order, every
+// category_severity key that categories does not name. Shared by
+// ValidateSettingsWrite (rejects it at save time) so the two check exactly
+// the same gap.
+func (s Settings) unrequestedThresholds() []string {
+	requested := make(map[string]struct{}, len(s.Categories))
+	for _, c := range s.Categories {
+		requested[c] = struct{}{}
+	}
+	var missing []string
+	for c := range s.CategorySeverity {
+		if _, ok := requested[c]; !ok {
+			missing = append(missing, c)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func isSupportedCategory(category string) bool {

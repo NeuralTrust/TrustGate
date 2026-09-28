@@ -275,6 +275,33 @@ an HTTP 200 whose `status.reason` is empty. On the wire the response ends with t
 dialect's content-filter terminator, and on the event the cut is visible only through
 `streaming.cut_at_eval`. Charting cuts means reading that field, not `status.reason`.
 
+### External guardrail failures
+
+`azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
+record a failure to reach a verdict the same way. The entry's `decision` says what happened
+to the request, not what the policy would have done in enforce:
+
+| Mode | `decision` | Request |
+|------|------------|---------|
+| enforce | `failed_closed` | Refused with HTTP 502, error type `guardrail_unavailable`; later policies in the chain do not run |
+| observe | `failed_open` | Forwarded; the chain carries on |
+
+Their `extras` carry two keys:
+
+| Key | Meaning |
+|-----|---------|
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body; always `failed_open`, in both modes) |
+| `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
+
+A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
+that fails records `failed_open` and never cuts the stream.
+
+**Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
+and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
+`failure_reason` used to carry `filter_not_in_template` / `filter_not_executed`; those
+values now travel in `failure_detail`, next to `failure_reason: verdict_incomplete`.
+`openai_moderation`'s enforce failures used to say `unavailable`.
+
 ### Savings semantics
 
 `trustgate.cost.savings_usd` is what smart routing avoided spending on this

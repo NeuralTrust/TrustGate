@@ -339,14 +339,15 @@ func TestExecuteEnforceFailureReturns502(t *testing.T) {
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok, "expected *PluginError, got %v", err)
 	assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
-	assert.Equal(t, typeUnavailable, pe.Type)
+	assert.Equal(t, "guardrail_unavailable", pe.Type)
 	assert.NotContains(t, string(pe.Body), secret)
 	assert.NotContains(t, pe.Message, secret)
-	assert.Equal(t, unavailableBodyJSON, string(pe.Body))
+	assert.Contains(t, string(pe.Body), "guardrail_unavailable")
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, decisionUnavailable, data.Decision)
+	assert.Equal(t, "failed_closed", data.Decision)
+	assert.Equal(t, "transport", data.FailureReason)
 }
 
 func TestExecuteObserveFailurePassesThrough(t *testing.T) {
@@ -365,7 +366,8 @@ func TestExecuteObserveFailurePassesThrough(t *testing.T) {
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
-	assert.Equal(t, decisionFailedOpen, data.Decision)
+	assert.Equal(t, "failed_open", data.Decision)
+	assert.Equal(t, "transport", data.FailureReason)
 }
 
 func TestExecuteStreamingResponseSkipped(t *testing.T) {
@@ -442,11 +444,35 @@ func TestExecuteEmptyBaseURLPassThrough(t *testing.T) {
 func TestExecuteInvalidConfigErrors(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, requestContext(), nil, nil)
-	_, err := p.Execute(context.Background(), in)
-	require.Error(t, err)
-	_, ok := appplugins.AsPluginError(err)
-	assert.False(t, ok, "config error must not be a PluginError")
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	require.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "expected *PluginError on a config_invalid failure in enforce mode, got %v", err)
+	assert.Equal(t, http.StatusBadGateway, pe.StatusCode)
+	assert.Equal(t, "guardrail_unavailable", pe.Type)
+
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "failed_closed", data.Decision)
+	assert.Equal(t, "config_invalid", data.FailureReason)
+}
+
+func TestExecuteInvalidConfigObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, map[string]any{}, requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
+	require.True(t, ok)
+	assert.Equal(t, "failed_open", data.Decision)
+	assert.Equal(t, "config_invalid", data.FailureReason)
 }
 
 // explicitNoBlockSettings is what an operator gets by explicitly disabling

@@ -22,14 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
-const (
-	typeContentFlagged = "content_flagged"
-	typeUnavailable    = "moderation_unavailable"
-
-	unavailableMessage = "content moderation is temporarily unavailable"
-)
-
-const unavailableBodyJSON = `{"error":{"type":"moderation_unavailable","message":"content moderation is temporarily unavailable"}}`
+const typeContentFlagged = "content_flagged"
 
 func blockBody(message string, violations []violation) []byte {
 	body := struct {
@@ -60,14 +53,5 @@ func blockError(message string, violations []violation) *appplugins.PluginError 
 		Type:       typeContentFlagged,
 		Message:    msg,
 		Body:       blockBody(msg, violations),
-	}
-}
-
-func unavailableError() *appplugins.PluginError {
-	return &appplugins.PluginError{
-		StatusCode: http.StatusBadGateway,
-		Type:       typeUnavailable,
-		Message:    unavailableMessage,
-		Body:       []byte(unavailableBodyJSON),
 	}
 }
