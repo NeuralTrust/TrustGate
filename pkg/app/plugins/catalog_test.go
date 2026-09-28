@@ -588,7 +588,9 @@ func TestSemanticCacheSchema(t *testing.T) {
 	skipIfStreaming, ok := fieldByKey(fields, "skip_if_streaming")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeBoolean, skipIfStreaming.Type)
-	assert.Equal(t, false, skipIfStreaming.Default)
+	assert.Equal(t, true, skipIfStreaming.Default,
+		"the console default must match config.skipIfStreaming(); a cache hit is served "+
+			"as application/json, so a streamed leg stays out of the cache unless asked")
 
 	embedding, ok := fieldByKey(fields, "embedding")
 	require.True(t, ok)
