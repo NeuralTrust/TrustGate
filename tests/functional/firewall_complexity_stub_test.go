@@ -90,6 +90,7 @@ func newFirewallComplexityStubServer() *firewallComplexityStub {
 			writeFirewallScore(w, smartRouteLowScore)
 		}
 	})
+	registerTopicGuardStub(mux)
 	stub.server = httptest.NewServer(mux)
 	return stub
 }

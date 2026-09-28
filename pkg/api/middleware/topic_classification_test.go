@@ -83,7 +83,7 @@ func newTopicClassificationApp(t *testing.T, s topicClassificationSetup) (*fiber
 	t.Helper()
 	intake := &recordingIntake{accept: s.accept}
 	cfg := &config.Config{TopicClassifier: config.TopicClassifierConfig{IntakeMaxBodyBytes: s.maxBody}}
-	mw := middleware.NewTopicClassificationMiddleware(intake, cfg)
+	mw := middleware.NewTopicClassificationMiddleware(intake, nil, cfg)
 
 	app := fiber.New()
 	app.Post("/*",
@@ -196,7 +196,7 @@ func TestTopicClassification_WithoutConsumerLeavesItEmpty(t *testing.T) {
 
 func TestTopicClassification_NilIntakeIsInert(t *testing.T) {
 	t.Parallel()
-	mw := middleware.NewTopicClassificationMiddleware(nil, nil)
+	mw := middleware.NewTopicClassificationMiddleware(nil, nil, nil)
 	app := fiber.New()
 	app.Post("/*",
 		func(c *fiber.Ctx) error {
