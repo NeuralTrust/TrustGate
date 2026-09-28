@@ -106,7 +106,7 @@ separately:
 | Attribute | Meaning |
 |-----------|---------|
 | `total_ms` | Wall clock from the moment the gateway accepted the request until the response was written. |
-| `provider_ms` | Time spent in the upstream provider, summed across attempts (retries and fallbacks included). |
+| `provider_ms` | Time spent in the upstream provider, summed across attempts (retries and fallbacks included), **net of any time a streaming policy held bytes back during drain** — see below. |
 | `policies_ms` | Time spent in the policy chain across **every** stage: `pre_request`, `pre_response` and `post_response`. |
 | `gateway_ms` | The gateway's own overhead: routing, adapter translation, serialization. |
 
@@ -138,24 +138,44 @@ matters: a stream span opens on the first block and ends when the stream does, s
 default wall clock would be the whole drain, provider generation included, and
 `policies_ms` on a streamed request would come out at roughly the whole request.
 
-**The reconciliation does not survive a streamed leg, and that is a known limitation.**
-The block loop runs *during* drain, so the hold is inside the provider span: `provider_ms`
-already contains the guard time that `blocking_policies_ms` now also carries. Subtracting
-both leaves a negative remainder and `gateway_ms` clamps to zero on a streamed request
-with per-block inspection enabled — not because the policy chain was charged the drain,
-but because the two buckets overlap by construction. Do not read that zero as "the gateway
-spent nothing", and do not reconcile `total_ms` against the three buckets on a streamed
-leg. The chain's own cost is the entry's `latency_ms`, which stays honest either way.
+**The overlap is resolved out of `provider_ms`, so the reconciliation holds on a streamed
+leg too.** The block loop runs *during* drain, so the hold elapses inside the provider
+span and the raw attempt sum contains it. Left there it would be counted twice — once as
+provider time and once in `blocking_policies_ms` — the remainder would go negative and
+`gateway_ms` would clamp to zero on every streamed request with per-block inspection
+enabled. `provider_ms` is therefore reported net of the streamed share:
 
-Three consequences for anyone charting this:
+```
+provider_ms = max(0, sum(attempt latencies) - streamed_policies_ms)
+```
 
+where `streamed_policies_ms` is the part of `policies_ms` contributed by policies that
+inspected the response block by block.
+
+Be clear about what this is: **a convention, not a measurement.** The provider keeps
+generating while the guard decides, so the two really do overlap, and no split of that
+overlap is the "true" one. Attributing it to the policy is the useful choice, because the
+policy is what made the bytes late and it is the only one of the two an operator can
+switch off. The consequence is that on a streamed request `provider_ms` is **lower** than
+the upstream call's wall clock by exactly the guard's hold. To chart raw upstream time on
+a streamed leg, add back the `pre_response` entries of `trustgate.policy_chain`.
+
+Four consequences for anyone charting this:
+
+- `provider_ms` is not the upstream span's wall clock on a streamed request. Comparing it
+  against a provider-side latency metric will show the guard's hold as a gap.
 - `policies_ms` on a streamed request grows when per-block inspection is enabled. That is
   a real change in what the client waited for, not an accounting artefact.
 - The per-entry `latency_ms` of a streamed leg is **not** `ended_at - started_at`. Do not
-  reconstruct it from span timestamps.
+  reconstruct it from span timestamps: a stream span opens on the first block and ends
+  when the stream does, so its wall clock is the whole drain. Each streaming policy sets
+  its own figure explicitly when the stream closes.
 - Each streaming policy is charged its own share, so the sum over a chain of N streaming
   policies is one hold, not N. The figure a policy reports is what that policy cost, never
-  what the chain around it cost.
+  what the chain around it cost — and so the deduction from `provider_ms` is one hold too.
+
+The deduction applies to the LLM proxy path only. An MCP `tools/call` has no stream drain
+for a policy to run inside, so its `provider_ms` is the upstream sum unchanged.
 
 The per-stage split is deliberately **not** duplicated into its own attribute — it is
 derivable from `trustgate.policy_chain`, where each entry already carries `stage` and
