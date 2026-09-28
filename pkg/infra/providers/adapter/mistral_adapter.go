@@ -83,10 +83,11 @@ func withMistralRandomSeed(body []byte, seed int64) ([]byte, error) {
 	if !bytes.Equal(bytes.TrimSpace(trimmed[:len(trimmed)-1]), []byte("{")) {
 		field = "," + field
 	}
-	out := make([]byte, 0, len(trimmed)+len(field))
-	out = append(out, trimmed[:len(trimmed)-1]...)
-	out = append(out, field...)
-	return append(out, '}'), nil
+	var out bytes.Buffer
+	out.Write(trimmed[:len(trimmed)-1])
+	out.WriteString(field)
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
 
 func (a *MistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
