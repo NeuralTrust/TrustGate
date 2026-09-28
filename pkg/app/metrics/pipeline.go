@@ -33,6 +33,13 @@ type Exporter interface {
 	Close()
 }
 
+// TopicExporter is implemented by exporters that carry topic classification
+// events. Exporters without it never receive them: their sinks key rows on the
+// trace id and would take a classification for a second copy of the request.
+type TopicExporter interface {
+	PublishTopic(ctx context.Context, evt *events.TopicClassification) error
+}
+
 // PlaygroundTraceStore persists the metrics Event of playground requests so the
 // dashboard can fetch it by TraceID. It runs after the exporters as a
 // best-effort side channel and must never block or fail the pipeline.
@@ -100,6 +107,26 @@ func (p *Pipeline) publishContext(
 	}
 	if p.playgroundStore != nil {
 		p.playgroundStore.Save(ctx, req, evt)
+	}
+}
+
+// PublishTopic sends a topic classification to the default and gateway
+// exporters that can carry it.
+func (p *Pipeline) PublishTopic(ctx context.Context, evt *events.TopicClassification, explicit []telemetrydomain.ExporterConfig) {
+	if p == nil || evt == nil {
+		return
+	}
+	for _, exporter := range p.resolveTargets(explicit) {
+		topical, ok := exporter.(TopicExporter)
+		if !ok {
+			continue
+		}
+		if err := topical.PublishTopic(ctx, evt); err != nil {
+			p.logger.Error("failed to publish topic classification event",
+				slog.String("gateway_id", evt.GatewayID),
+				slog.String("exporter", exporter.Name()),
+				slog.String("error", err.Error()))
+		}
 	}
 }
 

@@ -196,6 +196,7 @@ type workerHarness struct {
 	classifier *fakeClassifier
 	cache      *fakeCache
 	sink       *fakeSink
+	recorder   *countingRecorder
 	worker     *worker
 }
 
@@ -219,8 +220,9 @@ func newWorkerHarness(t *testing.T, cfg WorkerConfig, classifier *fakeClassifier
 		classifier: classifier,
 		cache:      newFakeCache(),
 		sink:       &fakeSink{},
+		recorder:   newCountingRecorder(),
 	}
-	h.worker = newWorker(quietLogger(), h.stream, h.classifier, h.cache, h.sink, cfg)
+	h.worker = newWorker(quietLogger(), h.stream, h.classifier, h.cache, h.sink, h.recorder, cfg)
 	return h
 }
 

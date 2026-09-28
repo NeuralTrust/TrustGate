@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math/rand/v2"
+	"math/rand"
 	"runtime/debug"
 	"strconv"
 	"sync"
@@ -113,6 +113,7 @@ type worker struct {
 	classifier Classifier
 	cache      Cache
 	sink       Sink
+	recorder   Recorder
 	cfg        WorkerConfig
 	breaker    *breaker
 	now        func() time.Time
@@ -133,11 +134,12 @@ type worker struct {
 }
 
 // NewWorker builds a worker over the given stream, classifier, cache and sink.
-func NewWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, cfg WorkerConfig) Worker {
-	return newWorker(logger, stream, classifier, cache, sink, cfg)
+// A nil recorder records nothing.
+func NewWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, recorder Recorder, cfg WorkerConfig) Worker {
+	return newWorker(logger, stream, classifier, cache, sink, recorder, cfg)
 }
 
-func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, cfg WorkerConfig) *worker {
+func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, recorder Recorder, cfg WorkerConfig) *worker {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -148,6 +150,7 @@ func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache 
 		classifier: classifier,
 		cache:      cache,
 		sink:       sink,
+		recorder:   orNop(recorder),
 		cfg:        cfg,
 		breaker:    newBreaker(cfg.BreakerFailures, cfg.BreakerCooldown),
 		now:        time.Now,
@@ -252,6 +255,7 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 			keep = append(keep, d)
 		}
 		if len(poison) > 0 {
+			w.recorder.Result(OutcomePoison, len(poison))
 			w.logger.Warn("topic classification dropped entries handed out too many times",
 				slog.Int("count", len(poison)), slog.Int64("max_deliveries", w.cfg.MaxDeliveries))
 			w.ack(workCtx, poison)
@@ -293,6 +297,7 @@ func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Deliver
 		groups[k] = append(groups[k], d)
 	}
 	if len(invalid) > 0 {
+		w.recorder.Result(OutcomeInvalid, len(invalid))
 		w.ack(workCtx, invalid)
 	}
 	for _, k := range order {
@@ -335,6 +340,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 			w.logger.Error("topic classification is enabled on a gateway but this data plane has no topic-guard endpoint configured; dropping its requests",
 				slog.String("gateway_id", first.GatewayID))
 		})
+		w.recorder.Result(OutcomeUnconfigured, len(batch))
 		w.ack(ctx, deliveryIDs(batch))
 		return
 	}
@@ -349,6 +355,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 			continue
 		}
 		if cls, ok := w.cached(ctx, key); ok {
+			w.recorder.Result(OutcomeCacheHit, 1)
 			w.publish(ctx, d, cls)
 			done = append(done, d.ID)
 			continue
@@ -368,6 +375,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 		case err == nil:
 			for i, p := range misses {
 				w.store(ctx, p.key, results[i])
+				w.recorder.Result(OutcomeClassified, len(p.deliveries))
 				for _, d := range p.deliveries {
 					w.publish(ctx, d, results[i])
 					done = append(done, d.ID)
@@ -380,6 +388,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 				slog.Int("texts", len(texts)),
 				slog.String("error", err.Error()))
 			for _, p := range misses {
+				w.recorder.Result(OutcomeFailed, len(p.deliveries))
 				done = append(done, deliveryIDs(p.deliveries)...)
 			}
 		}
@@ -396,14 +405,18 @@ func (w *worker) classify(ctx context.Context, topics []topic.Topic, threshold *
 		if !w.ready(ctx) {
 			return nil, w.interrupted(ctx)
 		}
+		started := w.now()
 		results, err := w.classifier.Classify(ctx, topics, threshold, texts)
+		elapsed := w.now().Sub(started)
 		if err == nil {
+			w.recorder.Call(OutcomeOK, len(texts), elapsed)
 			w.breaker.success()
 			return results, nil
 		}
 		var bp *topic.BackpressureError
 		switch {
 		case errors.As(err, &bp):
+			w.recorder.Call(OutcomeBackpressure, len(texts), elapsed)
 			w.pause(bp.RetryAfter)
 			continue
 		case ctx.Err() != nil:
@@ -411,6 +424,7 @@ func (w *worker) classify(ctx context.Context, topics []topic.Topic, threshold *
 		case errors.Is(err, topic.ErrClassifierNotConfigured):
 			return nil, err
 		}
+		w.recorder.Call(OutcomeError, len(texts), elapsed)
 		w.breaker.failure(w.now())
 		attempts++
 		if attempts >= w.cfg.MaxAttempts {
@@ -434,7 +448,7 @@ func (w *worker) backoff(attempt int) time.Duration {
 	if d <= 0 || d > maxRetryBackoff {
 		d = maxRetryBackoff
 	}
-	jitter := time.Duration(rand.Int64N(int64(w.cfg.RetryBackoff)/2 + 1)) // #nosec G404 -- retry jitter, not a secret
+	jitter := time.Duration(rand.Int63n(int64(w.cfg.RetryBackoff)/2 + 1)) // #nosec G404 -- retry jitter, not a secret
 	return d + jitter
 }
 

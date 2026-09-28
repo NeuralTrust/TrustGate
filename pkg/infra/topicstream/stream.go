@@ -44,6 +44,7 @@ const (
 	defaultRetention   = time.Hour
 	quotaWindow        = time.Second
 	busyGroupErrPrefix = "BUSYGROUP"
+	noGroupErrPrefix   = "NOGROUP"
 )
 
 var enqueueScript = redis.NewScript(`
@@ -163,6 +164,9 @@ func (s *Stream) Read(ctx context.Context, count int, block time.Duration) ([]to
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
+	if isNoGroup(err) {
+		return nil, s.EnsureGroup(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("topicstream: read: %w", err)
 	}
@@ -191,6 +195,9 @@ func (s *Stream) Reclaim(ctx context.Context, minIdle time.Duration, count int) 
 	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
+	}
+	if isNoGroup(err) {
+		return nil, s.EnsureGroup(ctx)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("topicstream: reclaim: %w", err)
@@ -230,6 +237,24 @@ func (s *Stream) deliveryCounts(ctx context.Context, first, last string, n int) 
 	return counts, nil
 }
 
+// Stats reports how many entries the stream holds and how many were handed
+// out but not acknowledged yet. A growing length means requests arrive faster
+// than they are classified; a growing pending count means consumers stall.
+func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
+	length, err = s.redis.XLen(ctx, streamKey).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("topicstream: length: %w", err)
+	}
+	summary, err := s.redis.XPending(ctx, streamKey, groupName).Result()
+	if err != nil {
+		if isNoGroup(err) {
+			return length, 0, nil
+		}
+		return length, 0, fmt.Errorf("topicstream: pending: %w", err)
+	}
+	return length, summary.Count, nil
+}
+
 // Ack marks entries as done so they are never handed out again.
 func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
@@ -239,6 +264,13 @@ func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 		return fmt.Errorf("topicstream: ack: %w", err)
 	}
 	return nil
+}
+
+// isNoGroup reports a missing consumer group, which happens when Redis lost
+// the stream (a flush, a failover without persistence). The group is simply
+// created again.
+func isNoGroup(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), noGroupErrPrefix)
 }
 
 func decode(msg redis.XMessage) topicclassifier.Delivery {

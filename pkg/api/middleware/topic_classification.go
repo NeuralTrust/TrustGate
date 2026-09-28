@@ -35,16 +35,21 @@ import (
 // more work, the candidate is dropped.
 type TopicClassificationMiddleware struct {
 	intake       topicclassifier.Intake
+	recorder     topicclassifier.Recorder
 	maxBodyBytes int
 }
 
-// NewTopicClassificationMiddleware builds the middleware on top of intake.
-func NewTopicClassificationMiddleware(intake topicclassifier.Intake, cfg *config.Config) *TopicClassificationMiddleware {
+// NewTopicClassificationMiddleware builds the middleware on top of intake. A
+// nil recorder records nothing.
+func NewTopicClassificationMiddleware(intake topicclassifier.Intake, recorder topicclassifier.Recorder, cfg *config.Config) *TopicClassificationMiddleware {
 	maxBody := 0
 	if cfg != nil {
 		maxBody = cfg.TopicClassifier.IntakeMaxBodyBytes
 	}
-	return &TopicClassificationMiddleware{intake: intake, maxBodyBytes: maxBody}
+	if recorder == nil {
+		recorder = topicclassifier.NopRecorder{}
+	}
+	return &TopicClassificationMiddleware{intake: intake, recorder: recorder, maxBodyBytes: maxBody}
 }
 
 func (m *TopicClassificationMiddleware) Middleware() fiber.Handler {
@@ -72,7 +77,11 @@ func (m *TopicClassificationMiddleware) offer(c *fiber.Ctx) {
 		return
 	}
 	body := c.Body()
-	if len(body) == 0 || (m.maxBodyBytes > 0 && len(body) > m.maxBodyBytes) {
+	if len(body) == 0 {
+		return
+	}
+	if m.maxBodyBytes > 0 && len(body) > m.maxBodyBytes {
+		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
 		return
 	}
 	m.intake.Submit(topicclassifier.Candidate{

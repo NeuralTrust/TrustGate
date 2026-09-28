@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math/rand/v2"
+	"math/rand"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -84,11 +84,12 @@ type Intake interface {
 var _ Intake = (*intake)(nil)
 
 type intake struct {
-	logger  *slog.Logger
-	decoder RequestDecoder
-	queue   Queue
-	cfg     IntakeConfig
-	sample  func() float64
+	logger   *slog.Logger
+	decoder  RequestDecoder
+	queue    Queue
+	recorder Recorder
+	cfg      IntakeConfig
+	sample   func() float64
 
 	ch chan Candidate
 	wg sync.WaitGroup
@@ -100,23 +101,24 @@ type intake struct {
 }
 
 // NewIntake builds an intake that decodes candidates with decoder and hands
-// the resulting requests to queue.
-func NewIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, cfg IntakeConfig) Intake {
-	return newIntake(logger, decoder, queue, cfg, rand.Float64)
+// the resulting requests to queue. A nil recorder records nothing.
+func NewIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) Intake {
+	return newIntake(logger, decoder, queue, recorder, cfg, rand.Float64)
 }
 
-func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, cfg IntakeConfig, sample func() float64) *intake {
+func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig, sample func() float64) *intake {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	cfg = cfg.withDefaults()
 	return &intake{
-		logger:  logger,
-		decoder: decoder,
-		queue:   queue,
-		cfg:     cfg,
-		sample:  sample,
-		ch:      make(chan Candidate, cfg.QueueSize),
+		logger:   logger,
+		decoder:  decoder,
+		queue:    queue,
+		recorder: orNop(recorder),
+		cfg:      cfg,
+		sample:   sample,
+		ch:       make(chan Candidate, cfg.QueueSize),
 	}
 }
 
@@ -124,12 +126,15 @@ func (i *intake) Submit(c Candidate) bool {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	if i.closed {
+		i.recorder.Intake(OutcomeBufferFull)
 		return false
 	}
 	select {
 	case i.ch <- c:
+		i.recorder.Intake(OutcomeAccepted)
 		return true
 	default:
+		i.recorder.Intake(OutcomeBufferFull)
 		return false
 	}
 }
@@ -207,10 +212,13 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 	err := i.queue.Enqueue(ctx, req)
 	switch {
 	case err == nil:
+		i.recorder.Enqueue(OutcomeQueued)
 	case errors.Is(err, topic.ErrQuotaExceeded):
+		i.recorder.Enqueue(OutcomeQuotaExceeded)
 		i.logger.Debug("topic classification dropped: gateway quota exceeded",
 			slog.String("gateway_id", c.GatewayID))
 	default:
+		i.recorder.Enqueue(OutcomeQueueError)
 		i.logger.Warn("topic classification enqueue failed",
 			slog.String("gateway_id", c.GatewayID),
 			slog.String("error", err.Error()))
@@ -222,10 +230,12 @@ func (i *intake) build(c Candidate) (topic.Request, bool) {
 		return topic.Request{}, false
 	}
 	if rate := c.Config.Rate(); rate < 1 && i.sample() >= rate {
+		i.recorder.Enqueue(OutcomeSampledOut)
 		return topic.Request{}, false
 	}
 	text := userText(i.decoder, c.Body, c.SourceFormat, c.Config.Window())
 	if text == "" {
+		i.recorder.Enqueue(OutcomeNoText)
 		return topic.Request{}, false
 	}
 	return topic.NewRequest(topic.RequestParams{

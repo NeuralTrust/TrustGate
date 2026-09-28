@@ -244,3 +244,51 @@ func TestStream_ReadTimesOutEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+func TestStream_Stats(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	s := h.stream(t, "a", Config{})
+	ctx := context.Background()
+
+	for i := range 3 {
+		require.NoError(t, s.Enqueue(ctx, request("gw", fmt.Sprint(i))))
+	}
+	read, err := s.Read(ctx, 2, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, s.Ack(ctx, read[0].ID))
+
+	length, pending, err := s.Stats(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), length)
+	assert.Equal(t, int64(1), pending, "handed out and not acknowledged")
+}
+
+func TestStream_StatsBeforeTheGroupExists(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	s := New(h.client, Config{})
+	length, pending, err := s.Stats(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, length)
+	assert.Zero(t, pending)
+}
+
+func TestStream_RecreatesAMissingGroup(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	s := h.stream(t, "a", Config{})
+	ctx := context.Background()
+
+	h.mr.FlushAll()
+	got, err := s.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err, "a lost group is recreated, not reported forever")
+	assert.Empty(t, got)
+	_, err = s.Reclaim(ctx, 0, 10)
+	require.NoError(t, err)
+
+	require.NoError(t, s.Enqueue(ctx, request("gw", "after the flush")))
+	got, err = s.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+}

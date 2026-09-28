@@ -90,7 +90,7 @@ func always(v float64) func() float64 { return func() float64 { return v } }
 
 func startIntake(t *testing.T, q Queue, cfg IntakeConfig, sample func() float64) *intake {
 	t.Helper()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, cfg, sample)
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, cfg, sample)
 	in.Start()
 	t.Cleanup(func() { _ = in.Shutdown(context.Background()) })
 	return in
@@ -150,7 +150,7 @@ func TestIntake_DropsWithoutEnqueueing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			q := newFakeQueue()
-			in := newIntake(quietLogger(), adapter.NewRegistry(), q, IntakeConfig{}, always(tt.sample))
+			in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{}, always(tt.sample))
 			in.Start()
 			require.True(t, in.Submit(tt.cand))
 			require.NoError(t, in.Shutdown(context.Background()))
@@ -173,7 +173,7 @@ func TestIntake_SampledIn(t *testing.T) {
 
 func TestIntake_SubmitNeverBlocks(t *testing.T) {
 	t.Parallel()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), IntakeConfig{QueueSize: 1}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{QueueSize: 1}, always(0))
 
 	require.True(t, in.Submit(candidate(enabledConfig())))
 	done := make(chan bool, 1)
@@ -189,7 +189,7 @@ func TestIntake_SubmitNeverBlocks(t *testing.T) {
 func TestIntake_ShutdownDrainsBufferedCandidates(t *testing.T) {
 	t.Parallel()
 	q := newFakeQueue()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, IntakeConfig{QueueSize: 8}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{QueueSize: 8}, always(0))
 
 	for range 5 {
 		require.True(t, in.Submit(candidate(enabledConfig())))
@@ -204,7 +204,7 @@ func TestIntake_ShutdownDrainsBufferedCandidates(t *testing.T) {
 
 func TestIntake_ShutdownWithoutStart(t *testing.T) {
 	t.Parallel()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), IntakeConfig{}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{}, always(0))
 	require.NoError(t, in.Shutdown(context.Background()))
 	assert.False(t, in.Submit(candidate(enabledConfig())))
 }
@@ -221,7 +221,7 @@ func TestIntake_ShutdownDeadlineCancelsInFlightEnqueue(t *testing.T) {
 		cancelled = true
 		return ctx.Err()
 	}
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, IntakeConfig{Workers: 1, EnqueueTimeout: time.Minute}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{Workers: 1, EnqueueTimeout: time.Minute}, always(0))
 	in.Start()
 	require.True(t, in.Submit(candidate(enabledConfig())))
 	<-started
