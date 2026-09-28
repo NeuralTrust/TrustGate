@@ -67,6 +67,35 @@ func TestGemini_RequestRoundTrip_PreservesInlineAndFileImages(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out, &reencoded))
 }
 
+// TestGemini_RequestRoundTrip_PreservesModelTurnImage pins the follow-up to
+// RUN-1678 group 2: an image-generation model (e.g. Gemini 2.5 Flash Image)
+// returns inlineData in the MODEL turn, and a client replaying that turn as
+// history sends it back the same way. EncodeRequest must not gate images to
+// the user role only, unlike OpenAI/Anthropic/Bedrock, whose wire formats
+// have no slot for an assistant-turn image at all.
+func TestGemini_RequestRoundTrip_PreservesModelTurnImage(t *testing.T) {
+	t.Parallel()
+	body := `{"contents":[{"role":"user","parts":[{"text":"draw a cat"}]},` +
+		`{"role":"model","parts":[{"text":"here it is"},` +
+		`{"inlineData":{"mimeType":"image/png","data":"` + pngPixel1x1 + `"}}]}]}`
+
+	ad := &GeminiAdapter{}
+	cr, err := ad.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 2)
+	assistant := cr.Messages[1]
+	assert.Equal(t, "assistant", assistant.Role)
+	assert.Equal(t, "here it is", assistant.Content)
+	require.Len(t, assistant.Images, 1, "the model-turn inlineData must decode into a canonical image")
+	assert.Equal(t, CanonicalImage{MediaType: "image/png", Data: pngPixel1x1}, assistant.Images[0])
+
+	out, err := ad.EncodeRequest(cr)
+	require.NoError(t, err)
+	raw := string(out)
+	assert.Contains(t, raw, `"inlineData"`, "the model-turn image must round-trip as inlineData")
+	assert.Contains(t, raw, pngPixel1x1, "the model-turn image bytes must be unchanged")
+}
+
 // TestGemini_DecodeRequest_DropsNonImageAttachments pins the documented gap:
 // the canonical model has no home for non-image media (PDF, audio, video),
 // so a non-image inlineData/fileData part is silently dropped, the same

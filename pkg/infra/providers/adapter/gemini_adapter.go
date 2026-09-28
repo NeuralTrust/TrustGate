@@ -581,7 +581,13 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		// Images go before the text part, the same order Anthropic and Bedrock
 		// encode them in; the canonical model does not track their position
 		// relative to the text more precisely than that (see bedrock_adapter.go).
-		if m.Role == "user" {
+		//
+		// Unlike those two, Gemini also accepts inlineData/fileData in a model
+		// turn: an image-generation model (e.g. Gemini 2.5 Flash Image) returns
+		// inlineData in its response, and a client replaying that turn as
+		// history sends it back the same way. A tool-result message (Role ==
+		// "tool") never carries images, so this is user/assistant only.
+		if m.Role == "user" || m.Role == "assistant" {
 			for _, img := range m.Images {
 				if part, ok := geminiImagePart(img); ok {
 					parts = append(parts, part)
