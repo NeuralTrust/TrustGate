@@ -37,16 +37,17 @@ type recordedTicket struct {
 	consumerPath string
 	code         string
 	instanceID   string
+	resumeURL    string
 }
 
 type ticketRecorder struct{ last recordedTicket }
 
-func (r *ticketRecorder) CreateServerTicket(
+func (r *ticketRecorder) CreateResumableServerTicket(
 	_ context.Context,
 	gatewayID ids.GatewayID,
-	principalSub, consumerPath, code, instanceID string,
+	principalSub, consumerPath, code, instanceID, resumeURL string,
 ) (string, error) {
-	r.last = recordedTicket{gatewayID, principalSub, consumerPath, code, instanceID}
+	r.last = recordedTicket{gatewayID, principalSub, consumerPath, code, instanceID, resumeURL}
 	return "tk", nil
 }
 
@@ -75,10 +76,12 @@ func TestSharedAccountService(t *testing.T) {
 		tickets := &ticketRecorder{}
 		svc := appregistry.NewSharedAccountService(finder, vaultmocks.NewRepository(t), tickets)
 
-		link, err := svc.Link(context.Background(), gw, reg.ID)
+		link, err := svc.Link(context.Background(), gw, reg.ID, " https://app.neuraltrust.ai/v2/team/registry#mcpAccount=r ")
 
 		require.NoError(t, err)
 		require.Equal(t, "tk", link.Ticket)
+		// The page brings the admin back to the screen they connected from.
+		require.Equal(t, "https://app.neuraltrust.ai/v2/team/registry#mcpAccount=r", tickets.last.resumeURL)
 		// An admin who leaves must not take the server's account with them.
 		require.Equal(t, domain.SharedAccountSubject(reg.ID), tickets.last.principalSub)
 		require.Equal(t, reg.ID.String(), tickets.last.instanceID)
@@ -110,7 +113,7 @@ func TestSharedAccountService(t *testing.T) {
 		svc := appregistry.NewSharedAccountService(finder, vaultmocks.NewRepository(t), &ticketRecorder{})
 
 		_, statusErr := svc.Status(context.Background(), gw, reg.ID)
-		_, linkErr := svc.Link(context.Background(), gw, reg.ID)
+		_, linkErr := svc.Link(context.Background(), gw, reg.ID, "")
 		disconnectErr := svc.Disconnect(context.Background(), gw, reg.ID)
 
 		for _, err := range []error{statusErr, linkErr, disconnectErr} {

@@ -25,11 +25,20 @@ import (
 
 const maxAccountRefLen = 320
 
+// resolveAccountRef names the upstream account a connection was made with,
+// for the "Signed in as" line: from the ID token when the upstream sent one,
+// else from the access token when it is a JWT that carries a readable name,
+// else from the upstream's userinfo endpoint — the one its metadata declared,
+// or the one known for the providers that do not declare it. Empty when none
+// of them says, which the UI shows as a linked account with no name.
 func resolveAccountRef(ctx context.Context, userinfo UserInfoClient, cfg *registrydomain.MCPAuth, token *ProviderToken) string {
 	if token == nil {
 		return ""
 	}
 	if ref := accountRefFromJWT(token.IDToken); ref != "" {
+		return ref
+	}
+	if ref := readableAccountRefFromJWT(token.AccessToken); ref != "" {
 		return ref
 	}
 	if userinfo == nil || strings.TrimSpace(token.AccessToken) == "" {
@@ -58,11 +67,21 @@ func accountRefFromJWT(raw string) string {
 	return accountRefFromClaims(claims)
 }
 
+// readableClaims name a person the way they would recognise themselves.
+var readableClaims = []string{"email", "emailAddress", "preferred_username", "upn", "unique_name", "login", "name"}
+
 func accountRefFromClaims(claims map[string]any) string {
-	if len(claims) == 0 {
-		return ""
+	if ref := readableAccountRef(claims); ref != "" {
+		return ref
 	}
-	for _, key := range []string{"email", "emailAddress", "preferred_username", "upn", "unique_name", "login", "name", "sub"} {
+	if ref := coerceClaim(claims["sub"]); ref != "" {
+		return clipAccountRef(ref)
+	}
+	return ""
+}
+
+func readableAccountRef(claims map[string]any) string {
+	for _, key := range readableClaims {
 		if ref := coerceClaim(claims[key]); ref != "" {
 			return clipAccountRef(ref)
 		}
@@ -70,9 +89,32 @@ func accountRefFromClaims(claims map[string]any) string {
 	return ""
 }
 
+// readableAccountRefFromJWT reads an access token that happens to be a JWT.
+// Access tokens are for the resource, not for us, so only a readable name is
+// taken from one: its sub is usually an opaque id nobody would recognise, and
+// the userinfo endpoint may still have the email.
+func readableAccountRefFromJWT(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.Count(raw, ".") != 2 {
+		return ""
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+		return ""
+	}
+	return readableAccountRef(claims)
+}
+
 func userinfoURL(cfg *registrydomain.MCPAuth) string {
 	if cfg == nil {
 		return ""
+	}
+	// The endpoint the upstream's own metadata declared, when it declared one
+	// over https. It is only ever handed the token that upstream just issued.
+	if declared := strings.TrimSpace(cfg.UserinfoURL); declared != "" {
+		if u, err := url.Parse(declared); err == nil && u.Scheme == "https" && u.Host != "" {
+			return declared
+		}
 	}
 	host := urlHost(cfg.TokenURL)
 	if host == "" {

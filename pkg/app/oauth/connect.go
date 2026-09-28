@@ -141,12 +141,25 @@ func (s *connectService) CreateProviderTicket(
 }
 
 func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
+	return s.CreateResumableServerTicket(ctx, gatewayID, principalSub, consumerPath, code, instanceID, "")
+}
+
+func (s *connectService) CreateResumableServerTicket(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, consumerPath, code, instanceID, resumeURL string,
+) (string, error) {
+	resume, err := NormalizeResumeURL(resumeURL)
+	if err != nil {
+		return "", err
+	}
 	return s.mintTicket(ctx, ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 		Code:         strings.TrimSpace(code),
 		InstanceID:   strings.TrimSpace(instanceID),
+		ResumeURL:    resume,
 	})
 }
 

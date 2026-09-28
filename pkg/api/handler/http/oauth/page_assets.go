@@ -490,9 +490,10 @@ var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`
   {{if .NeedsReconnect}}<div class="account danger">` + alertGlyph + `Access expired</div>
   {{else if .Linked}}{{if .AccountRef}}<div class="account">` + badgeCheck + `{{.AccountRef}}</div>{{end}}
   <div class="done">` + doneGlyph + `<div>
-    <span class="done-title">{{if .ResumeURL}}All set — head back to your app{{else}}All set — you can close this window{{end}}</span>
+    <span class="done-title">{{if .AutoReturn}}All set — taking you back{{else if .ResumeURL}}All set — head back to your app{{else}}All set — you can close this window{{end}}</span>
     <span class="done-body">Back in your assistant the new tools appear on their own; if they do not, start a new conversation — some clients read the tool list only when a session opens.</span>
-  </div></div>{{end}}
+  </div></div>
+  {{if .AutoReturn}}<script>setTimeout(function () { window.location.replace({{.ResumeURL}}); }, 1500);</script>{{end}}{{end}}
   <p class="note">` + lockGlyph + `<span>Credentials are encrypted in the gateway vault. The agent never sees the token.</span></p>
 {{end}}
 </div>
