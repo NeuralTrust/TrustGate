@@ -16,6 +16,7 @@ package topicclassifier
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"runtime/debug"
@@ -203,7 +204,13 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, i.cfg.EnqueueTimeout)
 	defer cancel()
-	if err := i.queue.Enqueue(ctx, req); err != nil {
+	err := i.queue.Enqueue(ctx, req)
+	switch {
+	case err == nil:
+	case errors.Is(err, topic.ErrQuotaExceeded):
+		i.logger.Debug("topic classification dropped: gateway quota exceeded",
+			slog.String("gateway_id", c.GatewayID))
+	default:
 		i.logger.Warn("topic classification enqueue failed",
 			slog.String("gateway_id", c.GatewayID),
 			slog.String("error", err.Error()))

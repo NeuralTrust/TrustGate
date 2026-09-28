@@ -19,6 +19,7 @@ package topicclassifier
 
 import (
 	"context"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -48,6 +49,34 @@ type Classifier interface {
 type Cache interface {
 	Get(ctx context.Context, key string) (topic.Classification, bool, error)
 	Set(ctx context.Context, key string, c topic.Classification) error
+}
+
+// Sink publishes the classification of a request.
+//
+//go:generate mockery --name=Sink --dir=. --output=./mocks --filename=sink_mock.go --case=underscore --with-expecter
+type Sink interface {
+	Publish(ctx context.Context, req topic.Request, cls topic.Classification) error
+}
+
+// Delivery is a queued request handed to the worker. Invalid deliveries could
+// not be decoded or were trimmed from the stream: they are acknowledged and
+// dropped. Deliveries counts every time the entry was handed out.
+type Delivery struct {
+	ID         string
+	Request    topic.Request
+	Deliveries int64
+	Invalid    bool
+}
+
+// Stream is the consuming side of the classification queue. Entries stay
+// pending until acknowledged, so a consumer that dies leaves them for
+// Reclaim.
+//
+//go:generate mockery --name=Stream --dir=. --output=./mocks --filename=stream_mock.go --case=underscore --with-expecter
+type Stream interface {
+	Read(ctx context.Context, count int, block time.Duration) ([]Delivery, error)
+	Reclaim(ctx context.Context, minIdle time.Duration, count int) ([]Delivery, error)
+	Ack(ctx context.Context, ids ...string) error
 }
 
 // RequestDecoder turns a provider request body into its canonical form.
