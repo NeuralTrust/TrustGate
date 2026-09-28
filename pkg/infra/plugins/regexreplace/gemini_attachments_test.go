@@ -81,3 +81,57 @@ func TestGeminiRequestRewritePreservesAttachments(t *testing.T) {
 		t.Fatalf("extras = %+v, want rewritten+changed", d)
 	}
 }
+
+// geminiRequestWithModelTurnImage is a two-turn Gemini history: a user
+// prompt whose text matches the redaction rule, and a MODEL turn carrying
+// both text and an inlineData image — the shape a client replays after an
+// image-generation model (e.g. Gemini 2.5 Flash Image) answered with one.
+func geminiRequestWithModelTurnImage(userText string) []byte {
+	return []byte(`{"contents":[` +
+		`{"role":"user","parts":[{"text":"` + userText + `"}]},` +
+		`{"role":"model","parts":[{"text":"here it is"},` +
+		`{"inlineData":{"mimeType":"image/png","data":"` + pngPixel1x1 + `"}}]}` +
+		`]}`)
+}
+
+// TestGeminiRequestRewritePreservesModelTurnImage is the follow-up
+// regression: rewriteRequest's re-encode must not drop an image sitting on
+// an assistant/model turn either, only on the user turn where the previous
+// test already covers it.
+func TestGeminiRequestRewritePreservesModelTurnImage(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	set := settings(targetRequest, maskRule("secret", "[REDACTED]"))
+	event, span := newEvent()
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set,
+		reqCtx(googleProvider, googleProvider, geminiRequestWithModelTurnImage("my secret code")), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream || len(res.RequestBody) == 0 || res.Body != nil {
+		t.Fatalf("expected request rewrite result, got %+v", res)
+	}
+
+	creq, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatGemini)
+	if err != nil {
+		t.Fatalf("decode rewritten request: %v", err)
+	}
+	if len(creq.Messages) < 2 {
+		t.Fatalf("expected a user and an assistant message, got %d", len(creq.Messages))
+	}
+	assistant := creq.Messages[len(creq.Messages)-1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("last message role = %q, want %q", assistant.Role, "assistant")
+	}
+	if len(assistant.Images) != 1 {
+		t.Fatalf("expected the model-turn inlineData image to survive the redaction re-encode, got %d images", len(assistant.Images))
+	}
+	if assistant.Images[0].Data != pngPixel1x1 {
+		t.Fatalf("model-turn image data = %q, want unchanged %q", assistant.Images[0].Data, pngPixel1x1)
+	}
+	if d := extras(t, span); d.Decision != decisionRewritten || !d.Changed {
+		t.Fatalf("extras = %+v, want rewritten+changed", d)
+	}
+}
