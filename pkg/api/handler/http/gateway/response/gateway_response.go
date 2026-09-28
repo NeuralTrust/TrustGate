@@ -21,6 +21,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
@@ -42,8 +43,10 @@ type GatewayResponse struct {
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 	Entitlements    domain.Entitlements    `json:"entitlements"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	// TopicClassification is the gateway's async topic classifier config.
+	TopicClassification *topic.Config `json:"topic_classification,omitempty"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
 }
 
 // GatewayHosts holds the hostnames clients use to reach the gateway on each
@@ -67,14 +70,15 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 			Proxy: proxyHost(g, proxyBaseDomain),
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
 		},
-		Metadata:        g.Metadata,
-		StoreMode:       g.StoreMode(),
-		Telemetry:       g.Telemetry,
-		ClientTLSConfig: g.ClientTLSConfig,
-		SessionConfig:   g.SessionConfig,
-		Entitlements:    g.Entitlements,
-		CreatedAt:       g.CreatedAt,
-		UpdatedAt:       g.UpdatedAt,
+		Metadata:            g.Metadata,
+		StoreMode:           g.StoreMode(),
+		Telemetry:           g.Telemetry,
+		ClientTLSConfig:     g.ClientTLSConfig,
+		SessionConfig:       g.SessionConfig,
+		Entitlements:        g.Entitlements,
+		TopicClassification: g.TopicClassification,
+		CreatedAt:           g.CreatedAt,
+		UpdatedAt:           g.UpdatedAt,
 	}
 }
 

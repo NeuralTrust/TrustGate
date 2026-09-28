@@ -27,6 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -43,6 +44,8 @@ type CreateInput struct {
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
+	// TopicClassification is the optional async topic classifier config.
+	TopicClassification *topic.Config
 	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements
 	// PlatformAdmin is true when the JWT has no tenant claim (must stamp entitlements; TenantID comes from the body).
@@ -102,6 +105,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
+	g.TopicClassification = in.TopicClassification
 	// Platform create must stamp full entitlements; tenant callers cannot set them.
 	if in.PlatformAdmin {
 		if in.Entitlements == nil || !in.Entitlements.HasStampedLimits() {

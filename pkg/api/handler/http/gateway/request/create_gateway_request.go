@@ -21,6 +21,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 )
 
 type CreateGatewayRequest struct {
@@ -33,6 +34,8 @@ type CreateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	// TopicClassification turns on the async topic classifier for the gateway.
+	TopicClassification *topic.Config `json:"topic_classification,omitempty"`
 	// Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.
 	// Tenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free
 	// or inherits the highest sibling tier.
@@ -43,6 +46,9 @@ type CreateGatewayRequest struct {
 // server generates a unique random slug at creation time. A provided slug must
 // still be a valid lowercase DNS label.
 func (r *CreateGatewayRequest) Validate() error {
+	if err := r.TopicClassification.Validate(); err != nil {
+		return err
+	}
 	if r.Entitlements != nil {
 		normalized, err := domain.RequireStampedEntitlements(*r.Entitlements)
 		if err != nil {

@@ -27,6 +27,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
@@ -42,7 +43,9 @@ type UpdateInput struct {
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
-	Entitlements    *domain.Entitlements
+	// TopicClassification, when set, replaces the whole topic classifier config.
+	TopicClassification *topic.Config
+	Entitlements        *domain.Entitlements
 	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
 	// a reserved metadata key server-side, so it survives client metadata replacement.
 	StoreMode *string
@@ -133,6 +136,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
+	}
+	if in.TopicClassification != nil {
+		g.TopicClassification = in.TopicClassification
 	}
 	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
