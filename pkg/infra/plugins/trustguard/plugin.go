@@ -465,8 +465,15 @@ func (p *Plugin) llmInspectionPayload(
 			return p.skipInspection(ctx, in, tgt, direction, skipReasonNoInspectableInput)
 		}
 		original := in.Request.Body
-		tgt.apply = func(masked string) ([]byte, bool) {
-			return rewriteRequest(p.registry, format, original, request, masked)
+		// No string fallback: a messages[] echo that does not map by position
+		// must fail closed, not be re-split by line count and written into
+		// whichever message the lines land in. The legacy "input" string is
+		// still honoured here.
+		tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+			if masked, ok := payload[transformedInputKey].(string); ok {
+				return rewriteRequest(p.registry, format, original, request, masked)
+			}
+			return rewriteRequestFromMessages(p.registry, format, original, request, payload)
 		}
 		payload, payloadErr := llmRequestPayloadWithAttachments(request, attachments)
 		if payloadErr != nil {
@@ -566,10 +573,17 @@ func (p *Plugin) applyTransform(
 		return passThrough(), nil
 	}
 
-	// Preserve the structured MCP envelope instead of splitting joined text.
+	// Map the structured payload (MCP envelope, LLM messages[]) back by
+	// position instead of splitting joined text.
 	if tgt.applyPayload != nil {
 		if body, ok := tgt.applyPayload(resp.TransformedPayload); ok {
 			return p.transformApplied(in, data, tgt, body)
+		}
+		if tgt.apply == nil {
+			if _, ok := transformedInput(resp.TransformedPayload); !ok {
+				return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
+			}
+			return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
 		}
 	}
 
