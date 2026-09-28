@@ -187,6 +187,7 @@ func (r *Registry) AdaptRequestForProvider(body []byte, source, target Format, p
 	}
 	dropRequestExtensionsForCrossFormat(source, target, canonical)
 	dropChatOptionsTargetRejects(canonical, target)
+	dropGeminiFileImagesForCrossFormat(source, target, canonical)
 	normalizeCacheIntent(canonical, target, providerName, defaultModel)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
@@ -366,5 +367,33 @@ func dropRequestExtensionsForCrossFormat(source, target Format, req *CanonicalRe
 	}
 	if source != target {
 		req.RequestExtensions = nil
+	}
+}
+
+// dropGeminiFileImagesForCrossFormat removes canonical images whose only
+// content is a Gemini/Vertex-only file reference (isGeminiFileURI) before a
+// cross-format encode. Those references need the caller's own Google
+// credentials to resolve, so forwarding one to another provider would trade
+// a silent drop (today's behavior, since no adapter modeled the field) for a
+// request the target rejects outright. A same-wire-format adaptation is left
+// untouched, so a Gemini request re-encoded back to Gemini (the redaction
+// plugins' round trip) keeps its fileData parts.
+func dropGeminiFileImagesForCrossFormat(source, target Format, req *CanonicalRequest) {
+	if req == nil || IsSameWireFormat(source, target) {
+		return
+	}
+	for i := range req.Messages {
+		images := req.Messages[i].Images
+		if len(images) == 0 {
+			continue
+		}
+		kept := images[:0]
+		for _, img := range images {
+			if img.Data == "" && isGeminiFileURI(img.URL) {
+				continue
+			}
+			kept = append(kept, img)
+		}
+		req.Messages[i].Images = kept
 	}
 }
