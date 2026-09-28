@@ -271,6 +271,7 @@ func (s *streamSpans) eventFor(ctx context.Context, seg StreamSegment, entry cha
 	}
 	span := rt.StartSpan(trace.SpanPlugin, entry.plugin.Name())
 	span.SetStage(string(policy.StagePreResponse))
+	span.SetStreamed()
 	event := metrics.NewEventContext(span)
 	event.SetMode(string(entry.mode))
 	s.events[key] = event
@@ -377,7 +378,12 @@ func (s *streamSpans) publish() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, event := range s.events {
+	for key, event := range s.events {
+		// The inspector sets this itself on the closing segment; the fallback
+		// covers the one that failed before it could. Without it the span would
+		// end on its wall clock — the whole drain — and pkg/app/metrics would
+		// deduct that from provider_ms as if the guard had held every byte.
+		event.SetSLatencyDefault(s.spent[key])
 		event.Publish()
 	}
 }
