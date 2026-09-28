@@ -247,18 +247,24 @@ func (p *Plugin) runGuardrail(
 	if result.InvocationResult == invocationResultFailure {
 		return p.failClosed(ctx, in, cfg, latency, fmt.Errorf("google_model_armor: invocationResult FAILURE"))
 	}
-	// A filter we were told to block on that did not actually run reports no
-	// match, exactly like a filter that ran and found nothing — and the
-	// envelope can still say SUCCESS overall. Take the same path as an
-	// outright failure rather than mistake silence for safety.
-	if f := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-		return p.failClosed(ctx, in, cfg, latency,
-			fmt.Errorf("google_model_armor: filter %q did not execute", f))
-	}
-
 	res := inspect(result, cfg)
 	data := newData(in, cfg, latency)
 	data.FilterVersion = result.filterVersion()
+
+	// A filter we were told to block on that did not actually run reports no
+	// match, exactly like a filter that ran and found nothing — and the
+	// envelope can still say SUCCESS overall. Take the same path as an
+	// outright failure rather than mistake silence for safety. A filter that
+	// did run and matched still wins: it is a real verdict, and naming it is
+	// more useful than naming the one that was missing.
+	if res.block == nil {
+		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
+			data.Filter = f
+			data.FailureReason = reason
+			return p.failClosedWith(ctx, in, data,
+				fmt.Errorf("google_model_armor: filter %q selected in block_on produced no verdict (%s)", f, reason))
+		}
+	}
 
 	if res.block != nil {
 		applyFinding(data, res.block)
@@ -326,11 +332,17 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, reason s
 	return nil, blockError(*f)
 }
 
-// failClosed is the shared outcome for a transport error or an
-// invocationResult of FAILURE: enforce mode rejects the call, observe mode
-// passes it through unmodified. Same contract as bedrock_guardrail.
+// failClosed is the shared outcome for a transport error, an invocationResult
+// of FAILURE, or a block_on filter that produced no verdict: enforce mode
+// rejects the call, observe mode passes it through unmodified. Same contract
+// as bedrock_guardrail.
 func (p *Plugin) failClosed(ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, err error) (*appplugins.Result, error) {
-	data := newData(in, cfg, latency)
+	return p.failClosedWith(ctx, in, newData(in, cfg, latency), err)
+}
+
+// failClosedWith is failClosed for a caller that already knows what to record
+// on the event, such as which filter produced no verdict.
+func (p *Plugin) failClosedWith(ctx context.Context, in appplugins.ExecInput, data *Data, err error) (*appplugins.Result, error) {
 	data.Decision = decisionFailedClosed
 	if appplugins.Blocks(in.Mode) {
 		p.debug(ctx, "model armor call failed, failing closed",

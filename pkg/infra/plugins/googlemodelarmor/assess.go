@@ -20,52 +20,79 @@ const (
 	executionStateSuccess   = "EXECUTION_SUCCESS"
 )
 
-// unevaluatedFilter names the first filter selected in block_on that reported
-// an executionState other than EXECUTION_SUCCESS, or "" when every selected
-// filter ran.
+// Reasons a filter selected in block_on produced no verdict. They are recorded
+// on the event so an operator can tell a template that never enabled a filter
+// (fix it in Google Cloud) from one whose filter failed on this call.
+const (
+	reasonFilterNotInTemplate = "filter_not_in_template"
+	reasonFilterNotExecuted   = "filter_not_executed"
+)
+
+// unevaluatedFilter names the first filter selected in block_on that produced
+// no verdict, and why, or "" when every selected filter ran.
 //
-// This matters because a filter that failed to run and a filter that found
+// This matters because a filter that did not run and a filter that found
 // nothing are otherwise indistinguishable to us: both arrive with no match,
 // and the envelope's own invocationResult can still say SUCCESS. Treating the
 // two alike would mean a guardrail quietly not guarding, which is the failure
 // mode with no symptom.
 //
-// An empty executionState is treated as success: the field is absent on older
-// filter versions, and inventing a failure from silence would fail every call
-// closed against them.
-func unevaluatedFilter(result *SanitizationResult, on map[string]bool) string {
+// A filter can fail to run in two ways, and both count:
+//   - it is absent from filterResults, which is what a template that never
+//     enabled it returns. block_on defaults to every filter, so without this a
+//     template enabling one filter would silently pass the other four.
+//   - it is present with an executionState other than EXECUTION_SUCCESS.
+//
+// An empty executionState on a present filter is treated as success: the
+// field is absent on older filter versions, and inventing a failure from
+// silence would fail every call closed against them.
+func unevaluatedFilter(result *SanitizationResult, on map[string]bool) (filter, reason string) {
 	if result == nil {
-		return ""
+		return "", ""
 	}
 	failed := func(state string) bool { return state != "" && state != executionStateSuccess }
+	fr := result.FilterResults
 
-	if on[filterSDP] {
-		if sdp := result.sdp(); sdp != nil {
-			switch {
-			case sdp.DeidentifyResult != nil && failed(sdp.DeidentifyResult.ExecutionState),
-				sdp.InspectResult != nil && failed(sdp.InspectResult.ExecutionState),
-				sdp.RedactResult != nil && failed(sdp.RedactResult.ExecutionState):
-				return filterSDP
-			}
+	checks := []struct {
+		name    string
+		present bool
+		failed  bool
+	}{
+		{filterSDP, result.sdp() != nil, sdpFailed(result.sdp(), failed)},
+		{filterRAI, fr.RAI != nil && fr.RAI.RaiFilterResult != nil,
+			fr.RAI != nil && fr.RAI.RaiFilterResult != nil && failed(fr.RAI.RaiFilterResult.ExecutionState)},
+		{filterPIAndJailbreak, fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil,
+			fr.PIAndJailbreak != nil && fr.PIAndJailbreak.PiAndJailbreakFilterResult != nil &&
+				failed(fr.PIAndJailbreak.PiAndJailbreakFilterResult.ExecutionState)},
+		{filterMaliciousURIs, fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil,
+			fr.MaliciousURIs != nil && fr.MaliciousURIs.MaliciousURIFilterResult != nil &&
+				failed(fr.MaliciousURIs.MaliciousURIFilterResult.ExecutionState)},
+		{filterCSAM, fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil,
+			fr.CSAM != nil && fr.CSAM.CSAMFilterFilterResult != nil && failed(fr.CSAM.CSAMFilterFilterResult.ExecutionState)},
+	}
+	for _, c := range checks {
+		if !on[c.name] {
+			continue
+		}
+		if !c.present {
+			return c.name, reasonFilterNotInTemplate
+		}
+		if c.failed {
+			return c.name, reasonFilterNotExecuted
 		}
 	}
-	if f := result.FilterResults.RAI; on[filterRAI] && f != nil && f.RaiFilterResult != nil &&
-		failed(f.RaiFilterResult.ExecutionState) {
-		return filterRAI
+	return "", ""
+}
+
+// sdpFailed reports whether any branch the SDP filter answered with — inspect,
+// de-identify or redact — says it did not run.
+func sdpFailed(sdp *SDPResult, failed func(string) bool) bool {
+	if sdp == nil {
+		return false
 	}
-	if f := result.FilterResults.PIAndJailbreak; on[filterPIAndJailbreak] && f != nil &&
-		f.PiAndJailbreakFilterResult != nil && failed(f.PiAndJailbreakFilterResult.ExecutionState) {
-		return filterPIAndJailbreak
-	}
-	if f := result.FilterResults.MaliciousURIs; on[filterMaliciousURIs] && f != nil &&
-		f.MaliciousURIFilterResult != nil && failed(f.MaliciousURIFilterResult.ExecutionState) {
-		return filterMaliciousURIs
-	}
-	if f := result.FilterResults.CSAM; on[filterCSAM] && f != nil && f.CSAMFilterFilterResult != nil &&
-		failed(f.CSAMFilterFilterResult.ExecutionState) {
-		return filterCSAM
-	}
-	return ""
+	return (sdp.DeidentifyResult != nil && failed(sdp.DeidentifyResult.ExecutionState)) ||
+		(sdp.InspectResult != nil && failed(sdp.InspectResult.ExecutionState)) ||
+		(sdp.RedactResult != nil && failed(sdp.RedactResult.ExecutionState))
 }
 
 // finding names the single filter that decided the outcome, plus the SDP
