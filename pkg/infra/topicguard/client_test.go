@@ -220,6 +220,20 @@ func TestClassify_Errors(t *testing.T) {
 		require.ErrorContains(t, err, "got 2 results for 3 texts")
 	})
 
+	t.Run("redirects are not followed", func(t *testing.T) {
+		t.Parallel()
+		elsewhere := &fakeTopicGuard{}
+		other := httptest.NewServer(elsewhere)
+		t.Cleanup(other.Close)
+		client, _ := newTestClient(t, &fakeTopicGuard{classify: func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, other.URL+classifyPath, http.StatusTemporaryRedirect)
+		}})
+		_, err := client.Classify(context.Background(), catalog, nil, []string{"a"})
+		require.Error(t, err)
+		hits, _ := elsewhere.hits()
+		assert.Zero(t, hits, "the prompts and the token must not follow a redirect")
+	})
+
 	t.Run("timeout", func(t *testing.T) {
 		t.Parallel()
 		release := make(chan struct{})

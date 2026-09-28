@@ -43,12 +43,14 @@ type Classifier interface {
 	ModelVersion(ctx context.Context) (string, error)
 }
 
-// Cache remembers classifications under topic.CacheKey.
+// Cache remembers classifications under topic.CacheKey. Both calls take a
+// whole batch, so a batch costs one round trip to read and one to write.
 //
 //go:generate mockery --name=Cache --dir=. --output=./mocks --filename=cache_mock.go --case=underscore --with-expecter
 type Cache interface {
-	Get(ctx context.Context, key string) (topic.Classification, bool, error)
-	Set(ctx context.Context, key string, c topic.Classification) error
+	// GetMany returns the entries found; missing keys are left out.
+	GetMany(ctx context.Context, keys []string) (map[string]topic.Classification, error)
+	SetMany(ctx context.Context, entries map[string]topic.Classification) error
 }
 
 // Sink publishes the classification of a request.
@@ -70,13 +72,18 @@ type Delivery struct {
 
 // Stream is the consuming side of the classification queue. Entries stay
 // pending until acknowledged, so a consumer that dies leaves them for
-// Reclaim.
+// Reclaim; a live one keeps its entries with Touch.
 //
 //go:generate mockery --name=Stream --dir=. --output=./mocks --filename=stream_mock.go --case=underscore --with-expecter
 type Stream interface {
 	Read(ctx context.Context, count int, block time.Duration) ([]Delivery, error)
 	Reclaim(ctx context.Context, minIdle time.Duration, count int) ([]Delivery, error)
+	// Ack marks entries as done and removes them, with the text they carry.
 	Ack(ctx context.Context, ids ...string) error
+	// Touch keeps entries this consumer still works on from being reclaimed.
+	Touch(ctx context.Context, ids ...string) error
+	// Trim drops entries older than the retention.
+	Trim(ctx context.Context) error
 }
 
 // RequestDecoder turns a provider request body into its canonical form.

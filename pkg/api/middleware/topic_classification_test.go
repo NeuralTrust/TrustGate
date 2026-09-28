@@ -79,6 +79,12 @@ func classifiedGateway(enabled bool) *gatewaydomain.Gateway {
 	return gw
 }
 
+func sampledGateway(rate float64) *gatewaydomain.Gateway {
+	gw := classifiedGateway(true)
+	gw.TopicClassification.SamplingRate = &rate
+	return gw
+}
+
 func newTopicClassificationApp(t *testing.T, s topicClassificationSetup) (*fiber.App, *recordingIntake) {
 	t.Helper()
 	intake := &recordingIntake{accept: s.accept}
@@ -159,6 +165,7 @@ func TestTopicClassification_SkipsWhatItMustNotClassify(t *testing.T) {
 		{name: "unknown route", setup: topicClassificationSetup{gateway: classifiedGateway(true)}, path: "/acme/whatever", body: chatBody},
 		{name: "body over the cap", setup: topicClassificationSetup{gateway: classifiedGateway(true), maxBody: 16}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "empty body", setup: topicClassificationSetup{gateway: classifiedGateway(true)}, path: "/acme/v1/chat/completions", body: ""},
+		{name: "sampled out", setup: topicClassificationSetup{gateway: sampledGateway(0)}, path: "/acme/v1/chat/completions", body: chatBody},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,4 +215,25 @@ func TestTopicClassification_NilIntakeIsInert(t *testing.T) {
 	)
 	status, _ := postTo(t, app, "/acme/v1/chat/completions", chatBody)
 	assert.Equal(t, fiber.StatusOK, status)
+}
+
+func TestTopicClassification_FullSamplingOffersEveryRequest(t *testing.T) {
+	t.Parallel()
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: sampledGateway(1), accept: true})
+	for range 5 {
+		postTo(t, app, "/acme/v1/chat/completions", chatBody)
+	}
+	assert.Len(t, intake.submitted(), 5)
+}
+
+func TestTopicClassification_UnsetCapFallsBackToTheDefault(t *testing.T) {
+	t.Parallel()
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: classifiedGateway(true), maxBody: -1, accept: true})
+
+	postTo(t, app, "/acme/v1/chat/completions", chatBody)
+	require.Len(t, intake.submitted(), 1, "a small body passes the default cap")
+
+	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("x", 600<<10) + `"}]}`
+	postTo(t, app, "/acme/v1/chat/completions", huge)
+	assert.Len(t, intake.submitted(), 1, "a cap of zero or less is not \"no cap\"")
 }

@@ -20,6 +20,7 @@ package topic
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
@@ -35,6 +36,11 @@ const (
 	DefaultMessageWindow = 3
 	// MaxMessageWindow bounds the configurable window.
 	MaxMessageWindow = 50
+	// MaxTopicNameChars and MaxTopicDefinitionChars bound each topic. The
+	// catalog travels with every queued request and every topic-guard call,
+	// so its size is what a gateway costs the shared Redis per request.
+	MaxTopicNameChars       = 64
+	MaxTopicDefinitionChars = 2_000
 )
 
 // ErrInvalidConfig is returned when a topic classification config is rejected.
@@ -99,6 +105,12 @@ func (c *Config) Validate() error {
 		}
 		if t.Definition == "" {
 			return fmt.Errorf("%w: topics[%d].definition is required", ErrInvalidConfig, i)
+		}
+		if utf8.RuneCountInString(t.Name) > MaxTopicNameChars {
+			return fmt.Errorf("%w: topics[%d].name is longer than %d characters", ErrInvalidConfig, i, MaxTopicNameChars)
+		}
+		if utf8.RuneCountInString(t.Definition) > MaxTopicDefinitionChars {
+			return fmt.Errorf("%w: topics[%d].definition is longer than %d characters", ErrInvalidConfig, i, MaxTopicDefinitionChars)
 		}
 		if _, dup := seen[t.Name]; dup {
 			return fmt.Errorf("%w: topic %q is duplicated", ErrInvalidConfig, t.Name)

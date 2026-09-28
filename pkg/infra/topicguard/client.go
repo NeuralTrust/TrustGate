@@ -84,6 +84,11 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 		http: &http.Client{
 			Timeout:   timeout,
 			Transport: o11y.InternalTransport(peerService, classifySpanName),
+			// A redirect would replay the prompts and the token header, which
+			// Go does not strip across hosts, to wherever it points.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		tokenProvider: tokenProvider,

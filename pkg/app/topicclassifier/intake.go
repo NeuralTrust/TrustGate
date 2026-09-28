@@ -18,9 +18,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math/rand"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
@@ -31,6 +31,7 @@ const (
 	defaultIntakeQueueSize      = 1000
 	defaultIntakeWorkers        = 2
 	defaultIntakeEnqueueTimeout = 500 * time.Millisecond
+	defaultIntakeMaxBufferBytes = 64 << 20
 )
 
 // Candidate is what the request path hands to the intake: an owned copy of
@@ -47,10 +48,13 @@ type Candidate struct {
 }
 
 // IntakeConfig sizes the intake. Zero values fall back to defaults.
+// MaxBufferBytes bounds the request bodies held while they wait to be queued,
+// whatever their number: large bodies fill it long before QueueSize does.
 type IntakeConfig struct {
 	QueueSize      int
 	Workers        int
 	EnqueueTimeout time.Duration
+	MaxBufferBytes int64
 }
 
 func (c IntakeConfig) withDefaults() IntakeConfig {
@@ -62,6 +66,9 @@ func (c IntakeConfig) withDefaults() IntakeConfig {
 	}
 	if c.EnqueueTimeout <= 0 {
 		c.EnqueueTimeout = defaultIntakeEnqueueTimeout
+	}
+	if c.MaxBufferBytes <= 0 {
+		c.MaxBufferBytes = defaultIntakeMaxBufferBytes
 	}
 	return c
 }
@@ -89,10 +96,10 @@ type intake struct {
 	queue    Queue
 	recorder Recorder
 	cfg      IntakeConfig
-	sample   func() float64
 
-	ch chan Candidate
-	wg sync.WaitGroup
+	ch       chan Candidate
+	wg       sync.WaitGroup
+	buffered atomic.Int64
 
 	mu      sync.RWMutex
 	started bool
@@ -103,10 +110,10 @@ type intake struct {
 // NewIntake builds an intake that decodes candidates with decoder and hands
 // the resulting requests to queue. A nil recorder records nothing.
 func NewIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) Intake {
-	return newIntake(logger, decoder, queue, recorder, cfg, rand.Float64)
+	return newIntake(logger, decoder, queue, recorder, cfg)
 }
 
-func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig, sample func() float64) *intake {
+func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) *intake {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -117,7 +124,6 @@ func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorde
 		queue:    queue,
 		recorder: orNop(recorder),
 		cfg:      cfg,
-		sample:   sample,
 		ch:       make(chan Candidate, cfg.QueueSize),
 	}
 }
@@ -126,6 +132,12 @@ func (i *intake) Submit(c Candidate) bool {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	if i.closed {
+		i.recorder.Intake(OutcomeShuttingDown)
+		return false
+	}
+	size := int64(len(c.Body))
+	if i.buffered.Add(size) > i.cfg.MaxBufferBytes {
+		i.buffered.Add(-size)
 		i.recorder.Intake(OutcomeBufferFull)
 		return false
 	}
@@ -134,6 +146,7 @@ func (i *intake) Submit(c Candidate) bool {
 		i.recorder.Intake(OutcomeAccepted)
 		return true
 	default:
+		i.buffered.Add(-size)
 		i.recorder.Intake(OutcomeBufferFull)
 		return false
 	}
@@ -187,10 +200,10 @@ func (i *intake) Shutdown(ctx context.Context) error {
 func (i *intake) run(ctx context.Context) {
 	defer i.wg.Done()
 	for c := range i.ch {
-		if ctx.Err() != nil {
-			continue
+		if ctx.Err() == nil {
+			i.process(ctx, c)
 		}
-		i.process(ctx, c)
+		i.buffered.Add(-int64(len(c.Body)))
 	}
 }
 
@@ -227,10 +240,6 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 
 func (i *intake) build(c Candidate) (topic.Request, bool) {
 	if !c.Config.IsEnabled() {
-		return topic.Request{}, false
-	}
-	if rate := c.Config.Rate(); rate < 1 && i.sample() >= rate {
-		i.recorder.Enqueue(OutcomeSampledOut)
 		return topic.Request{}, false
 	}
 	text := userText(i.decoder, c.Body, c.SourceFormat, c.Config.Window())

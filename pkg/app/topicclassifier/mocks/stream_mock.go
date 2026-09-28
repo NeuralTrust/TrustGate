@@ -205,6 +205,113 @@ func (_c *Stream_Reclaim_Call) RunAndReturn(run func(context.Context, time.Durat
 	return _c
 }
 
+// Touch provides a mock function with given fields: ctx, ids
+func (_m *Stream) Touch(ctx context.Context, ids ...string) error {
+	_va := make([]interface{}, len(ids))
+	for _i := range ids {
+		_va[_i] = ids[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Touch")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ...string) error); ok {
+		r0 = rf(ctx, ids...)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Stream_Touch_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Touch'
+type Stream_Touch_Call struct {
+	*mock.Call
+}
+
+// Touch is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ids ...string
+func (_e *Stream_Expecter) Touch(ctx interface{}, ids ...interface{}) *Stream_Touch_Call {
+	return &Stream_Touch_Call{Call: _e.mock.On("Touch",
+		append([]interface{}{ctx}, ids...)...)}
+}
+
+func (_c *Stream_Touch_Call) Run(run func(ctx context.Context, ids ...string)) *Stream_Touch_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]string, len(args)-1)
+		for i, a := range args[1:] {
+			if a != nil {
+				variadicArgs[i] = a.(string)
+			}
+		}
+		run(args[0].(context.Context), variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *Stream_Touch_Call) Return(_a0 error) *Stream_Touch_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Stream_Touch_Call) RunAndReturn(run func(context.Context, ...string) error) *Stream_Touch_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Trim provides a mock function with given fields: ctx
+func (_m *Stream) Trim(ctx context.Context) error {
+	ret := _m.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Trim")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
+		r0 = rf(ctx)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Stream_Trim_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Trim'
+type Stream_Trim_Call struct {
+	*mock.Call
+}
+
+// Trim is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *Stream_Expecter) Trim(ctx interface{}) *Stream_Trim_Call {
+	return &Stream_Trim_Call{Call: _e.mock.On("Trim", ctx)}
+}
+
+func (_c *Stream_Trim_Call) Run(run func(ctx context.Context)) *Stream_Trim_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context))
+	})
+	return _c
+}
+
+func (_c *Stream_Trim_Call) Return(_a0 error) *Stream_Trim_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Stream_Trim_Call) RunAndReturn(run func(context.Context) error) *Stream_Trim_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewStream creates a new instance of Stream. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewStream(t interface {

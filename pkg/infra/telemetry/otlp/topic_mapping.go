@@ -35,7 +35,6 @@ const (
 	attrTopicScores        = "trustgate.topic.scores"
 	attrTopicMatched       = "trustgate.topic.matched"
 	attrTopicMatchedCount  = "trustgate.topic.matched.count"
-	attrTopicWindows       = "trustgate.topic.windows"
 	attrTopicModelVersion  = "trustgate.topic.model_version"
 	attrTopicCatalogHash   = "trustgate.topic.catalog_hash"
 	attrTopicThreshold     = "trustgate.topic.threshold"
@@ -92,10 +91,7 @@ func topicToRecord(evt *events.TopicClassification) otellog.Record {
 	}
 	appendStr(attrTopicScores, jsonString(scores))
 	appendStr(attrTopicMatched, jsonString(matched))
-	attrs = append(attrs,
-		attribute.Int(attrTopicMatchedCount, len(evt.Matched)),
-		attribute.Int(attrTopicWindows, evt.Windows),
-	)
+	attrs = append(attrs, attribute.Int(attrTopicMatchedCount, len(evt.Matched)))
 	if evt.Threshold != nil {
 		attrs = append(attrs, attribute.Float64(attrTopicThreshold, *evt.Threshold))
 	}

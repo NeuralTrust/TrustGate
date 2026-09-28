@@ -405,7 +405,7 @@ records by trace id.
 | Rule | Detail |
 |---|---|
 | Event name | `trustgate.<version>.topic_classification`. Downstream routing keys on it |
-| Prompt | **Never emitted.** Neither the text, nor its hash, nor the system prompt |
+| Prompt | **Never emitted**, nor anything derived from it: not the text, its hash, its length or the number of windows topic-guard split it into, nor the system prompt |
 | Namespace | Every attribute is under `trustgate.topic.*`, except the retention pair |
 | Tenant | Sent as `trustgate.topic.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the classification as one more request |
 | Exporters | Only `otlp`. Kafka and Postgres exporters never receive it: both key rows on the trace id |
@@ -421,7 +421,6 @@ records by trace id.
 | `trustgate.topic.scores` | JSON `[{"topic","probability","matched"}]`, one entry per catalog topic |
 | `trustgate.topic.matched` | JSON array of the topics above the threshold (`[]` when none) |
 | `trustgate.topic.matched.count` | Number of matched topics |
-| `trustgate.topic.windows` | Windows topic-guard split the text into |
 | `trustgate.topic.model_version` | `name@revision+calibration` of the topic-guard model that scored it |
 | `trustgate.topic.catalog_hash` | Hash of the gateway's topic catalog, order-independent |
 | `trustgate.topic.threshold` | Threshold override, when the gateway sets one |

@@ -45,7 +45,6 @@ func topicEvent() *events.TopicClassification {
 			{Topic: "legal", Probability: 0.1},
 		},
 		Matched:      []string{"billing"},
-		Windows:      2,
 		ModelVersion: "topic-guard@r7+cal3",
 		CatalogHash:  "abc",
 		Threshold:    &threshold,
@@ -87,8 +86,8 @@ func TestExporter_PublishTopicEmitsItsOwnRecord(t *testing.T) {
 	assert.JSONEq(t, `[{"topic":"billing","probability":0.92,"matched":true},{"topic":"legal","probability":0.1,"matched":false}]`, str(attrTopicScores))
 	assert.Equal(t, "enterprise", str(attrRetentionPlan))
 
-	windows, _ := recordAttr(rec, attrTopicWindows)
-	assert.Equal(t, int64(2), windows.AsInt64())
+	_, hasWindows := recordAttr(rec, "trustgate.topic.windows")
+	assert.False(t, hasWindows, "the window count follows the prompt length, so it is not emitted")
 	threshold, _ := recordAttr(rec, attrTopicThreshold)
 	assert.InDelta(t, 0.6, threshold.AsFloat64(), 1e-9)
 	requested, _ := recordAttr(rec, attrTopicRequestedOn)

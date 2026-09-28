@@ -31,7 +31,6 @@ type TopicClassification struct {
 	Retention    *Retention
 	Scores       []TopicScore
 	Matched      []string
-	Windows      int
 	ModelVersion string
 	CatalogHash  string
 	Threshold    *float64

@@ -23,12 +23,14 @@ whatever the number of gateways; per-gateway detail lives in the
 `topic_classification` events.
 
 - `agentgateway.topic_classifier.intake_total` (`{request}`): what the request
-  path offered. `accepted`, `buffer_full`, `body_too_large`.
+  path offered. `accepted`, `sampled_out`, `body_too_large`, `buffer_full`
+  (out of slots or bytes), `shutting_down`.
 - `agentgateway.topic_classifier.enqueue_total` (`{request}`): what reached the
-  queue. `queued`, `sampled_out`, `no_text`, `quota_exceeded`, `queue_error`.
+  queue. `queued`, `no_text`, `quota_exceeded`, `queue_error`.
 - `agentgateway.topic_classifier.result_total` (`{request}`): how each queued
   request ended. `classified`, `cache_hit`, `failed`, `poison`, `unconfigured`,
-  `invalid`.
+  `invalid`, `unpublishable` (its gateway is gone), `publish_retry` (left
+  pending to be published again).
 - `agentgateway.topic_classifier.call.duration` (seconds) and
   `agentgateway.topic_classifier.call.texts` (`{text}`): each topic-guard call.
   `ok`, `backpressure`, `error`.
