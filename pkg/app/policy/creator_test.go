@@ -25,6 +25,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
@@ -45,12 +46,16 @@ func newCacheManager() *cache.TTLMapManager {
 // newRegistryMock returns a plugin registry mock whose ValidateStages yields
 // stagesErr. It is marked Maybe() so tests where validation is never reached
 // (e.g. domain validation fails first) do not fail on an unmet expectation.
+// ValidateSettingsWrite is also stubbed to nil and Maybe(): creator always
+// carries settings and calls it, while most updater tests do not, so leaving
+// it unset here would make one side of the suite fail on an unmet call.
 func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(nil).Maybe()
 	return reg
 }
 
@@ -147,6 +152,31 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
 	}
+}
+
+// TestCreator_Create_RejectsInertSettingsWrite covers the RUN-1701 rule: a
+// creator write always carries settings, so a plugin opting into
+// SettingsWriteValidator (e.g. openai_moderation refusing an explicit
+// block_on_flagged: false with no thresholds) must block the create.
+func TestCreator_Create_RejectsInertSettingsWrite(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	sentinel := errors.New("policy could never block or report a violation")
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(sentinel).Once()
+	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the plugin's sentinel error", err)
+	}
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want it to wrap ErrValidation", err)
+	}
+	repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
 }
 
 func TestCreator_Create_RejectsUnsupportedStage(t *testing.T) {
