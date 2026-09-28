@@ -38,6 +38,9 @@ type streamPlugin struct {
 	inputs    []ExecInput
 	clock     *testClock
 	spend     time.Duration
+	// silentOnClose makes closedErr fire before the inspector attributes its
+	// own latency, which is what leaves a span with no explicit figure.
+	silentOnClose bool
 }
 
 // testClock replaces the executor's wall clock so a per-entry latency assertion
@@ -60,6 +63,11 @@ func (p *streamPlugin) InspectSegment(_ context.Context, in ExecInput, seg Strea
 		p.clock.advance(p.spend)
 	}
 	if seg.Closing {
+		if p.closedErr != nil && p.silentOnClose {
+			// The inspector that fails before it reaches its own attribution:
+			// the case the span's fallback charge exists for.
+			return nil, p.closedErr
+		}
 		// What the trustguard inspector does with the report it is handed, so
 		// the executor's attribution can be asserted where it actually lands.
 		in.Event.SetSLatency(seg.Report.GuardLatency)
@@ -423,6 +431,9 @@ func TestExecutor_RunStreamSegment_OpensOneSpanPerStream(t *testing.T) {
 	require.NotNil(t, spans[0].Plugin)
 	assert.Equal(t, string(policy.StagePreResponse), spans[0].Plugin.Stage)
 	assert.Equal(t, string(policy.ModeObserve), spans[0].Plugin.Mode)
+	assert.True(t, spans[0].Plugin.Streamed,
+		"the stream forces pre_response, so only this marker tells the metrics fold "+
+			"the leg ran during drain and is already inside provider_ms")
 	assert.False(t, spans[0].EndedAt().IsZero(), "the closing segment ends the stream span")
 
 	twoExec, twoPols, _ := streamChain(t,
@@ -613,4 +624,37 @@ func TestExecutor_RunStreamSegment_ClosingIsNeverFinal(t *testing.T) {
 	assert.True(t, seen.Closing)
 	assert.False(t, seen.Final,
 		"the span lifecycle keys on Closing alone; a segment carrying no text is not the final block")
+}
+
+// TestExecutor_RunStreamSegment_ChargesASilentSpanItsOwnShare covers the
+// inspector that fails on the closing segment before it attributes its own
+// time. A stream span opens on the first block and ends when the stream does,
+// so left to its wall clock it would report the whole drain — and pkg/app/metrics
+// now deducts a streamed leg's latency from provider_ms, so that wall clock
+// would be subtracted from the provider as if the guard had held every byte.
+func TestExecutor_RunStreamSegment_ChargesASilentSpanItsOwnShare(t *testing.T) {
+	clock := &testClock{at: time.UnixMilli(1_000_000)}
+	runner, pols, inspectors := streamChainWithClock(t, clock,
+		entrySpec{slug: "quiet", mode: policy.ModeEnforce, spend: 25 * time.Millisecond},
+	)
+	inspectors["quiet"].closedErr = errors.New("aggregate rejected")
+	inspectors["quiet"].silentOnClose = true
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+
+	for seq := 1; seq <= 2; seq++ {
+		_, err := runner.RunStreamSegment(ctx, in, segment(seq, false))
+		require.NoError(t, err)
+	}
+	_, err := runner.RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 2, Closing: true})
+	require.NoError(t, err)
+	publish()
+
+	spans := rt.Spans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, 50*time.Millisecond, spans[0].Latency(),
+		"the two blocks it did inspect, not the span's wall clock")
+	assert.NotEmpty(t, spans[0].Error(), "the failure is still recorded")
 }
