@@ -33,6 +33,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func llmPayloadInput(t *testing.T, raw json.RawMessage) string {
@@ -171,11 +173,25 @@ type fakeGuard struct {
 	// messages[] it received with each string leaf passed through echoMask,
 	// under transformed_payload, with status transform.
 	echoMask func(string) string
+	// tokenStatuses answers the token leg's calls in order; a call past the
+	// end, or a zero entry, gets a token.
+	tokenStatuses []int
+	tokenHits     int
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == tokenPath {
+			f.mu.Lock()
+			call := f.tokenHits
+			f.tokenHits++
+			f.mu.Unlock()
+			if call < len(f.tokenStatuses) && f.tokenStatuses[call] != 0 && f.tokenStatuses[call] != http.StatusOK {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.tokenStatuses[call])
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", TokenType: "Bearer", ExpiresIn: 3600})
@@ -440,25 +456,27 @@ func TestExecuteRateLimitDoesNotFailOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteUnavailableDoesNotFailOpen(t *testing.T) {
+// Entitlements TrustGuard cannot load are a failure of the guard, not its
+// answer: they follow on_error like any other failure.
+func TestExecuteUnavailableFollowsOnError(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{status: http.StatusServiceUnavailable}
-	srv := newServer(t, f)
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
-	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
-	_, err := p.Execute(context.Background(), in)
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonEntitlementsUnavailable)
+
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
+	_, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil))
 	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("entitlements unavailable must not fail-open, got %v", err)
-	}
-	if pe.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", pe.StatusCode)
-	}
-	if pe.Type != typeUnavailable {
-		t.Fatalf("type = %q, want %q", pe.Type, typeUnavailable)
-	}
+	require.True(t, ok, "fail_closed must refuse, got %v", err)
+	assert.Equal(t, http.StatusServiceUnavailable, pe.StatusCode)
+	assert.Equal(t, typeUnavailable, pe.Type)
 }
 
 func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
@@ -478,15 +496,17 @@ func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
 	}
 }
 
-func TestExecuteForbiddenFailsClosed(t *testing.T) {
+func TestExecuteForbiddenFailsClosedWhenOptedIn(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{status: http.StatusForbidden}
 	srv := newServer(t, f)
 	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
 
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
 	event, span := newEvent()
-	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
 	if res != nil {
 		t.Fatalf("expected nil result on 403, got %+v", res)
@@ -511,24 +531,42 @@ func TestExecuteForbiddenFailsClosed(t *testing.T) {
 	}
 }
 
-func TestExecuteForbiddenFailsClosedEvenWithFailOpenSetting(t *testing.T) {
+// A rejected credential is a failure of the guard: by default it must not cut
+// the client's request, and it must never pass silently.
+func TestExecuteForbiddenFailsOpenByDefault(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{status: http.StatusForbidden}
-	srv := newServer(t, f)
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{status: http.StatusForbidden}
+			p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
-	set := settings("")
-	set["on_error"] = onErrorFailOpen
-	in := execInput(policy.StagePreRequest, policy.ModeObserve, set, requestContext(), nil)
-	_, err := p.Execute(context.Background(), in)
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("auth rejection must fail closed even when on_error=fail_open, got %v", err)
+			event, span := newEvent()
+			in := execInputWithEvent(policy.StagePreRequest, mode, settings(""), requestContext(), nil, event)
+			res, err := p.Execute(context.Background(), in)
+			require.NoError(t, err)
+			assertFailedOpen(t, res, span, failureReasonUnauthorized)
+		})
 	}
-	if pe.Type != typeUnauthorized {
-		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
-	}
+}
+
+// assertFailedOpen is the whole contract of a guard failure under the default
+// on_error: the request carries on untouched, and the span says it went
+// through uninspected and why, which is what the console reads.
+func assertFailedOpen(t *testing.T, res *appplugins.Result, span *trace.Span, reason string) {
+	t.Helper()
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.False(t, res.StopUpstream)
+	assert.Nil(t, res.RequestBody, "a failed-open request is forwarded as it came")
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	require.True(t, ok, "a fail-open must leave extras, got %T", attrs.Extras)
+	assert.True(t, extras.FailedOpen)
+	assert.Equal(t, decisionFailedOpen, extras.Decision)
+	assert.Equal(t, reason, extras.FailureReason)
+	assert.Equal(t, decisionFailedOpen, attrs.Decision, "the span decision is what the policy chain shows")
 }
 
 func TestExecuteTransportErrorFailClosed(t *testing.T) {
@@ -563,37 +601,60 @@ func TestExecuteTransportErrorFailClosed(t *testing.T) {
 	}
 }
 
-func TestExecutePersistent401FailsClosed(t *testing.T) {
+func TestExecutePersistent401FollowsOnError(t *testing.T) {
 	t.Parallel()
 
-	var guardHits int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case tokenPath:
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
-		case evaluatePath:
-			atomic.AddInt32(&guardHits, 1)
-			w.WriteHeader(http.StatusUnauthorized)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(srv.Close)
+	for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
+		t.Run(onError, func(t *testing.T) {
+			t.Parallel()
+			var guardHits int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case tokenPath:
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
+				case evaluatePath:
+					atomic.AddInt32(&guardHits, 1)
+					w.WriteHeader(http.StatusUnauthorized)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(srv.Close)
 
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
-	_, err := p.Execute(context.Background(), in)
-	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("persistent 401 must fail closed, got %v", err)
+			p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+			set := settings("")
+			set["on_error"] = onError
+			res, err := p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil))
+			if onError == onErrorFailOpen {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.False(t, res.StopUpstream)
+			} else {
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "persistent 401 must fail closed when opted in, got %v", err)
+				assert.Equal(t, typeUnauthorized, pe.Type)
+			}
+			assert.EqualValues(t, 2, atomic.LoadInt32(&guardHits), "original + refresh retry")
+		})
 	}
-	if pe.Type != typeUnauthorized {
-		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
-	}
-	if got := atomic.LoadInt32(&guardHits); got != 2 {
-		t.Fatalf("guard hits = %d, want 2 (original + refresh retry)", got)
-	}
+}
+
+// A mask TrustGuard asks for on the response that the plugin cannot write back
+// leaves the upstream response exactly as it came: no half-rewritten body.
+func TestExecuteResponseTransformFailureForwardsTheResponse(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusTransform}}
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	event, span := newEvent()
+	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp, event))
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonTransformFailed)
+	assert.Nil(t, res.Body, "the plugin writes no body of its own")
+	assert.Equal(t, openAIResponseBody(), resp.Body)
 }
 
 func TestExecutePreResponseBlockReturns403(t *testing.T) {
@@ -1313,47 +1374,53 @@ func TestExecuteTransformObserveDoesNotRewrite(t *testing.T) {
 	}
 }
 
-func TestExecuteTransformMissingPayloadBlocks(t *testing.T) {
+// A mask the plugin cannot apply is a failure on our side: by default the
+// original content goes on, unmasked, and the span says so and why.
+func TestExecuteTransformMissingPayloadFollowsOnError(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusTransform, TraceID: "trace-empty"}}
-	srv := newServer(t, f)
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected block on unapplicable transform, got %+v", res)
-	}
-	if _, ok := appplugins.AsPluginError(err); !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
-	}
-	attrs := span.PluginAttrsCopy()
-	extras, ok := attrs.Extras.(guardData)
-	if !ok {
-		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
-	}
-	if !extras.Degraded || extras.DegradedReason != reasonTransformNoPayload {
-		t.Fatalf("extras = %+v, want degraded no-payload", extras)
-	}
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonTransformFailed)
+	extras := span.PluginAttrsCopy().Extras.(guardData)
+	assert.True(t, extras.Degraded)
+	assert.Equal(t, reasonTransformNoPayload, extras.DegradedReason)
+
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
+	event, span = newEvent()
+	res, err = p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event))
+	assert.Nil(t, res)
+	_, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "fail_closed must block an unapplicable transform, got %v", err)
+	extras = span.PluginAttrsCopy().Extras.(guardData)
+	assert.Equal(t, decisionBlocked, extras.Decision, "TrustGuard found something, so fail_closed keeps the block it always was")
+	assert.True(t, extras.Degraded)
+	assert.Equal(t, reasonTransformNoPayload, extras.DegradedReason)
 }
 
-func TestExecuteTransformLineCountMismatchBlocks(t *testing.T) {
+func TestExecuteTransformLineCountMismatchFollowsOnError(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: transformResponse("be safe\nhello\n[MASKED_PII]")}
-	srv := newServer(t, f)
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+	p := newTestPlugin(t, adapter.NewRegistry(), newServer(t, f).URL)
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
-	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected block on ambiguous transform, got %+v", res)
-	}
-	if _, ok := appplugins.AsPluginError(err); !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
-	}
+	event, span := newEvent()
+	res, err := p.Execute(context.Background(), execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event))
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonTransformFailed)
+
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
+	res, err = p.Execute(context.Background(), execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil))
+	assert.Nil(t, res)
+	_, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "fail_closed must block an ambiguous transform, got %v", err)
 }
 
 // Enforce + transform on MCP masks the tool arguments, the same way the LLM path
@@ -2120,12 +2187,10 @@ func TestSkippedLegRecordsReasonOnEvent(t *testing.T) {
 	}
 }
 
-// TestExecuteGuardTimeoutFailsClosedByDefault is the defect RUN-1712 was opened
-// for. A detector that ran out of time is, by selection, the one that had the
-// most to say: the run that surfaced this returned "blocked, score 1.00" some
-// thirteen seconds after the gateway had already streamed the payload. The
-// default therefore has to be the opposite of on_error's.
-func TestExecuteGuardTimeoutFailsClosedByDefault(t *testing.T) {
+// TestExecuteGuardTimeoutFailsOpenByDefault: a guard that ran out of time must
+// not cut the client's request. The bypass a large payload can buy is the
+// accepted cost, and it is never silent.
+func TestExecuteGuardTimeoutFailsOpenByDefault(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock}, delay: 2 * time.Second}
@@ -2138,60 +2203,39 @@ func TestExecuteGuardTimeoutFailsClosedByDefault(t *testing.T) {
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
 
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("a timed-out guard must not pass the content through, got %+v", res)
-	}
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonTimeout)
+}
+
+// TestExecuteGuardTimeoutHonoursExplicitFailClosed keeps the stricter choice
+// for a policy that must never let text through uninspected.
+func TestExecuteGuardTimeoutHonoursExplicitFailClosed(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}, delay: 2 * time.Second}
+	srv := newServer(t, f)
+	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
+
+	set := settings("")
+	set["timeout"] = "250ms"
+	set["on_timeout"] = onErrorFailClosed
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	assert.Nil(t, res)
 	pe, ok := appplugins.AsPluginError(err)
-	if !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
-	}
-	if pe.StatusCode != http.StatusGatewayTimeout {
-		t.Fatalf("status = %d, want 504 so a timeout is tellable from an unreachable guard", pe.StatusCode)
-	}
+	require.True(t, ok, "expected *PluginError, got %v", err)
+	assert.Equal(t, http.StatusGatewayTimeout, pe.StatusCode, "504 so a timeout is tellable from an unreachable guard")
 	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	if !ok {
-		t.Fatalf("extras type = %T, want guardData", span.PluginAttrsCopy().Extras)
-	}
-	if !extras.FailedClosed || extras.FailureReason != failureReasonTimeout {
-		t.Fatalf("extras = %+v, want failed_closed with reason %q", extras, failureReasonTimeout)
-	}
+	require.True(t, ok)
+	assert.True(t, extras.FailedClosed)
+	assert.Equal(t, failureReasonTimeout, extras.FailureReason)
 }
 
-// TestExecuteGuardTimeoutHonoursExplicitFailOpen keeps the escape hatch: an
-// operator who would rather keep serving can still say so, they just have to
-// say it rather than get it by omission.
-func TestExecuteGuardTimeoutHonoursExplicitFailOpen(t *testing.T) {
-	t.Parallel()
-
-	f := &fakeGuard{response: GuardResponse{Status: statusBlock}, delay: 2 * time.Second}
-	srv := newServer(t, f)
-	p := newTestPlugin(t, adapter.NewRegistry(), srv.URL)
-
-	set := settings("")
-	set["timeout"] = "250ms"
-	set["on_timeout"] = onErrorFailOpen
-	event, span := newEvent()
-	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
-
-	res, err := p.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("expected fail-open pass, got %v", err)
-	}
-	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
-		t.Fatalf("expected pass-through, got %+v", res)
-	}
-	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
-	if !ok {
-		t.Fatalf("extras type = %T, want guardData", span.PluginAttrsCopy().Extras)
-	}
-	if !extras.FailedOpen || extras.FailureReason != failureReasonTimeout {
-		t.Fatalf("extras = %+v, want failed_open recorded as a timeout, not an unexplained pass", extras)
-	}
-}
-
-// TestExecuteTransportErrorStillFailsOpen guards the asymmetry from being
-// applied too widely: on_timeout must not quietly become the rule for every
-// way a guard call can fail.
+// TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault keeps the two
+// settings apart: an on_timeout of fail_closed must not spill over into the
+// other ways a guard call can fail.
 func TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault(t *testing.T) {
 	t.Parallel()
 
@@ -2201,11 +2245,13 @@ func TestExecuteTransportErrorStillFailsOpenUnderTimeoutDefault(t *testing.T) {
 	srv.Close()
 
 	p := newTestPlugin(t, adapter.NewRegistry(), addr)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	set := settings("")
+	set["on_timeout"] = onErrorFailClosed
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil)
 
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
-		t.Fatalf("an unreachable guard still fails open by default, got %v", err)
+		t.Fatalf("an unreachable guard follows on_error, not on_timeout, got %v", err)
 	}
 	if res == nil || res.StopUpstream {
 		t.Fatalf("expected pass-through, got %+v", res)

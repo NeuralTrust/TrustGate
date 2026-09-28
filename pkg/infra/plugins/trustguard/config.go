@@ -35,15 +35,13 @@ const (
 	onErrorFailClosed = "fail_closed"
 	defaultOnError    = onErrorFailOpen
 
-	// A timeout defaults to fail_closed while a transport error defaults to
-	// fail_open, and the asymmetry is deliberate. A refused connection is not
-	// something a caller can bring about; a timeout is. Enough text in one
-	// payload pushes the detector past the deadline, so failing open on a
-	// timeout hands anyone who notices a bypass they can trigger on demand —
-	// and the detector that ran out of time is, by selection, the one that had
-	// the most to say. Operators who would rather keep serving still can, but
-	// they have to write it down.
-	defaultOnTimeout = onErrorFailClosed
+	// A timeout fails open by default like every other failure of the guard: a
+	// TrustGuard problem must not cut the client's request. The cost is known
+	// and accepted: a caller can push the detector past the deadline with
+	// enough text and so get a payload through uninspected. It is never
+	// silent — the span carries failed_open with reason timeout — and a policy
+	// that would rather refuse can set on_timeout (or on_error, which an unset
+	// on_timeout inherits) to fail_closed.
 
 	// minPolicyTimeout keeps a policy from setting a deadline so short that
 	// every call trips it, which would turn the safe default into an outage.
@@ -87,11 +85,14 @@ type Settings struct {
 	// input/output direction reported to TrustGuard per evaluate call.
 	Direction   string `mapstructure:"direction"`
 	CollectorID string `mapstructure:"collector_id"`
-	// OnError controls transport / 5xx failure behaviour. Auth/config
-	// rejections (401/403) always fail closed regardless of this setting.
+	// OnError controls every failure of the guard other than a timeout:
+	// transport and 5xx, rejected or missing credentials, a missing base URL,
+	// unavailable entitlements, and a mask that could not be applied. It
+	// defaults to fail_open. A block or a 429 is an answer, not a failure, and
+	// is never subject to it.
 	OnError string `mapstructure:"on_error"`
 	// OnTimeout is separate from OnError because the two failures differ in
-	// who can cause them. It defaults to fail_closed; see defaultOnTimeout.
+	// who can cause them. Unset, it inherits OnError.
 	OnTimeout string `mapstructure:"on_timeout"`
 	// Timeout bounds one evaluate call for this policy. Empty means the
 	// deployment-wide TRUSTGUARD_TIMEOUT, which is the only control that
@@ -139,8 +140,11 @@ func (s *Settings) applyDefaults() {
 	if s.OnError == "" {
 		s.OnError = defaultOnError
 	}
+	// An unset on_timeout inherits on_error, as streaming.on_error does, so a
+	// policy that asked for fail_closed does not quietly fail open on the one
+	// failure a caller can bring about.
 	if s.OnTimeout == "" {
-		s.OnTimeout = defaultOnTimeout
+		s.OnTimeout = s.OnError
 	}
 	s.Timeout = strings.TrimSpace(s.Timeout)
 	s.Streaming.applyDefaults(s.OnError)

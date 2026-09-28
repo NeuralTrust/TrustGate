@@ -149,12 +149,13 @@ func runModes(cfg *config, rb *requestBody, properties map[string]any, ctxVars m
 
 func buildData(decision string, a modeAOutcome, b modeBResult) PromptTemplateData {
 	return PromptTemplateData{
-		Decision:          decision,
-		InjectedIDs:       a.injected,
-		SkippedIDs:        a.skipped,
-		UnresolvedIDs:     a.unresolved,
-		ResolvedTemplate:  b.resolvedTemplate,
-		DiscardedMessages: b.discarded,
+		Decision:               decision,
+		InjectedIDs:            a.injected,
+		SkippedIDs:             a.skipped,
+		UnresolvedIDs:          a.unresolved,
+		ResolvedTemplate:       b.resolvedTemplate,
+		DiscardedMessages:      b.discarded,
+		DroppedClientVariables: b.droppedClientVars,
 	}
 }
 
