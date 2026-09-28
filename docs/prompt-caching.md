@@ -108,7 +108,9 @@ after routing (`EnforceModel`), with one inference-profile prefix (`us.`,
 | Any other model, ARNs | – | – | – |
 
 When Bedrock still answers a `ValidationException` that names the cache,
-TrustGate retries once without any `cachePoint` and remembers that model.
+TrustGate retries that request once without any `cachePoint`. Nothing is
+remembered: the client is shared by every tenant, so one malformed request must
+not switch caching off for a model.
 The table follows the AWS prompt-caching guide as read on 2026-09-25.
 
 ## Prefix stability
