@@ -190,6 +190,68 @@ func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 	assert.Contains(t, openaiResp, "choices")
 }
 
+func TestProviderInvoke_AzureFoundryAnthropicAdaptsOpenAI(t *testing.T) {
+	var sentBody []byte
+	var sentConfig *providers.Config
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, config *providers.Config, body []byte) ([]byte, error) {
+			sentConfig = config
+			sentBody = body
+			return []byte(anthropicResponseBody), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get(providers.ProviderAzure).Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	target := apiKeyTarget(providers.ProviderAzure)
+	target.LLMTarget.ProviderOptions = map[string]any{"api": providers.AzureAPIAnthropic}
+
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), target, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, string(adapter.FormatAnthropic), req.TargetFormat)
+	assert.Equal(t, providers.AzureAPIAnthropic, sentConfig.Options["api"])
+	var adapted map[string]any
+	require.NoError(t, json.Unmarshal(sentBody, &adapted))
+	assert.Equal(t, "gpt-4", adapted["model"])
+	assert.Contains(t, adapted, "messages")
+	assert.Contains(t, adapted, "max_tokens")
+	assert.NotContains(t, adapted, "input")
+	assert.Contains(t, string(resp.Body), `"choices"`)
+}
+
+func TestProviderInvoke_AzureFoundryResponsesAdaptsChatCompletions(t *testing.T) {
+	var sentBody []byte
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, config *providers.Config, body []byte) ([]byte, error) {
+			assert.Equal(t, providers.AzureAPIResponses, config.Options["api"])
+			sentBody = body
+			return []byte(`{"id":"resp_1","object":"response","status":"completed","model":"gpt-4","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]}`), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get(providers.ProviderAzure).Return(client, nil).Once()
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	target := apiKeyTarget(providers.ProviderAzure)
+	target.LLMTarget.ProviderOptions = map[string]any{"api": providers.AzureAPIResponses}
+
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), target, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, string(adapter.FormatOpenAIResponses), req.TargetFormat)
+	assert.Contains(t, string(sentBody), `"input"`)
+	assert.NotContains(t, string(sentBody), `"messages"`)
+	assert.Contains(t, string(resp.Body), `"choices"`)
+}
+
 func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	errBody := []byte(`{"error":{"message":"rate limited"}}`)
 	client := providermocks.NewClient(t)
