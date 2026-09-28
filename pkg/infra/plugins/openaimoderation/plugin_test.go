@@ -702,13 +702,15 @@ func TestValidateSettingsWrite(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "text-moderation model with illicit is rejected: illicit does not exist for that model",
-			settings: map[string]any{
-				"api_key":    "secret",
-				"model":      ModelTextLatest,
-				"thresholds": map[string]any{CategoryIllicit: 0.5},
-			},
-			wantErr: true,
+			name:     "retired text-moderation model is rejected on create",
+			settings: map[string]any{"api_key": "secret", "model": "text-moderation-latest"},
+			wantErr:  true,
+		},
+		{
+			name:     "a stored retired text-moderation model stays editable",
+			settings: map[string]any{"api_key": "rotated", "model": "text-moderation-stable"},
+			previous: map[string]any{"api_key": "secret", "model": "text-moderation-stable"},
+			wantErr:  false,
 		},
 		{
 			name: "update where the bad key already existed in previous passes",
@@ -735,11 +737,11 @@ func TestValidateSettingsWrite(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "model change adding a key invalid for the new model is rejected",
+			name: "switching a policy to a retired model is rejected",
 			settings: map[string]any{
 				"api_key":    "secret",
-				"model":      ModelTextLatest,
-				"thresholds": map[string]any{CategoryIllicit: 0.5},
+				"model":      "text-moderation-latest",
+				"thresholds": map[string]any{CategoryHate: 0.5},
 			},
 			previous: map[string]any{
 				"api_key":    "secret",
@@ -752,7 +754,7 @@ func TestValidateSettingsWrite(t *testing.T) {
 			name: "model change keeps a key already present pre-existing across the change",
 			settings: map[string]any{
 				"api_key":    "secret",
-				"model":      ModelTextLatest,
+				"model":      ModelOmni20240926,
 				"thresholds": map[string]any{"hate/threatning": 0.5},
 			},
 			previous: map[string]any{

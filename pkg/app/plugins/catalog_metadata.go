@@ -881,10 +881,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:   "model",
 					Label: "Model",
 					Type:  FieldTypeString,
-					Description: "Moderations model. One of omni-moderation-latest, omni-moderation-2024-09-26 " +
-						"(13 categories), text-moderation-latest, text-moderation-stable (11 categories: " +
-						"omni's minus illicit and illicit/violent). An unrecognised model is still accepted " +
-						"(logged as a warning), but a new write must use a recognised one.",
+					Description: "Moderations model: omni-moderation-latest or omni-moderation-2024-09-26. " +
+						"OpenAI has retired text-moderation-latest and text-moderation-stable. An unrecognised " +
+						"model already stored keeps loading (logged as a warning), but a new write must use a " +
+						"recognised one.",
 					Default: "omni-moderation-latest",
 				},
 				{
@@ -904,11 +904,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label: "Categories",
 					Type:  FieldTypeArray,
 					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned " +
-						"by OpenAI. Valid keys for omni-moderation-*: harassment, harassment/threatening, hate, " +
-						"hate/threatening, illicit, illicit/violent, self-harm, self-harm/intent, " +
-						"self-harm/instructions, sexual, sexual/minors, violence, violence/graphic. " +
-						"text-moderation-* drop illicit and illicit/violent. A key that is not valid for the " +
-						"configured model is rejected on a new write; an already-stored one keeps working.",
+						"by OpenAI. Valid keys: harassment, harassment/threatening, hate, hate/threatening, " +
+						"illicit, illicit/violent, self-harm, self-harm/intent, self-harm/instructions, " +
+						"sexual, sexual/minors, violence, violence/graphic. An unknown key is rejected on a " +
+						"new write; an already-stored one keeps working.",
 					Item: &Field{
 						Key:   "category",
 						Label: "Category",
