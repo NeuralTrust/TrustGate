@@ -246,7 +246,7 @@ func TestInspectSegmentBlocks(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Block)
 	assert.Equal(t, typeGuardrailBlocked, got.Type)
-	assert.Equal(t, defaultBlockMessage, got.Message)
+	assert.Equal(t, appplugins.DefaultBlockMessage, got.Message)
 	assert.False(t, got.HasTransform)
 }
 

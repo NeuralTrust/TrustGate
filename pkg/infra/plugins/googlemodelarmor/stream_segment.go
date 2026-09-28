@@ -31,13 +31,10 @@ const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
 
-const (
-	defaultBlockMessage = "response blocked by guardrail policy"
-	// The buffered leg blocks when SDP asks to anonymise and returns nothing to
-	// anonymise with, so the stream leg cuts for the same reason rather than
-	// releasing text the policy ruled out.
-	anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
-)
+// The buffered leg blocks when SDP asks to anonymise and returns nothing to
+// anonymise with, so the stream leg cuts for the same reason rather than
+// releasing text the policy ruled out.
+const anonymizeDegradedMessage = "response blocked: guardrail masking could not be applied to this stream"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
@@ -250,7 +247,7 @@ func blockMessage(cfg Settings) string {
 	if msg := strings.TrimSpace(cfg.Message); msg != "" {
 		return msg
 	}
-	return defaultBlockMessage
+	return appplugins.DefaultBlockMessage
 }
 
 // streamID correlates every block of one response. An empty id is not a missing

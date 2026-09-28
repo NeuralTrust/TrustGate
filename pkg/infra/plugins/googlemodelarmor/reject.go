@@ -17,30 +17,38 @@ package googlemodelarmor
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
 const typeModelArmorBlocked = "model_armor_blocked"
 
-func blockError(f finding) *appplugins.PluginError {
+func blockError(message string, f finding) *appplugins.PluginError {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = appplugins.DefaultBlockMessage
+	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeModelArmorBlocked,
+		Message:    msg,
 		Headers:    map[string][]string{"Content-Type": {"application/json"}},
-		Body:       blockBody(f),
+		Body:       blockBody(msg, f),
 	}
 }
 
-func blockBody(f finding) []byte {
+func blockBody(message string, f finding) []byte {
 	body := struct {
 		Error struct {
 			Type      string   `json:"type"`
+			Message   string   `json:"message"`
 			Filter    string   `json:"filter"`
 			InfoTypes []string `json:"info_types,omitempty"`
 		} `json:"error"`
 	}{}
 	body.Error.Type = typeModelArmorBlocked
+	body.Error.Message = message
 	body.Error.Filter = f.filter
 	body.Error.InfoTypes = f.infoTypes
 	raw, err := json.Marshal(body)
