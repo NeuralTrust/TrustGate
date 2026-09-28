@@ -53,7 +53,7 @@ func blockBody(message string, f finding) []byte {
 	body.Error.Name = f.name
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(message)
+		return []byte(`{"error":{"type":"guardrail_blocked"}}`)
 	}
 	return raw
 }

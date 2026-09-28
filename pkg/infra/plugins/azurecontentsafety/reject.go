@@ -56,7 +56,7 @@ func blockBody(message string, breaches []breachedCategory) []byte {
 	body.Error.Categories = breaches
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(message)
+		return []byte(`{"error":{"type":"content_flagged"}}`)
 	}
 	return raw
 }

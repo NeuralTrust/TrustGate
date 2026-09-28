@@ -53,7 +53,7 @@ func blockBody(message string, f finding) []byte {
 	body.Error.InfoTypes = f.infoTypes
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(message)
+		return []byte(`{"error":{"type":"model_armor_blocked"}}`)
 	}
 	return raw
 }
