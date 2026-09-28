@@ -129,7 +129,7 @@ func TestGeminiModelFromPath(t *testing.T) {
 		"/v1/chat/completions":                                                                                  "",
 		"/v1beta/models/eu.amazon.nova-lite-v1:0:generateContent":                                               "eu.amazon.nova-lite-v1:0",
 		"/v1beta/models/mistral.mistral-7b-instruct-v0:2:streamGenerateContent":                                 "mistral.mistral-7b-instruct-v0:2",
-		"/v1beta/models/eu.amazon.nova-lite-v1%3A0:generateContent":                                             "eu.amazon.nova-lite-v1:0",
+		"/v1beta/models/gemini-2.5-pro:batchGenerateContent":                                                    "gemini-2.5-pro:batchGenerateContent",
 		"/v1beta/models/eu.amazon.nova-lite-v1:0":                                                               "eu.amazon.nova-lite-v1:0",
 		"/v1/projects/p/locations/r/publishers/google/models/us.anthropic.claude-opus-5-5-v1:0:generateContent": "us.anthropic.claude-opus-5-5-v1:0",
 	}
@@ -157,6 +157,35 @@ func TestResolveProxyPathKeepsColonsInGeminiModelIDs(t *testing.T) {
 	}
 	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/eu.amazon.nova-lite-v1:0"); !errors.Is(err, ErrUnknownProxyPath) {
 		t.Fatalf("a Vertex path without a method must stay unknown, got %v", err)
+	}
+}
+
+func TestSplitGeminiModelActionDoesNotDecodePercentEscapes(t *testing.T) {
+	t.Parallel()
+	cases := map[string][2]string{
+		"gemini-pro%3AgenerateContent":               {"gemini-pro%3AgenerateContent", ""},
+		"eu.amazon.nova-lite-v1%3A0:generateContent": {"eu.amazon.nova-lite-v1%3A0", "generateContent"},
+		"gemini-pro%3F:generateContent":              {"gemini-pro%3F", "generateContent"},
+	}
+	for segment, want := range cases {
+		model, action := adapter.SplitGeminiModelAction(segment)
+		if model != want[0] || action != want[1] {
+			t.Fatalf("SplitGeminiModelAction(%q) = (%q, %q), want (%q, %q)", segment, model, action, want[0], want[1])
+		}
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro%3AgenerateContent"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path whose ':' is percent-encoded must not be split, got %v", err)
+	}
+}
+
+func TestSplitGeminiModelActionKeepsUnknownMethodsInTheModel(t *testing.T) {
+	t.Parallel()
+	model, action := adapter.SplitGeminiModelAction("gemini-2.5-pro:batchGenerateContent")
+	if model != "gemini-2.5-pro:batchGenerateContent" || action != "" {
+		t.Fatalf("SplitGeminiModelAction = (%q, %q), want the whole segment as the model", model, action)
+	}
+	if _, err := ResolveProxyPath("/slug/v1/projects/p/locations/r/publishers/google/models/gemini-2.5-pro:batchGenerateContent"); !errors.Is(err, ErrUnknownProxyPath) {
+		t.Fatalf("a Vertex path with a method TrustGate does not route must stay unknown, got %v", err)
 	}
 }
 

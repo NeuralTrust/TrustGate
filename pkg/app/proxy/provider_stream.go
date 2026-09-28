@@ -75,8 +75,9 @@ func injectStreamIncludeUsage(body []byte) []byte {
 }
 
 // ClientNotifiedStreamError wraps an upstream stream failure an Anthropic,
-// Cohere or Responses client has already been sent a terminal event for in its
-// own format, so the transport must not append a generic error frame of its own.
+// Cohere, Responses or Gemini client has already been sent a terminal event
+// for in its own format, so the transport must not append a generic error
+// frame of its own.
 type ClientNotifiedStreamError struct {
 	Err error
 }
@@ -178,13 +179,15 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // such an error, or failed after its message started, gets a message-end with
 // an ERROR finish. A Responses client whose upstream sent such an error, failed
 // or ended without a finish after response.created gets an error event and
-// response.failed, and [DONE] without a finish completes its response. Once an
-// Anthropic, Cohere or Responses client has its terminal event for a failed
-// upstream, the sequence error is wrapped in ClientNotifiedStreamError. A
-// Responses client that has been sent nothing for a while gets an SSE
-// comment, whether or not upstream lines keep arriving, so idle timeouts do
-// not cut a stream whose tool calls are held or whose reasoning is not
-// forwarded; its upstream is read on a goroutine of its own for that, while
+// response.failed, and [DONE] without a finish completes its response. A
+// Gemini client whose upstream sent such an error, or failed before its
+// finish, gets no held tool calls and a Gemini error object instead of a
+// finish. Once an Anthropic, Cohere, Responses or Gemini client has its
+// terminal event for a failed upstream, the sequence error is wrapped in
+// ClientNotifiedStreamError. A Responses client that has been sent nothing
+// for a while gets an SSE comment, whether or not upstream lines keep
+// arriving, so idle timeouts do not cut a stream whose tool calls are held or
+// whose reasoning is not forwarded; its upstream is read on a goroutine of its own for that, while
 // every line still reaches the client from the goroutine ranging over the
 // returned sequence, one upstream line at a time. A Responses client whose
 // upstream sent [DONE] without a finish while a held tool call had arguments
@@ -490,8 +493,9 @@ func (d *finishDeferral) record(chunk *adapter.CanonicalStreamChunk) bool {
 }
 
 // recordUsage merges the usage of a chunk that arrived with an upstream error,
-// whose finish an Anthropic, Cohere or Responses client does not get, so a finish already
-// recorded, or a Cohere client's ERROR message-end, carries it.
+// whose finish an Anthropic, Cohere, Responses or Gemini client does not get,
+// so a finish already recorded, or a Cohere client's ERROR message-end,
+// carries it.
 func (d *finishDeferral) recordUsage(chunk *adapter.CanonicalStreamChunk) {
 	if d.flushed {
 		return
@@ -629,20 +633,22 @@ func (d *finishDeferral) done(
 }
 
 // clientAborted reports whether an Anthropic client got an error event in
-// place of message_stop, a Cohere client an ERROR message-end, or a Responses
-// client response.failed.
+// place of message_stop, a Cohere client an ERROR message-end, a Responses
+// client response.failed, or a Gemini client an error object.
 func (d *finishDeferral) clientAborted() bool {
 	return (d.anthropic != nil && d.anthropic.Aborted()) ||
 		(d.cohere != nil && d.cohere.Aborted()) ||
-		(d.responses != nil && d.responses.Aborted())
+		(d.responses != nil && d.responses.Aborted()) ||
+		(d.gemini != nil && d.gemini.Failed())
 }
 
 // fail flushes or aborts the client stream for an upstream that failed with
 // err, or sent upstreamErr as a payload, and returns the sequence error to
 // yield. A Cohere client whose upstream finished before its transport failed
 // gets that finish; otherwise it gets an ERROR message-end, unless the
-// transport failed before its message started. It returns false when the
-// consumer stopped.
+// transport failed before its message started. A Gemini client whose upstream
+// had not finished gets an error object. It returns false when the consumer
+// stopped.
 func (d *finishDeferral) fail(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -654,6 +660,8 @@ func (d *finishDeferral) fail(
 	terminated := d.flushed
 	var ok bool
 	switch {
+	case d.gemini != nil && !d.finished:
+		ok = d.failGemini(emit, source, logger)
 	case d.cohere == nil, upstreamErr == nil && d.finished:
 		ok = d.flushOnError(emit, registry, source, logger)
 	case upstreamErr != nil || d.cohere.Started():
@@ -664,7 +672,7 @@ func (d *finishDeferral) fail(
 	if !ok {
 		return false, nil
 	}
-	notify := d.anthropic != nil ||
+	notify := d.anthropic != nil || d.gemini != nil ||
 		(d.cohere != nil && (d.flushed || d.finished || d.cohere.Started())) ||
 		(d.responses != nil && d.responses.Started())
 	if !notify {
@@ -680,6 +688,22 @@ func (d *finishDeferral) fail(
 	}
 	logStreamFailure(logger, message, source, d.target, err, upstreamErr, aborted)
 	return true, &ClientNotifiedStreamError{Err: err}
+}
+
+// failGemini ends a Gemini client's stream with an error object, withholding
+// its held tool calls, unless the stream already ended.
+func (d *finishDeferral) failGemini(
+	emit func([][]byte) bool,
+	source adapter.Format,
+	logger *slog.Logger,
+) bool {
+	if d.flushed {
+		return true
+	}
+	d.flushed = true
+	lines := d.gemini.Fail("upstream stream failed")
+	d.logGemini(source, logger)
+	return len(lines) == 0 || emit(lines)
 }
 
 // abortCohere ends a Cohere client's message with an ERROR finish carrying
@@ -734,7 +758,7 @@ func (d *finishDeferral) abort(
 	case d.gemini != nil:
 		d.flushed = true
 		d.gemini.Abort()
-		d.logGeminiDropped(source, logger)
+		d.logGemini(source, logger)
 		return true
 	default:
 		return true
@@ -800,7 +824,7 @@ func (d *finishDeferral) flush(
 	}
 	if d.gemini != nil {
 		lines := d.gemini.Finish(chunk)
-		d.logGeminiDropped(source, logger)
+		d.logGemini(source, logger)
 		return len(lines) == 0 || emit(lines)
 	}
 	return encodeAndEmit(emit, registry, chunk, source, logger)
@@ -836,7 +860,10 @@ func (d *finishDeferral) logFinish(reason string, source adapter.Format, logger 
 	)
 }
 
-func (d *finishDeferral) logGeminiDropped(source adapter.Format, logger *slog.Logger) {
+// logGemini logs what the Gemini encoder could not send once the client
+// stream has ended.
+func (d *finishDeferral) logGemini(source adapter.Format, logger *slog.Logger) {
+	d.logGeminiEncodeError(source, logger)
 	nameless, withheld := d.gemini.Dropped(), d.gemini.Withheld()
 	if nameless == 0 && withheld == 0 {
 		return
@@ -847,6 +874,16 @@ func (d *finishDeferral) logGeminiDropped(source adapter.Format, logger *slog.Lo
 		slog.Int("nameless_tool_calls", nameless),
 		slog.Int("withheld_tool_calls", withheld),
 	)
+}
+
+func (d *finishDeferral) logGeminiEncodeError(source adapter.Format, logger *slog.Logger) {
+	if err := d.gemini.TakeEncodeError(); err != nil {
+		logger.Warn("stream encode chunk failed",
+			slog.String("target", string(d.target)),
+			slog.String("source", string(source)),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 func (d *finishDeferral) logResponsesFinish(reason string, source adapter.Format, logger *slog.Logger) {
@@ -878,6 +915,7 @@ func (d *finishDeferral) encode(
 		lines = d.responses.Content(chunk)
 	case d.gemini != nil:
 		lines = d.gemini.Content(chunk)
+		d.logGeminiEncodeError(source, logger)
 	default:
 		return encodeAndEmit(emit, registry, chunk, source, logger)
 	}
@@ -888,7 +926,7 @@ func (d *finishDeferral) encode(
 // when deferred holds it, so the client gets them once from flush with the
 // merged usage instead of per chunk, the last of which may lack the cache
 // counts. It returns false when the consumer stopped, and, for an Anthropic,
-// Cohere or Responses client, the error the upstream sent in payload, if any, after emitting
+// Cohere, Responses or Gemini client, the error the upstream sent in payload, if any, after emitting
 // the content that came with it; other clients get the rest of that payload as
 // usual.
 func emitDeferred(
@@ -909,7 +947,7 @@ func emitDeferred(
 	}
 	deferred.geminiCalls.Renumber(canonical.ToolCallDeltas)
 	if canonical.UpstreamError != nil {
-		if deferred.anthropic != nil || deferred.cohere != nil || deferred.responses != nil {
+		if deferred.anthropic != nil || deferred.cohere != nil || deferred.responses != nil || deferred.gemini != nil {
 			deferred.recordUsage(canonical)
 			content := adapter.CanonicalStreamChunk{
 				ID:             canonical.ID,

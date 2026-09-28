@@ -17,7 +17,6 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
@@ -75,7 +74,8 @@ func GeminiModelFromPath(path string) string {
 	return model
 }
 
-// geminiMethods are the actions a Gemini or Vertex model path can end with.
+// geminiMethods are the methods TrustGate routes on a Gemini or Vertex model
+// path. Any other suffix after a ':' is part of the model id.
 var geminiMethods = map[string]struct{}{
 	"generateContent":       {},
 	"streamGenerateContent": {},
@@ -88,14 +88,14 @@ var geminiMethods = map[string]struct{}{
 }
 
 // SplitGeminiModelAction splits the last segment of a Gemini model path into
-// the model and its method. The split is at the last ':' followed by a known
-// method, because model ids can contain ':' themselves (Bedrock
-// "eu.amazon.nova-lite-v1:0"). A segment without a known method is all model.
-// Percent-encoded colons are decoded first.
+// the model and its method. The split is at the last ':' followed by one of
+// the methods TrustGate routes (geminiMethods), because model ids can contain
+// ':' themselves (Bedrock "eu.amazon.nova-lite-v1:0"). A segment without such
+// a method, an unknown one such as batchGenerateContent included, is all
+// model. The segment is not percent-decoded: no SDK encodes the ':', and
+// decoding here alone would let the stream detection, which reads the raw
+// path, disagree with routing, and would let %3F or %23 into model ids.
 func SplitGeminiModelAction(segment string) (model, action string) {
-	if decoded, err := url.PathUnescape(segment); err == nil {
-		segment = decoded
-	}
 	if c := strings.LastIndexByte(segment, ':'); c >= 0 {
 		if _, ok := geminiMethods[segment[c+1:]]; ok {
 			return segment[:c], segment[c+1:]

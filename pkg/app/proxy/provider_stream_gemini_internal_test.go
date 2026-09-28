@@ -31,9 +31,18 @@ import (
 type geminiClientPart struct {
 	Text         string `json:"text"`
 	FunctionCall *struct {
+		ID   string          `json:"id"`
 		Name string          `json:"name"`
 		Args json.RawMessage `json:"args"`
 	} `json:"functionCall"`
+}
+
+type geminiClientError struct {
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
 }
 
 type geminiClientChunk struct {
@@ -50,6 +59,7 @@ type geminiClientChunk struct {
 type geminiClientStream struct {
 	chunks []geminiClientChunk
 	parts  []string
+	errors []geminiClientError
 }
 
 func decodeGeminiClientStream(t *testing.T, lines []string) geminiClientStream {
@@ -60,6 +70,13 @@ func decodeGeminiClientStream(t *testing.T, lines []string) geminiClientStream {
 		if !ok {
 			continue
 		}
+		var e geminiClientError
+		require.NoError(t, json.Unmarshal([]byte(payload), &e), payload)
+		if e.Error != nil {
+			s.errors = append(s.errors, e)
+			continue
+		}
+		require.Empty(t, s.errors, "nothing follows the error object")
 		var c geminiClientChunk
 		require.NoError(t, json.Unmarshal([]byte(payload), &c), payload)
 		require.Len(t, c.Candidates, 1)
@@ -415,5 +432,122 @@ func TestAdaptStream_GeminiClientWithholdsCallsOnUpstreamFailure(t *testing.T) {
 	lines, err := collectLinesAndError(adaptStream(upstream, adapter.NewRegistry(), adapter.FormatGemini, adapter.FormatBedrock, slog.Default(), nil))
 
 	require.ErrorIs(t, err, boom)
-	assert.Empty(t, decodeGeminiClientStream(t, lines).parts, "no call reaches the client without a finish")
+	_, notified := errors.AsType[*ClientNotifiedStreamError](err)
+	assert.True(t, notified, "the client already has its error object")
+	s := decodeGeminiClientStream(t, lines)
+	assert.Empty(t, s.parts, "no call reaches the client without a finish")
+	s.assertFailed(t)
+}
+
+func (s geminiClientStream) assertFailed(t *testing.T) {
+	t.Helper()
+	require.Len(t, s.errors, 1, "the client gets one error object")
+	assert.Equal(t, 500, s.errors[0].Error.Code)
+	assert.Equal(t, "INTERNAL", s.errors[0].Error.Status)
+	assert.Equal(t, "upstream stream failed", s.errors[0].Error.Message, "the client does not get the upstream's message")
+	for _, c := range s.chunks {
+		assert.Empty(t, c.Candidates[0].FinishReason, "a failed stream has no finish")
+	}
+}
+
+func TestAdaptStream_GeminiClientWithholdsCallsOnUpstreamErrorPayload(t *testing.T) {
+	name := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"delete_all","arguments":""}}]}}]}`
+	whole := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]}}]}`
+	cut := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","function":{"name":"second","arguments":"{\"a\":"}}]}}]}`
+	text := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`
+	errorPayload := `data: {"error":{"message":"The server had an error","type":"server_error","code":500}}`
+	tests := []struct {
+		name      string
+		upstream  []string
+		wantParts []string
+	}{
+		{name: "name-only call", upstream: []string{name, errorPayload, `data: [DONE]`}},
+		{name: "whole and cut calls", upstream: []string{name, whole, cut, errorPayload, `data: [DONE]`}},
+		{name: "text before the error", upstream: []string{text, errorPayload, `data: [DONE]`}, wantParts: []string{"text hi"}},
+		{
+			name: "error with content",
+			upstream: []string{
+				text,
+				`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" there"}}],"error":{"message":"The server had an error","type":"server_error"}}`,
+				`data: [DONE]`,
+			},
+			wantParts: []string{"text hi", "text  there"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines, err := collectLinesAndError(adaptStream(linesSeq(tt.upstream...), adapter.NewRegistry(), adapter.FormatGemini, adapter.FormatOpenAI, slog.Default(), nil))
+
+			_, notified := errors.AsType[*ClientNotifiedStreamError](err)
+			require.True(t, notified, "the client already has its error object, got %v", err)
+			_, upstream := errors.AsType[*adapter.UpstreamStreamError](err)
+			assert.True(t, upstream, "the sequence error is the upstream's")
+			s := decodeGeminiClientStream(t, lines)
+			assert.Equal(t, tt.wantParts, s.parts)
+			s.assertFailed(t)
+			assert.NotContains(t, strings.Join(lines, "\n"), "The server had an error")
+		})
+	}
+}
+
+func TestAdaptStream_GeminiClientUpstreamErrorAfterTheFinishKeepsTheFinish(t *testing.T) {
+	text := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`
+	finish := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
+	usage := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`
+	errorPayload := `data: {"error":{"message":"The server had an error","type":"server_error"}}`
+	for name, upstream := range map[string][]string{
+		"error after a held finish":      {text, finish, errorPayload, `data: [DONE]`},
+		"error after the flushed finish": {text, finish, usage, errorPayload, `data: [DONE]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lines, err := collectLinesAndError(adaptStream(linesSeq(upstream...), adapter.NewRegistry(), adapter.FormatGemini, adapter.FormatOpenAI, slog.Default(), nil))
+
+			_, notified := errors.AsType[*ClientNotifiedStreamError](err)
+			require.True(t, notified, "the client already has its finish, got %v", err)
+			s := decodeGeminiClientStream(t, lines)
+			assert.Empty(t, s.errors, "a finished stream gets no error object")
+			assert.Equal(t, []string{"text hi"}, s.parts)
+			s.assertOneFinishLast(t, "STOP")
+		})
+	}
+}
+
+func TestAdaptStream_GeminiClientDoneWithoutFinishCompletesNoArgCalls(t *testing.T) {
+	name := `data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"list_files","arguments":""}}]}}]}`
+
+	s := adaptGemini(t, adapter.FormatOpenAI, name, `data: [DONE]`)
+
+	assert.Equal(t, []string{"call list_files {}"}, s.parts, "a call with no argument bytes is a call to a tool that takes none")
+	s.assertOneFinishLast(t, "STOP")
+}
+
+func TestAdaptStream_GeminiClientGetsTheCallIDs(t *testing.T) {
+	s := adaptGemini(t, adapter.FormatOpenAI,
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+		`data: {"id":"c","model":"gpt","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	)
+
+	var ids []string
+	for _, c := range s.chunks {
+		for _, p := range c.Candidates[0].Content.Parts {
+			if p.FunctionCall != nil {
+				ids = append(ids, p.FunctionCall.ID)
+			}
+		}
+	}
+	assert.Equal(t, []string{"call_1"}, ids)
+}
+
+func TestAdaptStream_GeminiClientWithholdsCallsOnContextWindowExceeded(t *testing.T) {
+	s := adaptGemini(t, adapter.FormatAnthropic,
+		`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"web_search","input":{}}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"weather\"}"}}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded"},"usage":{"output_tokens":5}}`,
+		`data: {"type":"message_stop"}`,
+	)
+
+	assert.Empty(t, s.parts, "a call cut at the context window is withheld")
+	s.assertOneFinishLast(t, "MAX_TOKENS")
 }

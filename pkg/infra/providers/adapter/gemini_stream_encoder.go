@@ -26,18 +26,20 @@ import (
 // chunk ahead of the text that follows them, or ahead of the finish.
 //
 // A held call is sent only when its arguments are empty or a JSON object, and
-// only if the upstream finished normally: a length or content filter stop, a
-// failure finish, or an upstream that ended or failed without a finish may
-// have cut the arguments short, and a client executes the calls it gets, so
-// those calls are withheld, as the Responses encoder withholds them. A call
-// that never got a name is dropped. It is not safe for concurrent use.
+// only if the upstream finished normally: a length, context window or content
+// filter stop, a failure finish, or an upstream that ended or failed without a
+// finish may have cut the arguments short, and a client executes the calls it
+// gets, so those calls are withheld, as the Responses encoder withholds them.
+// A call that never got a name is dropped. It is not safe for concurrent use.
 type GeminiStreamEncoder struct {
-	codec    GeminiAdapter
-	done     bool
-	calls    map[int]*geminiStreamCall
-	pending  []*geminiStreamCall
-	dropped  int
-	withheld int
+	codec     GeminiAdapter
+	done      bool
+	failed    bool
+	calls     map[int]*geminiStreamCall
+	pending   []*geminiStreamCall
+	dropped   int
+	withheld  int
+	encodeErr error
 }
 
 type geminiStreamCall struct {
@@ -87,7 +89,7 @@ func (e *GeminiStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	}
 	e.done = true
 	var lines [][]byte
-	if _, failed := FinishFailure(chunk.FinishReason); failed || chunk.FinishReason == "length" || refusalFinish(chunk.FinishReason) {
+	if _, failed := FinishFailure(chunk.FinishReason); failed || truncatedFinish(chunk.FinishReason) || refusalFinish(chunk.FinishReason) {
 		e.withhold()
 	} else {
 		lines = e.sendCalls()
@@ -95,9 +97,8 @@ func (e *GeminiStreamEncoder) Finish(chunk *CanonicalStreamChunk) [][]byte {
 	return append(lines, e.encode(chunk)...)
 }
 
-// Abort ends the stream of an upstream that ended or failed without a finish:
-// the held tool calls are withheld and nothing more is sent. Gemini streams
-// have no error event.
+// Abort ends the stream of an upstream that ended without a finish: the held
+// tool calls are withheld and nothing more is sent.
 func (e *GeminiStreamEncoder) Abort() {
 	if e.done {
 		return
@@ -106,9 +107,49 @@ func (e *GeminiStreamEncoder) Abort() {
 	e.withhold()
 }
 
+// Fail ends the stream of an upstream that failed before its finish: the held
+// tool calls are withheld and the client gets the error object the Gemini API
+// sends mid-stream, with an INTERNAL status and code 500, which Gemini SDKs
+// raise as a server error. Nothing is sent once the stream has ended.
+func (e *GeminiStreamEncoder) Fail(message string) [][]byte {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	e.failed = true
+	e.withhold()
+	data, err := json.Marshal(geminiStreamError{Error: geminiStreamErrorBody{
+		Code:    geminiErrorCode,
+		Message: message,
+		Status:  geminiErrorStatus,
+	}})
+	if err != nil {
+		e.encodeErr = err
+		return nil
+	}
+	return SSEData(data)
+}
+
+// Failed reports whether the client got an error object from Fail.
+func (e *GeminiStreamEncoder) Failed() bool {
+	return e.failed
+}
+
+// TakeEncodeError returns the error of the last chunk that could not be
+// encoded since the previous call, and clears it. That chunk was not sent.
+func (e *GeminiStreamEncoder) TakeEncodeError() error {
+	err := e.encodeErr
+	e.encodeErr = nil
+	return err
+}
+
 // HeldCallsComplete reports whether every named tool call held back has
 // arguments that can be sent. It is asked of an upstream that sent [DONE]
-// without a finish, which leaves no other sign that a call was cut short.
+// without a finish, which leaves no other sign that a call was cut short. As
+// in ResponsesStreamEncoder.HeldCallsComplete, a call with no argument bytes
+// counts as complete and is sent with {}: OpenAI-compatible upstreams stream
+// a call to a tool that takes no arguments that way, and a call cut before
+// its first argument delta cannot be told apart from it.
 func (e *GeminiStreamEncoder) HeldCallsComplete() bool {
 	for _, call := range e.pending {
 		if call.name != "" && !call.complete() {
@@ -190,7 +231,23 @@ func (e *GeminiStreamEncoder) reset() {
 func (e *GeminiStreamEncoder) encode(chunk *CanonicalStreamChunk) [][]byte {
 	lines, err := e.codec.EncodeStreamChunk(chunk)
 	if err != nil {
+		e.encodeErr = err
 		return nil
 	}
 	return lines
+}
+
+const (
+	geminiErrorCode   = 500
+	geminiErrorStatus = "INTERNAL"
+)
+
+type geminiStreamError struct {
+	Error geminiStreamErrorBody `json:"error"`
+}
+
+type geminiStreamErrorBody struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
 }
