@@ -26,6 +26,7 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
@@ -664,4 +665,84 @@ func TestUpdater_Update_StoreModePreservedWhenOmitted(t *testing.T) {
 	if got.StoreMode() != domain.StoreModeCurated {
 		t.Fatalf("StoreMode = %q, want curated preserved", got.StoreMode())
 	}
+}
+
+func TestUpdater_Update_TopicClassification(t *testing.T) {
+	t.Parallel()
+
+	catalog := []topic.Topic{{Name: "billing", Definition: "refunds"}}
+
+	t.Run("replaces the config when provided", func(t *testing.T) {
+		t.Parallel()
+		repo := repomocks.NewRepository(t)
+		id := ids.New[ids.GatewayKind]()
+		now := time.Now().UTC()
+		existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+		existing.TopicClassification = &topic.Config{Enabled: false, Topics: catalog}
+
+		repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+		repo.EXPECT().
+			Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+				return g.TopicClassification != nil && g.TopicClassification.Enabled
+			})).
+			Return(nil).
+			Once()
+		publisher := cachemocks.NewEventPublisher(t)
+		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+		updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+		got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+			ID:                  id,
+			TopicClassification: &topic.Config{Enabled: true, Topics: catalog},
+		})
+		if err != nil {
+			t.Fatalf("Update error: %v", err)
+		}
+		if !got.TopicClassification.IsEnabled() {
+			t.Fatalf("TopicClassification = %+v, want enabled", got.TopicClassification)
+		}
+	})
+
+	t.Run("keeps the config when omitted", func(t *testing.T) {
+		t.Parallel()
+		repo := repomocks.NewRepository(t)
+		id := ids.New[ids.GatewayKind]()
+		now := time.Now().UTC()
+		existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+		existing.TopicClassification = &topic.Config{Enabled: true, Topics: catalog}
+
+		repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+		repo.EXPECT().
+			Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+				return g.TopicClassification.IsEnabled()
+			})).
+			Return(nil).
+			Once()
+		publisher := cachemocks.NewEventPublisher(t)
+		publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+		updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+		if _, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, Slug: ptr("renamed")}); err != nil {
+			t.Fatalf("Update error: %v", err)
+		}
+	})
+
+	t.Run("rejects an invalid config without persisting", func(t *testing.T) {
+		t.Parallel()
+		repo := repomocks.NewRepository(t)
+		id := ids.New[ids.GatewayKind]()
+		now := time.Now().UTC()
+		existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+
+		repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+
+		updater := appgateway.NewUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), nil, newTestLogger(), nil, false)
+		_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+			ID:                  id,
+			TopicClassification: &topic.Config{Enabled: true},
+		})
+		if !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("error = %v, want ErrValidation", err)
+		}
+	})
 }

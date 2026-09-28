@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"
@@ -113,15 +114,19 @@ func insertGatewayTx(ctx context.Context, tx pgx.Tx, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	topicBytes, err := marshalJSON(g.TopicClassification)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal topic_classification: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
 	}
 	const query = `
-		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, topic_classification)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	if _, err := tx.Exec(ctx, query,
-		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt,
+		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt, topicBytes,
 	); err != nil {
 		return mapPgError(err)
 	}
@@ -148,6 +153,10 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	topicBytes, err := marshalJSON(g.TopicClassification)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal topic_classification: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
@@ -162,11 +171,12 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		       client_tls     = $7,
 		       session_config = $8,
 		       entitlements   = $9,
-		       updated_at     = $10
+		       updated_at     = $10,
+		       topic_classification = $11
 		 WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt, topicBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -252,6 +262,10 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	topicBytes, err := marshalJSON(g.TopicClassification)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal topic_classification: %w", err)
+	}
 	entitlementsBytes, err := marshalJSON(g.Entitlements)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
@@ -266,7 +280,8 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 		       client_tls     = $7,
 		       session_config = $8,
 		       entitlements   = $9,
-		       updated_at     = $10
+		       updated_at     = $10,
+		       topic_classification = $11
 		 WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
@@ -280,7 +295,7 @@ func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway,
 			return ratelimit.ErrInstanceLimit
 		}
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt, topicBytes,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -326,7 +341,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, topic_classification
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -342,7 +357,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 
 func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, topic_classification
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
 	row := r.conn.Pool.QueryRow(ctx, query, host)
@@ -358,7 +373,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 
 func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, topic_classification
 		  FROM gateways
 		 WHERE slug = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
@@ -392,7 +407,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at, topic_classification
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
 		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
@@ -433,11 +448,11 @@ type rowScanner interface {
 
 func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
-	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw, entitlementsRaw []byte
+	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw, entitlementsRaw, topicRaw []byte
 	if err := s.Scan(
 		&g.ID, &g.Slug, &g.Status, &g.Domain,
 		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw, &entitlementsRaw,
-		&g.CreatedAt, &g.UpdatedAt,
+		&g.CreatedAt, &g.UpdatedAt, &topicRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -469,6 +484,13 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 			return nil, fmt.Errorf("scan session_config: %w", err)
 		}
 		g.SessionConfig = &sc
+	}
+	if len(topicRaw) > 0 {
+		var tc topic.Config
+		if err := json.Unmarshal(topicRaw, &tc); err != nil {
+			return nil, fmt.Errorf("scan topic_classification: %w", err)
+		}
+		g.TopicClassification = &tc
 	}
 	g.Entitlements = domain.DefaultEntitlements()
 	if len(entitlementsRaw) > 0 {
@@ -503,6 +525,10 @@ func marshalJSON(v any) ([]byte, error) {
 			return nil, nil
 		}
 	case *domain.SessionConfig:
+		if t == nil {
+			return nil, nil
+		}
+	case *topic.Config:
 		if t == nil {
 			return nil, nil
 		}

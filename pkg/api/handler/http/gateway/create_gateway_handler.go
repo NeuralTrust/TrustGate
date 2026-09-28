@@ -68,15 +68,16 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
-		Slug:            req.Slug,
-		Domain:          req.Domain,
-		TenantID:        effectiveTenant,
-		PlatformAdmin:   callerTenant == "",
-		Metadata:        req.Metadata,
-		Telemetry:       req.Telemetry,
-		ClientTLSConfig: req.ClientTLSConfig,
-		SessionConfig:   req.SessionConfig,
-		Entitlements:    req.Entitlements,
+		Slug:                req.Slug,
+		Domain:              req.Domain,
+		TenantID:            effectiveTenant,
+		PlatformAdmin:       callerTenant == "",
+		Metadata:            req.Metadata,
+		Telemetry:           req.Telemetry,
+		ClientTLSConfig:     req.ClientTLSConfig,
+		SessionConfig:       req.SessionConfig,
+		TopicClassification: req.TopicClassification,
+		Entitlements:        req.Entitlements,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

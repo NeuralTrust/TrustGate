@@ -90,6 +90,11 @@ const (
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
 
+	defaultTopicClassifierIntakeQueueSize    = 1000
+	defaultTopicClassifierIntakeWorkers      = 2
+	defaultTopicClassifierIntakeMaxBodyBytes = 2 << 20
+	defaultTopicClassifierEnqueueTimeout     = 500 * time.Millisecond
+
 	defaultPlaygroundTraceStoreEnabled = true
 	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
 
@@ -160,6 +165,7 @@ type Config struct {
 	Kafka               KafkaConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
+	TopicClassifier     TopicClassifierConfig
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
@@ -395,6 +401,15 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
+// TopicClassifierConfig tunes the async topic classifier. Whether a gateway is
+// classified is decided by the gateway's own config, never by these settings.
+type TopicClassifierConfig struct {
+	IntakeQueueSize    int
+	IntakeWorkers      int
+	IntakeMaxBodyBytes int
+	EnqueueTimeout     time.Duration
+}
+
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
@@ -498,6 +513,7 @@ func LoadConfig() (*Config, error) {
 		Kafka:               getKafkaConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
+		TopicClassifier:     getTopicClassifierConfig(),
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
@@ -721,6 +737,15 @@ func parseOTLPHeaders(raw string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+func getTopicClassifierConfig() TopicClassifierConfig {
+	return TopicClassifierConfig{
+		IntakeQueueSize:    getEnvInt("TOPIC_CLASSIFIER_INTAKE_QUEUE_SIZE", defaultTopicClassifierIntakeQueueSize),
+		IntakeWorkers:      getEnvInt("TOPIC_CLASSIFIER_INTAKE_WORKERS", defaultTopicClassifierIntakeWorkers),
+		IntakeMaxBodyBytes: getEnvInt("TOPIC_CLASSIFIER_INTAKE_MAX_BODY_BYTES", defaultTopicClassifierIntakeMaxBodyBytes),
+		EnqueueTimeout:     getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
+	}
 }
 
 func getMetricsConfig() MetricsConfig {
