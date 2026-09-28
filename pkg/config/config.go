@@ -411,28 +411,21 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
-// TopicClassifierConfig tunes the async topic classifier. Whether a gateway is
-// classified is decided by the gateway's own config, never by these settings.
 type TopicClassifierConfig struct {
-	IntakeQueueSize    int
-	IntakeWorkers      int
-	IntakeMaxBodyBytes int
-	// IntakeMaxBufferBytes bounds the request bodies a replica holds while
-	// they wait to be queued.
-	IntakeMaxBufferBytes int64
-	EnqueueTimeout       time.Duration
-	ClassifierTimeout    time.Duration
-	CacheTTL             time.Duration
-	// StreamRetention bounds how long customer text may wait in Redis.
+	IntakeQueueSize       int
+	IntakeWorkers         int
+	IntakeMaxBodyBytes    int
+	IntakeMaxBufferBytes  int64
+	EnqueueTimeout        time.Duration
+	ClassifierTimeout     time.Duration
+	CacheTTL              time.Duration
 	StreamMaxLen          int64
 	StreamRetention       time.Duration
 	GatewayQuotaPerSecond int64
-	// Concurrency is per replica: the load on topic-guard is Concurrency
-	// times the number of TrustGate replicas.
-	Concurrency   int
-	BatchMaxTexts int
-	ClaimMinIdle  time.Duration
-	MaxAttempts   int
+	Concurrency           int
+	BatchMaxTexts         int
+	ClaimMinIdle          time.Duration
+	MaxAttempts           int
 }
 
 type PlaygroundConfig struct {

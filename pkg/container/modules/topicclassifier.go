@@ -43,16 +43,10 @@ const (
 	topicGroupTimeout    = 5 * time.Second
 	topicShutdownTimeout = 5 * time.Second
 
-	// topicCacheKeyInfo separates the cache key from everything else derived
-	// from SERVER_SECRET_KEY, such as the vault cipher.
 	topicCacheKeyInfo = "trustgate/topic-classifier-cache"
 	topicCacheKeyLen  = 32
 )
 
-// TopicClassifier wires the per-gateway async topic classifier: the intake on
-// the proxy request path, the Redis stream, the topic-guard client, the cache
-// and the worker that publishes results through the telemetry pipeline.
-// Whether a gateway is classified is decided by its own config only.
 func TopicClassifier(c *container.Container) error {
 	for _, provider := range []any{
 		newTopicStream,
@@ -83,8 +77,6 @@ func newTopicClassifierMetrics(cfg *config.Config, sdk *o11y.SDK, stream *topics
 	return o11y.NewTopicClassifierMetrics(cfg, sdk, stream.Stats)
 }
 
-// newTopicGuardClient reaches topic-guard through the same firewall endpoint
-// and secret as the complexity scorer; only the timeout is its own.
 func newTopicGuardClient(cfg *config.Config) *topicguard.Client {
 	return topicguard.NewClient(
 		cfg.FirewallComplexity.BaseURL,
@@ -93,10 +85,7 @@ func newTopicGuardClient(cfg *config.Config) *topicguard.Client {
 	)
 }
 
-// newTopicCache signs cache keys with a key derived from SERVER_SECRET_KEY.
-// The encrypter is required only so that, in prod, the shared secret is
-// resolved into the config before it is read here. Without a secret the
-// worker runs uncached rather than storing keys derived from the prompt as is.
+// The unused Encrypter forces SERVER_SECRET_KEY to be resolved in prod before it is read.
 func newTopicCache(cc cache.Client, cfg *config.Config, _ vaultdomain.Encrypter, logger *slog.Logger) topicclassifier.Cache {
 	secret := cfg.Server.SecretKey
 	if secret == "" {
@@ -155,7 +144,6 @@ func newTopicClassificationMiddleware(
 	return middleware.NewTopicClassificationMiddleware(intake, metrics, cfg)
 }
 
-// TopicClassifierParams collects the classifier pieces a plane starts.
 type TopicClassifierParams struct {
 	dig.In
 	Logger     *slog.Logger
@@ -165,13 +153,6 @@ type TopicClassifierParams struct {
 	Worker     topicclassifier.Worker
 }
 
-// StartTopicClassifier creates the consumer group and starts the intake and
-// the worker, returning the function that stops them. A Redis that is down at
-// boot is not fatal: the stream recreates its group on the first read.
-//
-// A plane without a topic-guard endpoint still queues, so a worker plane that
-// has one can classify, but runs no worker: it would take entries from the
-// shared stream only to drop them.
 func StartTopicClassifier(p TopicClassifierParams, withIntake bool) func() {
 	ctx, cancel := context.WithTimeout(context.Background(), topicGroupTimeout)
 	if err := p.Stream.EnsureGroup(ctx); err != nil {

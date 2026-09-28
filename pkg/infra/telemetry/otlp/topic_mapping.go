@@ -27,6 +27,7 @@ import (
 const (
 	topicEventVerb = "topic_classification"
 
+	// Kept out of trustgate.tenant_id: the trustgate_events view would count the record as a request.
 	attrTopicSchemaVersion = "trustgate.topic.schema_version"
 	attrTopicTraceID       = "trustgate.topic.trace_id"
 	attrTopicGatewayID     = "trustgate.topic.gateway_id"
@@ -47,11 +48,6 @@ func topicEventName(schemaVersion int) string {
 	return fmt.Sprintf("trustgate.%d.%s", schemaVersion, topicEventVerb)
 }
 
-// topicToRecord maps a topic classification to its own OTLP log record. Every
-// attribute lives under trustgate.topic.*, and in particular the tenant is not
-// sent as trustgate.tenant_id: the ClickHouse view that fills trustgate_events
-// takes any record carrying that key, so reusing it would land each
-// classification as one more request and double the request counts.
 func topicToRecord(evt *events.TopicClassification) otellog.Record {
 	var rec otellog.Record
 	if evt == nil {

@@ -25,16 +25,14 @@ import (
 )
 
 type UpdateGatewayRequest struct {
-	Slug            *string                 `json:"slug,omitempty"`
-	Status          *string                 `json:"status,omitempty"`
-	Domain          *string                 `json:"domain,omitempty"`
-	Metadata        map[string]string       `json:"metadata,omitempty"`
-	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
-	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
-	// TopicClassification replaces the gateway's topic classifier config as a
-	// whole. Omitted leaves it unchanged; send enabled=false to turn it off.
-	TopicClassification *topic.Config `json:"topic_classification,omitempty"`
+	Slug                *string                 `json:"slug,omitempty"`
+	Status              *string                 `json:"status,omitempty"`
+	Domain              *string                 `json:"domain,omitempty"`
+	Metadata            map[string]string       `json:"metadata,omitempty"`
+	Telemetry           *telemetry.Telemetry    `json:"telemetry,omitempty"`
+	ClientTLSConfig     *domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig       *domain.SessionConfig   `json:"session_config,omitempty"`
+	TopicClassification *topic.Config           `json:"topic_classification,omitempty"`
 	// Entitlements is optional; only platform admins may set it (tenant callers get 422).
 	// When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
 	// has more gateways than the new MaxInstances returns 409 — delete excess first.

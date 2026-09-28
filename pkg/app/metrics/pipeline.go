@@ -33,9 +33,6 @@ type Exporter interface {
 	Close()
 }
 
-// TopicExporter is implemented by exporters that carry topic classification
-// events. Exporters without it never receive them: their sinks key rows on the
-// trace id and would take a classification for a second copy of the request.
 type TopicExporter interface {
 	PublishTopic(ctx context.Context, evt *events.TopicClassification) error
 }
@@ -110,8 +107,6 @@ func (p *Pipeline) publishContext(
 	}
 }
 
-// PublishTopic sends a topic classification to the default and gateway
-// exporters that can carry it.
 func (p *Pipeline) PublishTopic(ctx context.Context, evt *events.TopicClassification, explicit []telemetrydomain.ExporterConfig) {
 	if p == nil || evt == nil {
 		return

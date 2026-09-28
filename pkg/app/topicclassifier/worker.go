@@ -48,19 +48,8 @@ const (
 	noThresholdMarker = "default"
 )
 
-// errShuttingDown makes a batch that would have to wait for topic-guard give
-// up once shutdown starts. It is left pending, not dropped.
 var errShuttingDown = errors.New("topic classifier: shutting down")
 
-// WorkerConfig tunes the worker. Zero values fall back to defaults.
-//
-// Concurrency is the number of topic-guard calls this replica keeps in flight;
-// the total against topic-guard is Concurrency times the number of replicas.
-// ClaimMinIdle is how long an entry may go untouched before another consumer
-// takes it over; entries this worker holds are touched well within it.
-// MaxAttempts bounds in-process retries of one batch on real errors, while
-// MaxDeliveries bounds how many times an entry may be handed out across
-// crashes before it is dropped as poison.
 type WorkerConfig struct {
 	Concurrency     int
 	ReadCount       int
@@ -97,14 +86,9 @@ func positiveOr[T int | int64 | time.Duration](v, fallback T) T {
 	return v
 }
 
-// Worker consumes the classification queue: it batches requests that share a
-// catalog, classifies them against topic-guard and publishes the results.
-//
 //go:generate mockery --name=Worker --dir=. --output=./mocks --filename=worker_mock.go --case=underscore --with-expecter
 type Worker interface {
 	Start()
-	// Shutdown stops reading and waits for in-flight batches. If ctx expires
-	// first they are cancelled and stay pending, to be reclaimed later.
 	Shutdown(ctx context.Context) error
 }
 
@@ -139,8 +123,6 @@ type worker struct {
 	held   map[string]struct{}
 }
 
-// NewWorker builds a worker over the given stream, classifier, cache and sink.
-// A nil recorder records nothing.
 func NewWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache Cache, sink Sink, recorder Recorder, cfg WorkerConfig) Worker {
 	return newWorker(logger, stream, classifier, cache, sink, recorder, cfg)
 }
@@ -233,8 +215,6 @@ func (w *worker) readLoop(readCtx, workCtx context.Context) {
 	}
 }
 
-// claimLoop takes over entries dead consumers left behind and trims the
-// stream, so its retention holds even when nothing new is enqueued.
 func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 	defer w.loops.Done()
 	ticker := time.NewTicker(w.cfg.ClaimInterval)
@@ -263,7 +243,6 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 		for _, d := range deliveries {
 			switch {
 			case w.holds(d.ID):
-				// Already being worked on here; a missed touch let it idle.
 			case d.Deliveries > w.cfg.MaxDeliveries:
 				poison = append(poison, d.ID)
 			default:
@@ -280,9 +259,6 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 	}
 }
 
-// heartbeatLoop touches every entry this worker holds, read but not yet
-// acknowledged, so a batch waiting for a concurrency slot, a Retry-After or
-// the breaker is never reclaimed by another consumer and classified twice.
 func (w *worker) heartbeatLoop(readCtx context.Context) {
 	defer w.loops.Done()
 	ticker := time.NewTicker(max(w.cfg.ClaimMinIdle/3, time.Millisecond))
@@ -351,10 +327,6 @@ func keyOf(req topic.Request) batchKey {
 	return batchKey{gatewayID: req.GatewayID, catalogHash: req.CatalogHash, threshold: th}
 }
 
-// dispatch groups deliveries that can share a topic-guard call and hands each
-// batch to a goroutine, blocking while every concurrency slot is busy so the
-// reader slows down with topic-guard. Every valid delivery is held from here
-// until its batch ends, including while it waits for a slot.
 func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Delivery) {
 	var invalid []string
 	var valid []Delivery
@@ -388,7 +360,6 @@ func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Deliver
 		select {
 		case w.sem <- struct{}{}:
 		case <-readCtx.Done():
-			// Left pending: another consumer reclaims them once idle.
 			for _, rest := range batches[i:] {
 				w.release(rest)
 			}
@@ -429,8 +400,6 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 		w.ack(ctx, deliveryIDs(batch))
 		return
 	}
-	// Without a known model version a cached entry could come from a model
-	// that no longer serves, so the cache is only read when it is known.
 	useCache := err == nil && version != ""
 
 	var texts []*pendingText
@@ -494,9 +463,6 @@ func cacheKeyOf(req topic.Request, version string) string {
 	return topic.CacheKey(req.GatewayID, req.TextHash, req.CatalogHash, req.Threshold, version)
 }
 
-// classify retries real failures with backoff up to MaxAttempts. Saturation is
-// not a failure: it pauses the whole worker for Retry-After and tries again
-// without spending an attempt or tripping the breaker.
 func (w *worker) classify(ctx context.Context, topics []topic.Topic, threshold *float64, texts []string) ([]topic.Classification, error) {
 	attempts := 0
 	for {
@@ -550,8 +516,6 @@ func (w *worker) backoff(attempt int) time.Duration {
 	return d + jitter
 }
 
-// pause stops every call for d, capped so a bad Retry-After cannot stall the
-// worker for long.
 func (w *worker) pause(d time.Duration) {
 	until := w.now().Add(min(d, maxPause)).UnixNano()
 	for {
@@ -562,9 +526,6 @@ func (w *worker) pause(d time.Duration) {
 	}
 }
 
-// ready blocks while topic-guard asked to back off or the breaker is open. It
-// reports false once ctx is done, or when it would have to wait and shutdown
-// has started: in-flight work that can run right away still finishes.
 func (w *worker) ready(ctx context.Context) bool {
 	for {
 		if ctx.Err() != nil {
@@ -618,8 +579,6 @@ func (w *worker) cached(ctx context.Context, texts []*pendingText) map[string]to
 	return hits
 }
 
-// store caches each result under the model version that actually scored it,
-// which may be newer than the one the batch looked up.
 func (w *worker) store(ctx context.Context, texts []*pendingText, results []topic.Classification) {
 	if w.cache == nil {
 		return
@@ -637,9 +596,6 @@ func (w *worker) store(ctx context.Context, texts []*pendingText, results []topi
 	}
 }
 
-// publishAll publishes cls for every delivery and returns the ids that are
-// done. A delivery whose publish failed for a transient reason is left
-// pending: it is reclaimed later and served from the cache.
 func (w *worker) publishAll(ctx context.Context, ds []Delivery, cls topic.Classification) []string {
 	done := make([]string, 0, len(ds))
 	for _, d := range ds {
@@ -662,8 +618,7 @@ func (w *worker) publishAll(ctx context.Context, ds []Delivery, cls topic.Classi
 	return done
 }
 
-// ack runs on a context detached from cancellation: a batch finished while
-// shutting down must still be marked done, or it is classified twice.
+// Detached from cancellation so a batch finished during shutdown is still acked, not classified twice.
 func (w *worker) ack(ctx context.Context, ids []string) {
 	if len(ids) == 0 {
 		return

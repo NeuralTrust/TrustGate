@@ -56,8 +56,6 @@ func lastUserMessages(msgs []adapter.CanonicalMessage, window int) string {
 	return strings.Join(picked, "\n")
 }
 
-// truncateTail keeps the last limit runes. The latest turn is what the topic
-// hinges on, while topic-guard truncates from the end and would drop it.
 func truncateTail(s string, limit int) string {
 	if utf8.RuneCountInString(s) <= limit {
 		return s

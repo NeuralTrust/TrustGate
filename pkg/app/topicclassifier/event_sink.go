@@ -30,35 +30,22 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 )
 
-// GatewayFinder resolves the gateway a classification belongs to, for its
-// tenant, retention and exporters.
-//
 //go:generate mockery --name=GatewayFinder --dir=. --output=./mocks --filename=gateway_finder_mock.go --case=underscore --with-expecter
 type GatewayFinder interface {
 	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
 }
 
-// TopicPublisher hands topic classification events to telemetry exporters.
-//
 //go:generate mockery --name=TopicPublisher --dir=. --output=./mocks --filename=topic_publisher_mock.go --case=underscore --with-expecter
 type TopicPublisher interface {
 	PublishTopic(ctx context.Context, evt *events.TopicClassification, exporters []telemetrydomain.ExporterConfig)
 }
 
-// gatewayCacheTTL bounds how stale the tenant, retention and exporters of a
-// gateway may be when publishing, in exchange for not looking the gateway up
-// once per classified request.
 const gatewayCacheTTL = 30 * time.Second
 
-// ErrUnpublishable marks a classification that can never be published, such
-// as one for a gateway that no longer exists. Any other publish error is
-// transient, and the request is classified again later.
 var ErrUnpublishable = errors.New("topic sink: classification cannot be published")
 
 var _ Sink = (*eventSink)(nil)
 
-// cachedGateway remembers a lookup. A nil gw means the gateway was not found,
-// so a backlog for a deleted gateway does not query it once per request.
 type cachedGateway struct {
 	gw      *gatewaydomain.Gateway
 	expires time.Time
@@ -73,8 +60,6 @@ type eventSink struct {
 	known map[ids.GatewayID]cachedGateway
 }
 
-// NewEventSink builds the Sink that publishes classifications as telemetry
-// events through the gateway's exporters.
 func NewEventSink(gateways GatewayFinder, publisher TopicPublisher) Sink {
 	return &eventSink{
 		gateways:  gateways,
@@ -107,8 +92,6 @@ func (s *eventSink) gateway(ctx context.Context, id ids.GatewayID) (*gatewaydoma
 	return gw, nil
 }
 
-// remember stores a lookup and drops the expired ones, so gateways that stop
-// classifying do not stay in memory.
 func (s *eventSink) remember(id ids.GatewayID, gw *gatewaydomain.Gateway, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,8 +143,6 @@ func (s *eventSink) Publish(ctx context.Context, req topic.Request, cls topic.Cl
 	return nil
 }
 
-// retentionFor stamps the same expiry the request event gets, counted from
-// when the request arrived, so a classification never outlives its request.
 func retentionFor(gw *gatewaydomain.Gateway, requested time.Time) *events.Retention {
 	window, ok := gw.RetentionWindow()
 	if !ok || window <= 0 {

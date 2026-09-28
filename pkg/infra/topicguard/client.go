@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topicguard is a client for the Firewall topic-guard API, which
-// scores a text against a catalog of customer-defined topics.
 package topicguard
 
 import (
@@ -52,7 +50,6 @@ const (
 	calibrationSeparator = "+"
 )
 
-// TokenProvider supplies authentication tokens for Firewall requests.
 type TokenProvider interface {
 	Configured() bool
 	Invalidate()
@@ -61,7 +58,6 @@ type TokenProvider interface {
 
 var _ topicclassifier.Classifier = (*Client)(nil)
 
-// Client calls the Firewall topic-guard API.
 type Client struct {
 	http          *http.Client
 	baseURL       string
@@ -74,8 +70,6 @@ type Client struct {
 	versionExpires time.Time
 }
 
-// NewClient builds a Client. Missing endpoint credentials leave it
-// unconfigured, and every call then returns topic.ErrClassifierNotConfigured.
 func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -84,8 +78,7 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 		http: &http.Client{
 			Timeout:   timeout,
 			Transport: o11y.InternalTransport(peerService, classifySpanName),
-			// A redirect would replay the prompts and the token header, which
-			// Go does not strip across hosts, to wherever it points.
+			// Go forwards the custom token header across hosts, and a 307 replays the prompts.
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -96,13 +89,10 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 	}
 }
 
-// Configured reports whether the endpoint and token provider are configured.
 func (c *Client) Configured() bool {
 	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured()
 }
 
-// Classify scores texts against topics in a single call. Results are
-// index-aligned with texts and carry the model version that produced them.
 func (c *Client) Classify(ctx context.Context, topics []topic.Topic, threshold *float64, texts []string) ([]topic.Classification, error) {
 	if !c.Configured() {
 		return nil, topic.ErrClassifierNotConfigured
@@ -132,8 +122,6 @@ func (c *Client) Classify(ctx context.Context, topics []topic.Topic, threshold *
 	if len(out) != len(texts) {
 		return nil, fmt.Errorf("topicguard: got %d results for %d texts", len(out), len(texts))
 	}
-	// A failed version lookup still returns the last known version, and the
-	// scores are valid either way; the error only matters to cache keying.
 	version, _ := c.ModelVersion(ctx)
 	results := make([]topic.Classification, len(out))
 	for i, r := range out {
@@ -142,10 +130,6 @@ func (c *Client) Classify(ctx context.Context, topics []topic.Topic, threshold *
 	return results, nil
 }
 
-// ModelVersion returns the model and calibration revision currently serving.
-// It is cached for a few minutes so a redeploy is picked up without asking on
-// every call. On failure it returns the last known version with the error,
-// and asks again sooner.
 func (c *Client) ModelVersion(ctx context.Context) (string, error) {
 	if !c.Configured() {
 		return "", topic.ErrClassifierNotConfigured

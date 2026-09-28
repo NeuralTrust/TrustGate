@@ -611,8 +611,6 @@ func TestWorker_ShutdownDoesNotWaitOnAnOpenBreaker(t *testing.T) {
 	assert.Len(t, h.stream.ackedIDs(), 1, "the waiting batch stays pending instead of being dropped")
 }
 
-// blockingClassifier holds every call until release is closed, reporting when
-// the first one arrives.
 func blockingClassifier() (c *fakeClassifier, entered, release chan struct{}) {
 	entered, release = make(chan struct{}), make(chan struct{})
 	var once sync.Once

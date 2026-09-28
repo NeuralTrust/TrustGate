@@ -258,9 +258,8 @@ func TestStream_TouchKeepsAnEntryFromBeingReclaimed(t *testing.T) {
 	h.mr.SetTime(t0.Add(2 * time.Minute))
 	other.resetCursor()
 	stolen, err = other.Reclaim(ctx, 30*time.Second, 10)
+	// Redis does not count a JUSTID claim as a delivery but miniredis does, so the count is not asserted.
 	require.NoError(t, err)
-	// Redis does not count a JUSTID claim as a delivery; miniredis does, so
-	// the count is not asserted here.
 	require.Len(t, stolen, 1, "an entry no one touches is reclaimed")
 	require.NoError(t, busy.Touch(ctx))
 }

@@ -22,9 +22,6 @@ const (
 	topicStreamKey = "{topicclassifier}:stream"
 )
 
-// otlpReceiver stands in for a customer's OTel collector. It keeps every
-// exported payload as raw bytes: protobuf stores strings verbatim, so the
-// prompt leaking into any record would show up as a substring.
 type otlpReceiver struct {
 	server *httptest.Server
 	mu     sync.Mutex
@@ -64,9 +61,6 @@ func topicCatalog() []map[string]any {
 	}
 }
 
-// setupTopicRoute wires a gateway with topic classification set as given and
-// its own OTLP exporter pointing at receiver, one OpenAI-compatible backend
-// and an api-key consumer, plus any policies. It returns the key and path.
 func setupTopicRoute(t *testing.T, enabled bool, receiver *otlpReceiver, policies ...map[string]any) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{
@@ -113,8 +107,6 @@ func chatWithUserText(text string) map[string]any {
 	}
 }
 
-// postUntilRouted retries the request until the proxy routes the gateway
-// created a moment ago, giving it time to pick up the new config.
 func postUntilRouted(t *testing.T, apiKey, path string, body map[string]any) int {
 	t.Helper()
 	var status int
@@ -148,8 +140,6 @@ func TestTopicClassificationE2E_ClassifiesAndPublishesWithoutThePrompt(t *testin
 		"the prompt must leave Redis once it is classified")
 }
 
-// streamHolds reports whether any entry of the classification stream still
-// carries text.
 func streamHolds(t *testing.T, text string) bool {
 	t.Helper()
 	entries, err := redisDB.XRange(context.Background(), topicStreamKey, "-", "+").Result()

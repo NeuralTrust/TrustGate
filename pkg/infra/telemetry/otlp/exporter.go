@@ -111,8 +111,6 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	return nil
 }
 
-// PublishTopic emits a topic classification record. Raw exporters skip it:
-// the event carries no body, so a raw sink has nothing to store.
 func (e *Exporter) PublishTopic(ctx context.Context, evt *events.TopicClassification) error {
 	if evt == nil {
 		return nil
