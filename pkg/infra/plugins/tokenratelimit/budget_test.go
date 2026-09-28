@@ -15,6 +15,7 @@
 package tokenratelimit
 
 import (
+	"bytes"
 	"testing"
 
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -226,4 +227,87 @@ func TestModelFor(t *testing.T) {
 	t.Run("nil request", func(t *testing.T) {
 		assert.Equal(t, "", modelFor(nil))
 	})
+}
+
+func TestCountedTokens_CrossFormatClientBodyExcludesCacheReads(t *testing.T) {
+	registry := adapter.NewRegistry()
+	p := New(nil, registry, nil)
+	inputOnly := &config{Counting: countingInput}
+	total := &config{Counting: countingTotal}
+
+	upstreams := []struct {
+		format adapter.Format
+		body   string
+	}{
+		{
+			format: adapter.FormatAnthropic,
+			body: `{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],
+				"stop_reason":"end_turn","usage":{"input_tokens":200,"output_tokens":10,"cache_read_input_tokens":1000}}`,
+		},
+		{
+			format: adapter.FormatBedrock,
+			body: `{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn",
+				"usage":{"inputTokens":200,"outputTokens":10,"totalTokens":210,"cacheReadInputTokens":1000}}`,
+		},
+	}
+	clients := []adapter.Format{adapter.FormatOpenAI, adapter.FormatOpenAIResponses, adapter.FormatCohere}
+
+	for _, up := range upstreams {
+		for _, client := range clients {
+			t.Run(string(up.format)+" to "+string(client), func(t *testing.T) {
+				clientBody, err := registry.AdaptResponse([]byte(up.body), client, up.format)
+				require.NoError(t, err)
+
+				usage := p.extractUsage(
+					&infracontext.RequestContext{SourceFormat: string(client)},
+					&infracontext.ResponseContext{Body: clientBody},
+				)
+				require.NotNil(t, usage)
+				assert.Equal(t, 1000, usage.CachedInputTokens)
+				assert.Equal(t, 200, countedTokens(inputOnly, usage))
+				assert.Equal(t, 210, countedTokens(total, usage))
+			})
+		}
+	}
+}
+
+func TestCountedTokens_BedrockStreamExcludesCacheReads(t *testing.T) {
+	registry := adapter.NewRegistry()
+	p := New(nil, registry, nil)
+	metadata := []byte(`{"metadata":{"usage":{"inputTokens":200,"outputTokens":10,"totalTokens":210,"cacheReadInputTokens":1000}}}`)
+
+	observed, err := registry.DecodeStreamChunkFor(metadata, adapter.FormatBedrock)
+	require.NoError(t, err)
+	require.NotNil(t, observed)
+
+	usage := p.extractUsage(
+		&infracontext.RequestContext{
+			SourceFormat: string(adapter.FormatOpenAI),
+			Metadata:     map[string]interface{}{adapter.MetadataUsageKey: observed.Usage},
+		},
+		&infracontext.ResponseContext{Streaming: true},
+	)
+	require.NotNil(t, usage)
+	assert.Equal(t, 200, countedTokens(&config{Counting: countingInput}, usage))
+
+	for _, client := range []adapter.Format{adapter.FormatOpenAI, adapter.FormatCohere} {
+		t.Run(string(client)+" client chunk", func(t *testing.T) {
+			lines, err := registry.AdaptStreamChunk(metadata, client, adapter.FormatBedrock)
+			require.NoError(t, err)
+			var reencoded *adapter.CanonicalUsage
+			for _, line := range lines {
+				payload, ok := bytes.CutPrefix(line, []byte("data: "))
+				if !ok {
+					continue
+				}
+				chunk, err := registry.DecodeStreamChunkFor(payload, client)
+				require.NoError(t, err)
+				if chunk != nil {
+					reencoded = adapter.MergeUsage(reencoded, chunk.Usage)
+				}
+			}
+			require.NotNil(t, reencoded)
+			assert.Equal(t, 200, countedTokens(&config{Counting: countingInput}, reencoded))
+		})
+	}
 }

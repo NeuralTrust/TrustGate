@@ -81,7 +81,10 @@ func Proxy(c *container.Container) error {
 	if err := c.Provide(appproxy.NewModelsLister); err != nil {
 		return err
 	}
-	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister, cfg *config.Config) *proxyhttp.ForwardedHandler {
-		return proxyhttp.NewForwardedHandler(fwd).WithModels(models).WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs))
+	return c.Provide(func(fwd appproxy.Forwarder, models appproxy.ModelsLister, cfg *config.Config, logger *slog.Logger) *proxyhttp.ForwardedHandler {
+		return proxyhttp.NewForwardedHandler(fwd).
+			WithModels(models).
+			WithClientIPResolver(requestmeta.NewIPResolver(cfg.ClientIP.Mode, cfg.ClientIP.TrustedProxyCIDRs)).
+			WithLogger(logger)
 	})
 }
