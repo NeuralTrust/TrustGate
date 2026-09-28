@@ -65,12 +65,14 @@ func (e *BackpressureError) Error() string {
 }
 
 // CacheKey identifies a classification by everything that determines it: the
-// text, the catalog, the threshold and the model version that scored it.
-func CacheKey(textHash, catalogHash string, threshold *float64, modelVersion string) string {
+// text, the catalog, the threshold and the model version that scored it. The
+// gateway is part of it too, so gateways never share entries even with the
+// same catalog.
+func CacheKey(gatewayID, textHash, catalogHash string, threshold *float64, modelVersion string) string {
 	th := "default"
 	if threshold != nil {
 		th = strconv.FormatFloat(*threshold, 'g', -1, 64)
 	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{textHash, catalogHash, th, modelVersion}, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join([]string{gatewayID, textHash, catalogHash, th, modelVersion}, "\x00")))
 	return hex.EncodeToString(sum[:])
 }

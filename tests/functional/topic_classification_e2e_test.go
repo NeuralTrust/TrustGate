@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const topicEventName = "topic_classification"
+const (
+	topicEventName = "topic_classification"
+	topicStreamKey = "{topicclassifier}:stream"
+)
 
 // otlpReceiver stands in for a customer's OTel collector. It keeps every
 // exported payload as raw bytes: protobuf stores strings verbatim, so the
@@ -139,6 +143,25 @@ func TestTopicClassificationE2E_ClassifiesAndPublishesWithoutThePrompt(t *testin
 	assert.True(t, receiver.contains("billing"), "the event carries the classification")
 	assert.False(t, receiver.contains(marker), "the prompt must never reach the collector")
 	assert.False(t, receiver.contains("You are the ACME assistant"), "nor the system prompt")
+
+	require.Eventually(t, func() bool { return !streamHolds(t, marker) }, 10*time.Second, 100*time.Millisecond,
+		"the prompt must leave Redis once it is classified")
+}
+
+// streamHolds reports whether any entry of the classification stream still
+// carries text.
+func streamHolds(t *testing.T, text string) bool {
+	t.Helper()
+	entries, err := redisDB.XRange(context.Background(), topicStreamKey, "-", "+").Result()
+	require.NoError(t, err)
+	for _, e := range entries {
+		for _, v := range e.Values {
+			if s, ok := v.(string); ok && strings.Contains(s, text) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestTopicClassificationE2E_BlockedRequestIsStillClassified(t *testing.T) {

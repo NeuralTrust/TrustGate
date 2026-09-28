@@ -199,10 +199,120 @@ func TestStream_AckAndReclaim(t *testing.T) {
 	assert.Equal(t, int64(2), reclaimed[0].Deliveries)
 
 	require.NoError(t, alive.Ack(ctx, reclaimed[0].ID))
+	alive.resetCursor()
 	none, err := alive.Reclaim(ctx, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, none)
 	require.NoError(t, alive.Ack(ctx))
+}
+
+func TestStream_AckDeletesTheEntry(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	s := h.stream(t, "a", Config{})
+	ctx := context.Background()
+
+	require.NoError(t, s.Enqueue(ctx, request("gw", "classified")))
+	require.NoError(t, s.Enqueue(ctx, request("gw", "still waiting")))
+	read, err := s.Read(ctx, 1, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, s.Ack(ctx, read[0].ID))
+
+	assert.Equal(t, int64(1), h.xlen(t), "the text of a classified request leaves Redis with the ack")
+	_, pending, err := s.Stats(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, pending)
+}
+
+func TestStream_TrimDropsExpiredEntriesWithoutNewTraffic(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	s := h.stream(t, "a", Config{Retention: time.Minute})
+	ctx := context.Background()
+
+	require.NoError(t, s.Enqueue(ctx, request("gw", "left behind")))
+	later := t0.Add(2 * time.Minute)
+	s.now = func() time.Time { return later }
+	require.NoError(t, s.Trim(ctx))
+	assert.Zero(t, h.xlen(t))
+}
+
+func TestStream_TouchKeepsAnEntryFromBeingReclaimed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	busy := h.stream(t, "busy-pod", Config{})
+	other := h.stream(t, "other-pod", Config{})
+	ctx := context.Background()
+
+	require.NoError(t, busy.Enqueue(ctx, request("gw", "slow batch")))
+	read, err := busy.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.Len(t, read, 1)
+
+	h.mr.SetTime(t0.Add(time.Minute))
+	require.NoError(t, busy.Touch(ctx, read[0].ID))
+	stolen, err := other.Reclaim(ctx, 30*time.Second, 10)
+	require.NoError(t, err)
+	assert.Empty(t, stolen, "a touched entry is not idle")
+
+	h.mr.SetTime(t0.Add(2 * time.Minute))
+	other.resetCursor()
+	stolen, err = other.Reclaim(ctx, 30*time.Second, 10)
+	require.NoError(t, err)
+	// Redis does not count a JUSTID claim as a delivery; miniredis does, so
+	// the count is not asserted here.
+	require.Len(t, stolen, 1, "an entry no one touches is reclaimed")
+	require.NoError(t, busy.Touch(ctx))
+}
+
+func TestStream_ReclaimResumesWhereItStopped(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	dead := h.stream(t, "dead-pod", Config{})
+	alive := h.stream(t, "alive-pod", Config{})
+	ctx := context.Background()
+
+	for i := range 3 {
+		require.NoError(t, dead.Enqueue(ctx, request("gw", fmt.Sprint(i))))
+	}
+	_, err := dead.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	h.mr.SetTime(t0.Add(time.Minute))
+
+	seen := map[string]bool{}
+	for range 3 {
+		got, err := alive.Reclaim(ctx, 30*time.Second, 1)
+		require.NoError(t, err)
+		for _, d := range got {
+			seen[d.ID] = true
+		}
+	}
+	assert.Len(t, seen, 3, "successive calls walk the whole pending list")
+}
+
+func TestStream_LeaveRemovesAnIdleConsumer(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	idle := h.stream(t, "idle-pod", Config{})
+	holding := h.stream(t, "holding-pod", Config{})
+	ctx := context.Background()
+
+	_, err := idle.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, holding.Enqueue(ctx, request("gw", "held")))
+	_, err = holding.Read(ctx, 10, 10*time.Millisecond)
+	require.NoError(t, err)
+
+	require.NoError(t, idle.Leave(ctx))
+	require.NoError(t, holding.Leave(ctx))
+
+	consumers, err := h.client.XInfoConsumers(ctx, streamKey, groupName).Result()
+	require.NoError(t, err)
+	var names []string
+	for _, c := range consumers {
+		names = append(names, c.Name)
+	}
+	assert.Equal(t, []string{"holding-pod"}, names, "a consumer still holding entries stays so they can be reclaimed")
 }
 
 func TestStream_ReclaimRespectsMinIdle(t *testing.T) {
@@ -260,7 +370,7 @@ func TestStream_Stats(t *testing.T) {
 
 	length, pending, err := s.Stats(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), length)
+	assert.Equal(t, int64(2), length, "the acknowledged entry is deleted")
 	assert.Equal(t, int64(1), pending, "handed out and not acknowledged")
 }
 

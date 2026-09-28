@@ -56,6 +56,9 @@ type TopicClassifierMetrics struct {
 	results   metric.Int64Counter
 	calls     metric.Float64Histogram
 	callTexts metric.Int64Histogram
+	// outcomes holds one prepared label set per outcome, so recording on the
+	// request path does not build one per call.
+	outcomes map[string]metric.MeasurementOption
 }
 
 // NewTopicClassifierMetrics creates the instruments. Like NewProvider it runs
@@ -70,7 +73,10 @@ func NewTopicClassifierMetrics(cfg *config.Config, _ *SDK, stats StreamStats) (*
 }
 
 func newTopicClassifierMetrics(meter metric.Meter, stats StreamStats) (*TopicClassifierMetrics, error) {
-	m := &TopicClassifierMetrics{enabled: true}
+	m := &TopicClassifierMetrics{enabled: true, outcomes: make(map[string]metric.MeasurementOption)}
+	for _, outcome := range topicclassifier.Outcomes() {
+		m.outcomes[outcome] = metric.WithAttributeSet(attribute.NewSet(outcomeKey.String(outcome)))
+	}
 	var err error
 	if m.intake, err = meter.Int64Counter(topicIntakeMetric, metric.WithUnit("{request}"),
 		metric.WithDescription("Requests offered to the topic classifier by the request path, by outcome.")); err != nil {
@@ -136,28 +142,35 @@ func (m *TopicClassifierMetrics) Intake(outcome string) {
 	if m == nil || !m.enabled {
 		return
 	}
-	m.intake.Add(context.Background(), 1, metric.WithAttributes(outcomeKey.String(outcome)))
+	m.intake.Add(context.Background(), 1, m.attrs(outcome))
 }
 
 func (m *TopicClassifierMetrics) Enqueue(outcome string) {
 	if m == nil || !m.enabled {
 		return
 	}
-	m.enqueue.Add(context.Background(), 1, metric.WithAttributes(outcomeKey.String(outcome)))
+	m.enqueue.Add(context.Background(), 1, m.attrs(outcome))
 }
 
 func (m *TopicClassifierMetrics) Result(outcome string, n int) {
 	if m == nil || !m.enabled || n <= 0 {
 		return
 	}
-	m.results.Add(context.Background(), int64(n), metric.WithAttributes(outcomeKey.String(outcome)))
+	m.results.Add(context.Background(), int64(n), m.attrs(outcome))
 }
 
 func (m *TopicClassifierMetrics) Call(outcome string, texts int, d time.Duration) {
 	if m == nil || !m.enabled {
 		return
 	}
-	attrs := metric.WithAttributes(outcomeKey.String(outcome))
+	attrs := m.attrs(outcome)
 	m.calls.Record(context.Background(), d.Seconds(), attrs)
 	m.callTexts.Record(context.Background(), int64(texts), attrs)
+}
+
+func (m *TopicClassifierMetrics) attrs(outcome string) metric.MeasurementOption {
+	if opt, ok := m.outcomes[outcome]; ok {
+		return opt
+	}
+	return metric.WithAttributes(outcomeKey.String(outcome))
 }

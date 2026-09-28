@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -50,6 +51,10 @@ func TestConfigValidate(t *testing.T) {
 		{name: "disabled over the maximum", cfg: &Config{Topics: topics(MaxTopics + 1)}, wantErr: true},
 		{name: "blank name", cfg: &Config{Enabled: true, Topics: []Topic{{Name: "  ", Definition: "d"}}}, wantErr: true},
 		{name: "blank definition", cfg: &Config{Enabled: true, Topics: []Topic{{Name: "n", Definition: " "}}}, wantErr: true},
+		{name: "name at the limit", cfg: &Config{Enabled: true, Topics: []Topic{{Name: strings.Repeat("é", MaxTopicNameChars), Definition: "d"}}}},
+		{name: "name over the limit", cfg: &Config{Enabled: true, Topics: []Topic{{Name: strings.Repeat("n", MaxTopicNameChars+1), Definition: "d"}}}, wantErr: true},
+		{name: "definition at the limit", cfg: &Config{Enabled: true, Topics: []Topic{{Name: "n", Definition: strings.Repeat("é", MaxTopicDefinitionChars)}}}},
+		{name: "definition over the limit", cfg: &Config{Enabled: true, Topics: []Topic{{Name: "n", Definition: strings.Repeat("d", MaxTopicDefinitionChars+1)}}}, wantErr: true},
 		{
 			name:    "duplicated name after trimming",
 			cfg:     &Config{Enabled: true, Topics: []Topic{{Name: "billing", Definition: "d"}, {Name: " billing ", Definition: "d"}}},

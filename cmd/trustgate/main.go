@@ -243,6 +243,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 type topicWorkerParam struct {
 	dig.In
 	TopicClassifier modules.TopicClassifierParams
+	Worker          appmetrics.Worker
 	Conn            *database.Connection
 	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
@@ -250,12 +251,15 @@ type topicWorkerParam struct {
 }
 
 // runTopicWorker serves no HTTP: it only consumes the classification stream,
-// so it starts the worker without the intake and waits for a stop signal.
+// so it starts the worker without the intake and waits for a stop signal. The
+// metrics worker is shut down after the classifier, since that is what flushes
+// the exporters its events were handed to.
 func runTopicWorker(p topicWorkerParam, logger *slog.Logger) {
 	stopConfig := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopConfig()
+	defer p.Worker.Shutdown()
 	defer modules.StartTopicClassifier(p.TopicClassifier, false)()
 
 	quit := make(chan os.Signal, 1)

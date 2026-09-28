@@ -92,28 +92,26 @@ func TestIntake_RecordsEveryOutcome(t *testing.T) {
 			return errors.New("redis down")
 		}
 	}
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, rec, IntakeConfig{QueueSize: 16, Workers: 1}, always(0.9))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, rec, IntakeConfig{QueueSize: 4, Workers: 1})
 
-	sampled := enabledConfig()
-	half := 0.5
-	sampled.SamplingRate = &half
 	noText := candidate(enabledConfig())
 	noText.Body = []byte(`{"model":"gpt-4o","messages":[{"role":"system","content":"x"}]}`)
 
-	for _, c := range []Candidate{candidate(enabledConfig()), candidate(enabledConfig()), candidate(enabledConfig()), candidate(sampled), noText} {
+	for _, c := range []Candidate{candidate(enabledConfig()), candidate(enabledConfig()), candidate(enabledConfig()), noText} {
 		require.True(t, in.Submit(c))
 	}
+	assert.False(t, in.Submit(candidate(enabledConfig())), "the buffer is full")
 	in.Start()
 	require.NoError(t, in.Shutdown(context.Background()))
 	assert.False(t, in.Submit(candidate(enabledConfig())))
 
 	intake, enqueue, _, _ := rec.snapshot()
-	assert.Equal(t, map[string]int{OutcomeAccepted: 5, OutcomeBufferFull: 1}, intake)
+	assert.Equal(t, map[string]int{OutcomeAccepted: 4, OutcomeBufferFull: 1, OutcomeShuttingDown: 1}, intake,
+		"a refusal after shutdown is not reported as saturation")
 	assert.Equal(t, map[string]int{
 		OutcomeQueued:        1,
 		OutcomeQuotaExceeded: 1,
 		OutcomeQueueError:    1,
-		OutcomeSampledOut:    1,
 		OutcomeNoText:        1,
 	}, enqueue)
 }
@@ -128,7 +126,7 @@ func TestWorker_RecordsResultsAndCalls(t *testing.T) {
 	}}
 	h := newWorkerHarness(t, testWorkerConfig(), classifier)
 	hit := queued("gw", billing, "cached")
-	require.NoError(t, h.cache.Set(context.Background(), topic.CacheKey(hit.TextHash, hit.CatalogHash, nil, "v1"), topic.Classification{}))
+	h.cache.put(cacheKeyOf(hit, "v1"), topic.Classification{})
 	h.stream.push(hit, queued("gw", billing, "fresh"), queued("gw", billing, "fresh"))
 	h.stream.pushDelivery(Delivery{ID: "bad", Invalid: true})
 	h.start(t)

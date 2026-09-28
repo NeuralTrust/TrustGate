@@ -17,6 +17,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"math/rand"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
@@ -28,11 +29,17 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// defaultTopicIntakeMaxBodyBytes caps the body copied for classification when
+// the config sets no cap. Only the latest user messages, at most
+// topic.MaxTextChars of them, are ever classified.
+const defaultTopicIntakeMaxBodyBytes = 512 << 10
+
 // TopicClassificationMiddleware offers the prompt of every chat request of a
 // gateway with topic classification enabled to the async classifier. It sits
 // before the handler, so requests a plugin later blocks are classified too,
 // and it never blocks or fails the request: when the classifier cannot take
-// more work, the candidate is dropped.
+// more work, the candidate is dropped. Sampling happens here, before the body
+// is copied, so requests that will not be classified cost nothing more.
 type TopicClassificationMiddleware struct {
 	intake       topicclassifier.Intake
 	recorder     topicclassifier.Recorder
@@ -42,8 +49,8 @@ type TopicClassificationMiddleware struct {
 // NewTopicClassificationMiddleware builds the middleware on top of intake. A
 // nil recorder records nothing.
 func NewTopicClassificationMiddleware(intake topicclassifier.Intake, recorder topicclassifier.Recorder, cfg *config.Config) *TopicClassificationMiddleware {
-	maxBody := 0
-	if cfg != nil {
+	maxBody := defaultTopicIntakeMaxBodyBytes
+	if cfg != nil && cfg.TopicClassifier.IntakeMaxBodyBytes > 0 {
 		maxBody = cfg.TopicClassifier.IntakeMaxBodyBytes
 	}
 	if recorder == nil {
@@ -76,11 +83,21 @@ func (m *TopicClassificationMiddleware) offer(c *fiber.Ctx) {
 	if !ok || route.Capability != resolver.CapabilityChat {
 		return
 	}
+	if rate := gw.TopicClassification.Rate(); rate < 1 && rand.Float64() >= rate { // #nosec G404 -- sampling, not a secret
+		m.recorder.Intake(topicclassifier.OutcomeSampledOut)
+		return
+	}
+	// The raw body is checked first so an oversized compressed body is never
+	// decompressed here; the decoded one is checked again below.
+	if len(c.Request().Body()) > m.maxBodyBytes {
+		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
+		return
+	}
 	body := c.Body()
 	if len(body) == 0 {
 		return
 	}
-	if m.maxBodyBytes > 0 && len(body) > m.maxBodyBytes {
+	if len(body) > m.maxBodyBytes {
 		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
 		return
 	}

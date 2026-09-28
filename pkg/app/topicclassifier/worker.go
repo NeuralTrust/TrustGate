@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultWorkerConcurrency = 1
+	defaultWorkerConcurrency = 8
 	defaultReadCount         = 64
 	defaultReadBlock         = time.Second
 	defaultBatchMaxTexts     = 32
@@ -42,6 +42,7 @@ const (
 	defaultBreakerCooldown   = 30 * time.Second
 
 	maxRetryBackoff   = 10 * time.Second
+	maxPause          = 30 * time.Second
 	readErrorBackoff  = time.Second
 	ackTimeout        = 5 * time.Second
 	noThresholdMarker = "default"
@@ -55,6 +56,8 @@ var errShuttingDown = errors.New("topic classifier: shutting down")
 //
 // Concurrency is the number of topic-guard calls this replica keeps in flight;
 // the total against topic-guard is Concurrency times the number of replicas.
+// ClaimMinIdle is how long an entry may go untouched before another consumer
+// takes it over; entries this worker holds are touched well within it.
 // MaxAttempts bounds in-process retries of one batch on real errors, while
 // MaxDeliveries bounds how many times an entry may be handed out across
 // crashes before it is dropped as poison.
@@ -131,6 +134,9 @@ type worker struct {
 	stopped  bool
 	stopRead context.CancelFunc
 	stopWork context.CancelFunc
+
+	heldMu sync.Mutex
+	held   map[string]struct{}
 }
 
 // NewWorker builds a worker over the given stream, classifier, cache and sink.
@@ -156,6 +162,7 @@ func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache 
 		now:        time.Now,
 		sem:        make(chan struct{}, cfg.Concurrency),
 		stopping:   make(chan struct{}),
+		held:       make(map[string]struct{}),
 	}
 }
 
@@ -169,9 +176,10 @@ func (w *worker) Start() {
 	readCtx, stopRead := context.WithCancel(context.Background())
 	workCtx, stopWork := context.WithCancel(context.Background())
 	w.stopRead, w.stopWork = stopRead, stopWork
-	w.loops.Add(2)
+	w.loops.Add(3)
 	go w.readLoop(readCtx, workCtx)
 	go w.claimLoop(readCtx, workCtx)
+	go w.heartbeatLoop(readCtx)
 }
 
 func (w *worker) Shutdown(ctx context.Context) error {
@@ -225,6 +233,8 @@ func (w *worker) readLoop(readCtx, workCtx context.Context) {
 	}
 }
 
+// claimLoop takes over entries dead consumers left behind and trims the
+// stream, so its retention holds even when nothing new is enqueued.
 func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 	defer w.loops.Done()
 	ticker := time.NewTicker(w.cfg.ClaimInterval)
@@ -234,6 +244,9 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 		case <-readCtx.Done():
 			return
 		case <-ticker.C:
+		}
+		if err := w.stream.Trim(readCtx); err != nil && readCtx.Err() == nil {
+			w.logger.Debug("topic classification trim failed", slog.String("error", err.Error()))
 		}
 		if !w.ready(readCtx) {
 			return
@@ -248,11 +261,14 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 		keep := deliveries[:0]
 		var poison []string
 		for _, d := range deliveries {
-			if d.Deliveries > w.cfg.MaxDeliveries {
+			switch {
+			case w.holds(d.ID):
+				// Already being worked on here; a missed touch let it idle.
+			case d.Deliveries > w.cfg.MaxDeliveries:
 				poison = append(poison, d.ID)
-				continue
+			default:
+				keep = append(keep, d)
 			}
-			keep = append(keep, d)
 		}
 		if len(poison) > 0 {
 			w.recorder.Result(OutcomePoison, len(poison))
@@ -262,6 +278,63 @@ func (w *worker) claimLoop(readCtx, workCtx context.Context) {
 		}
 		w.dispatch(readCtx, workCtx, keep)
 	}
+}
+
+// heartbeatLoop touches every entry this worker holds, read but not yet
+// acknowledged, so a batch waiting for a concurrency slot, a Retry-After or
+// the breaker is never reclaimed by another consumer and classified twice.
+func (w *worker) heartbeatLoop(readCtx context.Context) {
+	defer w.loops.Done()
+	ticker := time.NewTicker(max(w.cfg.ClaimMinIdle/3, time.Millisecond))
+	defer ticker.Stop()
+	for {
+		select {
+		case <-readCtx.Done():
+			return
+		case <-ticker.C:
+		}
+		ids := w.heldIDs()
+		if len(ids) == 0 {
+			continue
+		}
+		if err := w.stream.Touch(readCtx, ids...); err != nil && readCtx.Err() == nil {
+			w.logger.Warn("topic classification heartbeat failed",
+				slog.Int("count", len(ids)), slog.String("error", err.Error()))
+		}
+	}
+}
+
+func (w *worker) hold(ds []Delivery) {
+	w.heldMu.Lock()
+	defer w.heldMu.Unlock()
+	for _, d := range ds {
+		w.held[d.ID] = struct{}{}
+	}
+}
+
+func (w *worker) release(ds []Delivery) {
+	w.heldMu.Lock()
+	defer w.heldMu.Unlock()
+	for _, d := range ds {
+		delete(w.held, d.ID)
+	}
+}
+
+func (w *worker) holds(id string) bool {
+	w.heldMu.Lock()
+	defer w.heldMu.Unlock()
+	_, ok := w.held[id]
+	return ok
+}
+
+func (w *worker) heldIDs() []string {
+	w.heldMu.Lock()
+	defer w.heldMu.Unlock()
+	ids := make([]string, 0, len(w.held))
+	for id := range w.held {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 type batchKey struct {
@@ -280,9 +353,11 @@ func keyOf(req topic.Request) batchKey {
 
 // dispatch groups deliveries that can share a topic-guard call and hands each
 // batch to a goroutine, blocking while every concurrency slot is busy so the
-// reader slows down with topic-guard.
+// reader slows down with topic-guard. Every valid delivery is held from here
+// until its batch ends, including while it waits for a slot.
 func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Delivery) {
 	var invalid []string
+	var valid []Delivery
 	var order []batchKey
 	groups := make(map[batchKey][]Delivery)
 	for _, d := range deliveries {
@@ -290,6 +365,7 @@ func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Deliver
 			invalid = append(invalid, d.ID)
 			continue
 		}
+		valid = append(valid, d)
 		k := keyOf(d.Request)
 		if _, ok := groups[k]; !ok {
 			order = append(order, k)
@@ -300,18 +376,26 @@ func (w *worker) dispatch(readCtx, workCtx context.Context, deliveries []Deliver
 		w.recorder.Result(OutcomeInvalid, len(invalid))
 		w.ack(workCtx, invalid)
 	}
+	w.hold(valid)
+	var batches [][]Delivery
 	for _, k := range order {
 		group := groups[k]
 		for start := 0; start < len(group); start += w.cfg.BatchMaxTexts {
-			batch := group[start:min(start+w.cfg.BatchMaxTexts, len(group))]
-			select {
-			case w.sem <- struct{}{}:
-			case <-readCtx.Done():
-				return
-			}
-			w.inflight.Add(1)
-			go w.handle(workCtx, batch)
+			batches = append(batches, group[start:min(start+w.cfg.BatchMaxTexts, len(group))])
 		}
+	}
+	for i, batch := range batches {
+		select {
+		case w.sem <- struct{}{}:
+		case <-readCtx.Done():
+			// Left pending: another consumer reclaims them once idle.
+			for _, rest := range batches[i:] {
+				w.release(rest)
+			}
+			return
+		}
+		w.inflight.Add(1)
+		go w.handle(workCtx, batch)
 	}
 }
 
@@ -324,6 +408,7 @@ type pendingText struct {
 func (w *worker) handle(ctx context.Context, batch []Delivery) {
 	defer w.inflight.Done()
 	defer func() { <-w.sem }()
+	defer w.release(batch)
 	defer func() {
 		if r := recover(); r != nil {
 			w.logger.Error("topic classification batch panicked",
@@ -344,48 +429,57 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 		w.ack(ctx, deliveryIDs(batch))
 		return
 	}
+	// Without a known model version a cached entry could come from a model
+	// that no longer serves, so the cache is only read when it is known.
+	useCache := err == nil && version != ""
 
-	var done []string
-	var misses []*pendingText
+	var texts []*pendingText
 	byKey := make(map[string]*pendingText)
 	for _, d := range batch {
-		key := topic.CacheKey(d.Request.TextHash, d.Request.CatalogHash, d.Request.Threshold, version)
+		key := cacheKeyOf(d.Request, version)
 		if p, ok := byKey[key]; ok {
 			p.deliveries = append(p.deliveries, d)
 			continue
 		}
-		if cls, ok := w.cached(ctx, key); ok {
-			w.recorder.Result(OutcomeCacheHit, 1)
-			w.publish(ctx, d, cls)
-			done = append(done, d.ID)
-			continue
-		}
 		p := &pendingText{key: key, text: d.Request.Text, deliveries: []Delivery{d}}
 		byKey[key] = p
-		misses = append(misses, p)
+		texts = append(texts, p)
+	}
+
+	var hits map[string]topic.Classification
+	if useCache {
+		hits = w.cached(ctx, texts)
+	}
+	var done []string
+	var misses []*pendingText
+	for _, p := range texts {
+		cls, ok := hits[p.key]
+		if !ok {
+			misses = append(misses, p)
+			continue
+		}
+		w.recorder.Result(OutcomeCacheHit, len(p.deliveries))
+		done = append(done, w.publishAll(ctx, p.deliveries, cls)...)
 	}
 
 	if len(misses) > 0 {
-		texts := make([]string, len(misses))
+		inputs := make([]string, len(misses))
 		for i, p := range misses {
-			texts[i] = p.text
+			inputs[i] = p.text
 		}
-		results, err := w.classify(ctx, first.Topics, first.Threshold, texts)
+		results, err := w.classify(ctx, first.Topics, first.Threshold, inputs)
 		switch {
 		case err == nil:
+			w.store(ctx, misses, results)
 			for i, p := range misses {
-				w.store(ctx, p.key, results[i])
 				w.recorder.Result(OutcomeClassified, len(p.deliveries))
-				for _, d := range p.deliveries {
-					w.publish(ctx, d, results[i])
-					done = append(done, d.ID)
-				}
+				done = append(done, w.publishAll(ctx, p.deliveries, results[i])...)
 			}
 		case ctx.Err() != nil, errors.Is(err, errShuttingDown):
 		default:
 			w.logger.Warn("topic classification dropped a batch after retrying",
 				slog.String("gateway_id", first.GatewayID),
-				slog.Int("texts", len(texts)),
+				slog.Int("texts", len(inputs)),
 				slog.String("error", err.Error()))
 			for _, p := range misses {
 				w.recorder.Result(OutcomeFailed, len(p.deliveries))
@@ -394,6 +488,10 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 		}
 	}
 	w.ack(ctx, done)
+}
+
+func cacheKeyOf(req topic.Request, version string) string {
+	return topic.CacheKey(req.GatewayID, req.TextHash, req.CatalogHash, req.Threshold, version)
 }
 
 // classify retries real failures with backoff up to MaxAttempts. Saturation is
@@ -452,8 +550,10 @@ func (w *worker) backoff(attempt int) time.Duration {
 	return d + jitter
 }
 
+// pause stops every call for d, capped so a bad Retry-After cannot stall the
+// worker for long.
 func (w *worker) pause(d time.Duration) {
-	until := w.now().Add(d).UnixNano()
+	until := w.now().Add(min(d, maxPause)).UnixNano()
 	for {
 		current := w.pauseUntil.Load()
 		if current >= until || w.pauseUntil.CompareAndSwap(current, until) {
@@ -502,34 +602,64 @@ func (w *worker) wait(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func (w *worker) cached(ctx context.Context, key string) (topic.Classification, bool) {
+func (w *worker) cached(ctx context.Context, texts []*pendingText) map[string]topic.Classification {
 	if w.cache == nil {
-		return topic.Classification{}, false
+		return nil
 	}
-	cls, ok, err := w.cache.Get(ctx, key)
+	keys := make([]string, len(texts))
+	for i, p := range texts {
+		keys[i] = p.key
+	}
+	hits, err := w.cache.GetMany(ctx, keys)
 	if err != nil {
 		w.logger.Debug("topic classification cache read failed", slog.String("error", err.Error()))
-		return topic.Classification{}, false
+		return nil
 	}
-	return cls, ok
+	return hits
 }
 
-func (w *worker) store(ctx context.Context, key string, cls topic.Classification) {
+// store caches each result under the model version that actually scored it,
+// which may be newer than the one the batch looked up.
+func (w *worker) store(ctx context.Context, texts []*pendingText, results []topic.Classification) {
 	if w.cache == nil {
 		return
 	}
-	if err := w.cache.Set(ctx, key, cls); err != nil {
+	entries := make(map[string]topic.Classification, len(texts))
+	for i, p := range texts {
+		cls := results[i]
+		if cls.ModelVersion == "" {
+			continue
+		}
+		entries[cacheKeyOf(p.deliveries[0].Request, cls.ModelVersion)] = cls
+	}
+	if err := w.cache.SetMany(ctx, entries); err != nil {
 		w.logger.Debug("topic classification cache write failed", slog.String("error", err.Error()))
 	}
 }
 
-func (w *worker) publish(ctx context.Context, d Delivery, cls topic.Classification) {
-	if err := w.sink.Publish(ctx, d.Request, cls); err != nil {
+// publishAll publishes cls for every delivery and returns the ids that are
+// done. A delivery whose publish failed for a transient reason is left
+// pending: it is reclaimed later and served from the cache.
+func (w *worker) publishAll(ctx context.Context, ds []Delivery, cls topic.Classification) []string {
+	done := make([]string, 0, len(ds))
+	for _, d := range ds {
+		err := w.sink.Publish(ctx, d.Request, cls)
+		if err == nil {
+			done = append(done, d.ID)
+			continue
+		}
 		w.logger.Warn("topic classification publish failed",
 			slog.String("gateway_id", d.Request.GatewayID),
 			slog.String("trace_id", d.Request.TraceID),
 			slog.String("error", err.Error()))
+		if errors.Is(err, ErrUnpublishable) {
+			w.recorder.Result(OutcomeUnpublishable, 1)
+			done = append(done, d.ID)
+			continue
+		}
+		w.recorder.Result(OutcomePublishRetry, 1)
 	}
+	return done
 }
 
 // ack runs on a context detached from cancellation: a batch finished while

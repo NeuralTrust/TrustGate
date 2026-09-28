@@ -25,6 +25,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier"
@@ -45,6 +46,7 @@ const (
 	quotaWindow        = time.Second
 	busyGroupErrPrefix = "BUSYGROUP"
 	noGroupErrPrefix   = "NOGROUP"
+	claimStart         = "0-0"
 )
 
 var enqueueScript = redis.NewScript(`
@@ -64,7 +66,9 @@ return 1
 `)
 
 // Config bounds the stream. Retention is how long an entry may wait before it
-// is trimmed, which is also how long customer text can sit in Redis.
+// is trimmed, which is also how long customer text can sit in Redis: entries
+// are deleted once acknowledged, and Trim drops older ones even when nothing
+// new is enqueued.
 // GatewayQuotaPerSecond caps what one gateway may enqueue per second so a
 // burst from one tenant cannot push everybody else out; zero disables it.
 type Config struct {
@@ -97,6 +101,9 @@ type Stream struct {
 	cfg      Config
 	consumer string
 	now      func() time.Time
+
+	mu     sync.Mutex
+	cursor string
 }
 
 // New builds a Stream. The consumer name identifies this process in the group,
@@ -107,6 +114,7 @@ func New(client redis.Cmdable, cfg Config) *Stream {
 		cfg:      cfg.withDefaults(),
 		consumer: consumerName(),
 		now:      time.Now,
+		cursor:   claimStart,
 	}
 }
 
@@ -183,29 +191,41 @@ func (s *Stream) Read(ctx context.Context, count int, block time.Duration) ([]to
 
 // Reclaim takes over entries another consumer left pending for at least
 // minIdle, typically because its process died, and reports how many times
-// each was handed out so poison entries can be dropped.
+// each was handed out so poison entries can be dropped. Each call resumes the
+// scan where the previous one stopped, so a pending list longer than count is
+// walked in full over successive calls.
 func (s *Stream) Reclaim(ctx context.Context, minIdle time.Duration, count int) ([]topicclassifier.Delivery, error) {
-	msgs, _, err := s.redis.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+	s.mu.Lock()
+	start := s.cursor
+	s.mu.Unlock()
+	msgs, next, err := s.redis.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   streamKey,
 		Group:    groupName,
 		Consumer: s.consumer,
 		MinIdle:  minIdle,
-		Start:    "0-0",
+		Start:    start,
 		Count:    int64(count),
 	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	if isNoGroup(err) {
+		s.resetCursor()
 		return nil, s.EnsureGroup(ctx)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("topicstream: reclaim: %w", err)
 	}
+	if next == "" {
+		next = claimStart
+	}
+	s.mu.Lock()
+	s.cursor = next
+	s.mu.Unlock()
 	if len(msgs) == 0 {
 		return nil, nil
 	}
-	counts, err := s.deliveryCounts(ctx, msgs[0].ID, msgs[len(msgs)-1].ID, len(msgs))
+	counts, err := s.deliveryCounts(ctx, msgs)
 	if err != nil {
 		return nil, err
 	}
@@ -218,34 +238,110 @@ func (s *Stream) Reclaim(ctx context.Context, minIdle time.Duration, count int) 
 	return out, nil
 }
 
-func (s *Stream) deliveryCounts(ctx context.Context, first, last string, n int) (map[string]int64, error) {
-	pending, err := s.redis.XPendingExt(ctx, &redis.XPendingExtArgs{
+func (s *Stream) resetCursor() {
+	s.mu.Lock()
+	s.cursor = claimStart
+	s.mu.Unlock()
+}
+
+// deliveryCounts asks for each claimed entry on its own, in one round trip, so
+// other entries this consumer holds in the same id range cannot push any of
+// them out of the reply. An entry missing from the reply reports zero, which
+// never counts as poison: it is checked again on a later claim.
+func (s *Stream) deliveryCounts(ctx context.Context, msgs []redis.XMessage) (map[string]int64, error) {
+	pipe := s.redis.Pipeline()
+	cmds := make([]*redis.XPendingExtCmd, len(msgs))
+	for i, msg := range msgs {
+		cmds[i] = pipe.XPendingExt(ctx, &redis.XPendingExtArgs{
+			Stream: streamKey,
+			Group:  groupName,
+			Start:  msg.ID,
+			End:    msg.ID,
+			Count:  1,
+		})
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("topicstream: pending: %w", err)
+	}
+	counts := make(map[string]int64, len(msgs))
+	for _, cmd := range cmds {
+		for _, p := range cmd.Val() {
+			counts[p.ID] = p.RetryCount
+		}
+	}
+	return counts, nil
+}
+
+// Touch resets the idle time of entries this consumer is still working on, so
+// no other consumer reclaims them while a slow batch waits for topic-guard. It
+// does not count as a delivery.
+func (s *Stream) Touch(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	err := s.redis.XClaimJustID(ctx, &redis.XClaimArgs{
 		Stream:   streamKey,
 		Group:    groupName,
-		Start:    first,
-		End:      last,
-		Count:    int64(n),
+		Consumer: s.consumer,
+		MinIdle:  0,
+		Messages: ids,
+	}).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("topicstream: touch: %w", err)
+	}
+	return nil
+}
+
+// Trim drops entries older than the retention. Enqueue trims too, but only
+// when something new arrives; this keeps the bound when traffic stops.
+func (s *Stream) Trim(ctx context.Context) error {
+	minID := strconv.FormatInt(s.now().Add(-s.cfg.Retention).UnixMilli(), 10)
+	if err := s.redis.XTrimMinID(ctx, streamKey, minID).Err(); err != nil {
+		return fmt.Errorf("topicstream: trim: %w", err)
+	}
+	return nil
+}
+
+// Leave removes this consumer from the group on a clean shutdown, so every
+// restart does not leave one more consumer behind. A consumer that still
+// holds entries stays, so they can be reclaimed.
+func (s *Stream) Leave(ctx context.Context) error {
+	n, err := s.redis.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream:   streamKey,
+		Group:    groupName,
+		Start:    "-",
+		End:      "+",
+		Count:    1,
 		Consumer: s.consumer,
 	}).Result()
 	if err != nil {
-		return nil, fmt.Errorf("topicstream: pending: %w", err)
+		if isNoGroup(err) {
+			return nil
+		}
+		return fmt.Errorf("topicstream: pending: %w", err)
 	}
-	counts := make(map[string]int64, len(pending))
-	for _, p := range pending {
-		counts[p.ID] = p.RetryCount
+	if len(n) > 0 {
+		return nil
 	}
-	return counts, nil
+	if err := s.redis.XGroupDelConsumer(ctx, streamKey, groupName, s.consumer).Err(); err != nil && !isNoGroup(err) {
+		return fmt.Errorf("topicstream: leave group: %w", err)
+	}
+	return nil
 }
 
 // Stats reports how many entries the stream holds and how many were handed
 // out but not acknowledged yet. A growing length means requests arrive faster
 // than they are classified; a growing pending count means consumers stall.
 func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
-	length, err = s.redis.XLen(ctx, streamKey).Result()
+	pipe := s.redis.Pipeline()
+	lenCmd := pipe.XLen(ctx, streamKey)
+	pendingCmd := pipe.XPending(ctx, streamKey, groupName)
+	_, _ = pipe.Exec(ctx)
+	length, err = lenCmd.Result()
 	if err != nil {
 		return 0, 0, fmt.Errorf("topicstream: length: %w", err)
 	}
-	summary, err := s.redis.XPending(ctx, streamKey, groupName).Result()
+	summary, err := pendingCmd.Result()
 	if err != nil {
 		if isNoGroup(err) {
 			return length, 0, nil
@@ -255,12 +351,16 @@ func (s *Stream) Stats(ctx context.Context) (length, pending int64, err error) {
 	return length, summary.Count, nil
 }
 
-// Ack marks entries as done so they are never handed out again.
+// Ack marks entries as done and deletes them, so the customer text they carry
+// leaves Redis as soon as it is classified.
 func (s *Stream) Ack(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := s.redis.XAck(ctx, streamKey, groupName, ids...).Err(); err != nil {
+	pipe := s.redis.TxPipeline()
+	pipe.XAck(ctx, streamKey, groupName, ids...)
+	pipe.XDel(ctx, streamKey, ids...)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("topicstream: ack: %w", err)
 	}
 	return nil

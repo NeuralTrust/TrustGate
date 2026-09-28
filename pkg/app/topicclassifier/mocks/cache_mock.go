@@ -22,81 +22,76 @@ func (_m *Cache) EXPECT() *Cache_Expecter {
 	return &Cache_Expecter{mock: &_m.Mock}
 }
 
-// Get provides a mock function with given fields: ctx, key
-func (_m *Cache) Get(ctx context.Context, key string) (topic.Classification, bool, error) {
-	ret := _m.Called(ctx, key)
+// GetMany provides a mock function with given fields: ctx, keys
+func (_m *Cache) GetMany(ctx context.Context, keys []string) (map[string]topic.Classification, error) {
+	ret := _m.Called(ctx, keys)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Get")
+		panic("no return value specified for GetMany")
 	}
 
-	var r0 topic.Classification
-	var r1 bool
-	var r2 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (topic.Classification, bool, error)); ok {
-		return rf(ctx, key)
+	var r0 map[string]topic.Classification
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []string) (map[string]topic.Classification, error)); ok {
+		return rf(ctx, keys)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) topic.Classification); ok {
-		r0 = rf(ctx, key)
+	if rf, ok := ret.Get(0).(func(context.Context, []string) map[string]topic.Classification); ok {
+		r0 = rf(ctx, keys)
 	} else {
-		r0 = ret.Get(0).(topic.Classification)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]topic.Classification)
+		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string) bool); ok {
-		r1 = rf(ctx, key)
+	if rf, ok := ret.Get(1).(func(context.Context, []string) error); ok {
+		r1 = rf(ctx, keys)
 	} else {
-		r1 = ret.Get(1).(bool)
+		r1 = ret.Error(1)
 	}
 
-	if rf, ok := ret.Get(2).(func(context.Context, string) error); ok {
-		r2 = rf(ctx, key)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
+	return r0, r1
 }
 
-// Cache_Get_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
-type Cache_Get_Call struct {
+// Cache_GetMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetMany'
+type Cache_GetMany_Call struct {
 	*mock.Call
 }
 
-// Get is a helper method to define mock.On call
+// GetMany is a helper method to define mock.On call
 //   - ctx context.Context
-//   - key string
-func (_e *Cache_Expecter) Get(ctx interface{}, key interface{}) *Cache_Get_Call {
-	return &Cache_Get_Call{Call: _e.mock.On("Get", ctx, key)}
+//   - keys []string
+func (_e *Cache_Expecter) GetMany(ctx interface{}, keys interface{}) *Cache_GetMany_Call {
+	return &Cache_GetMany_Call{Call: _e.mock.On("GetMany", ctx, keys)}
 }
 
-func (_c *Cache_Get_Call) Run(run func(ctx context.Context, key string)) *Cache_Get_Call {
+func (_c *Cache_GetMany_Call) Run(run func(ctx context.Context, keys []string)) *Cache_GetMany_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
+		run(args[0].(context.Context), args[1].([]string))
 	})
 	return _c
 }
 
-func (_c *Cache_Get_Call) Return(_a0 topic.Classification, _a1 bool, _a2 error) *Cache_Get_Call {
-	_c.Call.Return(_a0, _a1, _a2)
+func (_c *Cache_GetMany_Call) Return(_a0 map[string]topic.Classification, _a1 error) *Cache_GetMany_Call {
+	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *Cache_Get_Call) RunAndReturn(run func(context.Context, string) (topic.Classification, bool, error)) *Cache_Get_Call {
+func (_c *Cache_GetMany_Call) RunAndReturn(run func(context.Context, []string) (map[string]topic.Classification, error)) *Cache_GetMany_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
-// Set provides a mock function with given fields: ctx, key, c
-func (_m *Cache) Set(ctx context.Context, key string, c topic.Classification) error {
-	ret := _m.Called(ctx, key, c)
+// SetMany provides a mock function with given fields: ctx, entries
+func (_m *Cache) SetMany(ctx context.Context, entries map[string]topic.Classification) error {
+	ret := _m.Called(ctx, entries)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Set")
+		panic("no return value specified for SetMany")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, topic.Classification) error); ok {
-		r0 = rf(ctx, key, c)
+	if rf, ok := ret.Get(0).(func(context.Context, map[string]topic.Classification) error); ok {
+		r0 = rf(ctx, entries)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -104,32 +99,31 @@ func (_m *Cache) Set(ctx context.Context, key string, c topic.Classification) er
 	return r0
 }
 
-// Cache_Set_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Set'
-type Cache_Set_Call struct {
+// Cache_SetMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetMany'
+type Cache_SetMany_Call struct {
 	*mock.Call
 }
 
-// Set is a helper method to define mock.On call
+// SetMany is a helper method to define mock.On call
 //   - ctx context.Context
-//   - key string
-//   - c topic.Classification
-func (_e *Cache_Expecter) Set(ctx interface{}, key interface{}, c interface{}) *Cache_Set_Call {
-	return &Cache_Set_Call{Call: _e.mock.On("Set", ctx, key, c)}
+//   - entries map[string]topic.Classification
+func (_e *Cache_Expecter) SetMany(ctx interface{}, entries interface{}) *Cache_SetMany_Call {
+	return &Cache_SetMany_Call{Call: _e.mock.On("SetMany", ctx, entries)}
 }
 
-func (_c *Cache_Set_Call) Run(run func(ctx context.Context, key string, c topic.Classification)) *Cache_Set_Call {
+func (_c *Cache_SetMany_Call) Run(run func(ctx context.Context, entries map[string]topic.Classification)) *Cache_SetMany_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(topic.Classification))
+		run(args[0].(context.Context), args[1].(map[string]topic.Classification))
 	})
 	return _c
 }
 
-func (_c *Cache_Set_Call) Return(_a0 error) *Cache_Set_Call {
+func (_c *Cache_SetMany_Call) Return(_a0 error) *Cache_SetMany_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Cache_Set_Call) RunAndReturn(run func(context.Context, string, topic.Classification) error) *Cache_Set_Call {
+func (_c *Cache_SetMany_Call) RunAndReturn(run func(context.Context, map[string]topic.Classification) error) *Cache_SetMany_Call {
 	_c.Call.Return(run)
 	return _c
 }

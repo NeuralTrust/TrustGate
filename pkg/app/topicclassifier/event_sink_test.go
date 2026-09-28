@@ -160,14 +160,50 @@ func TestEventSink_WithoutRetentionOrExporters(t *testing.T) {
 func TestEventSink_Errors(t *testing.T) {
 	t.Parallel()
 	publisher := &fakePublisher{}
+	id := ids.New[ids.GatewayKind]().String()
 
 	bad := NewEventSink(&fakeGateways{}, publisher)
-	require.Error(t, bad.Publish(context.Background(), queued("not-an-id", billing, "x"), topic.Classification{}))
+	require.ErrorIs(t, bad.Publish(context.Background(), queued("not-an-id", billing, "x"), topic.Classification{}), ErrUnpublishable)
 
-	missing := NewEventSink(&fakeGateways{err: errors.New("not found")}, publisher)
-	require.Error(t, missing.Publish(context.Background(), queued(ids.New[ids.GatewayKind]().String(), billing, "x"), topic.Classification{}))
+	gone := NewEventSink(&fakeGateways{err: gatewaydomain.ErrNotFound}, publisher)
+	require.ErrorIs(t, gone.Publish(context.Background(), queued(id, billing, "x"), topic.Classification{}), ErrUnpublishable,
+		"a deleted gateway can never be published to")
+
+	down := NewEventSink(&fakeGateways{err: errors.New("connection refused")}, publisher)
+	err := down.Publish(context.Background(), queued(id, billing, "x"), topic.Classification{})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrUnpublishable, "a failing lookup is transient and retried")
 
 	assert.Empty(t, publisher.got, "nothing is published without a resolvable gateway")
+}
+
+func TestEventSink_RemembersMissingGateways(t *testing.T) {
+	t.Parallel()
+	gateways := &fakeGateways{err: gatewaydomain.ErrNotFound}
+	sink := NewEventSink(gateways, &fakePublisher{})
+	id := ids.New[ids.GatewayKind]().String()
+
+	for range 3 {
+		require.ErrorIs(t, sink.Publish(context.Background(), queued(id, billing, "x"), topic.Classification{}), ErrUnpublishable)
+	}
+	assert.Equal(t, 1, gateways.calls, "a backlog for a deleted gateway does not look it up per request")
+}
+
+func TestEventSink_DropsExpiredGateways(t *testing.T) {
+	t.Parallel()
+	gw := sinkGateway(t)
+	sink := NewEventSink(&fakeGateways{gw: gw}, &fakePublisher{}).(*eventSink)
+	now := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	sink.now = func() time.Time { return now }
+
+	require.NoError(t, sink.Publish(context.Background(), queued(gw.ID.String(), billing, "x"), topic.Classification{}))
+	now = now.Add(gatewayCacheTTL + time.Second)
+	sink.remember(ids.New[ids.GatewayKind](), gw, now)
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	assert.Len(t, sink.known, 1, "the expired entry is dropped when a new one is stored")
+	assert.NotContains(t, sink.known, gw.ID)
 }
 
 func TestEventSink_CachesGatewayLookups(t *testing.T) {

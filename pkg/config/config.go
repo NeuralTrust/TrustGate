@@ -92,14 +92,15 @@ const (
 
 	defaultTopicClassifierIntakeQueueSize    = 1000
 	defaultTopicClassifierIntakeWorkers      = 2
-	defaultTopicClassifierIntakeMaxBodyBytes = 2 << 20
+	defaultTopicClassifierIntakeMaxBodyBytes = 512 << 10
+	defaultTopicClassifierIntakeMaxBuffer    = 64 << 20
 	defaultTopicClassifierEnqueueTimeout     = 500 * time.Millisecond
 	defaultTopicClassifierTimeout            = 5 * time.Second
 	defaultTopicClassifierCacheTTL           = time.Hour
 	defaultTopicClassifierStreamMaxLen       = 100_000
 	defaultTopicClassifierStreamRetention    = time.Hour
 	defaultTopicClassifierGatewayQuota       = 100
-	defaultTopicClassifierConcurrency        = 1
+	defaultTopicClassifierConcurrency        = 8
 	defaultTopicClassifierBatchMaxTexts      = 32
 	defaultTopicClassifierClaimMinIdle       = time.Minute
 	defaultTopicClassifierMaxAttempts        = 3
@@ -416,9 +417,12 @@ type TopicClassifierConfig struct {
 	IntakeQueueSize    int
 	IntakeWorkers      int
 	IntakeMaxBodyBytes int
-	EnqueueTimeout     time.Duration
-	ClassifierTimeout  time.Duration
-	CacheTTL           time.Duration
+	// IntakeMaxBufferBytes bounds the request bodies a replica holds while
+	// they wait to be queued.
+	IntakeMaxBufferBytes int64
+	EnqueueTimeout       time.Duration
+	ClassifierTimeout    time.Duration
+	CacheTTL             time.Duration
 	// StreamRetention bounds how long customer text may wait in Redis.
 	StreamMaxLen          int64
 	StreamRetention       time.Duration
@@ -762,12 +766,13 @@ func parseOTLPHeaders(raw string) map[string]string {
 
 func getTopicClassifierConfig() TopicClassifierConfig {
 	return TopicClassifierConfig{
-		IntakeQueueSize:    getEnvInt("TOPIC_CLASSIFIER_INTAKE_QUEUE_SIZE", defaultTopicClassifierIntakeQueueSize),
-		IntakeWorkers:      getEnvInt("TOPIC_CLASSIFIER_INTAKE_WORKERS", defaultTopicClassifierIntakeWorkers),
-		IntakeMaxBodyBytes: getEnvInt("TOPIC_CLASSIFIER_INTAKE_MAX_BODY_BYTES", defaultTopicClassifierIntakeMaxBodyBytes),
-		EnqueueTimeout:     getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
-		ClassifierTimeout:  getEnvDuration("TOPIC_CLASSIFIER_TIMEOUT", defaultTopicClassifierTimeout),
-		CacheTTL:           getEnvDuration("TOPIC_CLASSIFIER_CACHE_TTL", defaultTopicClassifierCacheTTL),
+		IntakeQueueSize:      getEnvInt("TOPIC_CLASSIFIER_INTAKE_QUEUE_SIZE", defaultTopicClassifierIntakeQueueSize),
+		IntakeWorkers:        getEnvInt("TOPIC_CLASSIFIER_INTAKE_WORKERS", defaultTopicClassifierIntakeWorkers),
+		IntakeMaxBodyBytes:   getEnvInt("TOPIC_CLASSIFIER_INTAKE_MAX_BODY_BYTES", defaultTopicClassifierIntakeMaxBodyBytes),
+		IntakeMaxBufferBytes: getEnvInt64("TOPIC_CLASSIFIER_INTAKE_MAX_BUFFER_BYTES", defaultTopicClassifierIntakeMaxBuffer),
+		EnqueueTimeout:       getEnvDuration("TOPIC_CLASSIFIER_ENQUEUE_TIMEOUT", defaultTopicClassifierEnqueueTimeout),
+		ClassifierTimeout:    getEnvDuration("TOPIC_CLASSIFIER_TIMEOUT", defaultTopicClassifierTimeout),
+		CacheTTL:             getEnvDuration("TOPIC_CLASSIFIER_CACHE_TTL", defaultTopicClassifierCacheTTL),
 
 		StreamMaxLen:          getEnvInt64("TOPIC_CLASSIFIER_STREAM_MAX_LEN", defaultTopicClassifierStreamMaxLen),
 		StreamRetention:       getEnvDuration("TOPIC_CLASSIFIER_STREAM_RETENTION", defaultTopicClassifierStreamRetention),

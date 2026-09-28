@@ -34,6 +34,8 @@ type fakeStream struct {
 	queue   []Delivery
 	reclaim []Delivery
 	acked   []string
+	touched map[string]int
+	trims   int
 	nextID  int
 }
 
@@ -82,6 +84,37 @@ func (s *fakeStream) Ack(_ context.Context, ids ...string) error {
 	defer s.mu.Unlock()
 	s.acked = append(s.acked, ids...)
 	return nil
+}
+
+func (s *fakeStream) Touch(_ context.Context, ids ...string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.touched == nil {
+		s.touched = map[string]int{}
+	}
+	for _, id := range ids {
+		s.touched[id]++
+	}
+	return nil
+}
+
+func (s *fakeStream) Trim(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trims++
+	return nil
+}
+
+func (s *fakeStream) touches(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.touched[id]
+}
+
+func (s *fakeStream) trimCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trims
 }
 
 func (s *fakeStream) ackedIDs() []string {
@@ -144,22 +177,50 @@ func scoresFor(texts []string) []topic.Classification {
 type fakeCache struct {
 	mu      sync.Mutex
 	entries map[string]topic.Classification
+	reads   int
 }
 
 func newFakeCache() *fakeCache { return &fakeCache{entries: map[string]topic.Classification{}} }
 
-func (c *fakeCache) Get(_ context.Context, key string) (topic.Classification, bool, error) {
+func (c *fakeCache) GetMany(_ context.Context, keys []string) (map[string]topic.Classification, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	cls, ok := c.entries[key]
-	return cls, ok, nil
+	c.reads++
+	out := map[string]topic.Classification{}
+	for _, k := range keys {
+		if cls, ok := c.entries[k]; ok {
+			out[k] = cls
+		}
+	}
+	return out, nil
 }
 
-func (c *fakeCache) Set(_ context.Context, key string, cls topic.Classification) error {
+func (c *fakeCache) SetMany(_ context.Context, entries map[string]topic.Classification) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, cls := range entries {
+		c.entries[k] = cls
+	}
+	return nil
+}
+
+func (c *fakeCache) put(key string, cls topic.Classification) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[key] = cls
-	return nil
+}
+
+func (c *fakeCache) has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.entries[key]
+	return ok
+}
+
+func (c *fakeCache) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
 }
 
 func (c *fakeCache) size() int {
@@ -176,11 +237,15 @@ type published struct {
 type fakeSink struct {
 	mu  sync.Mutex
 	out []published
+	err error
 }
 
 func (s *fakeSink) Publish(_ context.Context, req topic.Request, cls topic.Classification) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
 	s.out = append(s.out, published{req: req, cls: cls})
 	return nil
 }
@@ -278,7 +343,7 @@ func TestWorker_CacheHitSkipsTopicGuard(t *testing.T) {
 	h := newWorkerHarness(t, testWorkerConfig(), nil)
 	hit := queued("gw", billing, "refund")
 	cachedResult := topic.Classification{Matched: []string{"billing"}, ModelVersion: "from-cache"}
-	require.NoError(t, h.cache.Set(context.Background(), topic.CacheKey(hit.TextHash, hit.CatalogHash, nil, "v1"), cachedResult))
+	h.cache.put(cacheKeyOf(hit, "v1"), cachedResult)
 
 	h.stream.push(hit, queued("gw", billing, "invoice"))
 	h.start(t)
@@ -544,4 +609,124 @@ func TestWorker_ShutdownDoesNotWaitOnAnOpenBreaker(t *testing.T) {
 		t.Fatal("Shutdown waited for the breaker cooldown")
 	}
 	assert.Len(t, h.stream.ackedIDs(), 1, "the waiting batch stays pending instead of being dropped")
+}
+
+// blockingClassifier holds every call until release is closed, reporting when
+// the first one arrives.
+func blockingClassifier() (c *fakeClassifier, entered, release chan struct{}) {
+	entered, release = make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	c = &fakeClassifier{classify: func(_ context.Context, _ int, texts []string) ([]topic.Classification, error) {
+		once.Do(func() { close(entered) })
+		<-release
+		return scoresFor(texts), nil
+	}}
+	return c, entered, release
+}
+
+func TestWorker_TouchesEntriesItHolds(t *testing.T) {
+	t.Parallel()
+	classifier, entered, release := blockingClassifier()
+	cfg := testWorkerConfig()
+	cfg.ClaimMinIdle = 3 * time.Millisecond
+	h := newWorkerHarness(t, cfg, classifier)
+	ids := h.stream.push(queued("gw", billing, "slow"))
+	h.start(t)
+	<-entered
+
+	require.Eventually(t, func() bool { return h.stream.touches(ids[0]) >= 2 }, 2*time.Second, time.Millisecond,
+		"an entry waiting on topic-guard is kept from being reclaimed")
+	close(release)
+	h.waitAcked(t, 1)
+
+	after := h.stream.touches(ids[0])
+	time.Sleep(20 * time.Millisecond)
+	assert.Equal(t, after, h.stream.touches(ids[0]), "an acknowledged entry is no longer touched")
+}
+
+func TestWorker_ReclaimSkipsEntriesItHolds(t *testing.T) {
+	t.Parallel()
+	classifier, entered, release := blockingClassifier()
+	h := newWorkerHarness(t, testWorkerConfig(), classifier)
+	req := queued("gw", billing, "in flight")
+	ids := h.stream.push(req)
+	h.start(t)
+	<-entered
+
+	h.stream.mu.Lock()
+	h.stream.reclaim = []Delivery{{ID: ids[0], Request: req, Deliveries: 2}}
+	h.stream.mu.Unlock()
+	require.Eventually(t, func() bool {
+		h.stream.mu.Lock()
+		defer h.stream.mu.Unlock()
+		return h.stream.reclaim == nil
+	}, 2*time.Second, time.Millisecond)
+	close(release)
+
+	h.waitAcked(t, 1)
+	time.Sleep(10 * time.Millisecond)
+	assert.Len(t, classifier.recorded(), 1, "an entry reclaimed while held here is not dispatched again")
+	assert.Len(t, h.sink.all(), 1, "and it is published once")
+}
+
+func TestWorker_ClaimLoopTrimsTheStream(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	h.start(t)
+	require.Eventually(t, func() bool { return h.stream.trimCount() >= 2 }, 2*time.Second, time.Millisecond,
+		"retention holds even with nothing new enqueued")
+}
+
+func TestWorker_TransientPublishFailureLeavesTheEntryPending(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	h.sink.err = errors.New("snapshot not loaded yet")
+	req := queued("gw", billing, "refund")
+	h.stream.push(req)
+	h.start(t)
+
+	require.Eventually(t, func() bool {
+		_, _, results, _ := h.recorder.snapshot()
+		return results[OutcomePublishRetry] == 1
+	}, 2*time.Second, time.Millisecond)
+	assert.Empty(t, h.stream.ackedIDs(), "left pending to be reclaimed and published later")
+	assert.True(t, h.cache.has(cacheKeyOf(req, "v1:refund")), "the retry is served from the cache")
+}
+
+func TestWorker_UnpublishableClassificationIsAcked(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	h.sink.err = fmt.Errorf("%w: gateway gone", ErrUnpublishable)
+	ids := h.stream.push(queued("gw", billing, "refund"))
+	h.start(t)
+
+	h.waitAcked(t, 1)
+	assert.Equal(t, ids, h.stream.ackedIDs(), "retrying cannot help, so it is dropped")
+	_, _, results, _ := h.recorder.snapshot()
+	assert.Equal(t, 1, results[OutcomeUnpublishable])
+}
+
+func TestWorker_UnknownModelVersionBypassesTheCache(t *testing.T) {
+	t.Parallel()
+	classifier := &fakeClassifier{versionErr: errors.New("config endpoint down")}
+	h := newWorkerHarness(t, testWorkerConfig(), classifier)
+	req := queued("gw", billing, "refund")
+	h.cache.put(cacheKeyOf(req, ""), topic.Classification{ModelVersion: "stale"})
+	h.stream.push(req)
+	h.start(t)
+
+	h.waitAcked(t, 1)
+	assert.Zero(t, h.cache.readCount(), "an entry of an unknown model is never served")
+	require.Len(t, classifier.recorded(), 1)
+	assert.True(t, h.cache.has(cacheKeyOf(req, "v1:refund")), "the result is stored under the version that scored it")
+}
+
+func TestWorker_CapsRetryAfter(t *testing.T) {
+	t.Parallel()
+	h := newWorkerHarness(t, testWorkerConfig(), nil)
+	now := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	h.worker.now = func() time.Time { return now }
+
+	h.worker.pause(time.Hour)
+	assert.Equal(t, now.Add(maxPause).UnixNano(), h.worker.pauseUntil.Load())
 }

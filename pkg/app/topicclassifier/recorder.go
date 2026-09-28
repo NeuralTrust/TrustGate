@@ -22,9 +22,10 @@ import "time"
 const (
 	OutcomeAccepted      = "accepted"
 	OutcomeBufferFull    = "buffer_full"
+	OutcomeShuttingDown  = "shutting_down"
 	OutcomeBodyTooLarge  = "body_too_large"
-	OutcomeQueued        = "queued"
 	OutcomeSampledOut    = "sampled_out"
+	OutcomeQueued        = "queued"
 	OutcomeNoText        = "no_text"
 	OutcomeQuotaExceeded = "quota_exceeded"
 	OutcomeQueueError    = "queue_error"
@@ -34,10 +35,23 @@ const (
 	OutcomePoison        = "poison"
 	OutcomeUnconfigured  = "unconfigured"
 	OutcomeInvalid       = "invalid"
+	OutcomeUnpublishable = "unpublishable"
+	OutcomePublishRetry  = "publish_retry"
 	OutcomeOK            = "ok"
 	OutcomeError         = "error"
 	OutcomeBackpressure  = "backpressure"
 )
+
+// Outcomes lists every outcome, so a recorder can prepare its label sets once.
+func Outcomes() []string {
+	return []string{
+		OutcomeAccepted, OutcomeBufferFull, OutcomeShuttingDown, OutcomeBodyTooLarge,
+		OutcomeSampledOut, OutcomeQueued, OutcomeNoText, OutcomeQuotaExceeded,
+		OutcomeQueueError, OutcomeClassified, OutcomeCacheHit, OutcomeFailed,
+		OutcomePoison, OutcomeUnconfigured, OutcomeInvalid, OutcomeUnpublishable,
+		OutcomePublishRetry, OutcomeOK, OutcomeError, OutcomeBackpressure,
+	}
+}
 
 // Recorder receives the classifier's operational counts. Intake counts what
 // the request path offered, Enqueue what reached the queue, Result how each

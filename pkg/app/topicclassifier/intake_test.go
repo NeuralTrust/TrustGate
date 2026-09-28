@@ -86,11 +86,9 @@ func candidate(cfg *topic.Config) Candidate {
 	}
 }
 
-func always(v float64) func() float64 { return func() float64 { return v } }
-
-func startIntake(t *testing.T, q Queue, cfg IntakeConfig, sample func() float64) *intake {
+func startIntake(t *testing.T, q Queue, cfg IntakeConfig) *intake {
 	t.Helper()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, cfg, sample)
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, cfg)
 	in.Start()
 	t.Cleanup(func() { _ = in.Shutdown(context.Background()) })
 	return in
@@ -110,7 +108,7 @@ func waitEnqueued(t *testing.T, q *fakeQueue) topic.Request {
 func TestIntake_EnqueuesTheBuiltRequest(t *testing.T) {
 	t.Parallel()
 	q := newFakeQueue()
-	in := startIntake(t, q, IntakeConfig{}, always(0))
+	in := startIntake(t, q, IntakeConfig{})
 
 	cfg := enabledConfig()
 	require.True(t, in.Submit(candidate(cfg)))
@@ -129,28 +127,22 @@ func TestIntake_EnqueuesTheBuiltRequest(t *testing.T) {
 func TestIntake_DropsWithoutEnqueueing(t *testing.T) {
 	t.Parallel()
 
-	sampled := enabledConfig()
-	rate := 0.5
-	sampled.SamplingRate = &rate
-
 	noUserText := candidate(enabledConfig())
 	noUserText.Body = []byte(`{"model":"gpt-4o","messages":[{"role":"system","content":"only system"}]}`)
 
 	tests := []struct {
-		name   string
-		cand   Candidate
-		sample float64
+		name string
+		cand Candidate
 	}{
 		{name: "disabled config", cand: candidate(&topic.Config{Enabled: false, Topics: enabledConfig().Topics})},
 		{name: "nil config", cand: candidate(nil)},
-		{name: "sampled out", cand: candidate(sampled), sample: 0.9},
 		{name: "no user text", cand: noUserText},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			q := newFakeQueue()
-			in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{}, always(tt.sample))
+			in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{})
 			in.Start()
 			require.True(t, in.Submit(tt.cand))
 			require.NoError(t, in.Shutdown(context.Background()))
@@ -159,21 +151,24 @@ func TestIntake_DropsWithoutEnqueueing(t *testing.T) {
 	}
 }
 
-func TestIntake_SampledIn(t *testing.T) {
+func TestIntake_BoundsBufferedBytes(t *testing.T) {
 	t.Parallel()
-	cfg := enabledConfig()
-	rate := 0.5
-	cfg.SamplingRate = &rate
+	body := len(candidate(enabledConfig()).Body)
+	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{QueueSize: 100, MaxBufferBytes: int64(2 * body)})
 
-	q := newFakeQueue()
-	in := startIntake(t, q, IntakeConfig{}, always(0.1))
-	require.True(t, in.Submit(candidate(cfg)))
-	waitEnqueued(t, q)
+	require.True(t, in.Submit(candidate(enabledConfig())))
+	require.True(t, in.Submit(candidate(enabledConfig())))
+	assert.False(t, in.Submit(candidate(enabledConfig())), "the byte budget binds before the slot count")
+	assert.Equal(t, int64(2*body), in.buffered.Load(), "a refused candidate releases what it reserved")
+
+	in.Start()
+	require.NoError(t, in.Shutdown(context.Background()))
+	assert.Zero(t, in.buffered.Load(), "queued candidates release their bytes")
 }
 
 func TestIntake_SubmitNeverBlocks(t *testing.T) {
 	t.Parallel()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{QueueSize: 1}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{QueueSize: 1})
 
 	require.True(t, in.Submit(candidate(enabledConfig())))
 	done := make(chan bool, 1)
@@ -189,7 +184,7 @@ func TestIntake_SubmitNeverBlocks(t *testing.T) {
 func TestIntake_ShutdownDrainsBufferedCandidates(t *testing.T) {
 	t.Parallel()
 	q := newFakeQueue()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{QueueSize: 8}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{QueueSize: 8})
 
 	for range 5 {
 		require.True(t, in.Submit(candidate(enabledConfig())))
@@ -204,7 +199,7 @@ func TestIntake_ShutdownDrainsBufferedCandidates(t *testing.T) {
 
 func TestIntake_ShutdownWithoutStart(t *testing.T) {
 	t.Parallel()
-	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), newFakeQueue(), nil, IntakeConfig{})
 	require.NoError(t, in.Shutdown(context.Background()))
 	assert.False(t, in.Submit(candidate(enabledConfig())))
 }
@@ -221,7 +216,7 @@ func TestIntake_ShutdownDeadlineCancelsInFlightEnqueue(t *testing.T) {
 		cancelled = true
 		return ctx.Err()
 	}
-	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{Workers: 1, EnqueueTimeout: time.Minute}, always(0))
+	in := newIntake(quietLogger(), adapter.NewRegistry(), q, nil, IntakeConfig{Workers: 1, EnqueueTimeout: time.Minute})
 	in.Start()
 	require.True(t, in.Submit(candidate(enabledConfig())))
 	<-started
@@ -252,7 +247,7 @@ func TestIntake_SurvivesEnqueueFailuresAndPanics(t *testing.T) {
 			return nil
 		}
 	}
-	in := startIntake(t, q, IntakeConfig{Workers: 1}, always(0))
+	in := startIntake(t, q, IntakeConfig{Workers: 1})
 
 	for range 3 {
 		require.True(t, in.Submit(candidate(enabledConfig())))

@@ -28,7 +28,7 @@ reaches the data planes in the config snapshot. There is no environment flag.
 | Field | Meaning |
 |---|---|
 | `enabled` | Classify this gateway's chat requests |
-| `topics` | 1 to 10 topics, unique `name`, non-empty `definition` |
+| `topics` | 1 to 10 topics, unique `name` of up to 64 characters, non-empty `definition` of up to 2,000 |
 | `threshold` | Optional. Without it topic-guard applies its calibrated operating point |
 | `message_window` | How many of the latest `user` messages are classified. Default 3, max 50. The system prompt is never sent |
 | `sampling_rate` | Fraction of requests to classify, 0 to 1. Default 1 |
@@ -41,10 +41,10 @@ with the next snapshot.
 ```
 Auth → HybridGatewayGuard → Session → Metrics → TopicClassification → handler
                                                         │
-          body copy (capped) + non-blocking send to an in-memory buffer
+          sample, body copy (capped) + non-blocking send to an in-memory buffer
                                                         │
       dispatcher: decode, last N user messages, truncate to 10,000 chars,
-                  sample, per-gateway quota + XADD to a Redis stream
+                  per-gateway quota + XADD to a Redis stream
                                                         │
       worker: read, cache by text + catalog + threshold + model version,
               batch per gateway and catalog, POST /v1/topic-guard
@@ -55,26 +55,50 @@ Auth → HybridGatewayGuard → Session → Metrics → TopicClassification → 
 - The middleware runs before any plugin, so requests a guardrail blocks are
   classified too. Only `chat` routes are offered; embeddings, rerank, files,
   images and audio are not.
-- Nothing on the request path decodes JSON or reaches Redis. A full buffer
-  drops the candidate and counts it.
-- The worker keeps a fixed number of calls in flight per replica. A 503 from
-  topic-guard pauses the whole worker for `Retry-After` without counting as a
-  failure; real errors retry with backoff behind a circuit breaker.
-- Entries left pending by a pod that dies are reclaimed by the others. An entry
-  handed out too many times is dropped.
+- Nothing on the request path decodes JSON or reaches Redis. Requests that
+  sampling leaves out are dropped before their body is copied. The buffer is
+  bounded both in entries and in bytes (`TOPIC_CLASSIFIER_INTAKE_MAX_BUFFER_BYTES`);
+  when either is full the candidate is dropped and counted.
+- The worker keeps a fixed number of calls in flight per replica
+  (`TOPIC_CLASSIFIER_CONCURRENCY`, 8 by default), so topic-guard sees that many
+  times the number of replicas. A 503 from topic-guard pauses the whole worker
+  for `Retry-After` (at most 30 s) without counting as a failure; real errors
+  retry with backoff behind a circuit breaker. Each batch reads and writes the
+  cache in one round trip each.
+- Entries left pending by a pod that dies are reclaimed by the others. A live
+  worker touches the entries it holds, so a slow batch is never taken over and
+  classified twice. An entry handed out too many times is dropped.
+- A classification whose publish fails for a transient reason stays pending and
+  is published again later, from the cache.
+- A plane without a topic-guard endpoint queues but runs no worker, so it never
+  takes entries from the shared stream only to drop them.
 
 ## What leaves TrustGate
 
 - **To topic-guard** (the firewall): the text of the latest user messages and
-  the gateway's catalog.
-- **To Redis**: the same text, in the stream, for at most
-  `TOPIC_CLASSIFIER_STREAM_RETENTION` (1 h by default), and the classification
-  in the cache for `TOPIC_CLASSIFIER_CACHE_TTL`.
+  the gateway's catalog. The client never follows redirects, so neither the
+  text nor the token can be sent anywhere else.
+- **To Redis**: the same text, in the stream, until it is classified: the entry
+  is deleted with its ack. An entry never classified is trimmed after
+  `TOPIC_CLASSIFIER_STREAM_RETENTION` (1 h by default, checked every 30 s even
+  without traffic). The classification stays in the cache for
+  `TOPIC_CLASSIFIER_CACHE_TTL`, under a key signed with a key derived from
+  `SERVER_SECRET_KEY` and scoped to the gateway, so reading Redis does not
+  reveal which prompts were classified.
 - **To the OTel collector**: the classification and the trace id, never the
   prompt. See the [event contract](telemetry/otlp-metadata-contract.md#topic-classification-event).
   Downstream, a view keyed on the event name routes these records to their
   own table; the attributes stay out of the `trustgate_events` namespace so
   they are never counted as requests.
+
+## Masking and PII plugins
+
+The middleware runs before the gateway's plugins, so the prompt is classified
+as the client sent it: a data masking or PII redaction plugin has not run yet.
+This is deliberate. It is what lets requests a plugin blocks be classified too,
+and topic-guard is served by the firewall, like the guardrails that already
+receive the unmasked text. It does mean that, on a gateway with masking, the
+original text reaches topic-guard and waits in Redis until it is classified.
 
 ## Tuning
 
