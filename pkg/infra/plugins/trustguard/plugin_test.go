@@ -171,11 +171,25 @@ type fakeGuard struct {
 	// messages[] it received with each string leaf passed through echoMask,
 	// under transformed_payload, with status transform.
 	echoMask func(string) string
+	// tokenStatuses answers the token leg's calls in order; a call past the
+	// end, or a zero entry, gets a token.
+	tokenStatuses []int
+	tokenHits     int
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == tokenPath {
+			f.mu.Lock()
+			call := f.tokenHits
+			f.tokenHits++
+			f.mu.Unlock()
+			if call < len(f.tokenStatuses) && f.tokenStatuses[call] != 0 && f.tokenStatuses[call] != http.StatusOK {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.tokenStatuses[call])
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", TokenType: "Bearer", ExpiresIn: 3600})

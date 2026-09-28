@@ -244,15 +244,21 @@ type segmentGuard struct {
 	captured   []GuardRequest
 	delays     []time.Duration
 	tokenDelay time.Duration
-	release    chan struct{}
-	status     int
-	response   GuardResponse
+	// tokenStatus, when set, is how the token leg answers every call.
+	tokenStatus int
+	release     chan struct{}
+	status      int
+	response    GuardResponse
 }
 
 func (g *segmentGuard) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == tokenPath {
 			if !g.hold(r, g.tokenDelay) {
+				return
+			}
+			if g.tokenStatus != 0 {
+				w.WriteHeader(g.tokenStatus)
 				return
 			}
 			w.Header().Set("Content-Type", contentTypeJSON)

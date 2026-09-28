@@ -92,6 +92,23 @@ func unauthorizedError(err *authRejectedError) *appplugins.PluginError {
 	}
 }
 
+// missingCredentialsError is unauthorizedError without an upstream status:
+// the gateway had no credentials to present, so TrustGuard was never asked.
+// The caller gets the same generic type and message; which configuration is
+// missing is the operator's to read, in the log and the trace.
+func missingCredentialsError() *appplugins.PluginError {
+	body, _ := json.Marshal(map[string]any{
+		"error":   typeUnauthorized,
+		"message": unauthorizedMessage,
+	})
+	return &appplugins.PluginError{
+		StatusCode: http.StatusBadGateway,
+		Type:       typeUnauthorized,
+		Message:    unauthorizedMessage,
+		Body:       body,
+	}
+}
+
 // timeoutFailClosedError is 504 rather than the transport path's 502: the
 // upstream guard was reachable and simply did not answer in time, and an
 // operator reading the status code should be able to tell those apart without

@@ -70,15 +70,21 @@ func (e *entitlementsUnavailableError) Error() string {
 }
 
 // authRejectedError is returned when TrustGuard deliberately refuses the
-// evaluate call (403, or 401 after token refresh). Must not fail-open: the
-// guard is reachable and the plugin is misconfigured or unauthorized.
+// evaluate call (403, or 401 after token refresh) or the token call (400, 401,
+// 403). Must not fail-open: the guard is reachable and the plugin is
+// misconfigured or unauthorized. code is the OAuth error code the token
+// endpoint named, for the operator's log only; it never reaches the caller.
 type authRejectedError struct {
 	status int
+	code   string
 }
 
 func (e *authRejectedError) Error() string {
 	if e == nil {
 		return "trustguard: unauthorized"
+	}
+	if e.code != "" {
+		return fmt.Sprintf("trustguard: unauthorized status %d (%s)", e.status, e.code)
 	}
 	return fmt.Sprintf("trustguard: unauthorized status %d", e.status)
 }

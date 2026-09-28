@@ -200,14 +200,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	if !p.tokens.configured() {
-		p.warn(ctx, "trustguard client credentials not configured, failing open",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-		)
-		return passThrough(), nil
-	}
-
 	if in.Request == nil {
 		return passThrough(), nil
 	}
@@ -234,6 +226,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	payload, tgt, skip := p.inspectionPayload(ctx, in, direction, mcpMode)
 	if skip {
 		return passThrough(), nil
+	}
+
+	// A TrustGuard policy is a guard someone asked for, and a pod with no
+	// credentials cannot call it: a Secret that did not mount, a partial
+	// rollout, or a hybrid data plane that received the policy through config
+	// sync (which never runs ValidateConfig) without being given the secret.
+	// Nothing retries its way out of that, so it fails closed like any other
+	// deliberate rejection, whatever on_error says. Checked only once there is
+	// something to inspect, so requests the policy would have skipped anyway
+	// still pass.
+	if !p.tokens.configured() {
+		return p.failClosedMissingCredentials(ctx, in, direction)
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)
@@ -756,6 +760,22 @@ func (p *Plugin) guardWith(
 		return nil, &authRejectedError{status: http.StatusUnauthorized}
 	}
 	return nil, err
+}
+
+func (p *Plugin) failClosedMissingCredentials(ctx context.Context, in appplugins.ExecInput, direction string) (*appplugins.Result, error) {
+	recordEvaluateFailure(ctx, failureReasonCredentialsMissing)
+	p.error(ctx, "trustguard client credentials not configured, failing closed",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.String("direction", direction),
+	)
+	recordGuardOutcome(in.Event, guardData{
+		Direction:     direction,
+		Decision:      decisionFailedClosed,
+		FailedClosed:  true,
+		FailureReason: failureReasonCredentialsMissing,
+	})
+	return nil, missingCredentialsError()
 }
 
 func (p *Plugin) failClosedAuth(ctx context.Context, in appplugins.ExecInput, direction string, err error) (*appplugins.Result, error) {
