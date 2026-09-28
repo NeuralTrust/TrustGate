@@ -28,6 +28,7 @@ import (
 const (
 	failureReasonUnauthorized = "unauthorized"
 	failureReasonTransport    = "transport"
+	failureReasonTimeout      = "timeout"
 )
 
 var (
