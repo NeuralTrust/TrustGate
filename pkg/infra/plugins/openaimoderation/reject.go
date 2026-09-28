@@ -26,8 +26,7 @@ const (
 	typeContentFlagged = "content_flagged"
 	typeUnavailable    = "moderation_unavailable"
 
-	defaultBlockMessage = "request blocked by content policy"
-	unavailableMessage  = "content moderation is temporarily unavailable"
+	unavailableMessage = "content moderation is temporarily unavailable"
 )
 
 const unavailableBodyJSON = `{"error":{"type":"moderation_unavailable","message":"content moderation is temporarily unavailable"}}`
@@ -54,7 +53,7 @@ func blockBody(message string, violations []violation) []byte {
 func blockError(message string, violations []violation) *appplugins.PluginError {
 	msg := strings.TrimSpace(message)
 	if msg == "" {
-		msg = defaultBlockMessage
+		msg = appplugins.DefaultBlockMessage
 	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,

@@ -442,7 +442,7 @@ func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			data := &Data{}
-			res, err := p.anonymizeEnforce(in, data, tt.out, tt.span, f)
+			res, err := p.anonymizeEnforce(in, data, "", tt.out, tt.span, f)
 			if res != nil {
 				t.Fatalf("expected nil result, got %+v", res)
 			}
@@ -469,7 +469,7 @@ func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
 		return []byte(masked), true
 	}}
 
-	res, err := p.anonymizeEnforce(in, data, piiAnonymizedOutputWithText("masked-body"), span, f)
+	res, err := p.anonymizeEnforce(in, data, "", piiAnonymizedOutputWithText("masked-body"), span, f)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

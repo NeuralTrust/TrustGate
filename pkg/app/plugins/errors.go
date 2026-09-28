@@ -16,6 +16,13 @@ package plugins
 
 import "errors"
 
+// DefaultBlockMessage is the vendor-neutral message a guardrail plugin returns
+// to the caller when its configured message is empty or whitespace-only. Every
+// guardrail plugin (azure_content_safety, bedrock_guardrail, google_model_armor,
+// openai_moderation) falls back to this same string on both the buffered and
+// streamed legs, so the caller never sees which vendor made the call.
+const DefaultBlockMessage = "This content violates our usage policy."
+
 // PluginError is returned by a plugin to reject a request and short-circuit the
 // chain with a specific HTTP status (e.g. rate limit 429, request too large 413).
 type PluginError struct {
