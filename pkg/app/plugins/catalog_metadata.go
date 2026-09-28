@@ -64,7 +64,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"rate_limiter": {
 		name:  "Rate Limiter",
 		group: groupTrafficControl,
-		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
+		description: "Applies to LLM and native MCP traffic. Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
 			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
 			" and then lets it through, so it smooths bursts but does not cap the rate.",
 		schema: SettingsSchema{
@@ -90,10 +90,11 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
-					Key:         "group_by_header",
-					Label:       "Group By Header",
-					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer.",
+					Key:   "group_by_header",
+					Label: "Group By Header",
+					Type:  FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer. " +
+						"On native MCP tools/call traffic this reads the same transport request headers as an LLM call, so it partitions MCP the same way; when the header is absent from the request the limit falls back to the shared scope counter, on both planes alike.",
 				},
 			},
 		},
@@ -101,7 +102,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"request_size_limiter": {
 		name:        "Request Size Limiter",
 		group:       groupTrafficControl,
-		description: "Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
+		description: "Applies to LLM and native MCP traffic. Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -131,7 +132,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "require_content_length",
 					Label:       "Require Content-Length",
 					Type:        FieldTypeBoolean,
-					Description: "Reject requests that do not declare a Content-Length header.",
+					Description: "Reject requests that do not declare a Content-Length header. Native MCP tools/call traffic has no such header of its own: the gateway derives it from the tool call's actual payload size, so this setting never refuses an MCP call for lacking one.",
 					Default:     false,
 				},
 			},

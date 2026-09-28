@@ -220,7 +220,13 @@ func (h *Handler) NotServedHere(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
-	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), c.GetReqHeaders()))
+	reqHeaders := c.GetReqHeaders()
+	c.SetUserContext(requestmeta.NewContext(c.UserContext(), h.resolveClientIP(c.Context().RemoteAddr().String(), c.Get(fiber.HeaderXForwardedFor)), reqHeaders))
+	// tools/call builds a synthetic RequestContext with no headers of its own
+	// (RUN-1674); stash the real ones so plugin_runner can let a header-keyed
+	// setting (Rate Limiter's Group by header) read them the same way it would
+	// on the LLM plane.
+	c.SetUserContext(infracontext.WithInboundHeaders(c.UserContext(), reqHeaders))
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)

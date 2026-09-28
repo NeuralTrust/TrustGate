@@ -37,4 +37,12 @@ const (
 	// middleware not to publish an event for the current request (e.g. ping,
 	// notifications, or pre-dispatch failures).
 	MCPSkipMetricsKey ContextKey = "__mcp_skip_metrics"
+	// InboundHeadersContextKey holds the real inbound HTTP request headers for
+	// a plane whose own RequestContext otherwise carries none. The MCP
+	// tools/call path builds a synthetic RequestContext from the JSON-RPC
+	// params (RUN-1674) and has no headers of its own to put there, but a
+	// header-keyed policy setting (Rate Limiter's Group by header) still needs
+	// to read the transport request's real headers to partition MCP the same
+	// way it partitions LLM. See WithInboundHeaders / InboundHeadersFromContext.
+	InboundHeadersContextKey ContextKey = "__inbound_http_headers"
 )
