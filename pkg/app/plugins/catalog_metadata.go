@@ -944,9 +944,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label: "Thresholds",
 					Type:  FieldTypeMap,
 					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks. " +
-						"Keys must be one of the model's valid categories (see categories); a key that is not " +
-						"valid for the configured model is rejected on a new write, but an already-stored one " +
-						"keeps working unchanged.",
+						"Valid keys: harassment, harassment/threatening, hate, hate/threatening, illicit, " +
+						"illicit/violent, self-harm, self-harm/intent, self-harm/instructions, sexual, " +
+						"sexual/minors, violence, violence/graphic. An unknown key is rejected on a new write, " +
+						"but an already-stored one keeps working unchanged.",
 					Value: &Field{
 						Key:   "threshold",
 						Label: "Threshold",
