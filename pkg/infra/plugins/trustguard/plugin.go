@@ -112,6 +112,10 @@ type Plugin struct {
 	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
+	// timeout is the deployment-wide deadline the HTTP client was built with.
+	// It is kept here as well so a policy can shorten or lengthen its own
+	// calls without every gateway sharing the change.
+	timeout time.Duration
 
 	cfgCache sync.Map
 }
@@ -124,6 +128,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 		tokens:   newTokenManager(c.http, clientID, clientSecret),
 		baseURL:  baseURL,
 		logger:   logger,
+		timeout:  timeout,
 	}
 }
 
@@ -255,7 +260,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	traceID := gatewayTraceID(ctx)
 	playground := requestHasPlaygroundToken(in.Request)
-	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body, playground)
+	// The deadline is set here rather than left to the HTTP client so that a
+	// policy can carry its own, and so that a call that runs out of time is
+	// reported as a timeout rather than as an indistinguishable transport
+	// error. The client's own Timeout still applies as the outer bound.
+	callCtx, cancel := context.WithTimeout(ctx, cfg.timeoutOr(p.timeout))
+	defer cancel()
+	resp, err := p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
@@ -273,6 +284,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 		if errors.Is(err, errUnauthorized) {
 			return p.failClosedAuth(ctx, in, direction, &authRejectedError{status: http.StatusUnauthorized})
+		}
+		// The caller's own cancellation is not ours to reinterpret: only a
+		// deadline this call imposed counts as the guard running out of time.
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return p.handleTimeout(ctx, in, cfg, direction, err)
 		}
 		return p.handleTransportError(ctx, in, cfg, direction, err)
 	}
@@ -680,9 +696,16 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 }
 
 // guardWith runs one evaluate call, retrying once with a fresh token after a
-// 401. The token leg comes from the caller because the two legs are bounded
-// differently: a buffered call waits out a token fetch under the HTTP client
-// timeout, a streamed block holding bytes back cannot.
+// 401. The token leg comes from the caller because the two paths fetch it
+// differently: a streamed block holding bytes back cannot wait out a cold
+// token the way a buffered call can, so it passes tokenWithin.
+//
+// Both paths now bound the whole thing — token leg included — with a single
+// deadline from the caller. The buffered path used to leave each leg to the
+// HTTP client's own timeout, so a cold token and a slow evaluate could each
+// take the full budget and a retry could take it twice more. One deadline is
+// what a policy-level "timeout" has to mean to be worth setting; the cost is
+// that a cold token now spends the same budget the evaluate call does.
 func (p *Plugin) guardWith(
 	ctx context.Context,
 	fetchToken tokenSource,
@@ -741,6 +764,45 @@ func (p *Plugin) failClosedAuth(ctx context.Context, in appplugins.ExecInput, di
 	}
 	recordGuardOutcome(in.Event, data)
 	return nil, unauthorizedError(auth)
+}
+
+// handleTimeout is the transport path's sibling for a call that ran out of
+// time. It is separate because the default is the opposite way round: a
+// timeout is reachable by anyone who can make a payload large enough, so it
+// fails closed unless the policy says otherwise.
+func (p *Plugin) handleTimeout(ctx context.Context, in appplugins.ExecInput, cfg Settings, direction string, err error) (*appplugins.Result, error) {
+	if cfg.failClosedOnTimeout() {
+		recordEvaluateFailure(ctx, failureReasonTimeout)
+		p.error(ctx, "trustguard call timed out, failing closed",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", direction),
+			slog.Duration("timeout", cfg.timeoutOr(p.timeout)),
+			slog.Any("error", err),
+		)
+		recordGuardOutcome(in.Event, guardData{
+			Direction:     direction,
+			Decision:      decisionFailedClosed,
+			FailedClosed:  true,
+			FailureReason: failureReasonTimeout,
+		})
+		return nil, timeoutFailClosedError()
+	}
+	recordEvaluateFailure(ctx, failureReasonTimeout)
+	p.warn(ctx, "trustguard call timed out, failing open",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.String("direction", direction),
+		slog.Duration("timeout", cfg.timeoutOr(p.timeout)),
+		slog.Any("error", err),
+	)
+	setExtras(in.Event, guardData{
+		Direction:     direction,
+		Decision:      decisionFailedOpen,
+		FailedOpen:    true,
+		FailureReason: failureReasonTimeout,
+	})
+	return passThrough(), nil
 }
 
 func (p *Plugin) handleTransportError(ctx context.Context, in appplugins.ExecInput, cfg Settings, direction string, err error) (*appplugins.Result, error) {
