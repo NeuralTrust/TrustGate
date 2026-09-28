@@ -180,8 +180,8 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // an ERROR finish. A Responses client whose upstream sent such an error, failed
 // or ended without a finish after response.created gets an error event and
 // response.failed, and [DONE] without a finish completes its response. A
-// Gemini client whose upstream sent such an error, or failed before its
-// finish, gets no held tool calls and a Gemini error object instead of a
+// Gemini client whose upstream sent such an error, or failed or ended before
+// its finish, gets no held tool calls and a Gemini error object instead of a
 // finish. Once an Anthropic, Cohere, Responses or Gemini client has its
 // terminal event for a failed upstream, the sequence error is wrapped in
 // ClientNotifiedStreamError. A Responses client that has been sent nothing
@@ -192,8 +192,8 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // returned sequence, one upstream line at a time. A Responses client whose
 // upstream sent [DONE] without a finish while a held tool call had arguments
 // that are not valid JSON gets response.failed, as for an upstream that ended
-// without one; a Gemini client in that case gets no tool calls, and otherwise
-// gets its held calls and a STOP finish.
+// without one; a Gemini client in that case gets a Gemini error object, and
+// otherwise gets its held calls and a STOP finish.
 //
 // An OpenAI Chat Completions client of a re-encoded OpenAI-wire upstream gets
 // the usage once: on the include_usage chunk when one follows the finish,
@@ -570,8 +570,8 @@ func (d *finishDeferral) flushOnError(
 
 // end flushes when the upstream ends; an Anthropic client whose upstream ended
 // without a finish gets an error event instead, a Cohere client whose message
-// started an ERROR message-end, and a Responses client whose response started
-// response.failed.
+// started an ERROR message-end, a Responses client whose response started
+// response.failed, and a Gemini client an error object.
 func (d *finishDeferral) end(
 	emit func([][]byte) bool,
 	registry providerCodec,
@@ -584,7 +584,7 @@ func (d *finishDeferral) end(
 	const message = "upstream stream ended before the message finished"
 	cohereStarted := d.cohere != nil && d.cohere.Started()
 	responsesStarted := d.responses != nil && d.responses.Started()
-	if !d.flushed && (d.anthropic != nil || cohereStarted || responsesStarted) {
+	if !d.flushed && (d.anthropic != nil || d.gemini != nil || cohereStarted || responsesStarted) {
 		logger.Warn("upstream stream ended without a finish; aborted the client stream with an error event",
 			slog.String("target", string(d.target)),
 			slog.String("source", string(source)),
@@ -611,19 +611,12 @@ func (d *finishDeferral) done(
 	if d.finished {
 		return d.flush(emit, registry, source, logger)
 	}
-	if d.responses != nil && !d.responses.HeldCallsComplete() {
+	if (d.responses != nil && !d.responses.HeldCallsComplete()) || (d.gemini != nil && !d.gemini.HeldCallsComplete()) {
 		logger.Warn("upstream stream sent [DONE] without a finish while a tool call was incomplete; aborted the client stream with an error event",
 			slog.String("target", string(d.target)),
 			slog.String("source", string(source)),
 		)
 		return d.abort(emit, "upstream stream ended before its tool call arguments were complete", source, logger)
-	}
-	if d.gemini != nil && !d.gemini.HeldCallsComplete() {
-		logger.Warn("upstream stream sent [DONE] without a finish while a tool call was incomplete; ended the client stream without its tool calls",
-			slog.String("target", string(d.target)),
-			slog.String("source", string(source)),
-		)
-		return d.abort(emit, "", source, logger)
 	}
 	if d.anthropic != nil || d.cohere != nil || d.responses != nil || d.gemini != nil {
 		d.finished = true
@@ -661,7 +654,7 @@ func (d *finishDeferral) fail(
 	var ok bool
 	switch {
 	case d.gemini != nil && !d.finished:
-		ok = d.failGemini(emit, source, logger)
+		ok = d.failGemini(emit, "upstream stream failed", source, logger)
 	case d.cohere == nil, upstreamErr == nil && d.finished:
 		ok = d.flushOnError(emit, registry, source, logger)
 	case upstreamErr != nil || d.cohere.Started():
@@ -690,10 +683,11 @@ func (d *finishDeferral) fail(
 	return true, &ClientNotifiedStreamError{Err: err}
 }
 
-// failGemini ends a Gemini client's stream with an error object, withholding
-// its held tool calls, unless the stream already ended.
+// failGemini ends a Gemini client's stream with an error object carrying
+// message, withholding its held tool calls, unless the stream already ended.
 func (d *finishDeferral) failGemini(
 	emit func([][]byte) bool,
+	message string,
 	source adapter.Format,
 	logger *slog.Logger,
 ) bool {
@@ -701,7 +695,7 @@ func (d *finishDeferral) failGemini(
 		return true
 	}
 	d.flushed = true
-	lines := d.gemini.Fail("upstream stream failed")
+	lines := d.gemini.Fail(message)
 	d.logGemini(source, logger)
 	return len(lines) == 0 || emit(lines)
 }
@@ -756,10 +750,7 @@ func (d *finishDeferral) abort(
 		d.logResponsesDropped(source, logger)
 		return emit(lines)
 	case d.gemini != nil:
-		d.flushed = true
-		d.gemini.Abort()
-		d.logGemini(source, logger)
-		return true
+		return d.failGemini(emit, message, source, logger)
 	default:
 		return true
 	}

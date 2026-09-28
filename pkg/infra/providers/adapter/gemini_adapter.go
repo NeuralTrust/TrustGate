@@ -100,7 +100,23 @@ func (p *geminiPart) UnmarshalJSON(b []byte) error {
 type geminiFunctionCall struct {
 	ID   string                 `json:"id,omitempty"`
 	Name string                 `json:"name"`
-	Args map[string]interface{} `json:"args,omitempty"`
+	Args map[string]interface{} `json:"args"`
+}
+
+// geminiCallArgs returns the functionCall args for arguments, never nil:
+// google-genai reads a call with no args key as args None, where a tool that
+// takes no arguments expects {}. The error reports arguments that are not
+// empty and not a JSON object; the args are then empty.
+func geminiCallArgs(arguments string) (map[string]interface{}, error) {
+	args := map[string]interface{}{}
+	if arguments == "" {
+		return args, nil
+	}
+	err := json.Unmarshal([]byte(arguments), &args)
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	return args, err
 }
 
 type geminiFuncResponse struct {
@@ -466,11 +482,9 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 			parts = append(parts, geminiPart{Text: m.Content})
 		}
 		for i, tc := range m.ToolCalls {
-			var args map[string]interface{}
-			if strings.TrimSpace(tc.Arguments) != "" {
-				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-					return nil, fmt.Errorf("encode Gemini tool call %q arguments: %w", tc.Name, err)
-				}
+			args, err := geminiCallArgs(strings.TrimSpace(tc.Arguments))
+			if err != nil {
+				return nil, fmt.Errorf("encode Gemini tool call %q arguments: %w", tc.Name, err)
 			}
 			part := geminiPart{
 				FunctionCall: &geminiFunctionCall{
@@ -651,8 +665,7 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 		parts = append(parts, geminiPart{Text: resp.Content})
 	}
 	for _, tc := range resp.ToolCalls {
-		var args map[string]interface{}
-		_ = json.Unmarshal([]byte(tc.Arguments), &args)
+		args, _ := geminiCallArgs(tc.Arguments)
 		parts = append(parts, geminiPart{
 			FunctionCall: &geminiFunctionCall{
 				ID:   geminiClientCallID(tc.ID, tc.Name),
@@ -765,12 +778,9 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		parts = append(parts, geminiPart{Text: chunk.Delta})
 	}
 	for _, tc := range chunk.ToolCallDeltas {
-		var args map[string]interface{}
-		argsStr := tc.ArgumentsDelta
-		if argsStr == "" {
-			args = make(map[string]interface{})
-		} else if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
-			args = map[string]interface{}{"__raw": argsStr}
+		args, err := geminiCallArgs(tc.ArgumentsDelta)
+		if err != nil {
+			args = map[string]interface{}{"__raw": tc.ArgumentsDelta}
 		}
 		parts = append(parts, geminiPart{
 			FunctionCall: &geminiFunctionCall{ID: geminiClientCallID(tc.ID, tc.Name), Name: tc.Name, Args: args},
