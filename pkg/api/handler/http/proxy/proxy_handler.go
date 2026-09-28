@@ -41,13 +41,16 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
 var newline = []byte("\n")
 
-var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
+const streamErrorMessage = "upstream stream terminated unexpectedly"
+
+var streamErrorEvent = []byte(`data: {"error":{"message":"` + streamErrorMessage + `","type":"upstream_error"}}`)
 
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
@@ -172,7 +175,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if result.Stream != nil {
 		streaming = true
-		return writeStream(c, result, reqCtx, cancel, h.logger)
+		return writeStream(c, result, reqCtx, streamErrorEventFor(route.SourceFormat), cancel, h.logger)
 	}
 	return c.Status(result.StatusCode).Send(result.Body)
 }
@@ -204,6 +207,7 @@ func writeStream(
 	c *fiber.Ctx,
 	result *appproxy.ForwardResult,
 	req *infracontext.RequestContext,
+	errorEvent []byte,
 	cancel context.CancelFunc,
 	logger *slog.Logger,
 ) error {
@@ -241,7 +245,7 @@ func writeStream(
 					slog.Any("panic", value),
 					slog.String("stack", string(stack)))
 				if !terminated {
-					writeStreamError(w, &captured, finalizer != nil)
+					writeStreamError(w, errorEvent, &captured, finalizer != nil)
 				}
 			}
 		}()
@@ -253,7 +257,7 @@ func writeStream(
 			}
 			if err != nil {
 				terminated = true
-				writeStreamError(w, &captured, finalizer != nil)
+				writeStreamError(w, errorEvent, &captured, finalizer != nil)
 				return
 			}
 			if finalizer != nil {
@@ -279,15 +283,30 @@ func writeStreamLine(w *bufio.Writer, line []byte) bool {
 	return w.Flush() == nil
 }
 
-// writeStreamError ends a stream that failed after its 200 went out. The
-// status can no longer change, so an explicit error event tells the client
-// the stream was aborted rather than finished.
-func writeStreamError(w *bufio.Writer, captured *bytes.Buffer, capture bool) {
+// streamErrorEventFor returns the error event that ends a failed stream for a
+// client of the source format. A Gemini client gets the error object the
+// Gemini API sends mid-stream: google-genai fails with a TypeError on one
+// without a code instead of raising its APIError.
+func streamErrorEventFor(source adapter.Format) []byte {
+	if !adapter.IsSameWireFormat(source, adapter.FormatGemini) {
+		return streamErrorEvent
+	}
+	lines, err := adapter.GeminiStreamErrorEvent(streamErrorMessage)
+	if err != nil {
+		return streamErrorEvent
+	}
+	return lines[0]
+}
+
+// writeStreamError ends a stream that failed after its 200 went out with
+// event. The status can no longer change, so an explicit error event tells
+// the client the stream was aborted rather than finished.
+func writeStreamError(w *bufio.Writer, event []byte, captured *bytes.Buffer, capture bool) {
 	if capture {
-		captured.Write(streamErrorEvent)
+		captured.Write(event)
 		captured.Write(newline)
 	}
-	_, _ = w.Write(streamErrorEvent)
+	_, _ = w.Write(event)
 	_, _ = w.Write(newline)
 	_, _ = w.Write(newline)
 	_ = w.Flush()
