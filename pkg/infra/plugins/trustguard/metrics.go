@@ -29,9 +29,18 @@ const (
 	failureReasonUnauthorized = "unauthorized"
 	failureReasonTransport    = "transport"
 	failureReasonTimeout      = "timeout"
-	// failureReasonCredentialsMissing is a pod started without
-	// TRUSTGUARD_CLIENT_ID/SECRET: no call is made, and the guard fails closed.
-	failureReasonCredentialsMissing = "credentials_missing"
+	// failureReasonCredentialsMissing and failureReasonBaseURLMissing are a pod
+	// started without TRUSTGUARD_CLIENT_ID/SECRET or TRUSTGUARD_BASE_URL: no
+	// call is made at all.
+	failureReasonCredentialsMissing      = "credentials_missing"
+	failureReasonBaseURLMissing          = "base_url_missing"
+	failureReasonEntitlementsUnavailable = "entitlements_unavailable"
+	failureReasonConfigInvalid           = "config_invalid"
+	failureReasonGatewayIDMissing        = "gateway_id_missing"
+	failureReasonPayloadUnreadable       = "payload_unreadable"
+	// failureReasonTransformFailed is TrustGuard asking for a mask this plugin
+	// could not write back; degraded_reason on the span says which step failed.
+	failureReasonTransformFailed = "transform_failed"
 )
 
 var (
@@ -99,9 +108,13 @@ func recordEvaluateFailure(ctx context.Context, reason string) {
 // defined as no evals at all, so its share of trustguard_stream_evals_total is
 // zero by construction and only a count of responses can answer how many
 // streams were never inspected.
-func recordStreamEvals(ctx context.Context, r appplugins.StreamReport) {
+func recordStreamEvals(ctx context.Context, r appplugins.StreamReport, failedOpen bool) {
 	initInstruments()
-	outcome := metric.WithAttributes(attribute.String("outcome", streamOutcomeLabel(r)))
+	label := streamOutcomeLabel(r)
+	if failedOpen && label != streamOutcomeBlocked {
+		label = streamOutcomeFailedOpen
+	}
+	outcome := metric.WithAttributes(attribute.String("outcome", label))
 	if streamEvals != nil {
 		streamEvals.Add(ctx, int64(r.Evals), outcome)
 	}

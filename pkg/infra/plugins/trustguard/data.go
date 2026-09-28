@@ -182,11 +182,14 @@ type streamData struct {
 // gave up on a block, released after the block loop retired, never inspected at
 // all, or inspected clean.
 const (
-	streamOutcomeBlocked  = "blocked"
-	streamOutcomeDegraded = "degraded"
-	streamOutcomeFallback = "fallback"
-	streamOutcomeSkipped  = "skipped"
-	streamOutcomeAllowed  = "allowed"
+	streamOutcomeBlocked = "blocked"
+	// streamOutcomeFailedOpen is a stream on which the guard failed and at
+	// least one block went through uninspected; it ranks just below a cut.
+	streamOutcomeFailedOpen = "failed_open"
+	streamOutcomeDegraded   = "degraded"
+	streamOutcomeFallback   = "fallback"
+	streamOutcomeSkipped    = "skipped"
+	streamOutcomeAllowed    = "allowed"
 )
 
 // streamOutcome folds the per-stream aggregate into the guardData written once
