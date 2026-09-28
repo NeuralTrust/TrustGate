@@ -87,6 +87,33 @@ func evaluationSet(cfg Settings, agg aggregated) []string {
 	return set
 }
 
+// missingKnownThreshold reports the first (sorted) thresholds key that is
+// known for cfg.Model but absent from agg.scores - a gap in the moderation
+// response, not a clean "below threshold". An unknown model, or a thresholds
+// key that model does not recognise, is ignored here exactly like
+// evaluate()'s own unknown-key tolerance: a policy saved before this
+// category set existed must keep running unchanged. See
+// azure_content_safety's evaluate for the same pattern.
+func missingKnownThreshold(cfg Settings, agg aggregated) string {
+	known, ok := categoriesForModel(cfg.Model)
+	if !ok {
+		return ""
+	}
+	names := make([]string, 0, len(cfg.Thresholds))
+	for cat := range cfg.Thresholds {
+		if _, isKnown := known[cat]; isKnown {
+			names = append(names, cat)
+		}
+	}
+	sort.Strings(names)
+	for _, cat := range names {
+		if _, present := agg.scores[cat]; !present {
+			return cat
+		}
+	}
+	return ""
+}
+
 func maxScore(agg aggregated) (string, float64) {
 	categories := make([]string, 0, len(agg.scores))
 	for cat := range agg.scores {

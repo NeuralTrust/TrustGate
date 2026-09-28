@@ -82,7 +82,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings, true); err != nil {
+	// A create has no previous version of these settings.
+	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings, nil, true); err != nil {
 		return nil, err
 	}
 	if err := validateMCPScope(ctx, c.registryRepo, c.registry, in.GatewayID, in.Slug, p.MCPScope); err != nil {
