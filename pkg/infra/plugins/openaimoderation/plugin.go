@@ -30,11 +30,9 @@ import (
 const (
 	inputTypeText = "text"
 
-	decisionBlock       = "block"
-	decisionReported    = "reported"
-	decisionAllowed     = "allowed"
-	decisionFailedOpen  = "failed_open"
-	decisionUnavailable = "unavailable"
+	decisionBlock    = "block"
+	decisionReported = "reported"
+	decisionAllowed  = "allowed"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -106,13 +104,17 @@ func (p *Plugin) ValidateSettingsWrite(settings map[string]any) error {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("openai_moderation: %w", err)
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureConfigInvalid, "", err)
 	}
 
 	if !cfg.selectsStage(in.Stage) {
 		return passThrough(), nil
 	}
 
+	// Not a policy-level failure: the gateway operator never configured an
+	// OpenAI base URL for this deployment, so there is nowhere to call.
+	// Left as a silent pass-through rather than routed through the failure
+	// helper — see the RUN-1672 report.
 	if p.baseURL == "" {
 		p.warn(ctx, "openai moderation base url not configured",
 			slog.String("plugin", PluginName),
@@ -127,10 +129,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", err)
 	}
 
-	text := p.extractText(in, format)
+	text, decErr := p.extractText(in, format)
+	if decErr != nil {
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureDecodeFailed, "", decErr)
+	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
@@ -142,18 +147,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	resp, err := p.client.Moderate(ctx, p.baseURL, cfg.APIKey, req)
 	if err != nil {
-		p.warn(ctx, "openai moderation call failed",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.Any("error", err),
-		)
-		if appplugins.Blocks(in.Mode) {
-			setExtras(in.Event, ModerationData{Model: cfg.Model, Decision: decisionUnavailable})
-			return nil, unavailableError()
-		}
-		setExtras(in.Event, ModerationData{Model: cfg.Model, Decision: decisionFailedOpen})
-		appplugins.SetDecisionFromOutcome(in.Event, decisionFailedOpen)
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureTransport, "", err)
+	}
+	if len(resp.Results) == 0 {
+		return p.externalFailure(ctx, in, cfg, appplugins.FailureVerdictIncomplete, "",
+			fmt.Errorf("moderations response carried no results"))
 	}
 
 	agg := aggregate(resp.Results)
@@ -190,25 +188,36 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	return passThrough(), nil
 }
 
-func (p *Plugin) extractText(in appplugins.ExecInput, format adapter.Format) string {
+// extractText returns the text to moderate, or a non-nil error when decoding
+// the request/response body failed outright — as opposed to there simply
+// being nothing to moderate (nil response, a streamed leg, an empty body, or
+// a nil canonical value), which returns ("", nil): nothing to evaluate is not
+// a failure.
+func (p *Plugin) extractText(in appplugins.ExecInput, format adapter.Format) (string, error) {
 	if in.Stage == policy.StagePreResponse {
 		if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
-			return ""
+			return "", nil
 		}
 		cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
-		if err != nil || cresp == nil {
-			return ""
+		if err != nil {
+			return "", err
 		}
-		return responseText(cresp)
+		if cresp == nil {
+			return "", nil
+		}
+		return responseText(cresp), nil
 	}
 	if len(in.Request.Body) == 0 {
-		return ""
+		return "", nil
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
-	if err != nil || creq == nil {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return joinRequestText(creq)
+	if creq == nil {
+		return "", nil
+	}
+	return joinRequestText(creq), nil
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
@@ -216,6 +225,40 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+// externalFailure turns a failed moderation call into a plugin outcome via
+// the shared appplugins.HandleExternalFailure: fail closed (502
+// guardrail_unavailable) in a blocking mode, fail open (pass through) in
+// observe, or always fail open for a decode_failed reason. It builds this
+// plugin's own ModerationData so failure_reason/failure_detail travel in the
+// same shape as every other external guardrail.
+func (p *Plugin) externalFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	reason appplugins.FailureReason,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: reason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
+	})
+	setExtras(in.Event, ModerationData{
+		Model:         cfg.Model,
+		Decision:      outcome.Decision,
+		FailureReason: string(reason),
+		FailureDetail: detail,
+	})
+	return outcome.Result, outcome.Err
 }
 
 func passThrough() *appplugins.Result {

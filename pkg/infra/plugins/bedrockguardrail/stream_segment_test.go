@@ -301,6 +301,23 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "block 5")
 }
 
+func TestInspectSegmentReturnsTheVerdictIncompleteFailure(t *testing.T) {
+	t.Parallel()
+	// Same shape as TestExecuteVerdictIncompleteEnforceFailsClosed: an
+	// intervention none of the read policy families can explain.
+	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
+		Action:      types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{}},
+	}))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+
+	require.Error(t, err)
+	assert.Nil(t, got, "an incomplete verdict must not be reported as a clean allow")
+	assert.Contains(t, err.Error(), "verdict_incomplete")
+}
+
 func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {
 	t.Parallel()
 	g := intervening(blockingOutput())

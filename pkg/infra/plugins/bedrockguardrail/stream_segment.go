@@ -78,7 +78,7 @@ func (p *Plugin) InspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock_guardrail: %w", err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
 	if !cfg.Streaming.Enabled {
 		return segmentAllow(), nil
@@ -106,10 +106,19 @@ func (p *Plugin) InspectSegment(
 		// Resolved by the guard, not here: only it knows whether the status is
 		// still uncommitted, which is what makes streaming.on_error a clean 403
 		// at the head and a terminator after it.
-		return nil, fmt.Errorf("bedrock_guardrail: applying guardrail to stream block %d: %w", seg.Seq, err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("applying guardrail to stream block %d: %w", seg.Seq, err))
 	}
 
 	res := inspect(out, cfg.PIIAction)
+	// Same rule as the buffered leg: an intervention neither block nor
+	// anonymize can explain is not a clean pass. Left to the guard the same
+	// way a transport failure is, since only it knows whether the block is
+	// still uncommitted.
+	if res.intervened && res.block == nil && res.anonymize == nil {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, "",
+			fmt.Errorf("stream block %d: guardrail intervened with no block or anonymize finding", seg.Seq))
+	}
 	switch {
 	case res.block != nil:
 		return &appplugins.SegmentVerdict{
