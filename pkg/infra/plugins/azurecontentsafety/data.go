@@ -24,7 +24,13 @@ type Data struct {
 	Decision   string         `json:"decision,omitempty"`
 	Mode       string         `json:"mode,omitempty"`
 	LatencyMS  int64          `json:"latency_ms,omitempty"`
-	FailedOpen bool           `json:"failed_open,omitempty"`
+	// FailureReason and FailureDetail are set only on a failed_open/failed_closed
+	// decision: FailureReason is one of appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed); FailureDetail names
+	// what within that reason, e.g. the category missing from Azure's response
+	// on a verdict_incomplete.
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {

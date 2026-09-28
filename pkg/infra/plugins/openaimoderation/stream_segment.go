@@ -17,7 +17,6 @@ package openaimoderation
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
@@ -68,7 +67,7 @@ func (p *Plugin) InspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("openai_moderation: %w", err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
 	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
@@ -98,13 +97,16 @@ func (p *Plugin) InspectSegment(
 	if err != nil {
 		// Returned rather than resolved here: only the guard knows whether the
 		// status is still uncommitted, which is what makes streaming.on_error
-		// a clean 403 at the head and a terminator after it.
-		p.warn(ctx, "openai moderation stream block failed",
-			slog.String("plugin", PluginName),
-			slog.Int("seq", seg.Seq),
-			slog.Any("error", err),
-		)
-		return nil, fmt.Errorf("openai_moderation: moderating stream block %d: %w", seg.Seq, err)
+		// a clean 403 at the head and a terminator after it. The guard itself
+		// logs this failure (headFailure/blockFailure in stream_guard.go), so
+		// this does not log a second time; it only tags the error with the
+		// same reason vocabulary the buffered leg uses.
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("moderating stream block %d: %w", seg.Seq, err))
+	}
+	if len(resp.Results) == 0 {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, "",
+			fmt.Errorf("stream block %d: moderations response carried no results", seg.Seq))
 	}
 
 	violations := evaluate(cfg, aggregate(resp.Results))

@@ -321,12 +321,12 @@ func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
 	if res != nil {
 		t.Fatalf("expected nil result on fail-closed, got %+v", res)
 	}
-	if err == nil {
-		t.Fatal("expected error on client failure in enforce mode")
-		return
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError on transport failure in enforce mode, got %v", err)
 	}
-	if _, ok := appplugins.AsPluginError(err); ok {
-		t.Fatalf("expected non-PluginError on transport failure, got %v", err)
+	if pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, want 502 guardrail_unavailable", pe)
 	}
 }
 
@@ -387,9 +387,10 @@ func TestExecuteFilterAbsentFromTemplateEnforceFailsClosed(t *testing.T) {
 	if !ok {
 		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
 	}
-	if data.Decision != decisionFailedClosed || data.Filter != filterRAI || data.FailureReason != reasonFilterNotInTemplate {
-		t.Fatalf("event = decision %q filter %q reason %q, want %q %q %q",
-			data.Decision, data.Filter, data.FailureReason, decisionFailedClosed, filterRAI, reasonFilterNotInTemplate)
+	if data.Decision != "failed_closed" || data.Filter != filterRAI ||
+		data.FailureReason != "verdict_incomplete" || data.FailureDetail != reasonFilterNotInTemplate {
+		t.Fatalf("event = decision %q filter %q reason %q detail %q, want failed_closed %q verdict_incomplete %q",
+			data.Decision, data.Filter, data.FailureReason, data.FailureDetail, filterRAI, reasonFilterNotInTemplate)
 	}
 }
 
@@ -407,8 +408,12 @@ func TestExecuteFilterAbsentFromTemplateObserveRecordsIt(t *testing.T) {
 	if !ok {
 		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
 	}
-	if data.Decision != decisionFailedClosed || data.Filter != filterRAI || data.FailureReason != reasonFilterNotInTemplate {
-		t.Fatalf("event = decision %q filter %q reason %q", data.Decision, data.Filter, data.FailureReason)
+	// Observe never blocks: unlike enforce, the failure fails OPEN, not
+	// closed. See appplugins.Blocks / RUN-1672.
+	if data.Decision != "failed_open" || data.Filter != filterRAI ||
+		data.FailureReason != "verdict_incomplete" || data.FailureDetail != reasonFilterNotInTemplate {
+		t.Fatalf("event = decision %q filter %q reason %q detail %q, want failed_open %q verdict_incomplete %q",
+			data.Decision, data.Filter, data.FailureReason, data.FailureDetail, filterRAI, reasonFilterNotInTemplate)
 	}
 }
 
@@ -458,8 +463,9 @@ func TestExecuteAnonymizeDoesNotMaskAbsentFilter(t *testing.T) {
 	if res != nil || err == nil {
 		t.Fatalf("expected fail-closed, got res %+v err %v", res, err)
 	}
-	if _, isBlock := appplugins.AsPluginError(err); isBlock {
-		t.Fatalf("expected a fail-closed error, not a block: %v", err)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.Type == typeModelArmorBlocked {
+		t.Fatalf("expected a guardrail_unavailable fail-closed error, not a block: %v", err)
 	}
 }
 
@@ -671,5 +677,97 @@ func TestValidateConfigRejectsMissingProject(t *testing.T) {
 	delete(set, "project")
 	if err := p.ValidateConfig(set); err == nil {
 		t.Fatal("expected validation error for missing project")
+	}
+}
+
+// pluginWithClientBuildError builds a plugin whose clientFor itself fails
+// (as opposed to pluginWithClientError, where the client builds fine and only
+// the token source fails once inside sanitize): this is the config_invalid
+// path, not transport.
+func pluginWithClientBuildError(err error) *Plugin {
+	return &Plugin{
+		registry: adapter.NewRegistry(),
+		clients: &clientCache{
+			build: func(modelArmorCredentials) (*client, error) { return nil, err },
+		},
+	}
+}
+
+func TestExecuteClientBuildErrorEnforceFailsClosed(t *testing.T) {
+	t.Parallel()
+	p := pluginWithClientBuildError(errors.New("bad credentials"))
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || data.Decision != "failed_closed" || data.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", data, ok)
+	}
+}
+
+func TestExecuteClientBuildErrorObserveFailsOpen(t *testing.T) {
+	t.Parallel()
+	p := pluginWithClientBuildError(errors.New("bad credentials"))
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, modelArmorSettings(), reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || data.Decision != "failed_open" || data.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_open", data, ok)
+	}
+}
+
+func TestExecuteParseConfigErrorEnforceFailsClosed(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), "", time.Second, nil)
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIRequest()), nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok || pe.StatusCode != http.StatusBadGateway || pe.Type != "guardrail_unavailable" {
+		t.Fatalf("pe = %+v, ok=%v, want 502 guardrail_unavailable", pe, ok)
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || data.Decision != "failed_closed" || data.FailureReason != "config_invalid" {
+		t.Fatalf("extras = %+v, ok=%v, want config_invalid/failed_closed", data, ok)
+	}
+}
+
+func TestExecuteDecodeFailedAlwaysPassesThroughEvenInEnforce(t *testing.T) {
+	t.Parallel()
+	stub := newModelArmorStub(t, http.StatusOK, allowResponse)
+	p := pluginWithStub(stub)
+	req := reqCtx(openAIRequest())
+	req.Provider = "not-a-real-provider"
+	req.SourceFormat = ""
+	event, span := newStreamEvent()
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, modelArmorSettings(), req, nil)
+	in.Event = event
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	if stub.count() != 0 {
+		t.Fatalf("expected no sanitize call on decode failure, got %d", stub.count())
+	}
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok || data.Decision != "failed_open" || data.FailureReason != "decode_failed" {
+		t.Fatalf("extras = %+v, ok=%v, want decode_failed/failed_open", data, ok)
 	}
 }

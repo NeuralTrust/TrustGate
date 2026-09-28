@@ -32,11 +32,10 @@ import (
 const PluginName = "bedrock_guardrail"
 
 const (
-	decisionBlocked      = "blocked"
-	decisionAnonymized   = "anonymized"
-	decisionReported     = "reported"
-	decisionAllowed      = "allowed"
-	decisionFailedClosed = "failed_closed"
+	decisionBlocked    = "blocked"
+	decisionAnonymized = "anonymized"
+	decisionReported   = "reported"
+	decisionAllowed    = "allowed"
 )
 
 const (
@@ -108,7 +107,7 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock_guardrail: %w", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, "", err)
 	}
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -126,10 +125,13 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
-	if err != nil || creq == nil {
+	if err != nil {
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+	}
+	if creq == nil {
 		return passThrough(), nil
 	}
 	text, idx := lastUserText(creq)
@@ -157,10 +159,13 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
-	if err != nil || cresp == nil {
+	if err != nil {
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
+	}
+	if cresp == nil {
 		return passThrough(), nil
 	}
 	text := responseText(cresp)
@@ -182,10 +187,22 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return p.failClosed(ctx, in, cfg, latency, err)
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureTransport, "",
+			fmt.Errorf("apply guardrail: %w", err))
 	}
 
 	res := inspect(out, cfg.PIIAction)
+
+	// The guardrail intervened, but none of the policy types this plugin reads
+	// (topic, content, word, sensitive-information, contextual-grounding)
+	// produced a finding to explain it — an intervention type AWS added that
+	// this plugin does not yet parse. Reading that as a clean pass would be a
+	// guardrail that quietly stopped guarding.
+	if res.intervened && res.block == nil && res.anonymize == nil {
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, "",
+			fmt.Errorf("guardrail intervened with no block or anonymize finding"))
+	}
+
 	data := newData(in, cfg, latency)
 
 	if res.block != nil {
@@ -248,33 +265,38 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message 
 	return nil, blockError(message, *f)
 }
 
-func (p *Plugin) failClosed(ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, err error) (*appplugins.Result, error) {
-	data := newData(in, cfg, latency)
-	data.Decision = decisionFailedClosed
-	if appplugins.Blocks(in.Mode) {
-		p.debug(ctx, "bedrock guardrail call failed, failing closed",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.Any("error", err),
-		)
-		setExtras(in.Event, data)
-		return nil, fmt.Errorf("bedrock_guardrail: apply guardrail: %w", err)
-	}
-	p.debug(ctx, "bedrock guardrail call failed, observe mode passing through",
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.Any("error", err),
-	)
+// externalFailure turns a failed guardrail call into a plugin outcome via the
+// shared appplugins.HandleExternalFailure: fail closed (502
+// guardrail_unavailable) in a blocking mode, fail open (pass through) in
+// observe, or always fail open for a decode_failed reason. It builds this
+// plugin's own Data so failure_reason/failure_detail travel in the same
+// shape as every other external guardrail.
+func (p *Plugin) externalFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	latencyMS int64,
+	reason appplugins.FailureReason,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: reason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
+	})
+	data := newData(in, cfg, latencyMS)
+	data.Decision = outcome.Decision
+	data.FailureReason = string(reason)
+	data.FailureDetail = detail
 	setExtras(in.Event, data)
-	appplugins.SetDecisionFromOutcome(in.Event, decisionFailedClosed)
-	return passThrough(), nil
-}
-
-func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
-	if p.logger == nil {
-		return
-	}
-	p.logger.DebugContext(ctx, msg, attrs...)
+	return outcome.Result, outcome.Err
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

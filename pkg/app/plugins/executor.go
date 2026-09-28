@@ -159,6 +159,14 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			if seg.Closing {
 				continue
 			}
+			// Observe never blocks, and streaming.on_error is the stream's
+			// answer for entries that can: an observe entry that could not
+			// inspect a segment records that it failed open and lets the
+			// rest of the chain carry on, as its buffered leg does.
+			if !Blocks(entry.mode) {
+				SetDecisionFromOutcome(event, decisionFailedOpen)
+				continue
+			}
 			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
 		}
 		if seg.Closing || verdict == nil {
