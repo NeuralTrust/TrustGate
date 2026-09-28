@@ -26,23 +26,26 @@ import (
 func TestParseConfig(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		settings   map[string]any
-		wantErr    bool
-		wantModel  string
-		wantStages []string
+		name               string
+		settings           map[string]any
+		wantErr            bool
+		wantModel          string
+		wantStages         []string
+		wantBlockOnFlagged bool
 	}{
 		{
-			name:       "defaults applied",
-			settings:   map[string]any{"api_key": "key"},
-			wantModel:  defaultModel,
-			wantStages: []string{stagePreRequest, stagePreResponse},
+			name:               "defaults applied",
+			settings:           map[string]any{"api_key": "key"},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: true,
 		},
 		{
-			name:       "explicit values preserved",
-			settings:   map[string]any{"api_key": "key", "model": "text-moderation-stable", "stages": []string{stagePreRequest}},
-			wantModel:  "text-moderation-stable",
-			wantStages: []string{stagePreRequest},
+			name:               "explicit values preserved",
+			settings:           map[string]any{"api_key": "key", "model": "text-moderation-stable", "stages": []string{stagePreRequest}},
+			wantModel:          "text-moderation-stable",
+			wantStages:         []string{stagePreRequest},
+			wantBlockOnFlagged: true,
 		},
 		{
 			name:     "missing api_key",
@@ -70,16 +73,45 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:       "valid config with thresholds and categories",
-			settings:   map[string]any{"api_key": "key", "categories": []string{"hate"}, "thresholds": map[string]any{"hate": 0.7}, "block_on_flagged": true},
-			wantModel:  defaultModel,
-			wantStages: []string{stagePreRequest, stagePreResponse},
+			name:               "valid config with thresholds and categories",
+			settings:           map[string]any{"api_key": "key", "categories": []string{"hate"}, "thresholds": map[string]any{"hate": 0.7}, "block_on_flagged": true},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: true,
 		},
 		{
 			name:       "threshold bounds accepted",
 			settings:   map[string]any{"api_key": "key", "thresholds": map[string]any{"hate": 0.0, "violence": 1.0}},
 			wantModel:  defaultModel,
 			wantStages: []string{stagePreRequest, stagePreResponse},
+		},
+		{
+			name:               "thresholds without block_on_flagged keeps it false",
+			settings:           map[string]any{"api_key": "key", "thresholds": map[string]any{"hate": 0.7}},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: false,
+		},
+		{
+			name:               "explicit block_on_flagged false without thresholds is preserved",
+			settings:           map[string]any{"api_key": "key", "block_on_flagged": false},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: false,
+		},
+		{
+			name:               "empty thresholds without block_on_flagged defaults it true",
+			settings:           map[string]any{"api_key": "key", "thresholds": map[string]any{}},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: true,
+		},
+		{
+			name:               "thresholds with block_on_flagged true is preserved",
+			settings:           map[string]any{"api_key": "key", "thresholds": map[string]any{"hate": 0.7}, "block_on_flagged": true},
+			wantModel:          defaultModel,
+			wantStages:         []string{stagePreRequest, stagePreResponse},
+			wantBlockOnFlagged: true,
 		},
 	}
 	for _, tt := range tests {
@@ -95,6 +127,7 @@ func TestParseConfig(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantModel, cfg.Model)
 			assert.Equal(t, tt.wantStages, cfg.Stages)
+			assert.Equal(t, tt.wantBlockOnFlagged, cfg.BlockOnFlagged)
 		})
 	}
 }
