@@ -114,7 +114,21 @@ func (p *Plugin) InspectSegment(
 		return nil, fmt.Errorf("google_model_armor: sanitizing stream block %d: %w", seg.Seq, err)
 	}
 
+	if result.InvocationResult == invocationResultFailure {
+		return nil, fmt.Errorf("google_model_armor: stream block %d: invocationResult FAILURE", seg.Seq)
+	}
+
 	res := inspect(result, cfg)
+	// Same rule as the buffered leg: a block_on filter that produced no
+	// verdict is not a clean one. It goes to the guard as an error, so
+	// streaming.on_error decides, and a real match on another filter still
+	// wins because it is a verdict.
+	if res.block == nil {
+		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
+			return nil, fmt.Errorf("google_model_armor: stream block %d: filter %q selected in block_on produced no verdict (%s)",
+				seg.Seq, f, reason)
+		}
+	}
 	switch {
 	case res.block != nil:
 		return &appplugins.SegmentVerdict{

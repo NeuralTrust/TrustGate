@@ -495,25 +495,74 @@ func TestUnevaluatedFilterFailsSelectedFilterThatDidNotRun(t *testing.T) {
 		},
 	}
 
-	if got := unevaluatedFilter(result, map[string]bool{filterRAI: true}); got != filterRAI {
-		t.Errorf("selected filter that did not run should be reported, got %q", got)
-	}
-	if got := unevaluatedFilter(result, map[string]bool{filterSDP: true}); got != "" {
-		t.Errorf("a filter nobody selected must not fail the call, got %q", got)
+	if got, reason := unevaluatedFilter(result, map[string]bool{filterRAI: true}); got != filterRAI || reason != reasonFilterNotExecuted {
+		t.Errorf("selected filter that did not run should be reported as not executed, got %q (%s)", got, reason)
 	}
 
 	ran := &SanitizationResult{FilterResults: FilterResults{
 		RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{ExecutionState: executionStateSuccess}},
 	}}
-	if got := unevaluatedFilter(ran, map[string]bool{filterRAI: true}); got != "" {
+	if got, _ := unevaluatedFilter(ran, map[string]bool{filterRAI: true}); got != "" {
 		t.Errorf("a filter that ran must not be reported, got %q", got)
 	}
 
-	absent := &SanitizationResult{FilterResults: FilterResults{
+	noState := &SanitizationResult{FilterResults: FilterResults{
 		RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{MatchState: "NO_MATCH_FOUND"}},
 	}}
-	if got := unevaluatedFilter(absent, map[string]bool{filterRAI: true}); got != "" {
+	if got, _ := unevaluatedFilter(noState, map[string]bool{filterRAI: true}); got != "" {
 		t.Errorf("an absent executionState must be treated as success, got %q", got)
+	}
+}
+
+// TestUnevaluatedFilterFailsSelectedFilterAbsentFromResponse is RUN-1667: a
+// template that never enabled a filter leaves it out of filterResults
+// altogether. Before the fix that was read as "ran and found nothing", so the
+// default block_on (all five) against a template enabling only SDP passed the
+// other four on every call.
+func TestUnevaluatedFilterFailsSelectedFilterAbsentFromResponse(t *testing.T) {
+	t.Parallel()
+
+	onlySDP := &SanitizationResult{
+		InvocationResult: "SUCCESS",
+		FilterResults: FilterResults{
+			SDP: &SDPFilterResult{SdpFilterResult: &SDPResult{InspectResult: &SDPInspectResult{
+				ExecutionState: executionStateSuccess, MatchState: "NO_MATCH_FOUND",
+			}}},
+		},
+	}
+
+	for _, filter := range []string{filterRAI, filterPIAndJailbreak, filterMaliciousURIs, filterCSAM} {
+		got, reason := unevaluatedFilter(onlySDP, map[string]bool{filterSDP: true, filter: true})
+		if got != filter || reason != reasonFilterNotInTemplate {
+			t.Errorf("block_on %q absent from the response: got %q (%s), want %q (%s)",
+				filter, got, reason, filter, reasonFilterNotInTemplate)
+		}
+	}
+
+	if got, reason := unevaluatedFilter(&SanitizationResult{}, map[string]bool{filterSDP: true}); got != filterSDP ||
+		reason != reasonFilterNotInTemplate {
+		t.Errorf("absent SDP must be reported, got %q (%s)", got, reason)
+	}
+
+	// A filter nobody selected is ignored whether it is present or absent.
+	if got, _ := unevaluatedFilter(onlySDP, map[string]bool{filterSDP: true}); got != "" {
+		t.Errorf("unselected absent filters must not fail the call, got %q", got)
+	}
+	skipped := &SanitizationResult{FilterResults: FilterResults{
+		SDP: onlySDP.FilterResults.SDP,
+		RAI: &RAIFilterResult{RaiFilterResult: &RAIResult{ExecutionState: "EXECUTION_SKIPPED"}},
+	}}
+	if got, _ := unevaluatedFilter(skipped, map[string]bool{filterSDP: true}); got != "" {
+		t.Errorf("an unselected filter that did not run must not fail the call, got %q", got)
+	}
+
+	// The default block_on is every filter, so the default configuration
+	// against a one-filter template must fail, naming the first missing one
+	// in canonical order.
+	var cfg Settings
+	cfg.applyDefaults()
+	if got, reason := unevaluatedFilter(onlySDP, cfg.blockOnSet()); got != filterRAI || reason != reasonFilterNotInTemplate {
+		t.Errorf("default block_on against an SDP-only template: got %q (%s), want %q", got, reason, filterRAI)
 	}
 }
 
@@ -582,7 +631,7 @@ func TestSanitizeDecodesLiveInspectResultBranch(t *testing.T) {
 
 	// Nothing in this response should trip the did-not-run guard.
 	on := map[string]bool{filterSDP: true, filterRAI: true, filterPIAndJailbreak: true, filterMaliciousURIs: true, filterCSAM: true}
-	if got := unevaluatedFilter(result, on); got != "" {
+	if got, _ := unevaluatedFilter(result, on); got != "" {
 		t.Errorf("every filter reported EXECUTION_SUCCESS, got unevaluated %q", got)
 	}
 }
