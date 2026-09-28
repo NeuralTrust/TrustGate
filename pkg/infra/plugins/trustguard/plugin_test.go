@@ -167,6 +167,10 @@ type fakeGuard struct {
 	// delay stalls the evaluate leg so a call can be made to run out of time
 	// without waiting out a real detector. The token leg is never delayed.
 	delay time.Duration
+	// echoMask, when set, answers like the real TrustGuard DLP: it echoes the
+	// messages[] it received with each string leaf passed through echoMask,
+	// under transformed_payload, with status transform.
+	echoMask func(string) string
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
@@ -207,6 +211,9 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		resp := f.response
 		if r, ok := f.responseFor[body.Direction]; ok {
 			resp = r
+		}
+		if f.echoMask != nil {
+			resp = echoTransform(body.Payload, f.echoMask)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		for k, v := range f.headers {
