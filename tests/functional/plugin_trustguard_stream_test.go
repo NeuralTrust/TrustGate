@@ -561,12 +561,12 @@ const trustGuardStreamFastGuardDelay = 5 * time.Millisecond
 // in single-digit milliseconds against a response paced over hundreds, the
 // chain's share has to stay a small fraction of the wall clock.
 //
-// gateway_ms is deliberately not asserted. On a streamed response the hold
-// happens inside the provider span — the block loop runs during drain — so
-// provider_ms already contains the guard time that blocking_policies_ms now
-// also carries, and the remainder clamps to zero however small the chain's
-// share is. That overlap is described in docs/telemetry/otlp-metadata-contract.md
-// and is not something this leg can settle.
+// It is also the end-to-end half of the bucket reconciliation. The hold happens
+// inside the provider span — the block loop runs during drain — so provider_ms
+// is reported net of it; left in both buckets the remainder went negative and
+// gateway_ms clamped to zero on every streamed request. gateway_ms is defined
+// as total_ms minus the other two, so the sum is exact unless it clamped:
+// asserting the three reconcile is asserting it did not.
 func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
@@ -611,6 +611,15 @@ func TestPluginE2E_TrustGuard_StreamChargesTheChainNotTheDrain(t *testing.T) {
 		evt.Latency.TotalMs, evt.Latency.PoliciesMs)
 	assert.Less(t, leg.AddedLatencyMs, evt.Latency.TotalMs,
 		"added_latency_ms sums per-block worst cases; it is not a second copy of the request")
+
+	// No post_response policy runs on this route, so policies_ms is entirely
+	// the blocking share and the identity is the plain three-way one.
+	assert.Equal(t, evt.Latency.TotalMs,
+		evt.Latency.ProviderMs+evt.Latency.PoliciesMs+evt.Latency.GatewayMs,
+		"the buckets must reconcile on a streamed leg: total %dms, provider %dms, policies %dms, gateway %dms",
+		evt.Latency.TotalMs, evt.Latency.ProviderMs, evt.Latency.PoliciesMs, evt.Latency.GatewayMs)
+	assert.Less(t, evt.Latency.ProviderMs, evt.Latency.TotalMs,
+		"provider_ms is the drain net of the guard's hold, so it cannot be the whole request")
 }
 
 // trustGuardStreamRepeatEvents is the paced body with the stub's block word
