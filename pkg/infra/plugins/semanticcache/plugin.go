@@ -187,7 +187,7 @@ func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
 	if req.HeaderValue(cfg.bypassHeader()) != "" {
 		return true
 	}
-	if cfg.SkipIfStreaming && p.requestWantsStream(req) {
+	if cfg.skipIfStreaming() && p.requestWantsStream(req) {
 		return true
 	}
 	return false
@@ -415,7 +415,7 @@ func (p *Plugin) postResponse(
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope(), Mode: cfg.mode()})
 		return passThrough(), nil
 	}
-	if cfg.SkipIfStreaming && resp.Streaming {
+	if cfg.skipIfStreaming() && resp.Streaming {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonStreaming})
 		return passThrough(), nil
 	}

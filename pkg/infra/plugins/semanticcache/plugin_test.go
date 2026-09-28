@@ -598,6 +598,37 @@ func TestPlugin_StreamingGate(t *testing.T) {
 		assert.Empty(t, store.stored, "streamed response must not be stored")
 	})
 
+	// The default is the case that shipped wrong: every other subtest here sets
+	// the key explicitly, so a flipped default is invisible to all of them. A
+	// cache hit short-circuits the chain and the short circuit is written as
+	// application/json (pkg/app/proxy/forwarder.go), so serving one to a client
+	// that asked for a stream hands it a JSON content type over SSE bytes.
+	t.Run("absent setting keeps a streaming request out of the cache", func(t *testing.T) {
+		store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.99}}}
+		p := New(store, locatorWith(&fakeCreator{emb: anEmbedding()}), adapter.NewRegistry())
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: streamingBody()}
+		in := scopedInput(policy.StagePreRequest, settingsWith(map[string]any{}), req, &infracontext.ResponseContext{}, defaultScope())
+
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.False(t, res.StopUpstream, "with no skip_if_streaming set, a streamed leg must not be served from cache")
+		assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+	})
+
+	t.Run("absent setting keeps a streamed response out of the store", func(t *testing.T) {
+		store := &fakeStore{}
+		p := New(store, locatorWith(&fakeCreator{emb: anEmbedding()}), adapter.NewRegistry())
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`), Streaming: true}
+		in := scopedInput(policy.StagePostResponse, settingsWith(map[string]any{}), req, resp, defaultScope())
+
+		_, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		assert.Empty(t, store.stored, "with no skip_if_streaming set, a streamed response must not be stored")
+	})
+
+	// The escape hatch: an explicit false must still restore the old behaviour,
+	// which is what the pointer type buys over a plain bool.
 	t.Run("skip false keeps serving a streaming request", func(t *testing.T) {
 		store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.99}}}
 		p := New(store, locatorWith(&fakeCreator{emb: anEmbedding()}), adapter.NewRegistry())
