@@ -111,7 +111,11 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 		}
 		return h.showPage(c, ticketID, callbackFlash(err))
 	}
-	return h.showPage(c, ticketID, "")
+	page, err := h.connect.Page(c.UserContext(), ticketID)
+	if err != nil {
+		return h.pageError(c, err)
+	}
+	return renderConnectPageAfter(c, page, ticketID, "", true, h.catalog)
 }
 
 // callbackFlash turns an error the upstream identity provider sent back on the

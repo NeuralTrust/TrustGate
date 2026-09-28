@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -57,13 +58,20 @@ type SharedAccountLink struct {
 // is the same minter the runtime uses for a user connecting their own account;
 // what makes this one the instance's is the subject it is minted for.
 type ServerTicketMinter interface {
-	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
+	CreateResumableServerTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, code, instanceID, resumeURL string,
+	) (string, error)
 }
 
 //go:generate mockery --name=SharedAccountService --dir=. --output=./mocks --filename=registry_shared_account_service_mock.go --case=underscore --with-expecter
 type SharedAccountService interface {
 	Status(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) (*SharedAccount, error)
-	Link(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) (*SharedAccountLink, error)
+	// Link mints the connect page. resumeURL, when set, is where the page sends
+	// the admin back to once the account is connected: the console screen they
+	// started from (see appoauth.NormalizeResumeURL for what it may be).
+	Link(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID, resumeURL string) (*SharedAccountLink, error)
 	Disconnect(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error
 }
 
@@ -115,6 +123,7 @@ func (s *sharedAccountService) Link(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	registryID ids.RegistryID,
+	resumeURL string,
 ) (*SharedAccountLink, error) {
 	reg, _, err := s.sharedRegistry(ctx, gatewayID, registryID)
 	if err != nil {
@@ -128,8 +137,8 @@ func (s *sharedAccountService) Link(
 		code = reg.MCPTarget.Code
 	}
 	consumerPath := appconsumer.MCPPath(consumerdomain.StoreSlug)
-	ticket, err := s.tickets.CreateServerTicket(
-		ctx, gatewayID, domain.SharedAccountSubject(reg.ID), consumerPath, code, reg.ID.String(),
+	ticket, err := s.tickets.CreateResumableServerTicket(
+		ctx, gatewayID, domain.SharedAccountSubject(reg.ID), consumerPath, code, reg.ID.String(), strings.TrimSpace(resumeURL),
 	)
 	if err != nil {
 		return nil, err

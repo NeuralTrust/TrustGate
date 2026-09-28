@@ -470,3 +470,72 @@ func TestCallbackFlash(t *testing.T) {
 		})
 	}
 }
+
+// Back from the provider with the account connected, a page opened from the
+// Portal returns there on its own; the same page opened later stays put, so
+// Disconnect can still be reached.
+func TestConnectCallback_ReturnsToTheResumeURLOnceConnected(t *testing.T) {
+	t.Parallel()
+	const portal = "https://app.neuraltrust.ai/v2/team/portal"
+	stub := &stubConnectService{page: &appoauth.ConnectPage{
+		ConsumerPath: "/store/mcp",
+		Code:         "com.notion/mcp",
+		ResumeURL:    portal,
+		Providers:    []appoauth.ProviderStatus{{Provider: "com.notion/mcp", Code: "com.notion/mcp", Registry: "Notion", Linked: true}},
+	}}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectCallbackPath, h.Callback)
+	app.Get("/+/connect", h.Page)
+
+	body := func(target string) string {
+		res, err := app.Test(httptest.NewRequest("GET", target, nil))
+		if err != nil {
+			t.Fatalf("route test: %v", err)
+		}
+		if res.StatusCode != fiber.StatusOK {
+			t.Fatalf("%s: status = %d", target, res.StatusCode)
+		}
+		b, _ := io.ReadAll(res.Body)
+		return string(b)
+	}
+	after := body("/oauth/callback/com.notion/mcp?state=s&code=c")
+	if !strings.Contains(after, `window.location.replace("`+portal+`")`) {
+		t.Fatalf("callback page must return to the Portal on its own: %s", after)
+	}
+	if !strings.Contains(after, "taking you back") {
+		t.Fatalf("callback page must say it is taking the user back: %s", after)
+	}
+	later := body("/store/mcp/connect?ticket=t")
+	if strings.Contains(later, "window.location.replace") {
+		t.Fatalf("a page opened later must not navigate away: %s", later)
+	}
+	if !strings.Contains(later, `href="`+portal+`"`) {
+		t.Fatalf("a page opened later still links back: %s", later)
+	}
+}
+
+// A connect that failed stays on the page with its error, resume URL or not.
+func TestConnectCallback_DoesNotReturnAfterAFailedConnect(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{
+		page: &appoauth.ConnectPage{
+			ConsumerPath: "/store/mcp",
+			Code:         "com.notion/mcp",
+			ResumeURL:    "https://app.neuraltrust.ai/v2/team/portal",
+			Providers:    []appoauth.ProviderStatus{{Provider: "com.notion/mcp", Code: "com.notion/mcp", Registry: "Notion"}},
+		},
+		callbackErr: &appoauth.OAuthError{Code: "access_denied"},
+	}
+	h := NewConnectHandler(stub, nil, "")
+	app := fiber.New()
+	app.Get(ConnectCallbackPath, h.Callback)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/callback/com.notion/mcp?state=s&error=access_denied", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(b), "window.location.replace") {
+		t.Fatalf("a failed connect must not navigate away: %s", b)
+	}
+}

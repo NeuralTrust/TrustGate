@@ -6639,6 +6639,10 @@ const docTemplate = `{
                 },
                 "principal_sub": {
                     "type": "string"
+                },
+                "resume_url": {
+                    "description": "ResumeURL is where the connect page sends the user once their account is\nconnected — the Portal screen they came from. An absolute https URL;\nempty leaves them on the page.",
+                    "type": "string"
                 }
             }
         },

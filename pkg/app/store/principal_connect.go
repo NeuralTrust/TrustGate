@@ -28,10 +28,10 @@ import (
 // ServerTicketMinter mints a connect ticket scoped to one catalog server for one
 // principal. appoauth.ConnectService satisfies it.
 type ServerTicketMinter interface {
-	CreateServerTicket(
+	CreateResumableServerTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,
-		principalSub, consumerPath, code, instanceID string,
+		principalSub, consumerPath, code, instanceID, resumeURL string,
 	) (string, error)
 }
 
@@ -42,6 +42,10 @@ type PrincipalConnectRequest struct {
 	PrincipalSub string
 	Code         string
 	RegistryID   ids.RegistryID
+	// ResumeURL is where the connect page sends the user back to once the
+	// account is connected: the Portal screen they opened it from. Empty
+	// leaves them on the page, told they can close it.
+	ResumeURL string
 }
 
 // PrincipalConnectLink is the minted ticket and where it is redeemed. The URL is
@@ -95,7 +99,9 @@ func (l *principalConnectLinker) LinkFor(
 	if !in.RegistryID.IsNil() {
 		instanceID = in.RegistryID.String()
 	}
-	ticket, err := l.tickets.CreateServerTicket(ctx, in.GatewayID, principalSub, consumerPath, code, instanceID)
+	ticket, err := l.tickets.CreateResumableServerTicket(
+		ctx, in.GatewayID, principalSub, consumerPath, code, instanceID, strings.TrimSpace(in.ResumeURL),
+	)
 	if err != nil {
 		return nil, err
 	}

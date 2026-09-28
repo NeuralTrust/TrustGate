@@ -30,6 +30,7 @@ type mintedTicket struct {
 	consumerPath string
 	code         string
 	instanceID   string
+	resumeURL    string
 }
 
 type fakeTicketMinter struct {
@@ -38,10 +39,10 @@ type fakeTicketMinter struct {
 	err error
 }
 
-func (f *fakeTicketMinter) CreateServerTicket(
+func (f *fakeTicketMinter) CreateResumableServerTicket(
 	_ context.Context,
 	gatewayID ids.GatewayID,
-	principalSub, consumerPath, code, instanceID string,
+	principalSub, consumerPath, code, instanceID, resumeURL string,
 ) (string, error) {
 	f.got = mintedTicket{
 		gatewayID:    gatewayID,
@@ -49,6 +50,7 @@ func (f *fakeTicketMinter) CreateServerTicket(
 		consumerPath: consumerPath,
 		code:         code,
 		instanceID:   instanceID,
+		resumeURL:    resumeURL,
 	}
 	return f.id, f.err
 }
@@ -102,6 +104,24 @@ func TestPrincipalConnectLinkerOmitsAnEmptyInstance(t *testing.T) {
 	}
 	if minter.got.principalSub != "ana" || minter.got.code != "com.notion/mcp" {
 		t.Fatalf("not trimmed: %+v", minter.got)
+	}
+}
+
+// The Portal names the screen the link was opened from, and the ticket carries
+// it so the connect page can send the user back there.
+func TestPrincipalConnectLinkerCarriesTheResumeURL(t *testing.T) {
+	minter := &fakeTicketMinter{id: "tkt-4"}
+	linker, _ := appstore.NewPrincipalConnectLinker(minter)
+	if _, err := linker.LinkFor(context.Background(), appstore.PrincipalConnectRequest{
+		GatewayID:    ids.New[ids.GatewayKind](),
+		PrincipalSub: "ana",
+		Code:         "com.notion/mcp",
+		ResumeURL:    " https://app.neuraltrust.ai/v2/t/portal ",
+	}); err != nil {
+		t.Fatalf("LinkFor: %v", err)
+	}
+	if minter.got.resumeURL != "https://app.neuraltrust.ai/v2/t/portal" {
+		t.Fatalf("resume url = %q", minter.got.resumeURL)
 	}
 }
 
