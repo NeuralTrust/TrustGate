@@ -894,3 +894,49 @@ func TestBuilder_StreamingChainChargesTheHoldOnce(t *testing.T) {
 	assert.Zero(t, duplicated.Latency.GatewayMs,
 		"a per-chain aggregate on every span is what clamps gateway_ms; the split is what prevents it")
 }
+
+// TestBuilder_StreamedPoliciesLeaveProviderMs pins the streamed-leg
+// reconciliation. A policy that inspects the response block by block runs while
+// the response drains, so its latency elapses inside the LLM span and the raw
+// attempt sum already contains it. Counted in both buckets the remainder goes
+// negative and gateway_ms clamps to zero, which is what shipped before: the
+// second half of this test is that regression, held in place as the control.
+func TestBuilder_StreamedPoliciesLeaveProviderMs(t *testing.T) {
+	build := func(streamed bool) events.Latency {
+		rt := trace.New("trace-stream", trace.Metadata{GatewayID: "gw-1"})
+		_ = rt.AddSpan(pluginSpan("rate_limiter",
+			&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 6*time.Millisecond, ""))
+		_ = rt.AddSpan(pluginSpan("trustguard",
+			&trace.PluginAttrs{Stage: "pre_response", Decision: "allow", Streamed: streamed},
+			200, 120*time.Millisecond, ""))
+		_ = rt.AddSpan(llmSpan("openai",
+			&trace.LLMAttrs{Provider: "openai", Model: "gpt-4o", Attempt: 1, Outcome: "success"},
+			200, 500*time.Millisecond, ""))
+
+		req := &infracontext.RequestContext{
+			GatewayID:    "gw-1",
+			Method:       "POST",
+			Path:         "/v1/chat/completions",
+			Body:         []byte(openAIRequestBody),
+			SourceFormat: string(adapter.FormatOpenAI),
+		}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+		start := time.UnixMilli(1_000_000)
+		end := start.Add(530 * time.Millisecond)
+		return newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end).Latency
+	}
+
+	got := build(true)
+	assert.Equal(t, int64(380), got.ProviderMs,
+		"the 120ms the guard held bytes elapsed inside the 500ms drain, so it is not the provider's")
+	assert.Equal(t, int64(126), got.PoliciesMs, "policies_ms still reports the full chain cost")
+	assert.Equal(t, int64(24), got.GatewayMs)
+	assert.Equal(t, got.TotalMs, got.ProviderMs+got.PoliciesMs+got.GatewayMs,
+		"the three buckets must reconcile against total_ms on a streamed leg")
+
+	unmarked := build(false)
+	assert.Equal(t, int64(500), unmarked.ProviderMs)
+	assert.Zero(t, unmarked.GatewayMs,
+		"without the marker the guard's hold is counted twice and the remainder clamps to zero")
+}

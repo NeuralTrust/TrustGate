@@ -128,6 +128,12 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
 	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
 	assert.Equal(t, int64(6), attrs["trustgate.latency.gateway_ms"].AsInt64())
+	assert.Equal(t,
+		attrs["trustgate.latency.total_ms"].AsInt64(),
+		attrs["trustgate.latency.provider_ms"].AsInt64()+
+			attrs["trustgate.latency.policies_ms"].AsInt64()+
+			attrs["trustgate.latency.gateway_ms"].AsInt64(),
+		"the three buckets reconcile against total_ms; the exporter must not break the split the builder made")
 
 	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
 	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())
