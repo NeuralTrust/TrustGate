@@ -29,6 +29,9 @@ const (
 	failureReasonUnauthorized = "unauthorized"
 	failureReasonTransport    = "transport"
 	failureReasonTimeout      = "timeout"
+	// failureReasonCredentialsMissing is a pod started without
+	// TRUSTGUARD_CLIENT_ID/SECRET: no call is made at all.
+	failureReasonCredentialsMissing = "credentials_missing"
 )
 
 var (
