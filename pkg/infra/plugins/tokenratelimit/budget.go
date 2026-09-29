@@ -17,7 +17,6 @@ package tokenratelimit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -201,7 +200,17 @@ func (p *Plugin) budgetGate(
 	for i := range windows {
 		consumed, err := p.redis.Get(ctx, windows[i].key).Int64()
 		if err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("token_rate_limiter: read counter: %w", err)
+			// The window loop has not yet determined which counter is
+			// reported (that only happens once every window's read
+			// succeeds), so there is no reportWindow/reportConsumed to carry
+			// here — but provider, model and cost-cap telemetry are already
+			// known and must not be lost to a bare failure record.
+			failData := TokenRateLimiterData{Provider: provider, Model: model}
+			if windows[i].model != "" {
+				failData.Model = windows[i].model
+			}
+			applyCostCapTelemetry(&failData, capTel)
+			return p.counterUnavailable(ctx, policy.StagePreRequest, mode, event, failData, "read_counter", err)
 		}
 		consumedByWindow[i] = consumed
 		if breachedIdx == -1 && exceeds(consumed, windows[i].max) {
@@ -270,6 +279,47 @@ func (p *Plugin) handleExceeded(
 	}
 }
 
+// counterUnavailable turns a counter-store (Redis) failure into a pass-through
+// outcome via the shared appplugins.HandleCounterFailure: unlike a budget
+// actually exceeded, this always fails open, whatever mode is in play
+// (subject to the ctx exception below) — our own infrastructure fails open in
+// every mode, including enforce, unlike a third-party guardrail. data is
+// whatever the caller already knows (provider, model, cost-cap telemetry);
+// this only adds FailureReason/FailureDetail on top of it, so that context is
+// not lost the way a bare TokenRateLimiterData would lose it.
+//
+// A ctx the caller itself canceled (or let deadline out) is not a
+// counter-store outage — HandleCounterFailure reports that back as a non-nil
+// error, and this returns it unchanged: no failed_open, no
+// counter_unavailable, no Warn, exactly the pre-RUN-1675 behavior.
+func (p *Plugin) counterUnavailable(
+	ctx context.Context,
+	stage policy.Stage,
+	mode policy.Mode,
+	event *metrics.EventContext,
+	data TokenRateLimiterData,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	result, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  stage,
+		Mode:   mode,
+		Detail: detail,
+		Err:    err,
+		Event:  event,
+	})
+	if ferr != nil {
+		return nil, ferr
+	}
+	data.Stage = string(stage)
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setTokenExtras(event, data)
+	return result, nil
+}
+
 func (p *Plugin) budgetHeaders(ctx context.Context, cfg *config, w budgetWindow, consumed int64, scope string) map[string][]string {
 	reset := p.resetSeconds(ctx, w.key, w.windowSec)
 	if cfg.Unit == unitDollars {
@@ -300,13 +350,14 @@ func (p *Plugin) accrue(
 	base, model string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	if resp == nil {
 		return &appplugins.Result{}, nil
 	}
 	if cfg.Unit == unitDollars {
-		return p.accrueDollars(ctx, cfg, base, model, req, resp, event)
+		return p.accrueDollars(ctx, cfg, base, model, req, resp, mode, event)
 	}
 
 	tokens := countedTokens(cfg, p.extractUsage(req, resp))
@@ -320,11 +371,16 @@ func (p *Plugin) accrue(
 	}
 	primary := windows[primaryWindowIndex(windows)]
 
+	provider := ""
+	if req != nil {
+		provider = req.Provider
+	}
 	var primaryTotal int64
 	for _, w := range windows {
 		total, err := recordScript.Run(ctx, p.redis, []string{w.key}, int64(tokens), w.windowSec).Int64()
 		if err != nil {
-			return nil, fmt.Errorf("token_rate_limiter: record tokens: %w", err)
+			failData := TokenRateLimiterData{Provider: provider, Model: model, TokensActual: tokens}
+			return p.counterUnavailable(ctx, policy.StagePostResponse, mode, event, failData, "record_tokens", err)
 		}
 		if w.key == primary.key {
 			primaryTotal = total
@@ -337,10 +393,6 @@ func (p *Plugin) accrue(
 		remaining = 0
 	}
 
-	provider := ""
-	if req != nil {
-		provider = req.Provider
-	}
 	setTokenExtras(event, TokenRateLimiterData{
 		Stage:           string(policy.StagePostResponse),
 		CounterKey:      primary.key,
@@ -361,6 +413,7 @@ func (p *Plugin) accrueDollars(
 	base, model string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	provider, requested := "", ""
@@ -411,7 +464,13 @@ func (p *Plugin) accrueDollars(
 	for _, w := range windows {
 		total, err := recordScript.Run(ctx, p.redis, []string{w.key}, micros, w.windowSec).Int64()
 		if err != nil {
-			return nil, fmt.Errorf("token_rate_limiter: record cost: %w", err)
+			failData := TokenRateLimiterData{
+				Provider:     provider,
+				Model:        model,
+				Unit:         unitDollars,
+				CostMicroUSD: micros,
+			}
+			return p.counterUnavailable(ctx, policy.StagePostResponse, mode, event, failData, "record_cost", err)
 		}
 		if w.key == primary.key {
 			primaryTotal = total

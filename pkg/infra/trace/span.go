@@ -97,6 +97,12 @@ type MCPAttrs struct {
 	RPCErrorCode   int
 	AccountRef     string
 	PolicyScope    *MCPPolicyScope
+	// Decision records a tools/call-level outcome the individual per-plugin
+	// spans (Plugin.Decision on a SpanPlugin entry) cannot carry, because
+	// nothing ran long enough to open one: PluginRunner failing open on a
+	// non-block error (including a request context it could not even build).
+	// See SetMCPDecision.
+	Decision string
 }
 
 // MCPPolicyScope records how the scoped policies of a consumer applied to one
@@ -418,6 +424,20 @@ func (s *Span) SetMCPTargets(targets int) {
 	defer s.mu.Unlock()
 	s.ensureMCP()
 	s.MCP.Targets = targets
+}
+
+// SetMCPDecision records the tools/call-level outcome directly on the MCP
+// span. It exists next to Plugin.Decision (set by SetDecision /
+// SetDecisionFromOutcome on a SpanPlugin entry) because a PluginRunner
+// fail-open can happen before any policy's own span was ever opened — a
+// request context the runner could not build, or an executor error that was
+// never wrapped into a per-plugin outcome — leaving nothing else on the trace
+// for that failure to attach to.
+func (s *Span) SetMCPDecision(decision string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.Decision = decision
 }
 
 // SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.

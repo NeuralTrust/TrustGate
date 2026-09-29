@@ -95,6 +95,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
 | `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
+| `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
@@ -301,6 +302,59 @@ and its observe-mode failures used to say `failed_closed`. `google_model_armor`'
 `failure_reason` used to carry `filter_not_in_template` / `filter_not_executed`; those
 values now travel in `failure_detail`, next to `failure_reason: verdict_incomplete`.
 `openai_moderation`'s enforce failures used to say `unavailable`.
+
+### Counter-store (rate-limit / budget) failures
+
+`rate_limiter`, `per_tool_rate_limiter` and `token_rate_limiter` all read and write a
+counter in Redis on every call. Unlike the external guardrails above, an outage here is
+**TrustGate's own infrastructure**, not a third party the operator asked to gate traffic:
+the product rule is that our own infrastructure fails open, in every mode, enforce
+included — only a third-party guardrail earns a fail-closed refusal. So, unlike the
+external guardrails' enforce/observe split, there is no mode-dependent branch here at all:
+
+| Mode | `decision` | Request |
+|------|------------|---------|
+| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+
+This applies to both legs of the counter: a failed read (the limit/budget could not be
+checked) and a failed record/accrue (the check passed but the write-back failed) both
+fail open the same way — a successful read that only fails to persist must not turn into
+a refusal.
+
+**Exception: a canceled or timed-out request is not an outage.** When the request itself
+was already canceled or past its deadline (a client disconnect, an upstream timeout
+unwinding the chain), the counter-store call failing is a symptom of that, not evidence our
+infrastructure is down. That case emits no `failed_open` decision, no `counter_unavailable`
+extras and no warning: the plugin's error simply propagates as it would have without this
+behavior.
+
+Their `extras` carry the same two keys the external guardrails use, plus whatever the call
+already knew before the counter store failed:
+
+| Key | Meaning |
+|-----|---------|
+| `failure_reason` | Always `counter_unavailable` |
+| `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
+
+For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count` and
+`limit` from the read that already succeeded, and `token_rate_limiter`'s keep `provider`,
+`model` and any cost-cap fields — a record failure never wipes out what the read (or the
+request itself) already established.
+
+**Decision precedence when a window was already found exceeded.** `rate_limiter` runs in
+throttle or observe when its read already finds the window over budget (enforce would have
+refused the request outright, before any record is attempted). If the record that follows
+then fails, the `throttle` / `observe` decision from that exceeded read wins over
+`failed_open`: the exceeded signal is what those modes exist to report, and
+`failure_reason: counter_unavailable` still travels in the same extras to say the
+write-back failed on top of it. A read that was not already exceeded keeps `failed_open`.
+
+As a second layer, any policy running in a non-blocking mode (observe) that fails with an
+error of its own — from any plugin, not just this family, whenever that plugin did not
+already fail itself open — is also forwarded rather than surfaced as a gateway error, the
+same way a streamed response already handles an observe-mode inspection failure.
+
+**New in RUN-1675.**
 
 ### TrustGuard failures
 

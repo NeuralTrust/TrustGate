@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -27,7 +28,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -1535,4 +1538,158 @@ func TestPlugin_GlobalScope_CrossProtocolBudgetReachesMax(t *testing.T) {
 	var pe *appplugins.PluginError
 	require.ErrorAs(t, err, &pe)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
+
+// commandBreakerHook fails any command (plain or inside a pipeline/script)
+// whose name is in targets, letting everything else through untouched —
+// including go-redis's own internal connection handshake, which a
+// blanket break would take down too. It is how the tests below simulate a
+// counter-store outage on exactly one leg (a GET read, or the
+// EVALSHA/EVAL a counting script runs as) while leaving the other leg
+// free to succeed, without needing to shut miniredis down outright.
+type commandBreakerHook struct {
+	targets map[string]struct{}
+	err     error
+}
+
+func (h commandBreakerHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h commandBreakerHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if _, ok := h.targets[cmd.Name()]; ok {
+			return h.err
+		}
+		return next(ctx, cmd)
+	}
+}
+func (h commandBreakerHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, c := range cmds {
+			if _, ok := h.targets[c.Name()]; ok {
+				return h.err
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func breakReads(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"get": {}}, err: err}
+}
+
+func breakRecords(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"evalsha": {}, "eval": {}}, err: err}
+}
+
+func assertCounterFailedOpen(t *testing.T, res *appplugins.Result, err error, span *trace.Span, wantDetail string) {
+	t.Helper()
+	require.NoError(t, err, "a counter-store failure must never reject the request")
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	require.NotNil(t, span.Plugin)
+	assert.Equal(t, "failed_open", span.Plugin.Decision)
+	data, ok := span.Plugin.Extras.(PerToolRateLimiterData)
+	require.True(t, ok, "extras should carry per-tool rate limiter data")
+	assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+	assert.Equal(t, wantDetail, data.FailureDetail)
+}
+
+// TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen proves RUN-1675 for
+// the LLM preRequest path's read leg (spentBefore/overLimit's GET): a
+// counter-store outage never refuses the request, even though this plugin
+// only supports enforce mode — "our own infrastructure fails open" holds in
+// every mode, not just the non-blocking ones.
+func TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakReads(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "read")
+}
+
+// TestPlugin_PreRequest_CounterStoreRecordFailureFailsOpen proves the same
+// rule for the record leg (countExecuted/recordOnce's counting script): the
+// read (spentBefore) succeeds against the still-live counter store, and only
+// the write-back fails, which must not turn a request that already cleared
+// its budget check into a refusal.
+func TestPlugin_PreRequest_CounterStoreRecordFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
+}
+
+// TestPlugin_PreRequest_CounterStoreRecordFailureAfterExceededReadKeepsToolTelemetry
+// proves the per_tool_rate_limiter half of item 3 of the RUN-1675 review:
+// spentBefore already found a tool over its window in this same request, so
+// a countExecuted (record) failure right after it must not lose that signal
+// to a bare failure record — see spentTelemetry in plugin.go.
+func TestPlugin_PreRequest_CounterStoreRecordFailureAfterExceededReadKeepsToolTelemetry(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	seed(t, rdb, consumerKey("send_email", 0), 5) // already well over the max of 1
+
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, openAIReq(body), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
+
+	data, ok := span.Plugin.Extras.(PerToolRateLimiterData)
+	require.True(t, ok, "extras should carry per-tool rate limiter data")
+	assert.Equal(t, "send_email", data.Tool, "the tool spentBefore already found over budget must survive the record failure")
+	assert.True(t, data.LimitExceeded)
+	assert.Equal(t, 5, data.CurrentCount)
+}
+
+// TestPlugin_MCP_PreRequest_CounterStoreReadFailureFailsOpen is the same read
+// failure, on the MCP tools/call path (mcpPreRequest/overLimit's GET).
+func TestPlugin_MCP_PreRequest_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakReads(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "read")
+}
+
+// TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen is the same
+// record failure, on the MCP tools/call path (mcpPreResponse's counting
+// script, which has no preceding read of its own).
+func TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	rdb.AddHook(breakRecords(errors.New("dial tcp: connection refused")))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	in := input(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")), nil)
+	in.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), in)
+	assertCounterFailedOpen(t, res, err, span, "record")
 }

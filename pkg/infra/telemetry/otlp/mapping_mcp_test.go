@@ -52,6 +52,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
 			AccountRef:        "ada@asana.com",
+			Decision:          "failed_open",
 		},
 	}
 
@@ -73,6 +74,28 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
 	assert.Equal(t, "ada@asana.com", attrs[attrMCPAccountRef].AsString())
+	assert.Equal(t, "failed_open", attrs[attrMCPDecision].AsString())
+}
+
+// TestEventToRecord_MCPDecisionEmptyWhenNothingFailed proves the new
+// decision attribute is additive: a normal MCP call (nothing failed open)
+// never emits trustgate.mcp.decision at all, rather than an empty string.
+func TestEventToRecord_MCPDecisionEmptyWhenNothingFailed(t *testing.T) {
+	t.Parallel()
+	evt := &events.Event{
+		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindMCP,
+		Status:        events.Status{Code: 200},
+		Request:       events.Request{Method: "POST", Path: "/mcp"},
+		Response:      events.Response{StatusCode: 200},
+		MCP:           &events.MCP{Method: "tools/call"},
+	}
+
+	rec := eventToRecord(evt)
+	attrs := attrsOf(rec)
+
+	_, hasDecision := attrs[attrMCPDecision]
+	assert.False(t, hasDecision, "an unset decision must not appear as an empty attribute")
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {

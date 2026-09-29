@@ -112,7 +112,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	count, err := p.currentCount(ctx, redisKey, now, window)
 	if err != nil {
-		return nil, err
+		return p.counterUnavailable(ctx, in, RateLimiterData{ExceededType: dimension}, nil, "read", err)
 	}
 
 	reset := now.Add(window)
@@ -153,7 +153,17 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if err := p.record(ctx, redisKey, now, window); err != nil {
-		return nil, err
+		// A read that already allowed the request must not turn into a
+		// refusal just because the write-back failed: the client keeps the
+		// slot the read granted it, on the same fail-open rule. When the read
+		// already found the window exceeded (only reachable here in
+		// throttle/observe — enforce already returned its PluginError above),
+		// the client-facing headers still describe that exceeded window, not
+		// an empty/unknown one.
+		if data.RateLimitExceeded {
+			setLimitHeaders(headers, dimension, cfg.Limit, count, reset)
+		}
+		return p.counterUnavailable(ctx, in, data, headers, "record", err)
 	}
 	// The client is told what is left once this request is counted: a client
 	// reading "1 remaining" must be able to spend it without being rejected.
@@ -167,6 +177,62 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		in.Event.SetExtras(data)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+// counterUnavailable turns a counter-store (Redis) failure into a pass-through
+// outcome via the shared appplugins.HandleCounterFailure: unlike a blocked
+// request, this always fails open, whatever in.Mode is (subject to the ctx
+// exception below). data is whatever the caller already knows — a read
+// failure has almost nothing yet (just the dimension), while a record
+// failure after an exceeded read already carries RateLimitExceeded,
+// CurrentCount, Limit, Window and RetryAfter; this only adds
+// FailureReason/FailureDetail on top rather than discarding it for a bare
+// failure record. headers, when non-nil, are attached to the pass-through
+// result unchanged (the caller has already decided what they should say).
+//
+// A ctx the caller itself canceled (or let deadline out) is not a
+// counter-store outage — HandleCounterFailure reports that back as a non-nil
+// error, and this returns it unchanged, without touching data or headers at
+// all: no failed_open, no counter_unavailable, no Warn, exactly the
+// pre-RUN-1675 behavior for that case.
+//
+// Decision precedence: when data.RateLimitExceeded is set (only reachable in
+// throttle/observe — enforce already returned its PluginError before either
+// call site here runs), the throttle/observe decision wins over
+// HandleCounterFailure's default failed_open: the exceeded signal is what
+// those modes exist to report, and failure_reason=counter_unavailable in the
+// same extras still tells an operator the write-back failed on top of it. A
+// plain (non-exceeded) failure keeps failed_open.
+func (p *Plugin) counterUnavailable(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	data RateLimiterData,
+	headers map[string][]string,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	result, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Detail: detail,
+		Err:    err,
+		Event:  in.Event,
+	})
+	if ferr != nil {
+		return nil, ferr
+	}
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	if data.RateLimitExceeded {
+		appplugins.SetDecision(in.Event, in.Mode)
+		result = &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}
+	}
+	if in.Event != nil {
+		in.Event.SetExtras(data)
+	}
+	return result, nil
 }
 
 func throttleDelay(window time.Duration, limit int) time.Duration {
