@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,12 @@ const (
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
 	maxResponseBytes       = 1 << 20
+
+	// evaluateTimeoutHeader tells TrustGuard how long, in milliseconds, this
+	// call will wait. TrustGuard holds its detectors to a little less, so one
+	// that runs out of time fails open inside the answer instead of outliving
+	// the call and turning into a gateway timeout (ENG-1671).
+	evaluateTimeoutHeader = "X-Evaluate-Timeout-Ms"
 
 	// peerService must match TrustGuard's own service.name, and evaluateSpanName
 	// stays a bounded label rather than the request target.
@@ -103,13 +110,18 @@ func withBaseTransport(base http.RoundTripper) clientOption {
 	return func(cfg *clientConfig) { cfg.baseTransport = base }
 }
 
+// newClient builds the evaluate client. Its Timeout is only a backstop:
+// every call brings its own deadline — the policy's timeout or
+// streaming.guard_timeout — and a shorter client timeout would cap it without
+// saying so. The backstop never sits below timeout, the deadline a policy
+// without its own inherits.
 func newClient(timeout time.Duration, opts ...clientOption) *client {
 	cfg := clientConfig{baseTransport: http.DefaultTransport}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &client{http: &http.Client{
-		Timeout:   timeout,
+		Timeout:   max(maxPolicyTimeout, timeout),
 		Transport: o11y.InternalTransportOver(cfg.baseTransport, peerService, evaluateSpanName),
 	}}
 }
@@ -131,6 +143,11 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	}
 	if playground {
 		req.Header.Set(playgroundOriginHeader, "1")
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if ms := time.Until(deadline).Milliseconds(); ms > 0 {
+			req.Header.Set(evaluateTimeoutHeader, strconv.FormatInt(ms, 10))
+		}
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
