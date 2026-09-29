@@ -106,11 +106,16 @@ type Settings struct {
 // leg. There is no max_inflight key: exactly one guard call is in flight by
 // construction, which is what makes the contiguous-prefix invariant hold.
 type StreamingSettings struct {
-	Enabled              bool `mapstructure:"enabled"`
-	HeadChars            int  `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int  `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int  `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int  `mapstructure:"max_accumulated_bytes"`
+	// Enabled defaults to true: a policy whose direction includes the
+	// response has to inspect a streamed response too, or "Request &
+	// Response" silently means "request only" on the traffic that streams,
+	// which for chat is most of it. It is a pointer so an explicit false,
+	// the opt-out, is distinguishable from an absent key.
+	Enabled              *bool `mapstructure:"enabled"`
+	HeadChars            int   `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
 	// FinalPass is a pointer so that an explicit false is distinguishable from
 	// an absent key, which defaults to true.
 	FinalPass    *bool  `mapstructure:"final_pass"`
@@ -250,6 +255,10 @@ func (s StreamingSettings) validate() error {
 		return fmt.Errorf("trustguard: streaming.on_error must be one of fail_open, fail_closed")
 	}
 	return nil
+}
+
+func (s StreamingSettings) enabled() bool {
+	return s.Enabled == nil || *s.Enabled
 }
 
 func (s StreamingSettings) finalPass() bool {

@@ -252,6 +252,76 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 	})
 }
 
+// TestPluginE2E_TrustGuard_StreamIsInspectedByDefault is RUN-1712 end to end.
+// The policy is what the console saves for "Request & Response": a collector
+// and a direction, no streaming block. Before this, that policy inspected the
+// request and let the streamed response through untouched, recording "Not
+// inspected: The response had no body" while the console said both legs were
+// covered.
+//
+// The request leg calls the guard first, so the head block is call 2. Blocking
+// call 1 instead would return a 403 from the request leg and pass this test
+// without the stream ever being inspected; the body shape is what tells the
+// two apart.
+func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+
+	up := newPacedStreamUpstream(t, trustGuardStreamEvents(), trustGuardStreamGap)
+	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", map[string]any{
+		"collector_id": trustGuardFunctionalCollectorID,
+		"direction":    "request_response",
+	}))
+
+	t.Run("the block loop runs with no streaming settings at all", func(t *testing.T) {
+		tg.Reset()
+		tg.SetGuardDelay(trustGuardStreamGuardDelay)
+
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+		require.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "[DONE]")
+
+		// GuardStreams holds one entry per call, and the request leg's call
+		// carries no stream envelope, so it records a zero value. Counting the
+		// raw slice would pass on the request leg alone, with the stream never
+		// inspected; only calls that carry a stream id are blocks.
+		var blocks []GuardStream
+		for _, s := range tg.GuardStreams() {
+			if s.ID != "" {
+				blocks = append(blocks, s)
+			}
+		}
+		require.NotEmpty(t, blocks, "an absent streaming block must mean on: no block ever reached the guard")
+		assert.Equal(t, 1, blocks[0].Seq, "the first block is sequence 1")
+
+		// Request leg, at least one block, then the post-drain pass. Waiting
+		// for all of them keeps the async one out of the next subtest's count.
+		require.Eventually(t, func() bool {
+			return tg.GuardHits() >= 3
+		}, 5*time.Second, 20*time.Millisecond, "expected request leg, block loop and post_response")
+	})
+
+	t.Run("a blocked head is refused by the stream guard, not the request leg", func(t *testing.T) {
+		tg.Reset()
+		tg.SetGuardDelay(trustGuardStreamGuardDelay)
+		tg.BlockOnCall(2)
+
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+		body := string(raw)
+
+		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.JSONEq(t, `{"error":"plugin_rejected","type":"trustguard_blocked",`+
+			`"message":"Request blocked by security policy: `+trustGuardBlockReason+`."}`, body,
+			"the head gate's body, which the request leg does not produce")
+		for _, marker := range trustGuardStreamMarkers {
+			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
+		}
+		assert.Equal(t, 2, tg.GuardHits(), "request leg, then the blocked head, then nothing")
+	})
+}
+
 // trustGuardStreamCutBlockMessage is what the stub's block verdict renders as on
 // the error channel of a cut. It is the same sentence the head gate returns as a
 // 403 body: the incident is the same, only the regime differs.

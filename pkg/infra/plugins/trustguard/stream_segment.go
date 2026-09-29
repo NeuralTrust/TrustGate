@@ -48,7 +48,7 @@ func (p *Plugin) inspectSegment(
 		}
 		return segmentAllow(), nil
 	}
-	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {
