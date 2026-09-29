@@ -283,9 +283,18 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, "body: %s", raw)
 		assert.Contains(t, string(raw), "[DONE]")
 
-		streams := tg.GuardStreams()
-		require.NotEmpty(t, streams, "an absent streaming block must mean on: no block ever reached the guard")
-		assert.Equal(t, 1, streams[0].Seq)
+		// GuardStreams holds one entry per call, and the request leg's call
+		// carries no stream envelope, so it records a zero value. Counting the
+		// raw slice would pass on the request leg alone, with the stream never
+		// inspected; only calls that carry a stream id are blocks.
+		var blocks []GuardStream
+		for _, s := range tg.GuardStreams() {
+			if s.ID != "" {
+				blocks = append(blocks, s)
+			}
+		}
+		require.NotEmpty(t, blocks, "an absent streaming block must mean on: no block ever reached the guard")
+		assert.Equal(t, 1, blocks[0].Seq, "the first block is sequence 1")
 
 		// Request leg, at least one block, then the post-drain pass. Waiting
 		// for all of them keeps the async one out of the next subtest's count.
