@@ -62,7 +62,6 @@ type trustGuardStub struct {
 
 	mu            sync.Mutex
 	lastTokenReq  trustGuardTokenCapture
-	lastGuardReq  trustGuardGuardCapture
 	lastGuardAuth string
 	guardDelay    time.Duration
 	blockOnCall   int
@@ -286,7 +285,6 @@ func (s *trustGuardStub) Reset() {
 	atomic.StoreInt64(&s.guardHits, 0)
 	s.mu.Lock()
 	s.lastTokenReq = trustGuardTokenCapture{}
-	s.lastGuardReq = trustGuardGuardCapture{}
 	s.lastGuardAuth = ""
 	s.guardDelay = 0
 	s.blockOnCall = 0
@@ -303,10 +301,21 @@ func (s *trustGuardStub) lastToken() trustGuardTokenCapture {
 	return s.lastTokenReq
 }
 
-func (s *trustGuardStub) lastGuard() trustGuardGuardCapture {
+// LastGuardForGateway returns the last capture whose gateway_id matches, so an
+// MCP test (which has no stream envelope and no client-visible trace id to
+// correlate on the way GuardForTrace does) still reads its own request's call
+// rather than whichever one landed last stub-wide. Every functional test
+// provisions its own gateway, so the id is as unique a key here as a trace id
+// is for an LLM request.
+func (s *trustGuardStub) LastGuardForGateway(gatewayID string) (trustGuardGuardCapture, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lastGuardReq
+	for i := len(s.guardCaptures) - 1; i >= 0; i-- {
+		if s.guardCaptures[i].GatewayID == gatewayID {
+			return s.guardCaptures[i], true
+		}
+	}
+	return trustGuardGuardCapture{}, false
 }
 
 func newTrustGuardStubServer() *trustGuardStub {
@@ -353,7 +362,6 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &req)
 
 	s.mu.Lock()
-	s.lastGuardReq = req
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.guardPayloads = append(s.guardPayloads, req.Payload)
 	stream := GuardStream{}
@@ -366,9 +374,8 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	delay, blockOn := s.guardDelay, s.blockOnCall
 	s.mu.Unlock()
 
-	// The counter is published after the capture: a test that waits on
-	// GuardHits() for an async post_response would otherwise read a zero-value
-	// lastGuard between the increment and this write.
+	// The counter is published after the capture, so a test that sees
+	// GuardHits() move can already read the call's capture.
 	atomic.AddInt64(&s.guardHits, 1)
 
 	if delay > 0 {
