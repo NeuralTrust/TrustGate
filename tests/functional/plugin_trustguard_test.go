@@ -166,9 +166,13 @@ func TestPluginE2E_TrustGuard_StreamingResponseSendsReasoningAndToolCalls(t *tes
 	tg.Reset()
 
 	up := newTrustGuardRichStreamUpstream(t)
+	// This pins the post-drain pass, which a streamed response only takes when
+	// the policy opts out of per-block inspection: since RUN-1712 that is on by
+	// default for any policy whose direction includes the response.
 	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", map[string]any{
 		"collector_id": trustGuardFunctionalCollectorID,
 		"direction":    "response",
+		"streaming":    map[string]any{"enabled": false},
 	}))
 
 	req := trustGuardChatRequest("stream please")
