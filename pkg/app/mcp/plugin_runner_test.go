@@ -29,6 +29,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -281,6 +282,104 @@ func TestPluginRunner_NilExecutor(t *testing.T) {
 	_, err := runner.PreRequest(context.Background(), rc, unboundCall())
 	require.NoError(t, err)
 	_, err = runner.PreResponse(context.Background(), rc, unboundCall(), json.RawMessage(testResult))
+	require.NoError(t, err)
+}
+
+// TestPluginRunner_FailOpen_RecordsMCPDecision proves RUN-1675's MCP
+// visibility fix: a fail-open (a generic executor error, not a *PluginError)
+// used to only reach a Warn log line (logFailOpen); it must also land on the
+// request's own MCP span, the one object PluginRunner can reach at this
+// level, since no per-plugin span was ever opened for a call the executor
+// never got to run cleanly.
+func TestPluginRunner_FailOpen_RecordsMCPDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		call func(ctx context.Context, runner *PluginRunner, rc *appconsumer.RoutableConsumer) error
+	}{
+		{
+			name: "PreRequest",
+			call: func(ctx context.Context, runner *PluginRunner, rc *appconsumer.RoutableConsumer) error {
+				_, err := runner.PreRequest(ctx, rc, unboundCall())
+				return err
+			},
+		},
+		{
+			name: "PreResponse",
+			call: func(ctx context.Context, runner *PluginRunner, rc *appconsumer.RoutableConsumer) error {
+				_, err := runner.PreResponse(ctx, rc, unboundCall(), json.RawMessage(testResult))
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			exec := pluginmocks.NewExecutor(t)
+			exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+				Return(&appplugins.StageOutcome{}, errors.New("guard down"))
+
+			rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest, policydomain.StagePreResponse))
+			runner := NewPluginRunner(exec, discardLogger())
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanMCP, "tools/call")
+			ctx := trace.NewSpanContext(context.Background(), span)
+
+			err := tt.call(ctx, runner, rc)
+			require.NoError(t, err, "a non-block error must still fail open")
+
+			require.NotNil(t, span.MCP, "the fail-open must be recorded on the MCP span reachable via trace.SpanFromContext")
+			assert.Equal(t, "failed_open", span.MCP.Decision)
+		})
+	}
+}
+
+// TestPluginRunner_PreResponseDiscovery_FailOpenRecordsMCPDecision covers the
+// third RunStage caller in plugin_runner.go (item 6 of the RUN-1675 review):
+// a discovery listing (tools/list) that fails open on a non-block error must
+// stamp decision=failed_open on the MCP span exactly like PreRequest and
+// PreResponse do, not just log it.
+func TestPluginRunner_PreResponseDiscovery_FailOpenRecordsMCPDecision(t *testing.T) {
+	t.Parallel()
+
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(&appplugins.StageOutcome{}, errors.New("guard down"))
+
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
+	runner := NewPluginRunner(exec, discardLogger())
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanMCP, "tools/list")
+	ctx := trace.NewSpanContext(context.Background(), span)
+
+	err := runner.PreResponseDiscovery(ctx, rc, json.RawMessage(`{"tools":[]}`))
+	require.NoError(t, err, "a non-block error must still fail open")
+
+	require.NotNil(t, span.MCP, "the fail-open must be recorded on the MCP span reachable via trace.SpanFromContext")
+	assert.Equal(t, "failed_open", span.MCP.Decision)
+}
+
+// TestPluginRunner_FailOpen_NoSpanIsSafe proves logFailOpen tolerates a ctx
+// with no MCP span attached — a caller with no HTTP request behind it, like
+// most of the table tests above, which build their own bare
+// context.Background(). It must still fail open and must not panic.
+func TestPluginRunner_FailOpen_NoSpanIsSafe(t *testing.T) {
+	t.Parallel()
+
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(&appplugins.StageOutcome{}, errors.New("guard down"))
+
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
+	runner := NewPluginRunner(exec, discardLogger())
+
+	_, err := runner.PreRequest(context.Background(), rc, unboundCall())
 	require.NoError(t, err)
 }
 

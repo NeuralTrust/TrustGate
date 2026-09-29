@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -311,6 +312,31 @@ func (e *executor) runOne(
 		Event:    event,
 	})
 
+	if err != nil {
+		if _, ok := AsPluginError(err); !ok && !Blocks(entry.mode) && ctx.Err() == nil {
+			// Observe never blocks, and a plugin that could not run at all —
+			// a counter-store outage that slipped past its own fail-open
+			// handling, a transport error, anything that is not a deliberate
+			// PluginError verdict — must not stop the chain or bubble up as a
+			// 502 either. This mirrors what RunStreamSegment already does for
+			// observe-mode stream entries: fail open, record it, move on.
+			//
+			// ctx.Err() != nil is excluded on purpose: the caller's own
+			// cancellation (a client disconnect, an upstream deadline
+			// unwinding the whole chain, a sibling in the same parallel
+			// batch blocking and canceling gctx) is not this plugin failing
+			// on its own, and treating it as failed_open would misreport
+			// every abandoned request as an infrastructure incident.
+			origErr := err
+			if event != nil {
+				event.SetError(origErr)
+				SetDecisionFromOutcome(event, decisionFailedOpen)
+			}
+			e.warnFailedOpen(entry, stage, origErr)
+			res, err = &Result{StatusCode: http.StatusOK}, nil
+		}
+	}
+
 	if event != nil {
 		event.SetSLatency(time.Since(start))
 		switch {
@@ -450,6 +476,22 @@ func (e *executor) applyResults(
 		}
 	}
 	return stopApplied
+}
+
+// warnFailedOpen logs the one Warn line a buffered-path entry gets when it
+// failed open in a non-blocking mode: same shape as warnExcessWriter, kept
+// next to it since both are runOne/runBatch's own diagnostics rather than
+// something the plugin logged itself.
+func (e *executor) warnFailedOpen(entry chainEntry, stage policy.Stage, err error) {
+	if e.logger == nil {
+		return
+	}
+	e.logger.Warn("plugin failed open on a non-blocking mode",
+		slog.String("plugin", entry.plugin.Name()),
+		slog.String("stage", string(stage)),
+		slog.String("mode", string(entry.mode)),
+		slog.String("decision", decisionFailedOpen),
+		slog.Any("error", err))
 }
 
 func (e *executor) warnExcessWriter(stage policy.Stage, capability string) {

@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 // codePolicyBlocked is a server-defined JSON-RPC error code (in the reserved
@@ -53,6 +54,12 @@ const (
 	directionInput  = "input"
 	directionOutput = "output"
 )
+
+// decisionFailedOpen is the same "failed_open" token every fail-open decision
+// uses elsewhere in the gateway (pkg/app/plugins/external_failure.go,
+// pkg/infra/plugins/trustguard); kept as its own constant here rather than an
+// import, since none of those packages export it.
+const decisionFailedOpen = "failed_open"
 
 // PluginRunner runs the resolved plugin chain on the native MCP tools/call
 // path, mirroring pkg/app/proxy for the LLM path. It is a thin adapter over the
@@ -134,7 +141,7 @@ func (r *PluginRunner) PreRequest(
 	}
 	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
 	}
 	in := r.stageInput(rc, call, policy.StagePreRequest)
@@ -144,7 +151,7 @@ func (r *PluginRunner) PreRequest(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -162,7 +169,7 @@ func (r *PluginRunner) PreRequest(
 	// place. Read the arguments back out so the upstream receives the masked
 	// payload; forwarding the originals would leak exactly what the plugin was
 	// asked to redact.
-	return &StageResult{Arguments: r.rewrittenArguments(rc, call.Exposed, call.Arguments, reqCtx.Body)}, nil
+	return &StageResult{Arguments: r.rewrittenArguments(ctx, rc, call.Exposed, call.Arguments, reqCtx.Body)}, nil
 }
 
 func (r *PluginRunner) stageInput(rc *appconsumer.RoutableConsumer, call ToolCall, stage policy.Stage) appplugins.StageInput {
@@ -176,6 +183,7 @@ func (r *PluginRunner) stageInput(rc *appconsumer.RoutableConsumer, call ToolCal
 // body, or nil when nothing usable changed. The tool name is deliberately not
 // honoured: routing is the gateway's decision, not a body writer's.
 func (r *PluginRunner) rewrittenArguments(
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	original json.RawMessage,
@@ -186,7 +194,7 @@ func (r *PluginRunner) rewrittenArguments(
 	}
 	var params mcpToolCallParams
 	if err := json.Unmarshal(body, &params); err != nil {
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput,
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput,
 			fmt.Errorf("mcp: plugin left an unparseable tools/call body: %w", err))
 		return nil
 	}
@@ -218,7 +226,7 @@ func (r *PluginRunner) PreResponse(
 	}
 	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
 	}
 	in := r.stageInput(rc, call, policy.StagePreResponse)
@@ -233,7 +241,7 @@ func (r *PluginRunner) PreResponse(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -295,7 +303,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -317,14 +325,25 @@ func (r *PluginRunner) PreResponseDiscovery(
 // logFailOpen records a guard/plugin failure that the runner deliberately does
 // not surface. RUN-832 requires a tools/call to proceed on guard errors in both
 // directions; only ids and outcome are logged, never tool payloads.
-func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage policy.Stage, direction string, err error) {
+//
+// Per RUN-1675, the log line is no longer the only place this lands: the
+// failure is also recorded as decision failed_open on the request's own MCP
+// span (trace.SpanFromContext(ctx)) so it is visible on the event, the way
+// the LLM plane's plugin spans already record their own fail-open decisions.
+// ctx may carry no span (a caller with no HTTP request behind it, e.g. a unit
+// test) — SetMCPDecision is skipped, not defaulted, since there is nothing to
+// stamp it on.
+func (r *PluginRunner) logFailOpen(ctx context.Context, rc *appconsumer.RoutableConsumer, stage policy.Stage, direction string, err error) {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPDecision(decisionFailedOpen)
+	}
 	if r.logger == nil {
 		return
 	}
 	r.logger.Warn("mcp plugin stage failed, failing open",
 		slog.String("stage", string(stage)),
 		slog.String("direction", direction),
-		slog.String("outcome", "failed_open"),
+		slog.String("outcome", decisionFailedOpen),
 		slog.String("gateway_id", rc.Consumer.GatewayID.String()),
 		slog.String("error", err.Error()),
 	)
