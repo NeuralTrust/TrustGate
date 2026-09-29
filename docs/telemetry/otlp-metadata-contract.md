@@ -258,7 +258,7 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `guard_timeout` | `degraded_reason` | A block's verdict did not arrive and the held text was released uninspected |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
-| `provider_not_streaming` | `skip_reason` | The leg opted into per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
+| `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
 
 **A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
 outright stops the stream too, and that stop is reported the way a verdict's is:
