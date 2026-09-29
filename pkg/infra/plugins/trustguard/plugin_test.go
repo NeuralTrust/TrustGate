@@ -17,6 +17,7 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -177,6 +178,8 @@ type fakeGuard struct {
 	// end, or a zero entry, gets a token.
 	tokenStatuses []int
 	tokenHits     int
+	// tokenDelay stalls the token leg the way delay stalls the evaluate leg.
+	tokenDelay time.Duration
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
@@ -186,6 +189,14 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 			call := f.tokenHits
 			f.tokenHits++
 			f.mu.Unlock()
+			if f.tokenDelay > 0 {
+				_, _ = io.Copy(io.Discard, r.Body)
+				select {
+				case <-time.After(f.tokenDelay):
+				case <-r.Context().Done():
+					return
+				}
+			}
 			if call < len(f.tokenStatuses) && f.tokenStatuses[call] != 0 && f.tokenStatuses[call] != http.StatusOK {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(f.tokenStatuses[call])
@@ -2205,6 +2216,72 @@ func TestExecuteGuardTimeoutFailsOpenByDefault(t *testing.T) {
 	res, err := p.Execute(context.Background(), in)
 	require.NoError(t, err)
 	assertFailedOpen(t, res, span, failureReasonTimeout)
+}
+
+// TestExecutePolicyTimeoutAboveDeploymentTimeoutIsHonoured: a policy
+// timeout above TRUSTGUARD_TIMEOUT bounds the call, not the deployment one.
+func TestExecutePolicyTimeoutAboveDeploymentTimeoutIsHonoured(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}, delay: time.Second}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, 500*time.Millisecond, "test-client", "test-secret", nil, withBaseTransport(testTransport(t)))
+
+	set := settings("")
+	set["timeout"] = "5s"
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.Equal(t, decisionAllowed, extras.Decision, "the call must outlast the 500ms deployment timeout: %+v", extras)
+	assert.Equal(t, 1, f.count())
+}
+
+// TestExecuteWithoutPolicyTimeoutStillEndsAtDeploymentTimeout: a policy
+// without its own timeout is bounded by the deployment-wide one.
+func TestExecuteWithoutPolicyTimeoutStillEndsAtDeploymentTimeout(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}, delay: time.Second}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, 200*time.Millisecond, "test-client", "test-secret", nil, withBaseTransport(testTransport(t)))
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	assertFailedOpen(t, res, span, failureReasonTimeout)
+}
+
+// TestExecuteTokenLegIsBoundedByDeploymentTimeout: the token fetch runs
+// detached from the call's deadline, so only the token client's own timeout
+// keeps a hung token endpoint from holding every call waiting on it.
+func TestExecuteTokenLegIsBoundedByDeploymentTimeout(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}, tokenDelay: 2 * time.Second}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, 200*time.Millisecond, "test-client", "test-secret", nil, withBaseTransport(testTransport(t)))
+
+	set := settings("")
+	set["timeout"] = "5s"
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+
+	start := time.Now()
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Less(t, time.Since(start), 1500*time.Millisecond, "the token leg must end at the 200ms deployment timeout")
+	extras, ok := span.PluginAttrsCopy().Extras.(guardData)
+	require.True(t, ok)
+	assert.True(t, extras.FailedOpen)
+	assert.Zero(t, f.count(), "no evaluate call without a token")
 }
 
 // TestExecuteGuardTimeoutHonoursExplicitFailClosed keeps the stricter choice
