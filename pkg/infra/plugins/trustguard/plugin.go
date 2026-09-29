@@ -113,9 +113,9 @@ type Plugin struct {
 	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
-	// timeout is the deployment-wide deadline the HTTP client was built with.
-	// It is kept here as well so a policy can shorten or lengthen its own
-	// calls without every gateway sharing the change.
+	// timeout is the deployment-wide deadline of an evaluate call whose
+	// policy sets none. A policy can shorten or lengthen its own calls
+	// without every gateway sharing the change.
 	timeout time.Duration
 
 	cfgCache sync.Map
@@ -130,10 +130,14 @@ type Plugin struct {
 
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...clientOption) *Plugin {
 	c := newClient(timeout, opts...)
+	// The token client keeps the deployment-wide timeout: its fetch is shared
+	// through singleflight and runs detached from every caller's deadline
+	// (see fetchOnce), so the client timeout is the only bound it has.
+	tokenHTTP := &http.Client{Timeout: timeout, Transport: c.http.Transport}
 	return &Plugin{
 		registry: registry,
 		client:   c,
-		tokens:   newTokenManager(c.http, clientID, clientSecret),
+		tokens:   newTokenManager(tokenHTTP, clientID, clientSecret),
 		baseURL:  baseURL,
 		logger:   logger,
 		timeout:  timeout,
@@ -261,7 +265,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// The deadline is set here rather than left to the HTTP client so that a
 	// policy can carry its own, and so that a call that runs out of time is
 	// reported as a timeout rather than as an indistinguishable transport
-	// error. The client's own Timeout still applies as the outer bound.
+	// error. The client's own Timeout is only a backstop above any deadline
+	// a policy is allowed to set.
 	callCtx, cancel := context.WithTimeout(ctx, cfg.timeoutOr(p.timeout))
 	defer cancel()
 	resp, err := p.guard(callCtx, baseURL, cfg.CollectorID, traceID, body, playground)
@@ -748,12 +753,10 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 // differently: a streamed block holding bytes back cannot wait out a cold
 // token the way a buffered call can, so it passes tokenWithin.
 //
-// Both paths now bound the whole thing — token leg included — with a single
-// deadline from the caller. The buffered path used to leave each leg to the
-// HTTP client's own timeout, so a cold token and a slow evaluate could each
-// take the full budget and a retry could take it twice more. One deadline is
-// what a policy-level "timeout" has to mean to be worth setting; the cost is
-// that a cold token now spends the same budget the evaluate call does.
+// Both evaluate legs share one deadline from the caller, so a retry spends
+// what is left of it instead of a budget of its own. The token leg is held to
+// that deadline only on the streaming path (tokenWithin); the buffered path
+// waits for the shared fetch, which the token client's own timeout bounds.
 func (p *Plugin) guardWith(
 	ctx context.Context,
 	fetchToken tokenSource,
