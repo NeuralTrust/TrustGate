@@ -593,7 +593,7 @@ func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 		settings map[string]any
 		seg      appplugins.StreamSegment
 	}{
-		{"streaming disabled", map[string]any{"collector_id": testCollectorID},
+		{"streaming disabled", streamingSettings(map[string]any{"enabled": false}),
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
 		{"policy excludes the response leg", requestLeg,
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
@@ -645,11 +645,22 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 	assert.Equal(t, onErrorFailClosed, opts.OnError,
 		"streaming.on_error inherits the policy on_error, and the caller must be given what it inherited")
 
+	// RUN-1712: a policy that says nothing about streaming is on, with the
+	// defaults, because its direction already says it inspects the response.
+	// Before this, the same policy streamed its responses uninspected while the
+	// console told the operator both legs were covered.
+	enabled, opts = p.StreamSettings(map[string]any{"collector_id": testCollectorID})
+	assert.True(t, enabled, "an absent streaming block must mean on, not off")
+	assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars)
+	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, opts.MinCharsBetweenEvals)
+
+	optedOut := streamingSettings(map[string]any{"enabled": false})
+
 	for _, tt := range []struct {
 		name     string
 		settings map[string]any
 	}{
-		{"streaming disabled", map[string]any{"collector_id": testCollectorID}},
+		{"streaming explicitly disabled", optedOut},
 		{"policy excludes the response leg", requestLeg},
 		{"settings that do not parse", map[string]any{"collector_id": "not-a-uuid"}},
 	} {
@@ -746,7 +757,7 @@ func TestInspectSegmentClosingWritesNothingWhenStreamingIsOff(t *testing.T) {
 	p := newTestPlugin(t, adapter.NewRegistry(), "")
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
-		map[string]any{"collector_id": testCollectorID}, segmentRequest(), nil, event)
+		streamingSettings(map[string]any{"enabled": false}), segmentRequest(), nil, event)
 
 	_, err := p.InspectSegment(segmentTraceContext(), in,
 		appplugins.StreamSegment{Closing: true, Report: appplugins.StreamReport{Evals: 2}})

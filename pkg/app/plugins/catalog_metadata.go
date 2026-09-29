@@ -839,7 +839,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors but closed on a guard timeout, because a timeout is something a large enough payload can bring about. Streaming responses are inspected after the stream completes (post_response) unless per-block inspection is configured.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
