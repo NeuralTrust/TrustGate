@@ -78,7 +78,11 @@ func TestMCPPluginChain_ToolsCallEvaluatesBothLegs(t *testing.T) {
 	// PreResponse runs after the upstream, so the final evaluate is the response
 	// leg. Asserting the direction catches an evaluate firing twice on the
 	// request instead of once per leg.
-	require.Equal(t, "output", TrustGuardFunctionalStub.lastGuard().Direction,
+	// Read by gateway id, so a stray post_response from an earlier test cannot
+	// be mistaken for this request's last call.
+	guard, ok := TrustGuardFunctionalStub.LastGuardForGateway(gatewayID)
+	require.True(t, ok, "expected a captured call for this test's gateway")
+	require.Equal(t, "output", guard.Direction,
 		"the last evaluate must carry the response leg")
 }
 
@@ -101,7 +105,9 @@ func TestMCPPluginChain_StoredLegacyInspectKeyIsIgnored(t *testing.T) {
 	require.Equal(t, 2, TrustGuardFunctionalStub.GuardHits(),
 		"a stored legacy inspect key must not suppress the response leg; only %d evaluate call(s) reached the guard",
 		TrustGuardFunctionalStub.GuardHits())
-	require.Equal(t, "output", TrustGuardFunctionalStub.lastGuard().Direction)
+	guard, ok := TrustGuardFunctionalStub.LastGuardForGateway(gatewayID)
+	require.True(t, ok, "expected a captured call for this test's gateway")
+	require.Equal(t, "output", guard.Direction)
 }
 
 // TestMCPPluginChain_DirectionRequestSkipsResponseLeg documents the intentional
@@ -119,5 +125,7 @@ func TestMCPPluginChain_DirectionRequestSkipsResponseLeg(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "tools/call must succeed: %v", body)
 	require.Equal(t, 1, TrustGuardFunctionalStub.GuardHits(),
 		"direction=request must evaluate the request leg only")
-	require.Equal(t, "input", TrustGuardFunctionalStub.lastGuard().Direction)
+	guard, ok := TrustGuardFunctionalStub.LastGuardForGateway(gatewayID)
+	require.True(t, ok, "expected a captured call for this test's gateway")
+	require.Equal(t, "input", guard.Direction)
 }
