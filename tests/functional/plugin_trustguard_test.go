@@ -177,19 +177,23 @@ func TestPluginE2E_TrustGuard_StreamingResponseSendsReasoningAndToolCalls(t *tes
 
 	req := trustGuardChatRequest("stream please")
 	req["stream"] = true
-	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, req))
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, req))
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 	assert.Contains(t, string(raw), "hello ")
 	assert.Contains(t, string(raw), "world")
 	assert.Contains(t, string(raw), "[DONE]")
 	assert.Equal(t, 1, up.Hits())
 
-	// post_response runs asynchronously after the client finishes draining the stream.
+	// post_response runs asynchronously and carries no stream envelope, so it
+	// is correlated by trace id rather than by a stub-wide GuardHits count.
+	traceID := headers.Get(traceIDHeader)
+	require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
 	require.Eventually(t, func() bool {
-		return tg.GuardHits() >= 1
+		return tg.BufferedHitsForTrace(traceID) >= 1
 	}, 5*time.Second, 50*time.Millisecond, "expected TrustGuard evaluate for streamed output")
 
-	guard := tg.lastGuard()
+	guard, ok := tg.GuardForTrace(traceID)
+	require.True(t, ok, "expected a buffered call captured for this request's trace id")
 	assert.Equal(t, "output", guard.Direction)
 	assert.Equal(t, "llm", guard.Protocol)
 
