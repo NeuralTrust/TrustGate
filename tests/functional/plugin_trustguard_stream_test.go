@@ -230,11 +230,16 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		}
 		assert.Contains(t, string(raw), "[DONE]")
 
-		streams := tg.GuardStreams()
+		// trustGuardStreamCalls, not the raw GuardStreams()/GuardPayloads()
+		// slices: a stray envelope-less call from an earlier test's detached
+		// post_response, landing after Reset() above, would occupy index 0 and
+		// this subtest would read its direction and payload instead of the head
+		// block's.
+		streams, payloads := trustGuardStreamCalls(tg.GuardStreams(), tg.GuardPayloads())
 		require.NotEmpty(t, streams, "the head block must reach the guard")
 		assert.NotEmpty(t, streams[0].ID, "an empty stream id correlates every stream in the process into one")
 		assert.Equal(t, 1, streams[0].Seq)
-		assert.Contains(t, trustGuardInspectText(tg.GuardPayloads()[0]), trustGuardStreamMarkers[0])
+		assert.Contains(t, trustGuardInspectText(payloads[0]), trustGuardStreamMarkers[0])
 
 		// post_response fires from its own detached goroutine after the
 		// response is sent and carries no stream envelope. With the default
