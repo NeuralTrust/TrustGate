@@ -60,7 +60,9 @@ var trustGuardStreamMarkers = []string{
 }
 
 // newPacedStreamUpstream answers with an SSE body that arrives one event at a
-// time, gap apart.
+// time, gap apart. Each write is also timestamped (fakeUpstream.recordWrite),
+// so a caller can assert on the server's own pacing via WriteOffsets instead
+// of on when a reader happened to see it.
 func newPacedStreamUpstream(t *testing.T, events []string, gap time.Duration) *fakeUpstream {
 	t.Helper()
 	u := &fakeUpstream{}
@@ -75,6 +77,7 @@ func newPacedStreamUpstream(t *testing.T, events []string, gap time.Duration) *f
 			if flusher != nil {
 				flusher.Flush()
 			}
+			u.recordWrite()
 			time.Sleep(gap)
 		}
 	}))
@@ -152,39 +155,51 @@ func trustGuardStreamRequest() map[string]any {
 // everything before the first round trip even starts.
 //
 // Only the upper bound on events per round trip is asserted. It is the one the
-// arithmetic guarantees — a sleep never returns early, so an event cannot
-// arrive sooner than its gap — and it is the direction that matters: too many
+// arithmetic guarantees — a sleep never returns early, so an event cannot be
+// written sooner than its gap — and it is the direction that matters: too many
 // events inside one call is what collapses the block loop.
+//
+// Timing is measured on the upstream's own writes (fakeUpstream.WriteOffsets),
+// not on this test's client reading them back: a descheduled reader can drain
+// several already-flushed events at once, collapsing the observed gap without
+// the write gap ever having been violated. The client still proves delivery —
+// every event but the keepalive comment must arrive as a "data:" line — just
+// not timing.
 func TestPacedStreamUpstream_HoldsEventsBackAcrossAGuardRoundTrip(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
 	events := trustGuardStreamEvents()
 	up := newPacedStreamUpstream(t, events, trustGuardStreamGap)
 
-	start := time.Now()
 	resp, err := http.Post(up.URL(), "application/json", strings.NewReader("{}"))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	var arrivals []time.Duration
+	dataLines := 0
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		if !strings.HasPrefix(scanner.Text(), "data: ") {
-			continue
+		if strings.HasPrefix(scanner.Text(), "data: ") {
+			dataLines++
 		}
-		arrivals = append(arrivals, time.Since(start))
 	}
 	require.NoError(t, scanner.Err())
-	require.Len(t, arrivals, len(events)-1, "every event but the keepalive comment carries a data line")
+	require.Equal(t, len(events)-1, dataLines, "every event but the keepalive comment carries a data line")
 
-	for i := 1; i < len(arrivals); i++ {
-		assert.GreaterOrEqual(t, arrivals[i]-arrivals[i-1], trustGuardStreamGap,
-			"event %d arrived less than one gap after event %d", i, i-1)
+	// The handler has returned by the time Scan() reports EOF, so every write
+	// is already recorded.
+	writes := up.WriteOffsets()
+	require.Len(t, writes, len(events), "the handler must have written every event before closing the response")
+
+	// writes[0] is the keepalive comment; writes[1:] line up with the "data:"
+	// events, the subset the pre-fix version measured via client arrivals.
+	for i := 2; i < len(writes); i++ {
+		assert.GreaterOrEqual(t, writes[i]-writes[i-1], trustGuardStreamGap,
+			"write %d was written less than one gap after write %d", i, i-1)
 	}
 
 	perRoundTrip := 0
-	for _, at := range arrivals {
-		if at-arrivals[0] < trustGuardStreamGuardDelay {
+	for _, at := range writes[1:] {
+		if at-writes[1] < trustGuardStreamGuardDelay {
 			perRoundTrip++
 		}
 	}
@@ -208,7 +223,7 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		tg.Reset()
 		tg.SetGuardDelay(trustGuardStreamGuardDelay)
 
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
 		require.Equal(t, http.StatusOK, status, "body: %s", raw)
 		for _, marker := range trustGuardStreamMarkers {
 			assert.Contains(t, string(raw), marker)
@@ -221,10 +236,19 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		assert.Equal(t, 1, streams[0].Seq)
 		assert.Contains(t, trustGuardInspectText(tg.GuardPayloads()[0]), trustGuardStreamMarkers[0])
 
-		// post_response is asynchronous. Waiting for it here keeps its call from
-		// landing inside the next subtest and being counted as the head call.
+		// post_response fires from its own detached goroutine after the
+		// response is sent and carries no stream envelope. With the default
+		// min_chars_between_evals the pre_response leg alone makes two
+		// in-stream calls (head seq 1, forced final seq 2), so GuardHits()>=2
+		// is satisfied before post_response lands and does not wait for it.
+		// Waiting on this request's own trace id instead — the gateway trace
+		// id the proxy echoes as X-AG-Trace-Id, which the plugin also forwards
+		// to the guard as X-Trace-ID on every call — cannot be satisfied by a
+		// call belonging to a different request.
+		traceID := headers.Get(traceIDHeader)
+		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
 		require.Eventually(t, func() bool {
-			return tg.GuardHits() >= 2
+			return tg.BufferedHitsForTrace(traceID) >= 1
 		}, 5*time.Second, 20*time.Millisecond, "expected the buffered post_response pass after the stream")
 	})
 
@@ -247,7 +271,14 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 		}
 		assert.NotContains(t, body, "data:", "the client must see an error body, not a stream")
 
-		assert.Equal(t, 1, tg.GuardHits(), "a blocked head must not be followed by any further inspection")
+		// InStreamHits, not GuardHits: a stray buffered call from another
+		// request racing in on the shared stub must not fail this assertion,
+		// only an in-stream call can, and BlockOnCall(1) can only ever match
+		// one of those anyway.
+		assert.Equal(t, 1, tg.InStreamHits(), "a blocked head must not be followed by any further in-stream inspection")
+		traceID := headers.Get(traceIDHeader)
+		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
+		assert.Zero(t, tg.BufferedHitsForTrace(traceID), "a blocked head must not be followed by this request's post_response")
 		assert.Equal(t, upstreamBefore+1, up.Hits())
 	})
 }
@@ -259,10 +290,10 @@ func TestPluginE2E_TrustGuard_StreamHeadGate(t *testing.T) {
 // inspected: The response had no body" while the console said both legs were
 // covered.
 //
-// The request leg calls the guard first, so the head block is call 2. Blocking
-// call 1 instead would return a 403 from the request leg and pass this test
-// without the stream ever being inspected; the body shape is what tells the
-// two apart.
+// The request leg calls the guard first, but carries no stream envelope, so
+// BlockOnCall(1) — matched on stream seq, not on call order — targets the
+// head block regardless. Blocking the request leg instead would return a 403
+// that never inspected the stream; the body shape is what tells the two apart.
 func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
@@ -279,7 +310,7 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		tg.Reset()
 		tg.SetGuardDelay(trustGuardStreamGuardDelay)
 
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
 		require.Equal(t, http.StatusOK, status, "body: %s", raw)
 		assert.Contains(t, string(raw), "[DONE]")
 
@@ -296,19 +327,25 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		require.NotEmpty(t, blocks, "an absent streaming block must mean on: no block ever reached the guard")
 		assert.Equal(t, 1, blocks[0].Seq, "the first block is sequence 1")
 
-		// Request leg, at least one block, then the post-drain pass. Waiting
-		// for all of them keeps the async one out of the next subtest's count.
+		// GuardHits() >= 3 is satisfied by the request leg plus the two
+		// in-stream calls (head, forced final) alone, before post_response
+		// (which carries no envelope) ever lands; waiting on it would let
+		// post_response leak into the next subtest. BufferedHitsForTrace,
+		// correlated to this request's own trace id, counts the request leg
+		// and post_response specifically.
+		traceID := headers.Get(traceIDHeader)
+		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
 		require.Eventually(t, func() bool {
-			return tg.GuardHits() >= 3
-		}, 5*time.Second, 20*time.Millisecond, "expected request leg, block loop and post_response")
+			return tg.BufferedHitsForTrace(traceID) >= 2
+		}, 5*time.Second, 20*time.Millisecond, "expected the request leg and the buffered post_response pass")
 	})
 
 	t.Run("a blocked head is refused by the stream guard, not the request leg", func(t *testing.T) {
 		tg.Reset()
 		tg.SetGuardDelay(trustGuardStreamGuardDelay)
-		tg.BlockOnCall(2)
+		tg.BlockOnCall(1)
 
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
+		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, trustGuardStreamRequest()))
 		body := string(raw)
 
 		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
@@ -318,7 +355,14 @@ func TestPluginE2E_TrustGuard_StreamIsInspectedByDefault(t *testing.T) {
 		for _, marker := range trustGuardStreamMarkers {
 			assert.NotContains(t, body, marker, "the head gate let upstream text reach the client")
 		}
-		assert.Equal(t, 2, tg.GuardHits(), "request leg, then the blocked head, then nothing")
+		// InStreamHits and BufferedHitsForTrace, not GuardHits: a buffered call
+		// from another request racing in on the shared stub must not fail
+		// these. The request leg still ran (BufferedHitsForTrace==1); no
+		// further in-stream call and no post_response followed the block.
+		assert.Equal(t, 1, tg.InStreamHits(), "a blocked head must not be followed by any further in-stream inspection")
+		traceID := headers.Get(traceIDHeader)
+		require.NotEmpty(t, traceID, "the proxy must echo the trace id the guard was called with")
+		assert.Equal(t, 1, tg.BufferedHitsForTrace(traceID), "the request leg ran once and no post_response followed the blocked head")
 	})
 }
 
