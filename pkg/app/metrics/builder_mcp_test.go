@@ -258,6 +258,47 @@ func TestBuilder_MCPDoubleTrustGuardListsBothAndTheGlobalInMatched(t *testing.T)
 	assert.Equal(t, int64(10), evt.Latency.PoliciesMs)
 }
 
+// RUN-1675: PluginRunner stamps decision=failed_open directly onto the MCP
+// span (via Span.SetMCPDecision) when a plugin stage failed on a non-block
+// error before any per-plugin span existed to carry it. Build must fold that
+// straight through to evt.MCP.Decision, next to (not instead of) the
+// per-plugin decisions already in policy_chain[].
+func TestBuilder_MCPFoldsFailedOpenDecision(t *testing.T) {
+	rt := trace.New("trace-mcp-failopen", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:         "tools/call",
+		Operation:      "tool",
+		Tool:           "search",
+		UpstreamStatus: http.StatusOK,
+		Decision:       "failed_open",
+	}, 5*time.Millisecond))
+	req, resp, start, end := mcpRequest()
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, "failed_open", evt.MCP.Decision)
+}
+
+// A normal call, where nothing failed open, must carry an empty Decision —
+// the zero value, not some other sentinel — so a reader can tell the two
+// cases apart and appendStr in the OTLP mapper correctly omits the attribute.
+func TestBuilder_MCPDecisionEmptyWhenNothingFailedOpen(t *testing.T) {
+	rt := trace.New("trace-mcp-ok", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:         "tools/call",
+		Operation:      "tool",
+		Tool:           "search",
+		UpstreamStatus: http.StatusOK,
+	}, 5*time.Millisecond))
+	req, resp, start, end := mcpRequest()
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	require.NotNil(t, evt.MCP)
+	assert.Empty(t, evt.MCP.Decision)
+}
+
 func TestBuilder_MCPDiscoveryCarriesNoPolicyScope(t *testing.T) {
 	rt := trace.New("trace-mcp-discovery", trace.Metadata{GatewayID: "gw-1", Kind: events.KindMCP})
 	_ = rt.AddSpan(mcpSpan("tools/list", &trace.MCPAttrs{

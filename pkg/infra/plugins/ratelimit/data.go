@@ -23,4 +23,10 @@ type RateLimiterData struct {
 	CurrentCount      int64  `json:"current_count"`
 	Limit             int    `json:"limit"`
 	Window            string `json:"window,omitempty"`
+	// FailureReason and FailureDetail are set only on a failed_open decision:
+	// the counter store (Redis) could not be read or written. FailureReason is
+	// always appplugins.FailureCounterUnavailable; FailureDetail names which
+	// call failed ("read" or "record").
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
 }

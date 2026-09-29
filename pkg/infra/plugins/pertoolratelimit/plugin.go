@@ -226,10 +226,14 @@ func (p *Plugin) preRequest(
 	legacy := legacyFunctionNames(ad, in.Request.Body, canonical)
 	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, append(toolNames(canonical.Tools), legacy...))
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		return p.counterUnavailable(ctx, in, nil, "read", err)
 	}
 	if err := p.countExecuted(ctx, cfg, in, dimension, subject, executedCalls(ad, in.Request.Body, canonical.Messages)); err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		// spentBefore already read one or more tools' windows in this same
+		// request; carry that signal along rather than losing it to a bare
+		// failure record. See spentTelemetry for why only one tool's data
+		// travels when several are already over budget.
+		return p.counterUnavailable(ctx, in, p.spentTelemetry(cfg, spent, dimension, subject), "record", err)
 	}
 
 	strip := toolStrip{}
@@ -429,7 +433,7 @@ func (p *Plugin) preResponse(
 		}
 		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
 		if err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+			return p.counterUnavailable(ctx, in, nil, "read", err)
 		}
 		if ws == nil {
 			continue
@@ -503,7 +507,7 @@ func (p *Plugin) mcpPreRequest(
 	}
 	ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		return p.counterUnavailable(ctx, in, nil, "read", err)
 	}
 	if ws == nil {
 		return okResult(), nil
@@ -547,7 +551,7 @@ func (p *Plugin) mcpPreResponse(
 	}
 	res, err := script.Run(ctx, p.redis, keys, args...).Result()
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		return p.counterUnavailable(ctx, in, nil, "record", err)
 	}
 	totals, ok := res.([]any)
 	if !ok {
@@ -706,6 +710,75 @@ func (p *Plugin) reject(ctx context.Context, tool string, ws *windowState, dimen
 		Message:    fmt.Sprintf("tool %q rate limit exceeded", tool),
 		Headers:    headers,
 	}
+}
+
+// counterUnavailable turns a counter-store (Redis) failure into a pass-through
+// outcome via the shared appplugins.HandleCounterFailure: unlike a rejected
+// tool call, this always fails open, whatever mode the policy is in — only
+// enforce is supported here, but the rule is "our own infrastructure fails
+// open", not "enforce fails open" (subject to the ctx exception below).
+// There is no throttle/observe-style alternate decision to preserve the way
+// rate_limiter has (this plugin only ever runs in enforce), so the decision
+// is always failed_open; base, when non-nil, is prior state worth keeping in
+// the extras anyway (see spentTelemetry) — this only adds
+// FailureReason/FailureDetail on top of it, or of a fresh PerToolRateLimiterData
+// when base is nil.
+//
+// A ctx the caller itself canceled (or let deadline out) is not a
+// counter-store outage — HandleCounterFailure reports that back as a non-nil
+// error, and this returns it unchanged: no failed_open, no
+// counter_unavailable, no Warn, exactly the pre-RUN-1675 behavior.
+func (p *Plugin) counterUnavailable(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	base *PerToolRateLimiterData,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	result, ferr := appplugins.HandleCounterFailure(appplugins.CounterFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Detail: detail,
+		Err:    err,
+		Event:  in.Event,
+	})
+	if ferr != nil {
+		return nil, ferr
+	}
+	data := PerToolRateLimiterData{Stage: string(in.Stage)}
+	if base != nil {
+		data = *base
+	}
+	data.FailureReason = string(appplugins.FailureCounterUnavailable)
+	data.FailureDetail = detail
+	setExtras(in.Event, data)
+	return result, nil
+}
+
+// spentTelemetry returns the telemetry for the first tool spentBefore already
+// found over its window, so a countExecuted (record) failure right after it
+// does not lose that signal entirely. Only one tool's data can travel — a
+// PerToolRateLimiterData models one tool per span — so when several are
+// already over budget this surfaces just one of them; that is still strictly
+// more informative than the bare failure record a caller would otherwise get,
+// even though it cannot represent every exceeded tool at once. Returns nil
+// when spent has no tool over its window (spentBefore succeeded clean, or
+// found nothing to report).
+func (p *Plugin) spentTelemetry(cfg *config, spent map[string]*windowState, dimension, subject string) *PerToolRateLimiterData {
+	for tool, ws := range spent {
+		if ws == nil {
+			continue
+		}
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		data := p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, effectiveBehavior(rule, cfg), true)
+		return &data
+	}
+	return nil
 }
 
 func (p *Plugin) data(

@@ -16,13 +16,16 @@ package tokenratelimit
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -254,4 +257,150 @@ func TestPlugin_ConsumerScopeRequiresConsumerID(t *testing.T) {
 
 	_, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}, appplugins.RuntimeScope{GatewayID: "gw-1"}))
 	require.Error(t, err)
+}
+
+// commandBreakerHook fails any command (plain, or inside a pipeline/script)
+// whose name is in targets, letting everything else — including go-redis's
+// own internal connection handshake — through untouched. It is how the tests
+// below simulate a counter-store outage on exactly one leg: a GET read
+// (budgetGate), or the EVALSHA/EVAL a counting script (recordScript) runs as.
+type commandBreakerHook struct {
+	targets map[string]struct{}
+	err     error
+}
+
+func (h commandBreakerHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h commandBreakerHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if _, ok := h.targets[cmd.Name()]; ok {
+			return h.err
+		}
+		return next(ctx, cmd)
+	}
+}
+func (h commandBreakerHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, c := range cmds {
+			if _, ok := h.targets[c.Name()]; ok {
+				return h.err
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func breakReads(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"get": {}}, err: err}
+}
+
+func breakRecords(err error) commandBreakerHook {
+	return commandBreakerHook{targets: map[string]struct{}{"evalsha": {}, "eval": {}}, err: err}
+}
+
+func newTestPluginWithHook(t *testing.T, hook redis.Hook) *Plugin {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdb.AddHook(hook)
+	t.Cleanup(func() { _ = rdb.Close() })
+	return New(rdb, adapter.NewRegistry(), nil)
+}
+
+// assertTokenCounterFailedOpen asserts the common shape every counter-store
+// failure test below expects, including item 3 of the RUN-1675 review: the
+// provider (known before any of the three call sites ever touches Redis)
+// must survive onto the failure extras rather than being lost to a bare
+// TokenRateLimiterData{FailureReason, FailureDetail} — see counterUnavailable
+// in budget.go.
+func assertTokenCounterFailedOpen(t *testing.T, res *appplugins.Result, err error, span *trace.Span, wantDetail string) {
+	t.Helper()
+	require.NoError(t, err, "a counter-store failure must never reject the request")
+	require.NotNil(t, res)
+	assert.Equal(t, 200, res.StatusCode)
+	require.NotNil(t, span.Plugin)
+	assert.Equal(t, "failed_open", span.Plugin.Decision)
+	data, ok := span.Plugin.Extras.(TokenRateLimiterData)
+	require.True(t, ok, "extras should carry token rate limiter data")
+	assert.Equal(t, string(appplugins.FailureCounterUnavailable), data.FailureReason)
+	assert.Equal(t, wantDetail, data.FailureDetail)
+	assert.Equal(t, "openai", data.Provider, "provider telemetry must survive the failure, not be discarded")
+}
+
+// TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen proves RUN-1675 for
+// budgetGate's read leg: a counter-store outage never rejects the request,
+// in enforce or in observe, unlike a budget actually exceeded.
+func TestPlugin_PreRequest_CounterStoreReadFailureFailsOpen(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			p := newTestPluginWithHook(t, breakReads(errors.New("dial tcp: connection refused")))
+			settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 10}}
+			req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{})
+			in.Mode = mode
+			in.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), in)
+			assertTokenCounterFailedOpen(t, res, err, span, "read_counter")
+		})
+	}
+}
+
+// TestPlugin_PostResponse_CounterStoreRecordTokensFailureFailsOpen proves the
+// same rule for accrue's record leg (a token-unit budget): a write-back
+// failure after the response is already known must not turn into a
+// rejection — there is nothing left to reject at that point anyway, but the
+// failure still has to be visible on the event, not just in a log line.
+func TestPlugin_PostResponse_CounterStoreRecordTokensFailureFailsOpen(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			p := newTestPluginWithHook(t, breakRecords(errors.New("dial tcp: connection refused")))
+			settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 10}}
+			req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := input(policy.StagePostResponse, settings, req, resp)
+			in.Mode = mode
+			in.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), in)
+			assertTokenCounterFailedOpen(t, res, err, span, "record_tokens")
+		})
+	}
+}
+
+// TestPlugin_PostResponse_CounterStoreRecordCostFailureFailsOpen is the same
+// record failure, for a dollar-unit budget's accrueDollars path.
+func TestPlugin_PostResponse_CounterStoreRecordCostFailureFailsOpen(t *testing.T) {
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			p := newTestPluginWithHook(t, breakRecords(errors.New("dial tcp: connection refused")))
+			settings := map[string]any{
+				"unit":          "dollars",
+				"pricing_table": "custom",
+				"custom_pricing": map[string]any{
+					"gpt-4o-mini": map[string]any{"input": 0.001, "output": 0},
+				},
+				"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+			}
+			req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o-mini"}`)}
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanPlugin, PluginName)
+			in := input(policy.StagePostResponse, settings, req, resp)
+			in.Mode = mode
+			in.Event = metrics.NewEventContext(span)
+
+			res, err := p.Execute(context.Background(), in)
+			assertTokenCounterFailedOpen(t, res, err, span, "record_cost")
+		})
+	}
 }

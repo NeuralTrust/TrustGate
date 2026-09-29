@@ -56,6 +56,14 @@ const (
 	// never consulted, so this always fails open, in every mode: there is
 	// nothing to fail closed about.
 	FailureDecodeFailed FailureReason = "decode_failed"
+	// FailureCounterUnavailable is TrustGate's own counter store (Redis)
+	// failing a read or a write: rate_limiter, per_tool_rate_limiter and
+	// token_rate_limiter all share this one reason. Unlike the reasons above,
+	// it is never subject to Blocks(mode): our own infrastructure fails OPEN
+	// in every mode, including enforce, because a third-party guardrail is
+	// what earns a fail-closed refusal, not an outage on our side. See
+	// HandleCounterFailure in counter_failure.go.
+	FailureCounterUnavailable FailureReason = "counter_unavailable"
 )
 
 const (

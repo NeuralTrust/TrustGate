@@ -66,7 +66,8 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		group: groupTrafficControl,
 		description: "Applies to LLM and native MCP traffic. Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
 			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
-			" and then lets it through, so it smooths bursts but does not cap the rate.",
+			" and then lets it through, so it smooths bursts but does not cap the rate. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -139,9 +140,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		},
 	},
 	"token_rate_limiter": {
-		name:        "LLM Budget",
-		group:       groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer.",
+		name:  "LLM Budget",
+		group: groupQuota,
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -270,9 +272,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		},
 	},
 	"per_tool_rate_limiter": {
-		name:        "Per-Tool Rate Limiter",
-		group:       groupTrafficControl,
-		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer.",
+		name:  "Per-Tool Rate Limiter",
+		group: groupTrafficControl,
+		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
