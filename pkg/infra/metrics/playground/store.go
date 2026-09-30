@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -31,10 +30,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/redis/go-redis/v9"
 )
-
-// headerPlaygroundToken mirrors resolver.HeaderPlaygroundToken, duplicated so
-// the infra layer does not depend on the api layer.
-const headerPlaygroundToken = "x-ag-playground-token"
 
 const traceKeyPrefix = "playground:trace:"
 
@@ -57,12 +52,15 @@ func NewStore(rdb *redis.Client, cfg config.PlaygroundConfig, logger *slog.Logge
 }
 
 // Save persists evt under its TraceID when the store is enabled and the request
-// carries the playground token. Best-effort: failures are logged, not returned.
+// was authenticated by the playground identity resolver (req.PlaygroundVerified).
+// The raw X-AG-Playground-Token header is deliberately not consulted: only the
+// proxy plane verifies it, so on MCP any client could set it. Best-effort:
+// failures are logged, not returned.
 func (s *Store) Save(ctx context.Context, req *infracontext.RequestContext, evt *events.Event) {
 	if s == nil || !s.enabled || s.rdb == nil || req == nil || evt == nil {
 		return
 	}
-	if evt.TraceID == "" || !hasPlaygroundToken(req.Headers) {
+	if evt.TraceID == "" || !req.PlaygroundVerified {
 		return
 	}
 
@@ -105,22 +103,4 @@ func (s *Store) Find(ctx context.Context, traceID string) (*events.Event, error)
 
 func traceKey(traceID string) string {
 	return traceKeyPrefix + traceID
-}
-
-func hasPlaygroundToken(headers map[string][]string) bool {
-	for key, values := range headers {
-		if strings.EqualFold(key, headerPlaygroundToken) {
-			for _, v := range values {
-				if v != "" {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// IsPlaygroundRequest reports whether the proxy request carries a playground token.
-func IsPlaygroundRequest(headers map[string][]string) bool {
-	return hasPlaygroundToken(headers)
 }
