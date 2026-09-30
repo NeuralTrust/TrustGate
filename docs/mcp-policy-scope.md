@@ -391,6 +391,23 @@ latency: the rewriter and the slowest reader now add up instead of overlapping.
 `semantic_cache` counts as a rewriter at the response stages, so nothing is
 moved after it there.
 
+**Streamed responses follow the same rule.** A streamed segment does not use
+batches: the chain walks the streaming entries one at a time. The walk is now
+ordered like a batch (rewriters first, then opted-in readers at the same
+priority; other entries keep their place, priorities are never crossed), and a
+rewrite is handed on. When an enforcing entry masks a segment, the entries
+behind it receive the masked text, so `openai_moderation` at the same priority
+as `regex_replace` never sends the unmasked text to its provider. Consequences:
+
+- The last transform wins, and it already contains the earlier ones, because
+  each rewriter transforms the previous rewriter's output. Before, only the first
+  transform in the chain was kept and the others were dropped.
+- An `observe` entry's transform is never applied to the client, so it is not
+  handed on: the entries behind it judge the text the client will actually get.
+- A block still ends the chain and discards any transform of the same segment.
+- If the composed mask cannot be applied to the held text, the stream is cut, as
+  for a single rewriter.
+
 ## Deny pattern: "only group X may call this tool"
 
 `tool_allowlist` now supports MCP and judges the native tool name. Combined
