@@ -341,6 +341,25 @@ For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count`
 `model` and any cost-cap fields — a record failure never wipes out what the read (or the
 request itself) already established.
 
+### Ran but had nothing to evaluate (`per_tool_rate_limiter`)
+
+A `policy_chain[]` entry normally exists only when the plugin recorded something: the builder
+drops a span with no decision, extras, score or error. `per_tool_rate_limiter` on a
+`pre_request` leg whose request declares no tools, or none matching a rule, used to record
+nothing, so the entry vanished and looked the same as a policy that was never attached. It now
+records the same `skipped` / `skip_reason` keys `trustguard` uses (additive, only on these entries):
+
+| Key | Meaning |
+|-----|---------|
+| `stage` | `pre_request` |
+| `skipped` | Always `true` |
+| `skip_reason` | `no_tools` (no tool declared, no tool result to count, or an MCP call with no tool name) or `no_matching_rule` (tools present, none matches a rule) |
+
+The entry carries **no `decision`**, so it is neither allowed nor blocked and is never `flagged`.
+This is opt-in per plugin: every other plugin that runs and records nothing is still dropped
+from the chain. It does not distinguish "not evaluated" from "not attached to this consumer";
+that needs the consumer's policy set and is not carried by the event.
+
 **Decision precedence when a window was already found exceeded.** `rate_limiter` runs in
 throttle or observe when its read already finds the window over budget (enforce would have
 refused the request outright, before any record is attempted). If the record that follows
