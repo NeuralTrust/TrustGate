@@ -378,6 +378,19 @@ the isolated requests of a parallel batch, so a plugin ordered ahead of another
 can change what it sees there. Plugins that gate a call — `tool_allowlist` — read
 `MCPTool`, never the metadata key.
 
+**Rewriters run before readers within a priority.** A parallel batch runs on
+isolated copies of the request and writes a rewrite back only when it ends, so a
+policy that reads content would otherwise score the original text next to a
+masker at the same priority. The planner therefore splits such a run into the
+rewriters first and then the plugins that opted in as content readers:
+`openai_moderation`, `azure_content_safety` and `semantic_cache` (at
+`pre_request`). Readers stay parallel among themselves, and a run with no
+rewriter, no reader, or a different priority is planned as before. If an earlier
+rewriter blocks or short-circuits, the readers after it do not run. The cost is
+latency: the rewriter and the slowest reader now add up instead of overlapping.
+`semantic_cache` counts as a rewriter at the response stages, so nothing is
+moved after it there.
+
 ## Deny pattern: "only group X may call this tool"
 
 `tool_allowlist` now supports MCP and judges the native tool name. Combined
