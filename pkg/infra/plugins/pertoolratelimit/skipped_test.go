@@ -37,6 +37,8 @@ func (noPricing) Resolve(context.Context, string, string) appcatalog.Pricing {
 	return appcatalog.Pricing{}
 }
 
+func (noPricing) InvalidateCache() {}
+
 func withSpan(in appplugins.ExecInput) (appplugins.ExecInput, *trace.RequestTrace, *trace.Span) {
 	rt := trace.New("trace-skip", trace.Metadata{GatewayID: "gw-1"})
 	span := rt.StartSpan(trace.SpanPlugin, PluginName)
@@ -45,6 +47,9 @@ func withSpan(in appplugins.ExecInput) (appplugins.ExecInput, *trace.RequestTrac
 	in.Event = metrics.NewEventContext(span)
 	return in, rt, span
 }
+
+const legacyChatOther = `{"model":"gpt","messages":[{"role":"user","content":"hi"}],` +
+	`"functions":[{"name":"other","parameters":{"type":"object"}}]}`
 
 func TestPlugin_PreRequest_RecordsSkippedWhenNothingToEvaluate(t *testing.T) {
 	settings := ruleSettings("send_email", "reject_response", "1m", 5)
@@ -57,6 +62,12 @@ func TestPlugin_PreRequest_RecordsSkippedWhenNothingToEvaluate(t *testing.T) {
 		{"llm request declares only unmatched tools", openAIReq(openAIReqBody(t, "lookup")), skipReasonNoMatchingRule},
 		{"mcp call without a tool name", mcpReq([]byte(`{"arguments":{}}`)), skipReasonNoTools},
 		{"mcp call to an unmatched tool", mcpReq(mcpBody(t, "lookup")), skipReasonNoMatchingRule},
+		{"llm request declares only unmatched legacy functions", openAIReq([]byte(legacyChatOther)), skipReasonNoMatchingRule},
+		{
+			"llm request only carries a result for an unmatched tool",
+			openAIReq(openAIToolResultsRaw(t, nil, []tcSpec{{"call_1", "lookup"}}, []string{"call_1"})),
+			skipReasonNoMatchingRule,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,4 +137,29 @@ func TestPlugin_PreRequest_ExecutedResultCountsNotSkipped(t *testing.T) {
 	assert.False(t, isSkip, "results the plugin counted mean it evaluated the request")
 }
 
-func (noPricing) InvalidateCache() {}
+func TestPlugin_PreRequest_MatchingLegacyFunctionIsNotSkipped(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	in, rt, span := withSpan(input(policy.StagePreRequest, settings, openAIReq([]byte(legacyChat)), nil))
+
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+
+	_, isSkip := span.PluginAttrsCopy().Extras.(skippedData)
+	assert.False(t, isSkip, "a legacy function a rule matches is evaluated, even under budget")
+
+	evt := appmetrics.NewBuilder(adapter.NewRegistry(), noPricing{}).Build(
+		context.Background(), rt,
+		&infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"},
+		&infracontext.ResponseContext{StatusCode: 200},
+		time.UnixMilli(1_000_000), time.UnixMilli(1_000_005),
+	)
+	for _, e := range evt.PolicyChain {
+		assert.NotEqual(t, true, mapValue(e.Extras, "skipped"))
+	}
+}
+
+func mapValue(extras any, key string) any {
+	m, _ := extras.(map[string]any)
+	return m[key]
+}
