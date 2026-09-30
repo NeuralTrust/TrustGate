@@ -27,6 +27,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier"
+	topicmocks "github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -68,6 +69,8 @@ type topicClassificationSetup struct {
 	consumer ids.ConsumerID
 	maxBody  int
 	accept   bool
+	// outcomes are the Intake outcomes the middleware must record, in any order.
+	outcomes []string
 }
 
 func classifiedGateway(enabled bool) *gatewaydomain.Gateway {
@@ -89,7 +92,11 @@ func newTopicClassificationApp(t *testing.T, s topicClassificationSetup) (*fiber
 	t.Helper()
 	intake := &recordingIntake{accept: s.accept}
 	cfg := &config.Config{TopicClassifier: config.TopicClassifierConfig{IntakeMaxBodyBytes: s.maxBody}}
-	mw := middleware.NewTopicClassificationMiddleware(intake, nil, cfg)
+	recorder := topicmocks.NewRecorder(t)
+	for _, outcome := range s.outcomes {
+		recorder.EXPECT().Intake(outcome).Once()
+	}
+	mw := middleware.NewTopicClassificationMiddleware(intake, recorder, cfg)
 
 	app := fiber.New()
 	app.Post("/*",
@@ -163,9 +170,9 @@ func TestTopicClassification_SkipsWhatItMustNotClassify(t *testing.T) {
 		{name: "no trace", setup: topicClassificationSetup{gateway: classifiedGateway(true), noTrace: true}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "embeddings route", setup: topicClassificationSetup{gateway: classifiedGateway(true)}, path: "/acme/v1/embeddings", body: `{"input":"hello","model":"text-embedding-3-small"}`},
 		{name: "unknown route", setup: topicClassificationSetup{gateway: classifiedGateway(true)}, path: "/acme/whatever", body: chatBody},
-		{name: "body over the cap", setup: topicClassificationSetup{gateway: classifiedGateway(true), maxBody: 16}, path: "/acme/v1/chat/completions", body: chatBody},
+		{name: "body over the cap", setup: topicClassificationSetup{gateway: classifiedGateway(true), maxBody: 16, outcomes: []string{topicclassifier.OutcomeBodyTooLarge}}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "empty body", setup: topicClassificationSetup{gateway: classifiedGateway(true)}, path: "/acme/v1/chat/completions", body: ""},
-		{name: "sampled out", setup: topicClassificationSetup{gateway: sampledGateway(0)}, path: "/acme/v1/chat/completions", body: chatBody},
+		{name: "sampled out", setup: topicClassificationSetup{gateway: sampledGateway(0), outcomes: []string{topicclassifier.OutcomeSampledOut}}, path: "/acme/v1/chat/completions", body: chatBody},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,7 +210,7 @@ func TestTopicClassification_WithoutConsumerLeavesItEmpty(t *testing.T) {
 
 func TestTopicClassification_NilIntakeIsInert(t *testing.T) {
 	t.Parallel()
-	mw := middleware.NewTopicClassificationMiddleware(nil, nil, nil)
+	mw := middleware.NewTopicClassificationMiddleware(nil, topicmocks.NewRecorder(t), nil)
 	app := fiber.New()
 	app.Post("/*",
 		func(c *fiber.Ctx) error {
@@ -228,7 +235,12 @@ func TestTopicClassification_FullSamplingOffersEveryRequest(t *testing.T) {
 
 func TestTopicClassification_UnsetCapFallsBackToTheDefault(t *testing.T) {
 	t.Parallel()
-	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: classifiedGateway(true), maxBody: -1, accept: true})
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{
+		gateway:  classifiedGateway(true),
+		maxBody:  -1,
+		accept:   true,
+		outcomes: []string{topicclassifier.OutcomeBodyTooLarge},
+	})
 
 	postTo(t, app, "/acme/v1/chat/completions", chatBody)
 	require.Len(t, intake.submitted(), 1, "a small body passes the default cap")

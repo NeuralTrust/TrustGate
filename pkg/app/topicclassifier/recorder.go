@@ -50,23 +50,10 @@ func Outcomes() []string {
 }
 
 //go:generate mockery --name=Recorder --dir=. --output=./mocks --filename=recorder_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Recorder --dir=. --output=. --inpackage --testonly --filename=recorder_mock_test.go --case=underscore --with-expecter
 type Recorder interface {
 	Intake(outcome string)
 	Enqueue(outcome string)
 	Result(outcome string, n int)
 	Call(outcome string, texts int, d time.Duration)
-}
-
-type NopRecorder struct{}
-
-func (NopRecorder) Intake(string)                   {}
-func (NopRecorder) Enqueue(string)                  {}
-func (NopRecorder) Result(string, int)              {}
-func (NopRecorder) Call(string, int, time.Duration) {}
-
-func orNop(r Recorder) Recorder {
-	if r == nil {
-		return NopRecorder{}
-	}
-	return r
 }
