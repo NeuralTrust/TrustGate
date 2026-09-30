@@ -21,16 +21,35 @@ import (
 )
 
 type chainEntry struct {
-	plugin      Plugin
-	config      policy.PluginConfig
-	mode        policy.Mode
-	priority    int
-	specificity uint8
-	parallel    bool
-	global      bool
-	mutatesReq  bool
-	mutatesResp bool
-	mutatesMeta bool
+	plugin       Plugin
+	config       policy.PluginConfig
+	mode         policy.Mode
+	priority     int
+	specificity  uint8
+	parallel     bool
+	global       bool
+	mutatesReq   bool
+	mutatesResp  bool
+	mutatesMeta  bool
+	readsContent bool
+}
+
+// rewritesAt reports whether the entry rewrites the content the given stage
+// carries: the request body on the request stages, the response body on the
+// response stages.
+func (e chainEntry) rewritesAt(stage policy.Stage) bool {
+	switch stage {
+	case policy.StagePreResponse, policy.StagePostResponse:
+		return e.mutatesResp
+	default:
+		return e.mutatesReq
+	}
+}
+
+// onlyReadsAt reports whether the entry inspects content at the stage without
+// rewriting it. Such an entry must run after the rewriters of its priority.
+func (e chainEntry) onlyReadsAt(stage policy.Stage) bool {
+	return e.readsContent && !e.rewritesAt(stage)
 }
 
 func lessEntry(a, b chainEntry) bool {
@@ -85,14 +104,15 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:        pol.Mode.Normalize(),
-			priority:    pol.Priority,
-			specificity: entrySpecificity(pol.MCPScope, flatSpecificity),
-			parallel:    pol.Parallel,
-			global:      pol.IsGlobal(),
-			mutatesReq:  plugin.MutatesRequestBody(),
-			mutatesResp: plugin.MutatesResponseBody(),
-			mutatesMeta: plugin.MutatesMetadata(),
+			mode:         pol.Mode.Normalize(),
+			priority:     pol.Priority,
+			specificity:  entrySpecificity(pol.MCPScope, flatSpecificity),
+			parallel:     pol.Parallel,
+			global:       pol.IsGlobal(),
+			mutatesReq:   plugin.MutatesRequestBody(),
+			mutatesResp:  plugin.MutatesResponseBody(),
+			mutatesMeta:  plugin.MutatesMetadata(),
+			readsContent: readsContent(plugin),
 		})
 	}
 
