@@ -233,7 +233,7 @@ func (p *Plugin) preRequest(
 		}
 		setSkipped(in.Event, policy.StagePreRequest, reason)
 	}
-	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, append(toolNames(canonical.Tools), legacy...))
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, declared)
 	if err != nil {
 		return p.counterUnavailable(ctx, in, nil, "read", err)
 	}
