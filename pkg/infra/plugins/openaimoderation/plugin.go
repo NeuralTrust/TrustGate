@@ -86,6 +86,10 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// ReadsContent opts into being sequenced after any same-priority rewriter, so
+// the verdict is scored on the rewritten content (RUN-1693).
+func (p *Plugin) ReadsContent() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err

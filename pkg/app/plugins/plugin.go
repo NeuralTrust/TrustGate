@@ -69,6 +69,25 @@ func inertSafe(d PluginDescriptor) bool {
 	return ok && s.ScopeInertSafe()
 }
 
+// ContentReader is the opt-in a plugin declares when it inspects the text of
+// the request or response to reach a verdict (a moderation or scoring
+// guardrail). It is what lets the planner sequence a same-priority parallel
+// rewriter (MutatesRequestBody / MutatesResponseBody) ahead of it, so the
+// reader judges the rewritten content instead of the original (RUN-1693).
+//
+// The default is false: a plugin that does not implement it, or that does not
+// look at content (a rate limiter, a size limit), keeps its placement. A plugin
+// that both rewrites and reads is treated as a rewriter.
+type ContentReader interface {
+	ReadsContent() bool
+}
+
+// readsContent reports whether the descriptor opted in as a content reader.
+func readsContent(d PluginDescriptor) bool {
+	r, ok := d.(ContentReader)
+	return ok && r.ReadsContent()
+}
+
 // SettingsWriteValidator is implemented by plugins with rules that apply only
 // when settings are written, never when a stored policy is loaded. It can
 // reject a shape ValidateConfig must still accept, such as one saved before

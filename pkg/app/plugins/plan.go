@@ -77,14 +77,15 @@ func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, 
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:        pol.Mode.Normalize(),
-			priority:    pol.Priority,
-			specificity: entrySpecificity(pol.MCPScope, flatSpecificity),
-			parallel:    pol.Parallel,
-			global:      pol.IsGlobal(),
-			mutatesReq:  plugin.MutatesRequestBody(),
-			mutatesResp: plugin.MutatesResponseBody(),
-			mutatesMeta: plugin.MutatesMetadata(),
+			mode:         pol.Mode.Normalize(),
+			priority:     pol.Priority,
+			specificity:  entrySpecificity(pol.MCPScope, flatSpecificity),
+			parallel:     pol.Parallel,
+			global:       pol.IsGlobal(),
+			mutatesReq:   plugin.MutatesRequestBody(),
+			mutatesResp:  plugin.MutatesResponseBody(),
+			mutatesMeta:  plugin.MutatesMetadata(),
+			readsContent: readsContent(plugin),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {
@@ -220,16 +221,18 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 		return lessEntry(sorted[i], sorted[j])
 	})
 
+	sorted = rewritersBeforeReaders(sorted, stage)
+
 	batches := make([][]chainEntry, 0, len(sorted))
 	var current []chainEntry
-	var usedReq, usedResp, usedMeta bool
+	var usedReq, usedResp, usedMeta, hasRewriter bool
 	for i := range sorted {
 		entry := sorted[i]
 		if !entry.parallel {
 			if len(current) > 0 {
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta = false, false, false
+				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
 			}
 			batches = append(batches, []chainEntry{entry})
 			continue
@@ -247,7 +250,11 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 					capability = "metadata"
 				}
 			}
-			if !samePriority || capability != "" {
+			// A pure reader never shares a batch with a rewriter of its
+			// priority: a batch runs on isolated copies, so it would judge the
+			// original content (RUN-1693).
+			readerAfterRewriter := samePriority && hasRewriter && entry.onlyReadsAt(stage)
+			if !samePriority || capability != "" || readerAfterRewriter {
 				if capability != "" && logger != nil {
 					logger.Warn("plugin forced sequential: parallel batch capability cap exceeded",
 						slog.String("stage", string(stage)),
@@ -256,16 +263,57 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 				}
 				batches = append(batches, current)
 				current = nil
-				usedReq, usedResp, usedMeta = false, false, false
+				usedReq, usedResp, usedMeta, hasRewriter = false, false, false, false
 			}
 		}
 		current = append(current, entry)
 		usedReq = usedReq || entry.mutatesReq
 		usedResp = usedResp || entry.mutatesResp
 		usedMeta = usedMeta || entry.mutatesMeta
+		hasRewriter = hasRewriter || entry.rewritesAt(stage)
 	}
 	if len(current) > 0 {
 		batches = append(batches, current)
 	}
 	return batches
+}
+
+// rewritersBeforeReaders reorders each run of consecutive parallel entries that
+// share a priority so that the pure content readers come after everything else.
+// The sort is stable, so the tie-break (specificity, slug, id) still decides the
+// order inside each side. Entries that neither rewrite nor read keep their
+// place among the rewriters, and a run with no reader, or with no rewriter, is
+// left exactly as it was. Priorities are never crossed.
+func rewritersBeforeReaders(entries []chainEntry, stage policy.Stage) []chainEntry {
+	out := make([]chainEntry, 0, len(entries))
+	for i := 0; i < len(entries); {
+		j := i + 1
+		if entries[i].parallel {
+			for j < len(entries) && entries[j].parallel && entries[j].priority == entries[i].priority {
+				j++
+			}
+		}
+		run := entries[i:j]
+		hasRewriter := false
+		for _, e := range run {
+			hasRewriter = hasRewriter || e.rewritesAt(stage)
+		}
+		if !hasRewriter {
+			out = append(out, run...)
+			i = j
+			continue
+		}
+		var head, readers []chainEntry
+		for _, e := range run {
+			if e.onlyReadsAt(stage) {
+				readers = append(readers, e)
+			} else {
+				head = append(head, e)
+			}
+		}
+		out = append(out, head...)
+		out = append(out, readers...)
+		i = j
+	}
+	return out
 }
