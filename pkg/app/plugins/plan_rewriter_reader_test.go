@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,22 +141,50 @@ func TestStagePlan_GroupBatches_ReaderAfterRewriterOnResponseStage(t *testing.T)
 	assert.Equal(t, [][]string{{"z_mask"}, {"a_read"}}, batchSlugs(plan.batchesFor(policy.StagePreResponse)))
 }
 
-func TestExecutor_RunStage_ReadersStillRunConcurrently(t *testing.T) {
-	var calls int32
-	mk := func(name string) Plugin {
+// The readers of a split run must still overlap each other (a barrier that only
+// opens once both are in flight proves it without timing), and must both start
+// after the rewriter has finished.
+func TestExecutor_RunStage_ReadersOverlapAfterRewriter(t *testing.T) {
+	var rewriterDone atomic.Bool
+	var inFlight, startedEarly int32
+	allIn := make(chan struct{})
+
+	rewriter := &fakePlugin{
+		name: "z_mask", stages: preReq, mutReq: true,
+		execFn: func(ExecInput) (*Result, error) {
+			rewriterDone.Store(true)
+			return &Result{RequestBody: []byte("masked")}, nil
+		},
+	}
+	mkReader := func(name string) Plugin {
 		return readerPlugin{&fakePlugin{
-			name: name, stages: preReq, result: &Result{}, delay: 50 * time.Millisecond, calls: &calls,
+			name: name, stages: preReq,
+			execFn: func(in ExecInput) (*Result, error) {
+				if !rewriterDone.Load() || string(in.Request.Body) != "masked" {
+					atomic.AddInt32(&startedEarly, 1)
+				}
+				if atomic.AddInt32(&inFlight, 1) == 2 {
+					close(allIn)
+				}
+				select {
+				case <-allIn:
+					return &Result{}, nil
+				case <-time.After(2 * time.Second):
+					return nil, errors.New("readers never overlapped")
+				}
+			},
 		}}
 	}
-	exec := NewExecutor(newRegistry(t, mk("a"), mk("b"), mk("c")), nil)
+	exec := NewExecutor(newRegistry(t, rewriter, mkReader("a_read"), mkReader("b_read")), nil)
 
-	start := time.Now()
+	req := &infracontext.RequestContext{Body: []byte("original")}
 	_, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: policies(t, pre("a", 0, true), pre("b", 0, true), pre("c", 0, true)),
+		Policies: policies(t, pre("a_read", 0, true), pre("b_read", 0, true), pre("z_mask", 0, true)),
+		Request:  req,
 		Response: &infracontext.ResponseContext{},
 	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), atomic.LoadInt32(&calls))
-	assert.Less(t, time.Since(start), 120*time.Millisecond, "three readers must still overlap")
+	require.NoError(t, err, "both readers must be in flight together")
+	assert.Equal(t, int32(2), atomic.LoadInt32(&inFlight))
+	assert.Zero(t, atomic.LoadInt32(&startedEarly), "readers must start after the rewriter, on its output")
 }

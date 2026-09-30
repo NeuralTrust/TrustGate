@@ -82,8 +82,10 @@ type ContentReader interface {
 	ReadsContent() bool
 }
 
-// readsContent reports whether the descriptor opted in as a content reader.
-func readsContent(d PluginDescriptor) bool {
+// IsContentReader reports whether the descriptor opted in as a content reader.
+// Adding a plugin to that set is a scheduling decision, so the registry wiring
+// test enumerates it and fails when the set changes unannounced.
+func IsContentReader(d PluginDescriptor) bool {
 	r, ok := d.(ContentReader)
 	return ok && r.ReadsContent()
 }

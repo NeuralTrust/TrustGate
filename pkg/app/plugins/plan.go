@@ -85,7 +85,7 @@ func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, 
 			mutatesReq:   plugin.MutatesRequestBody(),
 			mutatesResp:  plugin.MutatesResponseBody(),
 			mutatesMeta:  plugin.MutatesMetadata(),
-			readsContent: readsContent(plugin),
+			readsContent: IsContentReader(plugin),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {

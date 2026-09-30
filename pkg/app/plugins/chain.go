@@ -112,7 +112,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			mutatesReq:   plugin.MutatesRequestBody(),
 			mutatesResp:  plugin.MutatesResponseBody(),
 			mutatesMeta:  plugin.MutatesMetadata(),
-			readsContent: readsContent(plugin),
+			readsContent: IsContentReader(plugin),
 		})
 	}
 
