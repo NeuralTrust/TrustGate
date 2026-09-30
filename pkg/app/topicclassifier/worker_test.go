@@ -261,7 +261,7 @@ type workerHarness struct {
 	classifier *fakeClassifier
 	cache      *fakeCache
 	sink       *fakeSink
-	recorder   *countingRecorder
+	recorder   *MockRecorder
 	worker     *worker
 }
 
@@ -277,6 +277,11 @@ func testWorkerConfig() WorkerConfig {
 
 func newWorkerHarness(t *testing.T, cfg WorkerConfig, classifier *fakeClassifier) *workerHarness {
 	t.Helper()
+	return newWorkerHarnessWith(t, cfg, classifier, permissiveRecorder(t))
+}
+
+func newWorkerHarnessWith(t *testing.T, cfg WorkerConfig, classifier *fakeClassifier, rec *MockRecorder) *workerHarness {
+	t.Helper()
 	if classifier == nil {
 		classifier = &fakeClassifier{}
 	}
@@ -285,7 +290,7 @@ func newWorkerHarness(t *testing.T, cfg WorkerConfig, classifier *fakeClassifier
 		classifier: classifier,
 		cache:      newFakeCache(),
 		sink:       &fakeSink{},
-		recorder:   newCountingRecorder(),
+		recorder:   rec,
 	}
 	h.worker = newWorker(quietLogger(), h.stream, h.classifier, h.cache, h.sink, h.recorder, cfg)
 	return h
@@ -463,6 +468,8 @@ func TestWorker_BreakerOpensAfterConsecutiveFailures(t *testing.T) {
 		return nil, errors.New("down")
 	}}
 	cfg := testWorkerConfig()
+	// One call in flight at a time: a call already sent before the breaker opens cannot be stopped.
+	cfg.Concurrency = 1
 	cfg.MaxAttempts = 1
 	cfg.BreakerFailures = 2
 	cfg.BreakerCooldown = time.Hour
@@ -684,8 +691,7 @@ func TestWorker_TransientPublishFailureLeavesTheEntryPending(t *testing.T) {
 	h.start(t)
 
 	require.Eventually(t, func() bool {
-		_, _, results, _ := h.recorder.snapshot()
-		return results[OutcomePublishRetry] == 1
+		return recorded(h.recorder, "Result", OutcomePublishRetry, 1)
 	}, 2*time.Second, time.Millisecond)
 	assert.Empty(t, h.stream.ackedIDs(), "left pending to be reclaimed and published later")
 	assert.True(t, h.cache.has(cacheKeyOf(req, "v1:refund")), "the retry is served from the cache")
@@ -700,8 +706,7 @@ func TestWorker_UnpublishableClassificationIsAcked(t *testing.T) {
 
 	h.waitAcked(t, 1)
 	assert.Equal(t, ids, h.stream.ackedIDs(), "retrying cannot help, so it is dropped")
-	_, _, results, _ := h.recorder.snapshot()
-	assert.Equal(t, 1, results[OutcomeUnpublishable])
+	h.recorder.AssertCalled(t, "Result", OutcomeUnpublishable, 1)
 }
 
 func TestWorker_UnknownModelVersionBypassesTheCache(t *testing.T) {

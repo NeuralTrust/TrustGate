@@ -37,13 +37,14 @@ type TopicClassificationMiddleware struct {
 	maxBodyBytes int
 }
 
-func NewTopicClassificationMiddleware(intake topicclassifier.Intake, recorder topicclassifier.Recorder, cfg *config.Config) *TopicClassificationMiddleware {
+func NewTopicClassificationMiddleware(
+	intake topicclassifier.Intake,
+	recorder topicclassifier.Recorder,
+	cfg *config.Config,
+) *TopicClassificationMiddleware {
 	maxBody := defaultTopicIntakeMaxBodyBytes
 	if cfg != nil && cfg.TopicClassifier.IntakeMaxBodyBytes > 0 {
 		maxBody = cfg.TopicClassifier.IntakeMaxBodyBytes
-	}
-	if recorder == nil {
-		recorder = topicclassifier.NopRecorder{}
 	}
 	return &TopicClassificationMiddleware{intake: intake, recorder: recorder, maxBodyBytes: maxBody}
 }

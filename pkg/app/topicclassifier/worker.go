@@ -138,7 +138,7 @@ func newWorker(logger *slog.Logger, stream Stream, classifier Classifier, cache 
 		classifier: classifier,
 		cache:      cache,
 		sink:       sink,
-		recorder:   orNop(recorder),
+		recorder:   recorder,
 		cfg:        cfg,
 		breaker:    newBreaker(cfg.BreakerFailures, cfg.BreakerCooldown),
 		now:        time.Now,

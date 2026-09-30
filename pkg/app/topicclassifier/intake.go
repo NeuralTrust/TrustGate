@@ -106,7 +106,7 @@ func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorde
 		logger:   logger,
 		decoder:  decoder,
 		queue:    queue,
-		recorder: orNop(recorder),
+		recorder: recorder,
 		cfg:      cfg,
 		ch:       make(chan Candidate, cfg.QueueSize),
 	}
