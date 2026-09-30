@@ -174,12 +174,19 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 				SetDecisionFromOutcome(event, decisionFailedOpen)
 				continue
 			}
-			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			// An earlier enforcing entry may already have masked this segment.
+			// Hand that mask back with the error: a caller that resolves the
+			// failure as fail_open releases the held text, and it must release
+			// the masked text, never the raw text a mask already covered.
+			if outcome.HasTransform {
+				return outcome, failure
+			}
+			return nil, failure
 		}
 		if seg.Closing || verdict == nil {
 			continue
 		}
-		transformed := outcome.HasTransform
 		stop := e.mergeVerdict(outcome, verdict, entry)
 		// Hand-off mirrors mergeVerdict: only a transform from an entry that
 		// blocks is applied to what the client receives, so only that one
@@ -188,7 +195,14 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if !stop && verdict.HasTransform && Blocks(entry.mode) {
 			current = segmentAfterTransform(current, verdict.Transformed)
 		}
-		if stop || (!transformed && outcome.HasTransform) {
+		switch {
+		case stop:
+			// A block is the cut's one author: the transforms of the same
+			// segment are discarded with it, so their entries do not share it.
+			spans.markCutOnly(seg, entry)
+		case verdict.HasTransform && Blocks(entry.mode):
+			// Every entry whose transform ends up in the final mask is a
+			// candidate for the rewrite that could not be applied.
 			spans.markCut(seg, entry)
 		}
 		if stop {
@@ -265,6 +279,11 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		// carries every earlier mask.
 		outcome.HasTransform = true
 		outcome.Transformed = verdict.Transformed
+		// Type and Message describe the entry whose transform is kept.
+		if verdict.Type != "" {
+			outcome.Type = verdict.Type
+			outcome.Message = verdict.Message
+		}
 	}
 	return false
 }

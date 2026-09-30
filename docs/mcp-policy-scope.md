@@ -405,6 +405,15 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - An `observe` entry's transform is never applied to the client, so it is not
   handed on: the entries behind it judge the text the client will actually get.
 - A block still ends the chain and discards any transform of the same segment.
+- If an enforcing entry fails after an earlier one masked the segment, the mask
+  travels with the error: `on_error: fail_open` releases the masked text, never
+  the raw text, and cuts the stream if the mask cannot be applied.
+- Masks can stack: a wide pattern in a later rewriter may match inside the
+  placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders change,
+  never raw data.
+- The rule applies only within consecutive `parallel` entries of the same
+  priority. A reader with `parallel: false`, or at another priority, is not
+  moved; the console always writes `parallel: true`.
 - If the composed mask cannot be applied to the held text, the stream is cut, as
   for a single rewriter.
 
