@@ -30,14 +30,13 @@ func TestNewRequest(t *testing.T) {
 	}
 	req := NewRequest(RequestParams{
 		GatewayID:  "gw",
-		ConsumerID: "consumer",
 		TraceID:    "trace",
 		Text:       "where is my refund",
 		Config:     cfg,
 		ReceivedAt: received,
 	})
 
-	if req.GatewayID != "gw" || req.ConsumerID != "consumer" || req.TraceID != "trace" {
+	if req.GatewayID != "gw" || req.TraceID != "trace" {
 		t.Fatalf("identifiers not carried: %+v", req)
 	}
 	if req.TextHash != HashText("where is my refund") {

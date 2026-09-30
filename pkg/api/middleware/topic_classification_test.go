@@ -15,6 +15,8 @@
 package middleware_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
@@ -24,13 +26,11 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier"
 	topicmocks "github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -64,11 +64,10 @@ func (r *recordingIntake) submitted() []topicclassifier.Candidate {
 }
 
 type topicClassificationSetup struct {
-	gateway  *gatewaydomain.Gateway
-	noTrace  bool
-	consumer ids.ConsumerID
-	maxBody  int
-	accept   bool
+	gateway *gatewaydomain.Gateway
+	noTrace bool
+	maxBody int
+	accept  bool
 	// outcomes are the Intake outcomes the middleware must record, in any order.
 	outcomes []string
 }
@@ -108,9 +107,6 @@ func newTopicClassificationApp(t *testing.T, s topicClassificationSetup) (*fiber
 			if !s.noTrace {
 				ctx = trace.NewContext(ctx, trace.New("trace-123", trace.Metadata{}))
 			}
-			if !s.consumer.IsNil() {
-				ctx = appauth.WithAuthContext(ctx, &appauth.AuthContext{ConsumerID: s.consumer})
-			}
 			c.SetUserContext(ctx)
 			return c.Next()
 		},
@@ -124,8 +120,16 @@ func newTopicClassificationApp(t *testing.T, s topicClassificationSetup) (*fiber
 
 func postTo(t *testing.T, app *fiber.App, path, body string) (int, string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	return postEncoded(t, app, path, []byte(body), "")
+}
+
+func postEncoded(t *testing.T, app *fiber.App, path string, body []byte, encoding string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if encoding != "" {
+		req.Header.Set("Content-Encoding", encoding)
+	}
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -136,9 +140,8 @@ func postTo(t *testing.T, app *fiber.App, path, body string) (int, string) {
 
 func TestTopicClassification_OffersChatRequestsOfEnabledGateways(t *testing.T) {
 	t.Parallel()
-	consumer := ids.New[ids.ConsumerKind]()
 	gw := classifiedGateway(true)
-	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: gw, consumer: consumer, accept: true})
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: gw, accept: true})
 
 	status, echoed := postTo(t, app, "/acme/v1/chat/completions", chatBody)
 
@@ -147,7 +150,6 @@ func TestTopicClassification_OffersChatRequestsOfEnabledGateways(t *testing.T) {
 	got := intake.submitted()
 	require.Len(t, got, 1)
 	assert.Equal(t, gw.ID.String(), got[0].GatewayID)
-	assert.Equal(t, consumer.String(), got[0].ConsumerID)
 	assert.Equal(t, "trace-123", got[0].TraceID)
 	assert.Equal(t, adapter.FormatOpenAI, got[0].SourceFormat)
 	assert.Equal(t, chatBody, string(got[0].Body))
@@ -197,17 +199,6 @@ func TestTopicClassification_FullIntakeNeverAffectsTheRequest(t *testing.T) {
 	assert.Len(t, intake.submitted(), 1)
 }
 
-func TestTopicClassification_WithoutConsumerLeavesItEmpty(t *testing.T) {
-	t.Parallel()
-	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: classifiedGateway(true), accept: true})
-
-	postTo(t, app, "/acme/v1/chat/completions", chatBody)
-
-	got := intake.submitted()
-	require.Len(t, got, 1)
-	assert.Empty(t, got[0].ConsumerID)
-}
-
 func TestTopicClassification_NilIntakeIsInert(t *testing.T) {
 	t.Parallel()
 	mw := middleware.NewTopicClassificationMiddleware(nil, topicmocks.NewRecorder(t), nil)
@@ -248,4 +239,43 @@ func TestTopicClassification_UnsetCapFallsBackToTheDefault(t *testing.T) {
 	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("x", 600<<10) + `"}]}`
 	postTo(t, app, "/acme/v1/chat/completions", huge)
 	assert.Len(t, intake.submitted(), 1, "a cap of zero or less is not \"no cap\"")
+}
+
+func gzipped(t *testing.T, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write([]byte(body))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+func TestTopicClassification_DecodesAnEncodedBody(t *testing.T) {
+	t.Parallel()
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{gateway: classifiedGateway(true), accept: true})
+
+	status, _ := postEncoded(t, app, "/acme/v1/chat/completions", gzipped(t, chatBody), "gzip")
+
+	assert.Equal(t, fiber.StatusOK, status)
+	got := intake.submitted()
+	require.Len(t, got, 1)
+	assert.Equal(t, chatBody, string(got[0].Body), "the classifier gets the decoded body")
+}
+
+func TestTopicClassification_EncodedBodyOverTheCapOnceDecoded(t *testing.T) {
+	t.Parallel()
+	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` + strings.Repeat("x", 64<<10) + `"}]}`
+	encoded := gzipped(t, huge)
+	app, intake := newTopicClassificationApp(t, topicClassificationSetup{
+		gateway:  classifiedGateway(true),
+		maxBody:  len(encoded) + 1024,
+		accept:   true,
+		outcomes: []string{topicclassifier.OutcomeBodyTooLarge},
+	})
+
+	status, _ := postEncoded(t, app, "/acme/v1/chat/completions", encoded, "gzip")
+
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Empty(t, intake.submitted(), "the cap applies to the decoded size too")
 }

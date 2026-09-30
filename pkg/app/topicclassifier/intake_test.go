@@ -77,7 +77,6 @@ func enabledConfig() *topic.Config {
 func candidate(cfg *topic.Config) Candidate {
 	return Candidate{
 		GatewayID:    "gw-1",
-		ConsumerID:   "consumer-1",
 		TraceID:      "trace-1",
 		SourceFormat: adapter.FormatOpenAI,
 		Body:         []byte(openAIConversation),
@@ -115,7 +114,6 @@ func TestIntake_EnqueuesTheBuiltRequest(t *testing.T) {
 	req := waitEnqueued(t, q)
 
 	assert.Equal(t, "gw-1", req.GatewayID)
-	assert.Equal(t, "consumer-1", req.ConsumerID)
 	assert.Equal(t, "trace-1", req.TraceID)
 	assert.Equal(t, "INV-42\nyes, do it", req.Text)
 	assert.Equal(t, topic.HashText(req.Text), req.TextHash)
