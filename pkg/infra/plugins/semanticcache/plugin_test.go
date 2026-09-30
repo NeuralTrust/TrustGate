@@ -24,6 +24,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -932,4 +933,69 @@ func TestPlugin_ImagesBypassCache(t *testing.T) {
 			assert.Equal(t, 0, creator.calls)
 		})
 	}
+}
+
+// RUN-1693: at pre_request the cache only reads the prompt, so it opts in to run
+// after a same-priority rewriter and must key its lookup on the rewritten body.
+type maskPlugin struct{}
+
+func (maskPlugin) Name() string                    { return "z_mask" }
+func (maskPlugin) MandatoryStages() []policy.Stage { return []policy.Stage{policy.StagePreRequest} }
+func (maskPlugin) SupportedStages() []policy.Stage { return []policy.Stage{policy.StagePreRequest} }
+func (maskPlugin) SupportedModes() []policy.Mode   { return []policy.Mode{policy.ModeEnforce} }
+func (maskPlugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM}
+}
+func (maskPlugin) ValidateConfig(map[string]any) error { return nil }
+func (maskPlugin) MutatesRequestBody() bool            { return true }
+func (maskPlugin) MutatesResponseBody() bool           { return false }
+func (maskPlugin) MutatesMetadata() bool               { return false }
+func (maskPlugin) Execute(context.Context, appplugins.ExecInput) (*appplugins.Result, error) {
+	return &appplugins.Result{RequestBody: []byte(`{"model":"gpt","messages":[{"role":"user","content":"masked text"}]}`)}, nil
+}
+
+func TestPlugin_ReadsContentOptIn(t *testing.T) {
+	assert.True(t, appplugins.IsContentReader(New(nil, nil, nil)))
+}
+
+func TestPlugin_PreRequest_KeysOnRewrittenBodyWhenSamePriorityAsMasker(t *testing.T) {
+	store := &fakeStore{}
+	settings := baseSettings()
+	settings["mode"] = "exact"
+	p := New(store, locatorWith(&fakeCreator{emb: anEmbedding()}), adapter.NewRegistry())
+
+	// Seed the entry under the MASKED text, as post_response stores it.
+	partition, ok := partitionKey(mustConfig(t, settings), defaultScope(), &infracontext.RequestContext{RegistryID: "b1"})
+	require.True(t, ok)
+	require.NoError(t, store.PutExact(context.Background(), partition, exactKey(partition, "masked text"), `{"cached":true}`, time.Hour))
+
+	reg := appplugins.NewRegistry()
+	require.NoError(t, reg.Register(p))
+	require.NoError(t, reg.Register(maskPlugin{}))
+	exec := appplugins.NewExecutor(reg, nil)
+
+	// "a_" sorts before "z_mask": on develop the cache is batched with the masker and looks up the original.
+	pols := []*policy.Policy{
+		{ID: ids.New[ids.PolicyKind](), Slug: PluginName, Name: PluginName, Enabled: true, Parallel: true,
+			Stages: []policy.Stage{policy.StagePreRequest}, Settings: settings, Mode: policy.ModeEnforce},
+		{ID: ids.New[ids.PolicyKind](), Slug: "z_mask", Name: "z_mask", Enabled: true, Parallel: true,
+			Stages: []policy.Stage{policy.StagePreRequest}, Mode: policy.ModeEnforce},
+	}
+	req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+	resp := &infracontext.ResponseContext{Metadata: map[string]interface{}{}}
+	req.ConsumerID = defaultScope().ConsumerID
+	req.GatewayID = defaultScope().GatewayID
+	out, err := exec.RunStage(context.Background(), appplugins.StageInput{
+		Stage: policy.StagePreRequest, Policies: pols, Request: req, Response: resp,
+	})
+	require.NoError(t, err)
+	require.True(t, out.ShortCircuit, "the lookup must use the masked text and hit")
+	assert.Equal(t, []byte(`{"cached":true}`), out.Body)
+}
+
+func mustConfig(t *testing.T, settings map[string]any) *config {
+	t.Helper()
+	cfg, err := parseConfig(settings)
+	require.NoError(t, err)
+	return cfg
 }
