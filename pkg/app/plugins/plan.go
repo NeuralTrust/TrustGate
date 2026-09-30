@@ -24,6 +24,10 @@ import (
 type StagePlan struct {
 	byStage map[policy.Stage][]chainEntry
 	batches map[policy.Stage][][]chainEntry
+	// streamed is the pre_response list in the order a streamed segment walks
+	// it (OrderStreamEntries). Plans built without finishStage leave it nil and
+	// the executor derives the order on demand.
+	streamed []chainEntry
 }
 
 var planStages = [...]policy.Stage{
@@ -130,6 +134,9 @@ func (p *StagePlan) finishStage(stage policy.Stage, entries []chainEntry, logger
 	})
 	p.byStage[stage] = entries
 	p.batches[stage] = groupBatches(entries, stage, logger)
+	if stage == policy.StagePreResponse {
+		p.streamed = OrderStreamEntries(entries)
+	}
 }
 
 func appendUniqueEntries(dst, src []chainEntry) []chainEntry {
@@ -205,6 +212,18 @@ func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
 	return p.byStage[stage]
 }
 
+// streamEntriesFor is the pre_response list in streamed order. It is nil-safe
+// and falls back to deriving the order for a plan that did not precompute it.
+func (p *StagePlan) streamEntriesFor() []chainEntry {
+	if p == nil {
+		return nil
+	}
+	if p.streamed != nil {
+		return p.streamed
+	}
+	return OrderStreamEntries(p.byStage[policy.StagePreResponse])
+}
+
 func (p *StagePlan) batchesFor(stage policy.Stage) [][]chainEntry {
 	if p == nil {
 		return nil
@@ -276,6 +295,16 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 		batches = append(batches, current)
 	}
 	return batches
+}
+
+// OrderStreamEntries returns the pre_response entries in the order a streamed
+// segment walks them: the same rewriters-before-readers rule batches use, so a
+// content reader (openai_moderation) inspects a segment only after the
+// rewriters of its priority have masked it. Entries must already be in
+// lessEntry order. The result is a new slice, deterministic and stable;
+// priorities are never crossed.
+func OrderStreamEntries(entries []chainEntry) []chainEntry {
+	return rewritersBeforeReaders(entries, policy.StagePreResponse)
 }
 
 // rewritersBeforeReaders reorders each run of consecutive parallel entries that
