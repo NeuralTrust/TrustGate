@@ -78,6 +78,12 @@ type RequestContext struct {
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool
+	// PlaygroundVerified is true only when the playground identity resolver
+	// verified this request's X-AG-Playground-Token JWT. It is set by the
+	// gateway from the resolved AuthContext, never from a header, so the
+	// playground trace store can trust it where it cannot trust the raw header
+	// (MCP clients can send any header value and no resolver checks it there).
+	PlaygroundVerified bool
 	// MCPTool is the upstream-native tool name a resolved tools/call is bound
 	// to, "" on any other request. A plugin deciding whether to allow the call
 	// must read it here and not from MetadataMCPTool: Metadata is a channel

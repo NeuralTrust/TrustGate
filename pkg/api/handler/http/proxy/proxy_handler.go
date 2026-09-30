@@ -172,6 +172,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
+	reqCtx.PlaygroundVerified = authCtx != nil && authCtx.Method == appauth.MethodPlayground
 	// The user context is never cancelled when the client goes away, so the
 	// upstream request gets a context of its own that ends with the response.
 	ctx, cancel := context.WithCancel(c.UserContext())

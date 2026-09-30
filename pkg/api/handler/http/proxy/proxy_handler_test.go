@@ -1306,3 +1306,66 @@ func TestOriginalRequestUsesSocketPeerBeforeConfiguredFiberHeader(t *testing.T) 
 		})
 	}
 }
+
+// A streamed response is finalized with the handler's own request context, so
+// that context must carry the playground verdict the auth stage reached, not
+// whatever X-AG-Playground-Token the client sent.
+func TestHandle_Streaming_FinalizerReqCarriesPlaygroundVerdict(t *testing.T) {
+	gwID := ids.New[ids.GatewayKind]()
+	tests := []struct {
+		name string
+		auth fiber.Handler
+		want bool
+	}{
+		{name: "verified playground auth", auth: authStubPlayground(gwID, consumerSlug), want: true},
+		{name: "api key with forged playground header", auth: authStub(gwID, consumerSlug), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			stream := func(yield func([]byte, error) bool) { yield([]byte("data: a"), nil) }
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.Anything).
+				Return(&appproxy.ForwardResult{
+					StatusCode: 200,
+					Headers:    map[string][]string{"Content-Type": {"text/event-stream"}},
+					Stream:     stream,
+				}, nil).
+				Once()
+
+			var (
+				mu  sync.Mutex
+				got *infracontext.RequestContext
+			)
+			app := fiber.New()
+			app.Use(tt.auth)
+			app.Use(func(c *fiber.Ctx) error {
+				c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
+					func(req *infracontext.RequestContext, _ []byte, _ int, _ map[string][]string) {
+						mu.Lock()
+						defer mu.Unlock()
+						got = req
+					}))
+				return c.Next()
+			})
+			app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+
+			req := newProxyRequest()
+			req.Header.Set("X-AG-Playground-Token", "forged")
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			_, _ = io.ReadAll(resp.Body)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if got == nil {
+				t.Fatal("finalizer was not called")
+			}
+			if got.PlaygroundVerified != tt.want {
+				t.Fatalf("PlaygroundVerified = %v, want %v", got.PlaygroundVerified, tt.want)
+			}
+		})
+	}
+}

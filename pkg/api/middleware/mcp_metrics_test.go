@@ -124,3 +124,47 @@ func TestMCPMetricsMiddleware_DisabledSkipsWorker(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	worker.AssertNotCalled(t, "Process", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
+
+// MCP never verifies X-AG-Playground-Token, so a client-supplied value must not
+// mark the request as a verified playground one (RUN-1726).
+func TestMCPMetricsMiddleware_ForgedPlaygroundHeaderIsNotVerified(t *testing.T) {
+	worker := appmetricsmocks.NewWorker(t)
+
+	var (
+		mu  sync.Mutex
+		got *infracontext.RequestContext
+	)
+	worker.EXPECT().
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ *trace.RequestTrace, req *infracontext.RequestContext, _ *infracontext.ResponseContext, _ time.Time, _ time.Time, _ []telemetrydomain.ExporterConfig) {
+			mu.Lock()
+			defer mu.Unlock()
+			got = req
+		}).
+		Return().
+		Once()
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewMCPMetricsMiddleware(worker, cfg)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), ids.New[ids.GatewayKind]()))
+		return c.Next()
+	})
+	app.Use(mw.Middleware())
+	app.Post("/mcp", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	req := httptest.NewRequest(fiber.MethodPost, "/mcp", nil)
+	req.Header.Set("X-AG-Playground-Token", "anything")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotNil(t, got, "worker.Process must be called")
+	assert.NotEmpty(t, got.HeaderValue("X-AG-Playground-Token"), "the raw header is still forwarded")
+	assert.False(t, got.PlaygroundVerified)
+}
