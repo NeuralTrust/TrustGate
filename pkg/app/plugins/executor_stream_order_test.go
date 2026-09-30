@@ -31,6 +31,7 @@ import (
 type orderStub struct {
 	*streamPlugin
 	fn    func(StreamSegment) *SegmentVerdict
+	err   error
 	reads bool
 	log   *[]string
 }
@@ -41,6 +42,9 @@ func (o *orderStub) InspectSegment(_ context.Context, _ ExecInput, seg StreamSeg
 		return nil, nil
 	}
 	*o.log = append(*o.log, o.name)
+	if o.err != nil {
+		return nil, o.err
+	}
 	if o.fn == nil {
 		return nil, nil
 	}
@@ -56,6 +60,7 @@ type orderSpec struct {
 	rewrites bool
 	reads    bool
 	fn       func(StreamSegment) *SegmentVerdict
+	err      error
 }
 
 // replaceWith masks every occurrence of secret, the way regex_replace does over
@@ -78,7 +83,7 @@ func orderChain(t *testing.T, specs ...orderSpec) (*executor, []*policy.Policy, 
 	for _, spec := range specs {
 		sp := newStreamPlugin(spec.slug, nil)
 		sp.mutResp = spec.rewrites
-		stub := &orderStub{streamPlugin: sp, fn: spec.fn, reads: spec.reads, log: log}
+		stub := &orderStub{streamPlugin: sp, fn: spec.fn, err: spec.err, reads: spec.reads, log: log}
 		stubs[spec.slug] = stub
 		plugins = append(plugins, stub)
 		pol := policies(t, polSpec{
@@ -280,6 +285,72 @@ func TestSegmentAfterTransform_Text(t *testing.T) {
 			got := segmentAfterTransform(tt.seg, tt.transformed)
 			assert.Equal(t, tt.transformed, got.Accumulated)
 			assert.Equal(t, tt.wantText, got.Text)
+		})
+	}
+}
+
+// TestRunStreamSegment_PlanPathOrdersAndHandsOn covers the path production
+// takes: the forwarder always passes a compiled plan, so the ordering has to
+// hold there and not only on the Policies fallback.
+func TestRunStreamSegment_PlanPathOrdersAndHandsOn(t *testing.T) {
+	t.Parallel()
+	exec, pols, stubs, log := orderChain(t,
+		orderSpec{slug: "a_moderation", priority: 10, mode: policy.ModeEnforce, reads: true},
+		orderSpec{slug: "z_masker", priority: 10, mode: policy.ModeEnforce, rewrites: true, fn: replaceWith("4111", "****")},
+	)
+	plan := NewStagePlan(exec.registry, pols, nil)
+
+	out, err := exec.RunStreamSegment(context.Background(), StageInput{
+		Stage:    policy.StagePreResponse,
+		Plan:     plan,
+		Response: &infracontext.ResponseContext{},
+	}, rawSegment())
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"z_masker", "a_moderation"}, *log)
+	assert.Equal(t, "card ****", stubs["a_moderation"].seen[0].Accumulated)
+	assert.Equal(t, "card ****", out.Transformed)
+}
+
+func TestRunStreamSegment_FailureAfterAMaskCarriesTheMask(t *testing.T) {
+	t.Parallel()
+	boom := assert.AnError
+	tests := []struct {
+		name     string
+		specs    []orderSpec
+		wantMask bool
+	}{
+		{
+			name: "an enforcing reader failing after a mask hands the mask back",
+			specs: []orderSpec{
+				{slug: "a_moderation", priority: 10, mode: policy.ModeEnforce, reads: true, err: boom},
+				{slug: "z_masker", priority: 10, mode: policy.ModeEnforce, rewrites: true, fn: replaceWith("4111", "****")},
+			},
+			wantMask: true,
+		},
+		{
+			name: "a failure with no earlier mask returns no outcome",
+			specs: []orderSpec{
+				{slug: "a_moderation", priority: 10, mode: policy.ModeEnforce, reads: true, err: boom},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			exec, pols, _, _ := orderChain(t, tt.specs...)
+			out, err := exec.RunStreamSegment(context.Background(), StageInput{
+				Stage:    policy.StagePreResponse,
+				Policies: pols,
+				Response: &infracontext.ResponseContext{},
+			}, rawSegment())
+			require.ErrorIs(t, err, boom)
+			if tt.wantMask {
+				require.NotNil(t, out)
+				assert.Equal(t, "card ****", out.Transformed)
+				return
+			}
+			assert.Nil(t, out)
 		})
 	}
 }

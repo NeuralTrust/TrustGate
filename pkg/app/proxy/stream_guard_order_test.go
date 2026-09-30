@@ -36,6 +36,8 @@ type chainInspector struct {
 	rewrites bool
 	reads    bool
 	fn       func(appplugins.StreamSegment) *appplugins.SegmentVerdict
+	err      error
+	errWhen  func() bool
 	seen     []string
 }
 
@@ -52,6 +54,9 @@ func (c *chainInspector) InspectSegment(
 		return nil, nil
 	}
 	c.seen = append(c.seen, seg.Accumulated)
+	if c.err != nil && (c.errWhen == nil || c.errWhen()) {
+		return nil, c.err
+	}
 	if c.fn == nil {
 		return nil, nil
 	}
@@ -68,6 +73,11 @@ func replaceIn(from, to string) func(appplugins.StreamSegment) *appplugins.Segme
 }
 
 func realChainGuard(t *testing.T, plugins ...*chainInspector) *streamGuard {
+	t.Helper()
+	return realChainGuardCfg(t, streamGuardConfig{}, plugins...)
+}
+
+func realChainGuardCfg(t *testing.T, cfg streamGuardConfig, plugins ...*chainInspector) *streamGuard {
 	t.Helper()
 	reg := appplugins.NewRegistry()
 	pols := make([]*policy.Policy, 0, len(plugins))
@@ -88,7 +98,7 @@ func realChainGuard(t *testing.T, plugins ...*chainInspector) *streamGuard {
 	require.True(t, ok)
 	in := stageInputFixture()
 	in.Policies = pols
-	return newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, in, streamGuardConfig{}, newGuardLogger())
+	return newStreamGuard(runner, adapter.NewRegistry(), adapter.FormatOpenAI, in, cfg, newGuardLogger())
 }
 
 // TestStreamGuard_ReaderJudgesWhatTheClientReceives is RUN-1744: the reader's
@@ -144,4 +154,58 @@ func TestStreamGuard_ComposedMaskEqualToProducedStillCuts(t *testing.T) {
 	_, err := collectGuardOutput(t, g, out)
 	require.NoError(t, err)
 	assert.Contains(t, pe.Error(), streamMaskedMessage)
+}
+
+// TestStreamGuard_FailOpenReleasesTheMaskNeverTheRawText: the reader runs after
+// the masker, so an outage of the reader's provider used to drop the mask and
+// release the raw text under fail_open.
+func TestStreamGuard_FailOpenReleasesTheMaskNeverTheRawText(t *testing.T) {
+	t.Parallel()
+	failing := func() []*chainInspector {
+		return []*chainInspector{
+			{name: "a_moderation", reads: true, err: assert.AnError},
+			{name: "z_masker", rewrites: true, fn: replaceIn("secret", "****")},
+		}
+	}
+
+	t.Run("head, fail_open", func(t *testing.T) {
+		t.Parallel()
+		lines := textStreamLines("Hello ", "secret")
+		g := realChainGuardCfg(t, streamGuardConfig{onError: streamFailOpen}, failing()...)
+		out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+		require.Nil(t, pe)
+		got, err := collectGuardOutput(t, g, out)
+		require.NoError(t, err)
+		assert.Equal(t, "Hello ****", streamedText(t, adapter.FormatOpenAI, got))
+		assert.NotContains(t, strings.Join(got, "\n"), "secret")
+	})
+
+	t.Run("head, fail_closed", func(t *testing.T) {
+		t.Parallel()
+		lines := textStreamLines("Hello ", "secret")
+		g := realChainGuardCfg(t, streamGuardConfig{onError: streamFailClosed}, failing()...)
+		_, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+		require.NotNil(t, pe)
+		assert.Contains(t, pe.Error(), streamUnverifiableMessage)
+	})
+
+	t.Run("block after the head, fail_open", func(t *testing.T) {
+		t.Parallel()
+		lines := textStreamLines("Hello ", "secret", " end")
+		plugins := failing()
+		// Only the second call fails, so the head releases cleanly and the
+		// failure lands on a block the client is already reading.
+		calls := 0
+		masker := plugins[1]
+		reader := plugins[0]
+		reader.errWhen = func() bool { calls++; return calls == 2 }
+		g := realChainGuardCfg(t, streamGuardConfig{onError: streamFailOpen, minChars: 1, headChars: 1}, reader, masker)
+		out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+		require.Nil(t, pe)
+		got, err := collectGuardOutput(t, g, out)
+		require.NoError(t, err)
+		assert.NotContains(t, strings.Join(got, "\n"), "secret")
+		assert.Contains(t, streamedText(t, adapter.FormatOpenAI, got), "Hello ****")
+		assert.GreaterOrEqual(t, calls, 2, "the failure must land on a block after the head")
+	})
 }

@@ -213,7 +213,7 @@ type streamSpans struct {
 	mu     sync.Mutex
 	events map[string]*metrics.EventContext
 	spent  map[string]time.Duration
-	cutBy  map[string]string
+	cutBy  map[string][]string
 }
 
 // NewStreamSpanContext derives a context carrying the plugin spans of a single
@@ -229,7 +229,7 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 	spans := &streamSpans{
 		events: make(map[string]*metrics.EventContext),
 		spent:  make(map[string]time.Duration),
-		cutBy:  make(map[string]string),
+		cutBy:  make(map[string][]string),
 	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
@@ -307,7 +307,24 @@ func (s *streamSpans) markCut(seg StreamSegment, entry chainEntry) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cutBy[seg.StreamID] = spanKey(seg, entry)
+	key := spanKey(seg, entry)
+	for _, k := range s.cutBy[seg.StreamID] {
+		if k == key {
+			return
+		}
+	}
+	s.cutBy[seg.StreamID] = append(s.cutBy[seg.StreamID], key)
+}
+
+// markCutOnly is markCut for a cut with a single author (a block): it replaces
+// any entry named before it.
+func (s *streamSpans) markCutOnly(seg StreamSegment, entry chainEntry) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cutBy[seg.StreamID] = []string{spanKey(seg, entry)}
 }
 
 // reporter names the entry asked to publish what describes the whole stream.
@@ -328,8 +345,8 @@ func (s *streamSpans) reporter(seg StreamSegment, entries []chainEntry) string {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cutter, ok := s.cutBy[seg.StreamID]; ok {
-		return cutter
+	if cutters := s.cutBy[seg.StreamID]; len(cutters) > 0 {
+		return cutters[0]
 	}
 	return first
 }
@@ -346,8 +363,13 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	defer s.mu.Unlock()
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
-	cutter, claimed := s.cutBy[seg.StreamID]
-	if (claimed && cutter != key) || (!claimed && !Blocks(entry.mode)) {
+	cutters := s.cutBy[seg.StreamID]
+	claimed := len(cutters) > 0
+	claimedByEntry := false
+	for _, k := range cutters {
+		claimedByEntry = claimedByEntry || k == key
+	}
+	if (claimed && !claimedByEntry) || (!claimed && !Blocks(entry.mode)) {
 		report.CutAtEval = 0
 		report.CutOffsetChars = 0
 	}
