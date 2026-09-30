@@ -209,3 +209,26 @@ func TestStreamGuard_FailOpenReleasesTheMaskNeverTheRawText(t *testing.T) {
 		assert.GreaterOrEqual(t, calls, 2, "the failure must land on a block after the head")
 	})
 }
+
+// TestStreamGuard_FailOpenCutsWhenThePartialMaskCannotLand: the mask an earlier
+// entry produced reaches back into text the client has already read, so it
+// cannot be applied, and fail_open must cut rather than release the raw block.
+func TestStreamGuard_FailOpenCutsWhenThePartialMaskCannotLand(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3")
+	calls := 0
+	reader := &chainInspector{name: "a_moderation", reads: true, err: assert.AnError, errWhen: func() bool { calls++; return calls == 2 }}
+	masker := &chainInspector{name: "z_masker", rewrites: true, fn: replaceIn("a1b2", "XX")}
+	g := realChainGuardCfg(t, streamGuardConfig{onError: streamFailOpen, minChars: 1, headChars: 1}, reader, masker)
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe, "past the head the status is already committed")
+	got, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	head := textStreamLines("a1")[:2]
+	require.Equal(t, head, got[:len(head)], "only the head block reaches the client")
+	assert.Equal(t, openAICutLines(streamMaskedMessage), got[len(head):])
+	assert.NotContains(t, strings.Join(got, "\n"), "b2", "the raw block is never released")
+	assert.True(t, g.stopped)
+}

@@ -297,34 +297,23 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 	s.spent[spanKey(seg, entry)] += d
 }
 
-// markCut names the entry whose verdict stopped the stream. The guard knows a
-// stream was cut but not by whom, and only the chain can tell: without this an
+// setCut records which entries author the cut on the segment just evaluated,
+// replacing whatever an earlier segment stored. The guard knows a stream was
+// cut but not by whom, and only the chain can tell: without this an
 // observe-mode entry that cut nothing would publish the cut an enforce-mode
-// entry beside it made.
-func (s *streamSpans) markCut(seg StreamSegment, entry chainEntry) {
+// entry beside it made. A block names one entry; a transform names every entry
+// whose mask went into the one that could not be applied.
+func (s *streamSpans) setCut(seg StreamSegment, keys []string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := spanKey(seg, entry)
-	for _, k := range s.cutBy[seg.StreamID] {
-		if k == key {
-			return
-		}
-	}
-	s.cutBy[seg.StreamID] = append(s.cutBy[seg.StreamID], key)
-}
-
-// markCutOnly is markCut for a cut with a single author (a block): it replaces
-// any entry named before it.
-func (s *streamSpans) markCutOnly(seg StreamSegment, entry chainEntry) {
-	if s == nil {
+	if len(keys) == 0 {
+		delete(s.cutBy, seg.StreamID)
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cutBy[seg.StreamID] = []string{spanKey(seg, entry)}
+	s.cutBy[seg.StreamID] = append([]string(nil), keys...)
 }
 
 // reporter names the entry asked to publish what describes the whole stream.

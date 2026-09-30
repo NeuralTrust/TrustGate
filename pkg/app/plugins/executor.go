@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -136,6 +137,14 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	// text, so a later entry (a reader above all) never sends the unmasked
 	// text to its third party (RUN-1744).
 	current := seg
+	// cutKeys names the entries that would author a cut on THIS segment. The
+	// stored list is replaced at the end of every evaluated segment, because a
+	// cut can only happen on the last one: a mask an earlier block landed is not
+	// to be blamed for a later block's failure.
+	var cutKeys []string
+	if !seg.Closing {
+		defer func() { spans.setCut(seg, cutKeys) }()
+	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
 		if !ok {
@@ -199,11 +208,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		case stop:
 			// A block is the cut's one author: the transforms of the same
 			// segment are discarded with it, so their entries do not share it.
-			spans.markCutOnly(seg, entry)
+			cutKeys = []string{spanKey(seg, entry)}
 		case verdict.HasTransform && Blocks(entry.mode):
 			// Every entry whose transform ends up in the final mask is a
 			// candidate for the rewrite that could not be applied.
-			spans.markCut(seg, entry)
+			if key := spanKey(seg, entry); !slices.Contains(cutKeys, key) {
+				cutKeys = append(cutKeys, key)
+			}
 		}
 		if stop {
 			break

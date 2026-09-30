@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -353,4 +354,39 @@ func TestRunStreamSegment_FailureAfterAMaskCarriesTheMask(t *testing.T) {
 			assert.Nil(t, out)
 		})
 	}
+}
+
+// TestRunStreamSegment_CutIsBlamedOnTheSegmentThatCut: a mask entry X landed in
+// segment 1, a different entry Y transformed segment 2 and that mask could not
+// be applied, so the guard cut there. Only Y authored the cut and only Y
+// reports the stream; X's earlier mask is not blamed for a later block.
+func TestRunStreamSegment_CutIsBlamedOnTheSegmentThatCut(t *testing.T) {
+	t.Parallel()
+	exec, pols, stubs, _ := orderChain(t,
+		orderSpec{slug: "a_x", priority: 10, mode: policy.ModeEnforce, rewrites: true, fn: replaceWith("AAA", "****")},
+		orderSpec{slug: "b_y", priority: 20, mode: policy.ModeEnforce, rewrites: true, fn: replaceWith("BBB", "####")},
+	)
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	defer publish()
+
+	_, err := exec.RunStreamSegment(ctx, in, StreamSegment{StreamID: "s", Seq: 1, Text: "AAA", Accumulated: "AAA"})
+	require.NoError(t, err)
+	_, err = exec.RunStreamSegment(ctx, in, StreamSegment{StreamID: "s", Seq: 2, Text: " BBB", Accumulated: "**** BBB"})
+	require.NoError(t, err)
+	_, err = exec.RunStreamSegment(ctx, in, StreamSegment{
+		StreamID: "s", Seq: 2, Closing: true,
+		Report: StreamReport{CutAtEval: 2, CutOffsetChars: 4},
+	})
+	require.NoError(t, err)
+
+	x := stubs["a_x"].seen[len(stubs["a_x"].seen)-1]
+	y := stubs["b_y"].seen[len(stubs["b_y"].seen)-1]
+	require.True(t, x.Closing)
+	require.True(t, y.Closing)
+	assert.Zero(t, x.Report.CutAtEval, "an earlier block's mask is not blamed for a later cut")
+	assert.Equal(t, 2, y.Report.CutAtEval)
+	assert.True(t, y.ReportsStream)
+	assert.False(t, x.ReportsStream)
 }
