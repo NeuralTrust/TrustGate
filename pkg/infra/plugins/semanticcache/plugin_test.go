@@ -937,7 +937,7 @@ func TestPlugin_ImagesBypassCache(t *testing.T) {
 
 // RUN-1693: at pre_request the cache only reads the prompt, so it opts in to run
 // after a same-priority rewriter and must key its lookup on the rewritten body.
-type maskPlugin struct{ seenBody chan string }
+type maskPlugin struct{}
 
 func (maskPlugin) Name() string                    { return "z_mask" }
 func (maskPlugin) MandatoryStages() []policy.Stage { return []policy.Stage{policy.StagePreRequest} }
