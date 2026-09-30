@@ -36,7 +36,6 @@ const (
 
 type Candidate struct {
 	GatewayID    string
-	ConsumerID   string
 	TraceID      string
 	SourceFormat adapter.Format
 	Body         []byte
@@ -233,7 +232,6 @@ func (i *intake) build(c Candidate) (topic.Request, bool) {
 	}
 	return topic.NewRequest(topic.RequestParams{
 		GatewayID:  c.GatewayID,
-		ConsumerID: c.ConsumerID,
 		TraceID:    c.TraceID,
 		Text:       text,
 		Config:     c.Config,

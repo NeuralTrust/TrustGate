@@ -16,12 +16,10 @@ package middleware
 
 import (
 	"bytes"
-	"context"
 	"math/rand"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
-	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/topicclassifier"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -78,33 +76,28 @@ func (m *TopicClassificationMiddleware) offer(c *fiber.Ctx) {
 		return
 	}
 	// Checked on the raw body first so an oversized compressed body is never decompressed.
-	if len(c.Request().Body()) > m.maxBodyBytes {
-		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
-		return
-	}
-	body := c.Body()
-	if len(body) == 0 {
-		return
-	}
+	body := c.Request().Body()
 	if len(body) > m.maxBodyBytes {
 		m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
 		return
 	}
+	// c.Body() scans every header and re-decodes on each call; only an encoded body needs it.
+	if len(c.Request().Header.ContentEncoding()) > 0 {
+		body = c.Body()
+		if len(body) > m.maxBodyBytes {
+			m.recorder.Intake(topicclassifier.OutcomeBodyTooLarge)
+			return
+		}
+	}
+	if len(body) == 0 {
+		return
+	}
 	m.intake.Submit(topicclassifier.Candidate{
 		GatewayID:    gw.ID.String(),
-		ConsumerID:   consumerIDFromContext(ctx),
 		TraceID:      rt.TraceID(),
 		SourceFormat: route.SourceFormat,
 		Body:         bytes.Clone(body),
 		Config:       gw.TopicClassification,
 		ReceivedAt:   time.Now().UTC(),
 	})
-}
-
-func consumerIDFromContext(ctx context.Context) string {
-	authCtx, ok := appauth.AuthContextFromContext(ctx)
-	if !ok || authCtx == nil || authCtx.ConsumerID.IsNil() {
-		return ""
-	}
-	return authCtx.ConsumerID.String()
 }

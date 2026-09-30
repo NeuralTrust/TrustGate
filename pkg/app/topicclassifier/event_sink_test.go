@@ -76,7 +76,6 @@ func TestEventSink_PublishesTheClassification(t *testing.T) {
 	threshold := 0.6
 	req := topic.NewRequest(topic.RequestParams{
 		GatewayID:  gw.ID.String(),
-		ConsumerID: "consumer-1",
 		TraceID:    "trace-1",
 		Text:       "refund",
 		Config:     &topic.Config{Enabled: true, Topics: billing, Threshold: &threshold},

@@ -24,7 +24,6 @@ import (
 
 type Request struct {
 	GatewayID   string    `json:"gateway_id"`
-	ConsumerID  string    `json:"consumer_id,omitempty"`
 	TraceID     string    `json:"trace_id"`
 	Text        string    `json:"text"`
 	TextHash    string    `json:"text_hash"`
@@ -36,7 +35,6 @@ type Request struct {
 
 type RequestParams struct {
 	GatewayID  string
-	ConsumerID string
 	TraceID    string
 	Text       string
 	Config     *Config
@@ -55,7 +53,6 @@ func NewRequest(p RequestParams) Request {
 	}
 	return Request{
 		GatewayID:   p.GatewayID,
-		ConsumerID:  p.ConsumerID,
 		TraceID:     p.TraceID,
 		Text:        p.Text,
 		TextHash:    HashText(p.Text),
