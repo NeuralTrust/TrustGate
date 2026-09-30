@@ -224,11 +224,20 @@ func (p *Plugin) preRequest(
 		return okResult(), nil
 	}
 	legacy := legacyFunctionNames(ad, in.Request.Body, canonical)
-	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, append(toolNames(canonical.Tools), legacy...))
+	executed := executedCalls(ad, in.Request.Body, canonical.Messages)
+	declared := append(toolNames(canonical.Tools), legacy...)
+	if !anyRuleMatches(cfg.Rules, declared) && !anyRuleMatches(cfg.Rules, executedNames(executed)) {
+		reason := skipReasonNoMatchingRule
+		if len(declared) == 0 && len(executed) == 0 {
+			reason = skipReasonNoTools
+		}
+		setSkipped(in.Event, policy.StagePreRequest, reason)
+	}
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, declared)
 	if err != nil {
 		return p.counterUnavailable(ctx, in, nil, "read", err)
 	}
-	if err := p.countExecuted(ctx, cfg, in, dimension, subject, executedCalls(ad, in.Request.Body, canonical.Messages)); err != nil {
+	if err := p.countExecuted(ctx, cfg, in, dimension, subject, executed); err != nil {
 		// spentBefore already read one or more tools' windows in this same
 		// request; carry that signal along rather than losing it to a bare
 		// failure record. See spentTelemetry for why only one tool's data
@@ -499,10 +508,12 @@ func (p *Plugin) mcpPreRequest(
 	}
 	tool := mcpToolName(in.Request.Body)
 	if tool == "" {
+		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoTools)
 		return okResult(), nil
 	}
 	rule, ok := matchRule(cfg.Rules, tool)
 	if !ok {
+		setSkipped(in.Event, policy.StagePreRequest, skipReasonNoMatchingRule)
 		return okResult(), nil
 	}
 	ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
@@ -616,6 +627,14 @@ func executedCalls(ad adapter.RequestAdapter, body []byte, messages []adapter.Ca
 	}
 	for _, c := range adapter.ExecutedLegacyFunctionCalls(ad, body) {
 		out = append(out, executedCall{id: c.ID, tool: c.Name})
+	}
+	return out
+}
+
+func executedNames(calls []executedCall) []string {
+	out := make([]string, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, c.tool)
 	}
 	return out
 }
@@ -869,6 +888,24 @@ func wireFormat(req *infracontext.RequestContext) string {
 		return req.SourceFormat
 	}
 	return req.Provider
+}
+
+// setSkipped records that the plugin ran on this leg and evaluated nothing.
+func setSkipped(event *metrics.EventContext, stage policy.Stage, reason string) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(skippedData{Stage: string(stage), Skipped: true, SkipReason: reason})
+}
+
+// anyRuleMatches reports whether at least one of names matches a rule.
+func anyRuleMatches(rules []ruleConfig, names []string) bool {
+	for _, n := range names {
+		if _, ok := matchRule(rules, n); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func setExtras(event *metrics.EventContext, data PerToolRateLimiterData) {
