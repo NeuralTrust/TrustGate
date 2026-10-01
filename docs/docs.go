@@ -5772,6 +5772,19 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "status": {
+                    "description": "Status is \"active\" (enabled and running), \"paused\" (disabled) or \"error\"\n(enabled but the gateway cannot run it; see status_message).",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "paused",
+                        "error"
+                    ]
+                },
+                "status_message": {
+                    "description": "StatusMessage is the reason the gateway cannot run the policy. It is\npresent only when status is \"error\".",
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 },

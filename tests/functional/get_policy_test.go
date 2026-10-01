@@ -24,6 +24,8 @@ func TestGetPolicy_Success(t *testing.T) {
 	assert.Equal(t, id, body["id"])
 	assert.Equal(t, name, body["name"])
 	assert.Equal(t, gwID, body["gateway_id"])
+	assert.Equal(t, "active", body["status"])
+	assert.NotContains(t, body, "status_message")
 }
 
 func TestGetPolicy_NotFound(t *testing.T) {

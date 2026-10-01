@@ -24,10 +24,11 @@ import (
 
 type DuplicatePolicyHandler struct {
 	duplicator apppolicy.Duplicator
+	status     apppolicy.StatusEvaluator
 }
 
-func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator) *DuplicatePolicyHandler {
-	return &DuplicatePolicyHandler{duplicator: duplicator}
+func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator, status apppolicy.StatusEvaluator) *DuplicatePolicyHandler {
+	return &DuplicatePolicyHandler{duplicator: duplicator, status: status}
 }
 
 // Handle godoc
@@ -53,5 +54,6 @@ func (h *DuplicatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromPolicy(p))
+	status, message := h.status.Evaluate(p)
+	return httpio.WriteCreated(c, response.FromPolicy(p).WithStatus(string(status), message))
 }
