@@ -88,27 +88,28 @@ PR rules:
 
 ## Phase T2: Runtime (TrustGate, base T1)
 
-- [ ] T2.1 `pkg/app/consumer/data_finder.go`: `loadPolicies` returns `{everywhere, onMCP, byConsumer}` and skips links for `GatewayWide()`. MCP consumers and `StoreConsumer` read `onMCP`; LLM and A2A read `everywhere`.
-- [ ] T2.2 `pkg/app/plugins/plan.go:90` and `chain.go:119` use `pol.GatewayWide()`. Update the `plugin.go:176` doc. `pkg/app/consumer/associator.go:190` uses `GatewayWide()`. Doc lines that name the global flag as the source of gateway-wide state say "gateway-wide placement (global or MCP-wide)": `pkg/app/plugins/catalog_metadata.go` (~:540 and ~:836, the informational `scope` field) and `pkg/infra/plugins/ratelimit/config.go:30`.
-- [ ] T2.3 `pkg/app/policy/warnings.go`:
+- [x] T2.1 `pkg/app/consumer/data_finder.go`: `loadPolicies` returns `{everywhere, onMCP, byConsumer}` and skips links for `GatewayWide()`. MCP consumers and `StoreConsumer` read `onMCP`; LLM and A2A read `everywhere`.
+- [x] T2.2 `pkg/app/plugins/plan.go:90` and `chain.go:119` use `pol.GatewayWide()`. Update the `plugin.go:176` doc. `pkg/app/consumer/associator.go:190` uses `GatewayWide()`. Doc lines that name the global flag as the source of gateway-wide state say "gateway-wide placement (global or MCP-wide)": `pkg/app/plugins/catalog_metadata.go` (~:540 and ~:836, the informational `scope` field) and `pkg/infra/plugins/ratelimit/config.go:30`.
+- [x] T2.3 `pkg/app/policy/warnings.go`:
   - The orphan warning uses `p.Draft()`.
   - `reach` drops non-MCP consumers for MCP-wide.
   - Add `sameSlugRuns.mcpWide` and `reaches(reachedConsumer)`.
-- [ ] T2.4 Test `pkg/app/consumer/data_finder_inert_test.go`: an inert-safe, group-only MCP-wide policy is absent from LLM/A2A `Policies` and `PolicyPlan`.
-- [ ] T2.5 Test `pkg/app/consumer/data_finder_test.go`:
+- [x] T2.4 Test `pkg/app/consumer/data_finder_inert_test.go`: an inert-safe, group-only MCP-wide policy is absent from LLM/A2A `Policies` and `PolicyPlan`.
+- [x] T2.5 Test `pkg/app/consumer/data_finder_test.go`:
   - The policy is in every MCP consumer's `ScopedPolicies`.
   - Its links are ignored.
   - An attached unscoped policy of the same slug overrides it.
   - In `StoreConsumer.MCPPlans`, including an `InstanceOf` clone, a member matches and a non-member does not.
-- [ ] T2.6 Test `pkg/app/policy/warnings_test.go`:
+- [x] T2.6 Test `pkg/app/policy/warnings_test.go`:
   - No "runs nowhere" warning for MCP-wide; a draft still gets it.
   - The api-key warning names MCP consumers only.
   - A same-slug MCP-wide policy collides on MCP consumers only.
-- [ ] T2.7 Test `pkg/app/consumer/associator_test.go`: the protocol check is skipped. Test `pkg/app/plugins/executor_test.go`: `Scope.Global` is true for MCP-wide.
-- [ ] T2.8 Spec deltas:
+- [x] T2.7 Test `pkg/app/consumer/associator_test.go`: the protocol check is skipped. Test `pkg/app/plugins/executor_test.go`: `Scope.Global` is true for MCP-wide.
+- [x] T2.8 Spec deltas:
   - `specs/policy-inert-scope/spec.md`: a draft requires `mcp_wide=false`; ADD "MCP-wide nunca entra en una cadena LLM/A2A".
   - `specs/mcp-policy-plan-selection/spec.md`: the Store takes MCP-wide policies.
-- [ ] T2.9 Run VG.
+  - `specs/mcp-policy-scope/spec.md` (added in the T2 review): MODIFY "Validación en la Admin API", the orphan warning applies to drafts only. The 422 stays for T4.10.
+- [x] T2.9 Run VG.
 
 ## Phase T3: Use case (TrustGate, base T2)
 
@@ -159,7 +160,9 @@ PR rules:
   - placement and level tables, the `:256` and `:259` rows, and an `mcp_wide` row
   - Admin API table
   - Rollout section. An old binary, or one rolled back, places an MCP-wide policy by its links alone: with none it runs nowhere; with links it runs on those consumers, as before the promotion. The console detaches links on promotion.
+  - Note (T2 review): say that MCP-wide plugin state reports the dimension `global`, like a global policy: `exceeded_type` is `global` and the Redis key carries the `global` label (e.g. `ratelimit:<policy>:global:<gateway>`).
 - [ ] T4.10 Spec delta `specs/mcp-policy-scope/spec.md`: the orphan warning applies to drafts only; 422. Create `specs/policy-mcp-wide-placement/spec.md`.
+  - Note (T2 review): T2 already created `specs/mcp-policy-scope/spec.md` with the MODIFIED "Validación en la Admin API" block, covering the orphan warning only. T4.10 extends that same block: the 422 on `POST /mcp-wide` for a plugin without MCP support, and `/mcp-wide` next to "promoción a `global`" in the 409 sentence.
 - [ ] T4.11 Run VG.
 
 ## Phase A1: Engine (app, base `develop`, parallel with T1)

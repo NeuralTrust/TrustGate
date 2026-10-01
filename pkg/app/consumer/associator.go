@@ -187,7 +187,7 @@ func attachedTo(pol *policydomain.Policy, consumerID ids.ConsumerID) *policydoma
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {
-	if pol.IsGlobal() {
+	if pol.GatewayWide() {
 		return nil
 	}
 	if cons.Type != domain.TypeLLM && cons.Type != domain.TypeMCP {

@@ -173,8 +173,9 @@ type ExecInput struct {
 // RuntimeScope is the execution scope derived from the policy and the resolved
 // consumer. It tells a plugin whether the policy applies gateway-wide (Global)
 // or to a single consumer, so stateful plugins can partition their state
-// accordingly. It is derived from the source of truth (Policy.Global plus the
-// resolved consumer), never from request headers, path or credentials.
+// accordingly. It is derived from the source of truth (Policy.GatewayWide, so a
+// global or an MCP-wide placement, plus the resolved consumer), never from
+// request headers, path or credentials.
 type RuntimeScope struct {
 	GatewayID  string
 	ConsumerID string
@@ -182,8 +183,8 @@ type RuntimeScope struct {
 }
 
 // Subject resolves the partition for this execution: gateway-wide when the
-// policy is global, otherwise the current consumer. It returns the dimension
-// label ("global" or "consumer") and the identifier to key state on.
+// policy is global or MCP-wide, otherwise the current consumer. It returns the
+// dimension label ("global" or "consumer") and the identifier to key state on.
 func (s RuntimeScope) Subject() (dimension string, id string, err error) {
 	if s.Global {
 		if s.GatewayID == "" {

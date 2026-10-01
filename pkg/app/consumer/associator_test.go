@@ -310,6 +310,7 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 		name              string
 		consumerType      domain.Type
 		global            bool
+		mcpWide           bool
 		slug              string
 		resolverProtocols map[string][]string
 		wantAttach        bool
@@ -359,6 +360,14 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 			wantAttach:        true,
 		},
 		{
+			name:              "skip validation for MCP-wide policy",
+			consumerType:      domain.TypeLLM,
+			mcpWide:           true,
+			slug:              "per_tool_rate_limiter",
+			resolverProtocols: map[string][]string{"per_tool_rate_limiter": {"MCP"}},
+			wantAttach:        true,
+		},
+		{
 			name:              "skip validation for a2a consumer",
 			consumerType:      domain.TypeA2A,
 			slug:              "cost_cap",
@@ -390,7 +399,7 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 
 			policyRepo := policymocks.NewRepository(t)
 			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
-				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, Global: tt.global}, nil).Once()
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, Global: tt.global, MCPWide: tt.mcpWide}, nil).Once()
 
 			publisher := cachemocks.NewEventPublisher(t)
 			if tt.wantAttach {

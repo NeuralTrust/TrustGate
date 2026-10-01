@@ -116,7 +116,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			priority:     pol.Priority,
 			specificity:  entrySpecificity(pol.MCPScope, flatSpecificity),
 			parallel:     pol.Parallel,
-			global:       pol.IsGlobal(),
+			global:       pol.GatewayWide(),
 			mutatesReq:   plugin.MutatesRequestBody(),
 			mutatesResp:  plugin.MutatesResponseBody(),
 			mutatesMeta:  plugin.MutatesMetadata(),

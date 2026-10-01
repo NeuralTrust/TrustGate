@@ -25,6 +25,7 @@ import (
 	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	policymocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
@@ -32,7 +33,9 @@ import (
 	backendmocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer {
@@ -705,5 +708,97 @@ func TestDataFinder_FindByGateway_StoreConsumerPlansFromScopedGlobals(t *testing
 	other := &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), GatewayID: gwID, Enabled: true}
 	if plan := store.MCPPlans.PlanFor(other, "run_query", nil); plan == nil || plan.Has(policydomain.StagePreRequest) {
 		t.Fatal("a scoped global must not reach other registries in the Store")
+	}
+}
+
+func TestDataFinder_FindByGateway_MCPWidePolicyReachesEveryMCPConsumerAndIgnoresItsLinks(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	linked := mcpRoutableConsumer(gwID)
+	unlinked := mcpRoutableConsumer(gwID)
+	llm := routableConsumer(gwID, nil)
+	h := newInertHarness(t)
+
+	mcpWide := inertPolicy(gwID, "W", nameGatingSlug, groupScope("Finanzas"), linked.ID, llm.ID)
+	mcpWide.SetMCPWide(true)
+
+	data := loadInert(t, gwID, h.reg, newTestLogger(),
+		[]*domain.Consumer{linked, unlinked, llm}, []*policydomain.Policy{mcpWide})
+
+	for _, c := range []*domain.Consumer{linked, unlinked} {
+		rc := consumerByID(t, data, c.ID)
+		assert.Equal(t, []ids.PolicyID{mcpWide.ID}, policyIDs(rc.ScopedPolicies),
+			"every MCP consumer takes it, linked or not")
+		assert.Empty(t, rc.Policies, "a scoped policy stays out of the MCP base chain")
+	}
+	assert.False(t, containsPolicyID(consumerByID(t, data, llm.ID).ScopedPolicies, mcpWide.ID),
+		"a link to a non-MCP consumer is ignored, as a global policy's links are")
+	require.NotNil(t, data.StoreConsumer)
+	assert.Equal(t, []ids.PolicyID{mcpWide.ID}, policyIDs(data.StoreConsumer.ScopedPolicies))
+}
+
+func TestDataFinder_FindByGateway_AttachedUnscopedPolicyOverridesAnUnscopedMCPWideOne(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	withOwn := mcpRoutableConsumer(gwID)
+	plain := mcpRoutableConsumer(gwID)
+	h := newInertHarness(t)
+
+	mcpWide := inertPolicy(gwID, "W", nameGatingSlug, nil)
+	mcpWide.SetMCPWide(true)
+	own := inertPolicy(gwID, "O", nameGatingSlug, nil, withOwn.ID)
+
+	data := loadInert(t, gwID, h.reg, newTestLogger(),
+		[]*domain.Consumer{withOwn, plain}, []*policydomain.Policy{mcpWide, own})
+
+	assert.Equal(t, []string{"O"}, h.executedPlan(consumerByID(t, data, withOwn.ID).PolicyPlan),
+		"the consumer's own unscoped policy overrides the MCP-wide one of its slug")
+	assert.Equal(t, []string{"W"}, h.executedPlan(consumerByID(t, data, plain.ID).PolicyPlan))
+	require.NotNil(t, data.StoreConsumer)
+	assert.Equal(t, []string{"W"}, h.executedPlan(data.StoreConsumer.PolicyPlan))
+}
+
+func TestDataFinder_FindByGateway_MCPWideGroupPolicyRunsForMembersOnly(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	mcpCons := mcpRoutableConsumer(gwID)
+	h := newInertHarness(t)
+
+	mcpWide := inertPolicy(gwID, "W", nameGatingSlug, groupScope("Finanzas"))
+	mcpWide.SetMCPWide(true)
+
+	data := loadInert(t, gwID, h.reg, newTestLogger(),
+		[]*domain.Consumer{mcpCons}, []*policydomain.Policy{mcpWide})
+
+	require.NotNil(t, data.StoreConsumer)
+	store := data.StoreConsumer.MCPPlans
+	consumerPlans := consumerByID(t, data, mcpCons.ID).MCPPlans
+	require.NotNil(t, store)
+	require.NotNil(t, consumerPlans)
+	assert.Empty(t, h.executedPlan(data.StoreConsumer.PolicyPlan), "the Store base chain holds no scoped policy")
+
+	shelfID := ids.New[ids.RegistryKind]()
+	clone := mcpRegistry(ids.New[ids.RegistryKind]())
+	clone.InstanceOf = shelfID
+	upstream := mcpRegistry(ids.New[ids.RegistryKind]())
+
+	tests := []struct {
+		name      string
+		plans     *appconsumer.PolicyPlans
+		reg       *registrydomain.Registry
+		principal *identity.Principal
+		want      []string
+	}{
+		{"store shelf, member", store, mcpRegistry(shelfID), groupPrincipal("Finanzas"), []string{"W"}},
+		{"store instance clone, member", store, clone, groupPrincipal("Finanzas"), []string{"W"}},
+		{"store instance clone, non-member", store, clone, groupPrincipal("Marketing"), nil},
+		{"store instance clone, no principal", store, clone, nil, nil},
+		{"mcp consumer, member", consumerPlans, upstream, groupPrincipal("Finanzas"), []string{"W"}},
+		{"mcp consumer, non-member", consumerPlans, upstream, groupPrincipal("Marketing"), nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, h.executedPlan(tc.plans.PlanFor(tc.reg, "run_query", tc.principal)))
+		})
 	}
 }
