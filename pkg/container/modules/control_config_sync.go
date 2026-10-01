@@ -30,6 +30,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
@@ -57,6 +58,9 @@ type compilerReaders struct {
 	// levels into every snapshot.
 	Grants        storeaccessdomain.Repository
 	StorePolicies storeaccessdomain.PolicyRepository
+	// TenantCaps puts each tenant's plan caps into the snapshots that carry its
+	// gateways.
+	TenantCaps ratelimitdomain.TenantCapsRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -78,6 +82,7 @@ func ControlConfigSync(c *container.Container) error {
 			appsnapshot.WithStoreGrants(r.Grants),
 			appsnapshot.WithStorePolicies(r.StorePolicies),
 			appsnapshot.WithPlaygroundTokenKeys(keys),
+			appsnapshot.WithTenantCaps(r.TenantCaps),
 		), nil
 	}); err != nil {
 		return err
