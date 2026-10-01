@@ -5766,6 +5766,14 @@ const docTemplate = `{
                 "slug": {
                     "type": "string"
                 },
+                "status": {
+                    "description": "Status is \"active\", \"paused\" (disabled) or \"error\" (enabled but the\ngateway cannot load it). FromPolicy derives it from Enabled alone;\nlist and get overwrite it with the validated value via WithStatus.",
+                    "type": "string"
+                },
+                "status_message": {
+                    "description": "StatusMessage is the load failure reason when Status is \"error\".",
+                    "type": "string"
+                },
                 "stages": {
                     "type": "array",
                     "items": {

@@ -35,6 +35,12 @@ type PolicyResponse struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []string         `json:"stages,omitempty"`
 	Mode        string           `json:"mode"`
+	// Status is "active", "paused" (disabled) or "error" (enabled but the
+	// gateway cannot load it). FromPolicy derives it from Enabled alone;
+	// list and get overwrite it with the validated value via WithStatus.
+	Status string `json:"status"`
+	// StatusMessage is the load failure reason when Status is "error".
+	StatusMessage string `json:"status_message,omitempty"`
 	// MCPScope is echoed as stored: absent when the policy is consumer-wide,
 	// {} when a registry delete pruned every destination.
 	MCPScope *MCPScopeResponse `json:"mcp_scope,omitempty"`
@@ -46,6 +52,14 @@ type PolicyResponse struct {
 }
 
 // MCPToolRefResponse names one upstream tool by registry and native name.
+// Policy status values. They mirror app/policy.Status; the response package
+// stays free of app-layer imports.
+const (
+	StatusActive = "active"
+	StatusPaused = "paused"
+	StatusError  = "error"
+)
+
 type MCPToolRefResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Tool       string         `json:"tool"`
@@ -60,7 +74,12 @@ type MCPScopeResponse struct {
 }
 
 func FromPolicy(p *domain.Policy) PolicyResponse {
+	status := StatusActive
+	if !p.Enabled {
+		status = StatusPaused
+	}
 	return PolicyResponse{
+		Status:      status,
 		ID:          p.ID,
 		GatewayID:   p.GatewayID,
 		ConsumerIDs: p.ConsumerIDs,
@@ -78,6 +97,13 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// WithStatus overrides the derived status with an evaluated one.
+func (r PolicyResponse) WithStatus(status, message string) PolicyResponse {
+	r.Status = status
+	r.StatusMessage = message
+	return r
 }
 
 // FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
