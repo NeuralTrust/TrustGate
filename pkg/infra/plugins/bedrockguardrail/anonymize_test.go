@@ -60,7 +60,7 @@ func TestRewriteRequestRoundTrip(t *testing.T) {
 			{Role: roleUser, Content: "my email is john@example.com"},
 		},
 	}
-	body, ok := rewriteRequest(reg, adapter.FormatOpenAI, creq, 1, "my email is {EMAIL}")
+	body, ok := rewriteRequest(reg, adapter.FormatOpenAI, nil, creq, 1, "my email is {EMAIL}")
 	if !ok || len(body) == 0 {
 		t.Fatalf("rewriteRequest ok = %v, len = %d", ok, len(body))
 	}
@@ -80,7 +80,7 @@ func TestRewriteRequestUnsupportedFormat(t *testing.T) {
 	creq := &adapter.CanonicalRequest{
 		Messages: []adapter.CanonicalMessage{{Role: roleUser, Content: "hello"}},
 	}
-	if body, ok := rewriteRequest(reg, unsupportedFormat, creq, 0, "masked"); ok || body != nil {
+	if body, ok := rewriteRequest(reg, unsupportedFormat, nil, creq, 0, "masked"); ok || body != nil {
 		t.Fatalf("expected (nil,false) on unsupported format, got (%v,%v)", body, ok)
 	}
 }
@@ -91,7 +91,7 @@ func TestRewriteRequestOutOfBounds(t *testing.T) {
 	creq := &adapter.CanonicalRequest{
 		Messages: []adapter.CanonicalMessage{{Role: roleUser, Content: "hello"}},
 	}
-	if body, ok := rewriteRequest(reg, adapter.FormatOpenAI, creq, 5, "masked"); ok || body != nil {
+	if body, ok := rewriteRequest(reg, adapter.FormatOpenAI, nil, creq, 5, "masked"); ok || body != nil {
 		t.Fatalf("expected (nil,false) on out-of-bounds index, got (%v,%v)", body, ok)
 	}
 }

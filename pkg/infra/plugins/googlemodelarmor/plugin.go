@@ -30,11 +30,10 @@ import (
 const PluginName = "google_model_armor"
 
 const (
-	decisionBlocked      = "blocked"
-	decisionAnonymized   = "anonymized"
-	decisionReported     = "reported"
-	decisionAllowed      = "allowed"
-	decisionFailedClosed = "failed_closed"
+	decisionBlocked    = "blocked"
+	decisionAnonymized = "anonymized"
+	decisionReported   = "reported"
+	decisionAllowed    = "allowed"
 )
 
 const (
@@ -130,11 +129,11 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("google_model_armor: %w", err)
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, err: err})
 	}
 	cl, err := p.clientFor(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("google_model_armor: %w", err)
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, err: err})
 	}
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -155,10 +154,13 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
-	if err != nil || creq == nil {
+	if err != nil {
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
+	}
+	if creq == nil {
 		return passThrough(), nil
 	}
 	text, idx := lastUserText(creq)
@@ -168,7 +170,7 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	span := rewriteSpan{
 		format: format,
 		rewrite: func(masked string) ([]byte, bool) {
-			return rewriteRequest(p.registry, format, creq, idx, masked)
+			return rewriteRequest(p.registry, format, in.Request.Body, creq, idx, masked)
 		},
 	}
 	sanitize := func(ctx context.Context) (*SanitizationResult, error) {
@@ -192,10 +194,13 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
 	}
 	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
-	if err != nil || cresp == nil {
+	if err != nil {
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureDecodeFailed, err: err})
+	}
+	if cresp == nil {
 		return passThrough(), nil
 	}
 	text := responseText(cresp)
@@ -242,10 +247,17 @@ func (p *Plugin) runGuardrail(
 	result, err := sanitize(ctx)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return p.failClosed(ctx, in, cfg, latency, err)
+		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+			reason: appplugins.FailureTransport,
+			err:    fmt.Errorf("sanitize: %w", err),
+		})
 	}
 	if result.InvocationResult == invocationResultFailure {
-		return p.failClosed(ctx, in, cfg, latency, fmt.Errorf("google_model_armor: invocationResult FAILURE"))
+		return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+			reason:        appplugins.FailureTransport,
+			filterVersion: result.filterVersion(),
+			err:           fmt.Errorf("invocationResult FAILURE"),
+		})
 	}
 	res := inspect(result, cfg)
 	data := newData(in, cfg, latency)
@@ -259,10 +271,13 @@ func (p *Plugin) runGuardrail(
 	// more useful than naming the one that was missing.
 	if res.block == nil {
 		if f, reason := unevaluatedFilter(result, cfg.blockOnSet()); f != "" {
-			data.Filter = f
-			data.FailureReason = reason
-			return p.failClosedWith(ctx, in, data,
-				fmt.Errorf("google_model_armor: filter %q selected in block_on produced no verdict (%s)", f, reason))
+			return p.externalFailure(ctx, in, cfg, latency, failureInfo{
+				reason:        appplugins.FailureVerdictIncomplete,
+				filter:        f,
+				armorReason:   reason,
+				filterVersion: result.filterVersion(),
+				err:           fmt.Errorf("filter %q selected in block_on produced no verdict (%s)", f, reason),
+			})
 		}
 	}
 
@@ -273,7 +288,7 @@ func (p *Plugin) runGuardrail(
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
 			appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-			return nil, blockError(*res.block)
+			return nil, blockError(cfg.Message, *res.block)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -285,7 +300,7 @@ func (p *Plugin) runGuardrail(
 		applyFinding(data, res.anonymize)
 		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
-			return p.anonymizeEnforce(in, data, result, span, res.anonymize)
+			return p.anonymizeEnforce(in, data, cfg.Message, result, span, res.anonymize)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
@@ -302,20 +317,21 @@ func (p *Plugin) runGuardrail(
 func (p *Plugin) anonymizeEnforce(
 	in appplugins.ExecInput,
 	data *Data,
+	message string,
 	result *SanitizationResult,
 	span rewriteSpan,
 	f *finding,
 ) (*appplugins.Result, error) {
 	masked, ok := maskedText(result)
 	if !ok {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeNoOutput, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeNoOutput, f)
 	}
 	if !supportsReencode(p.registry, span.format) {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeUnsupportedFormat, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeUnsupportedFormat, f)
 	}
 	body, ok := span.rewrite(masked)
 	if !ok {
-		return p.anonymizeDegraded(in, data, reasonAnonymizeEncodeFailed, f)
+		return p.anonymizeDegraded(in, data, message, reasonAnonymizeEncodeFailed, f)
 	}
 	data.Decision = decisionAnonymized
 	setExtras(in.Event, data)
@@ -323,51 +339,62 @@ func (p *Plugin) anonymizeEnforce(
 	return span.result(body), nil
 }
 
-func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, reason string, f *finding) (*appplugins.Result, error) {
+func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, message string, reason string, f *finding) (*appplugins.Result, error) {
 	data.Degraded = true
 	data.DegradedReason = reason
 	data.Decision = decisionBlocked
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
-	return nil, blockError(*f)
+	return nil, blockError(message, *f)
 }
 
-// failClosed is the shared outcome for a transport error, an invocationResult
-// of FAILURE, or a block_on filter that produced no verdict: enforce mode
-// rejects the call, observe mode passes it through unmodified. Same contract
-// as bedrock_guardrail.
-func (p *Plugin) failClosed(ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, err error) (*appplugins.Result, error) {
-	return p.failClosedWith(ctx, in, newData(in, cfg, latency), err)
+// failureInfo is what one externalFailure call needs beyond the shared
+// appplugins.ExternalFailure fields: which Model Armor filter (if any) is
+// involved, that filter's own why-it-did-not-run reason (kept in
+// Data.FailureDetail; see the comment on Data.FailureDetail for why this is
+// distinct from the generic FailureReason), and the filter version the
+// response carried, when there was a response to read one from.
+type failureInfo struct {
+	reason        appplugins.FailureReason
+	filter        string
+	armorReason   string
+	filterVersion string
+	err           error
 }
 
-// failClosedWith is failClosed for a caller that already knows what to record
-// on the event, such as which filter produced no verdict.
-func (p *Plugin) failClosedWith(ctx context.Context, in appplugins.ExecInput, data *Data, err error) (*appplugins.Result, error) {
-	data.Decision = decisionFailedClosed
-	if appplugins.Blocks(in.Mode) {
-		p.debug(ctx, "model armor call failed, failing closed",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.Any("error", err),
-		)
-		setExtras(in.Event, data)
-		return nil, fmt.Errorf("google_model_armor: sanitize: %w", err)
-	}
-	p.debug(ctx, "model armor call failed, observe mode passing through",
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.Any("error", err),
-	)
+// externalFailure turns a failed guardrail call into a plugin outcome via the
+// shared appplugins.HandleExternalFailure: fail closed (502
+// guardrail_unavailable) in a blocking mode, fail open (pass through) in
+// observe, or always fail open for a decode_failed reason. It builds this
+// plugin's own Data so failure_reason/failure_detail travel in the same
+// shape as every other external guardrail, while keeping filter and
+// filter_version, which are specific to this plugin.
+func (p *Plugin) externalFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	latencyMS int64,
+	fi failureInfo,
+) (*appplugins.Result, error) {
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: fi.reason,
+		Detail: fi.filter,
+		Err:    fi.err,
+		Logger: p.logger,
+		Event:  in.Event,
+	})
+	data := newData(in, cfg, latencyMS)
+	data.Decision = outcome.Decision
+	data.FailureReason = string(fi.reason)
+	data.FailureDetail = fi.armorReason
+	data.Filter = fi.filter
+	data.FilterVersion = fi.filterVersion
 	setExtras(in.Event, data)
-	appplugins.SetDecisionFromOutcome(in.Event, decisionFailedClosed)
-	return passThrough(), nil
-}
-
-func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
-	if p.logger == nil {
-		return
-	}
-	p.logger.DebugContext(ctx, msg, attrs...)
+	return outcome.Result, outcome.Err
 }
 
 func newData(in appplugins.ExecInput, cfg Settings, latency int64) *Data {

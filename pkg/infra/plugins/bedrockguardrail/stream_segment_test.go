@@ -246,7 +246,7 @@ func TestInspectSegmentBlocks(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Block)
 	assert.Equal(t, typeGuardrailBlocked, got.Type)
-	assert.Equal(t, defaultBlockMessage, got.Message)
+	assert.Equal(t, appplugins.DefaultBlockMessage, got.Message)
 	assert.False(t, got.HasTransform)
 }
 
@@ -299,6 +299,40 @@ func TestInspectSegmentReturnsTheCallFailure(t *testing.T) {
 	assert.Nil(t, got, "a failure must not be reported as a clean allow")
 	assert.ErrorIs(t, err, boom)
 	assert.Contains(t, err.Error(), "block 5")
+}
+
+func TestInspectSegmentReturnsTheVerdictIncompleteFailure(t *testing.T) {
+	t.Parallel()
+	// Same shape as TestExecuteVerdictIncompleteEnforceFailsClosed: an
+	// intervention none of the read policy families can explain.
+	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
+		Action:      types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{}},
+	}))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+
+	require.Error(t, err)
+	assert.Nil(t, got, "an incomplete verdict must not be reported as a clean allow")
+	assert.Contains(t, err.Error(), "verdict_incomplete")
+}
+
+func TestInspectSegmentVerdictIncompleteNamesTheUnparsedPolicy(t *testing.T) {
+	t.Parallel()
+	p := streamPlugin(t, intervening(&bedrockruntime.ApplyGuardrailOutput{
+		Action: types.GuardrailActionGuardrailIntervened,
+		Assessments: []types.GuardrailAssessment{{
+			AutomatedReasoningPolicy: &types.GuardrailAutomatedReasoningPolicyAssessment{},
+		}},
+	}))
+
+	got, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeEnforce, streamSettings(nil), nil), segment(5, "some text"))
+
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "verdict_incomplete (automated_reasoning_policy)")
 }
 
 func TestInspectSegmentIsInertWithoutTheOptIn(t *testing.T) {

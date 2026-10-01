@@ -20,6 +20,7 @@ import (
 	"math"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	providers "github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -35,6 +36,8 @@ type CustomPrice struct {
 	// CacheWrite1h prices the share written with a one-hour TTL, which Anthropic
 	// bills above its five-minute default. No catalog publishes a rate for it, so
 	// it defaults to CacheWrite and only an explicit override makes it exact.
+	// Anthropic and Bedrock are the exception: they default to twice the input
+	// rate, which is what both charge for a one-hour write.
 	CacheWrite1h *float64 `mapstructure:"cache_write_1h" json:"cache_write_1h,omitempty"`
 }
 
@@ -60,7 +63,7 @@ func orInput(rate, input float64) float64 {
 	return rate
 }
 
-func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float64) Rates {
+func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float64, premium1h bool) Rates {
 	r := Rates{Input: input, Output: output, CacheRead: input, CacheWrite: input}
 	if cacheRead != nil {
 		r.CacheRead = *cacheRead
@@ -68,11 +71,25 @@ func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float6
 	if cacheWrite != nil {
 		r.CacheWrite = *cacheWrite
 	}
-	r.CacheWrite1h = r.CacheWrite
+	r.CacheWrite1h = defaultCacheWrite1h(r, premium1h)
 	if cacheWrite1h != nil {
 		r.CacheWrite1h = *cacheWrite1h
 	}
 	return r
+}
+
+func defaultCacheWrite1h(r Rates, premium1h bool) float64 {
+	if premium1h {
+		return 2 * r.Input
+	}
+	return r.CacheWrite
+}
+
+// billsOneHourCacheWrite decides by provider alone: only Claude reports a
+// one-hour TTL, and a Bedrock application inference profile ARN hides the model
+// name.
+func billsOneHourCacheWrite(provider string) bool {
+	return provider == providers.Anthropic || provider == providers.Bedrock
 }
 
 // CostUSD prices a canonical usage view. It is correct for every provider
@@ -84,13 +101,13 @@ func (r Rates) CostUSD(u *adapter.CanonicalUsage) (promptUSD, completionUSD floa
 	}
 	cached, written := u.CachedInputTokens, u.CacheWriteInputTokens
 	plain := u.PlainInputTokens()
-	if plain == u.InputTokens && cached+written > 0 {
+	if cached+written > u.InputTokens {
 		slog.Warn("llmcost: usage sub-counts exceed the prompt they claim to be part of; "+
 			"billing the whole prompt at the input rate",
 			slog.Int("input_tokens", u.InputTokens),
 			slog.Int("cached_input_tokens", cached),
 			slog.Int("cache_write_input_tokens", written))
-		cached, written = 0, 0
+		plain, cached, written = u.InputTokens, 0, 0
 	}
 	written1h := u.CacheWrite1hInputTokens
 	if written1h > written {
@@ -135,13 +152,13 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
 		if cp, ok := BestMatch(custom, slug); ok {
-			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
+			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h, billsOneHourCacheWrite(provider)), true
 		}
 	}
 	if registry != nil {
 		for _, slug := range candidates {
 			if cp, ok := BestMatch(registry.Overrides, slug); ok {
-				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
+				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h, billsOneHourCacheWrite(provider)), true
 			}
 		}
 	}
@@ -159,7 +176,7 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 			CacheRead:  orInput(price.CacheReadPrice, price.InputPrice),
 			CacheWrite: orInput(price.CacheWritePrice, price.InputPrice),
 		}
-		r.CacheWrite1h = r.CacheWrite
+		r.CacheWrite1h = defaultCacheWrite1h(r, billsOneHourCacheWrite(provider))
 		if registry != nil && registry.Discount > 0 {
 			factor := 1 - registry.Discount
 			r.Input *= factor

@@ -25,7 +25,7 @@ import (
 // request shapes the canonical model does not represent: multimodal content
 // parts (image_url, input_audio, documents) are flattened to text, per-part
 // annotations such as Anthropic cache_control are dropped, and top-level
-// fields the adapter does not model (seed, n, penalties) disappear on encode.
+// fields the adapter does not model (n, penalties, logprobs) disappear on encode.
 // A compression plugin must never trade tokens for silent data loss, so the
 // guards in this file detect those shapes up front and make Execute pass the
 // request through untouched instead.
@@ -270,7 +270,7 @@ func toolChoiceRoundTripSafe(raw json.RawMessage) bool {
 // keepsTopLevelFields reports whether every non-null top-level field of the
 // original request survived into the re-encoded body. The transforms only
 // rewrite string values inside messages, so a top-level key missing from the
-// output means the adapter's canonical model dropped it (seed, n, penalties,
+// output means the adapter's canonical model dropped it (n, penalties, logprobs,
 // a max_completion_tokens rename) — in that case the original request is
 // forwarded instead.
 func keepsTopLevelFields(original, encoded []byte) bool {

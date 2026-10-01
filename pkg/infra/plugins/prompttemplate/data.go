@@ -31,4 +31,9 @@ type PromptTemplateData struct {
 	// DiscardedMessages counts the conversation turns a rendered template
 	// replaced, which is otherwise invisible to the caller and to the operator.
 	DiscardedMessages int `json:"discarded_messages,omitempty"`
+	// DroppedClientVariables names client-supplied variables that collided
+	// with a gateway-resolved context variable (from a JWT claim or a
+	// trusted header) and were dropped in its favour, which is otherwise
+	// invisible to the caller and to the operator.
+	DroppedClientVariables []string `json:"dropped_client_variables,omitempty"`
 }

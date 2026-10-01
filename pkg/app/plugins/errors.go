@@ -14,7 +14,27 @@
 
 package plugins
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
+
+// DefaultBlockMessage is the vendor-neutral message a guardrail plugin returns
+// to the caller when its configured message is empty or whitespace-only. Every
+// guardrail plugin (azure_content_safety, bedrock_guardrail, google_model_armor,
+// openai_moderation) falls back to this same string on both the buffered and
+// streamed legs, so the caller never sees which vendor made the call.
+const DefaultBlockMessage = "This content violates our usage policy."
+
+// DefaultUnavailableMessage is the vendor-neutral message a guardrail plugin
+// returns to the caller when the guardrail itself could not be consulted (a
+// transport failure, an incomplete verdict, or an invalid configuration) and
+// the mode requires failing closed. Unlike DefaultBlockMessage, this one is
+// never overridden by the policy's configured message: that message is for a
+// real finding, not for the guardrail being unavailable. Every guardrail
+// plugin falls back to the same string here too, via HandleExternalFailure in
+// external_failure.go, the single place this message and its body are built.
+const DefaultUnavailableMessage = "This content could not be checked right now."
 
 // PluginError is returned by a plugin to reject a request and short-circuit the
 // chain with a specific HTTP status (e.g. rate limit 429, request too large 413).
@@ -37,4 +57,17 @@ func AsPluginError(err error) (*PluginError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// UndecodableRequestError rejects a request whose body does not decode in its
+// wire format. A plugin that enforces a policy on the tools of a request
+// returns it rather than let a body it could not inspect reach the upstream,
+// which may accept what the gateway could not decode.
+func UndecodableRequestError(plugin string) *PluginError {
+	return &PluginError{
+		StatusCode: http.StatusBadRequest,
+		Type:       "invalid_request_body",
+		Message:    plugin + ": the request body could not be decoded",
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
+	}
 }

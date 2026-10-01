@@ -64,9 +64,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"rate_limiter": {
 		name:  "Rate Limiter",
 		group: groupTrafficControl,
-		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
+		description: "Applies to LLM and native MCP traffic. Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition. " +
 			"Enforce rejects requests over the limit. Throttle delays each one by up to " + MaxThrottleDelay.String() +
-			" and then lets it through, so it smooths bursts but does not cap the rate.",
+			" and then lets it through, so it smooths bursts but does not cap the rate. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -90,10 +91,11 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
-					Key:         "group_by_header",
-					Label:       "Group By Header",
-					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer.",
+					Key:   "group_by_header",
+					Label: "Group By Header",
+					Type:  FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer. " +
+						"On native MCP tools/call traffic this reads the same transport request headers as an LLM call, so it partitions MCP the same way; when the header is absent from the request the limit falls back to the shared scope counter, on both planes alike.",
 				},
 			},
 		},
@@ -101,7 +103,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"request_size_limiter": {
 		name:        "Request Size Limiter",
 		group:       groupTrafficControl,
-		description: "Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
+		description: "Applies to LLM and native MCP traffic. Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -131,16 +133,17 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "require_content_length",
 					Label:       "Require Content-Length",
 					Type:        FieldTypeBoolean,
-					Description: "Reject requests that do not declare a Content-Length header.",
+					Description: "Reject requests that do not declare a Content-Length header. Native MCP tools/call traffic has no such header of its own: the gateway derives it from the tool call's actual payload size, so this setting never refuses an MCP call for lacking one.",
 					Default:     false,
 				},
 			},
 		},
 	},
 	"token_rate_limiter": {
-		name:        "LLM Budget",
-		group:       groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer.",
+		name:  "LLM Budget",
+		group: groupQuota,
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -269,9 +272,10 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		},
 	},
 	"per_tool_rate_limiter": {
-		name:        "Per-Tool Rate Limiter",
-		group:       groupTrafficControl,
-		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer.",
+		name:  "Per-Tool Rate Limiter",
+		group: groupTrafficControl,
+		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer. " +
+			"If the counter store is unavailable, requests are allowed through and the event records decision failed_open.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -419,11 +423,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     true,
 				},
 				{
-					Key:         "skip_if_streaming",
-					Label:       "Skip If Streaming",
-					Type:        FieldTypeBoolean,
-					Description: "Skip caching for streaming requests and responses.",
-					Default:     false,
+					Key:   "skip_if_streaming",
+					Label: "Skip If Streaming",
+					Type:  FieldTypeBoolean,
+					Description: "Skip caching for streaming requests and responses. " +
+						"Turning this off lets a cache hit answer a request that asked for a " +
+						"stream with a single non-streamed body.",
+					Default: true,
 				},
 				{
 					Key:         "ttl",
@@ -836,7 +842,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors. Streaming responses are inspected after the stream completes (post_response), not live.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors and timeouts unless on_error / on_timeout say fail_closed. Streamed responses are inspected block by block as they are produced, whenever the direction includes the response; set streaming.enabled to false to inspect them only after the stream completes.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -859,6 +865,34 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
 				},
+				{
+					Key:   "on_error",
+					Label: "On Error",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard cannot inspect the request: a transport failure, a server error, " +
+						"rejected or missing credentials, a missing base URL, unavailable entitlements, or a mask that " +
+						"could not be applied. fail_open lets the request through uninspected and marks it failed_open " +
+						"with the reason. A block or a rate limit is the guard's answer and is never affected.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
+				},
+				{
+					Key:   "on_timeout",
+					Label: "On Timeout",
+					Type:  FieldTypeEnum,
+					Description: "What to do when the guard does not answer in time. Defaults to fail_open, like on_error. " +
+						"A large enough payload can push the detector past the deadline, so fail_closed is the " +
+						"stricter choice for a policy that must never let text through uninspected.",
+					Enum:    enumOptions("fail_open", "fail_closed"),
+					Default: "fail_open",
+				},
+				{
+					Key:   "timeout",
+					Label: "Timeout",
+					Type:  FieldTypeDuration,
+					Description: "How long one evaluate call may take for this policy (e.g. 30s). " +
+						"Leave empty to use the deployment-wide TRUSTGUARD_TIMEOUT.",
+				},
 			},
 		},
 	},
@@ -876,11 +910,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "model",
-					Label:       "Model",
-					Type:        FieldTypeString,
-					Description: "Moderations model.",
-					Default:     "omni-moderation-latest",
+					Key:   "model",
+					Label: "Model",
+					Type:  FieldTypeString,
+					Description: "Moderations model: omni-moderation-latest or omni-moderation-2024-09-26. " +
+						"OpenAI has retired text-moderation-latest and text-moderation-stable. An unrecognised " +
+						"model already stored keeps loading (logged as a warning), but a new write must use a " +
+						"recognised one.",
+					Default: "omni-moderation-latest",
 				},
 				{
 					Key:         "stages",
@@ -895,10 +932,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "categories",
-					Label:       "Categories",
-					Type:        FieldTypeArray,
-					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned by OpenAI.",
+					Key:   "categories",
+					Label: "Categories",
+					Type:  FieldTypeArray,
+					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned " +
+						"by OpenAI. Valid keys: harassment, harassment/threatening, hate, hate/threatening, " +
+						"illicit, illicit/violent, self-harm, self-harm/intent, self-harm/instructions, " +
+						"sexual, sexual/minors, violence, violence/graphic. An unknown key is rejected on a " +
+						"new write; an already-stored one keeps working.",
 					Item: &Field{
 						Key:   "category",
 						Label: "Category",
@@ -906,10 +947,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					},
 				},
 				{
-					Key:         "thresholds",
-					Label:       "Thresholds",
-					Type:        FieldTypeMap,
-					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks.",
+					Key:   "thresholds",
+					Label: "Thresholds",
+					Type:  FieldTypeMap,
+					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks. " +
+						"Valid keys: harassment, harassment/threatening, hate, hate/threatening, illicit, " +
+						"illicit/violent, self-harm, self-harm/intent, self-harm/instructions, sexual, " +
+						"sexual/minors, violence, violence/graphic. An unknown key is rejected on a new write, " +
+						"but an already-stored one keeps working unchanged.",
 					Value: &Field{
 						Key:   "threshold",
 						Label: "Threshold",
@@ -932,7 +977,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "message",
 							Label:       "Message",
 							Type:        FieldTypeString,
-							Description: "Block message returned to the caller.",
+							Description: `Optional; returned to the caller when the guardrail blocks. Defaults to "This content violates our usage policy." when empty.`,
 						},
 					},
 				},
@@ -992,7 +1037,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "message",
 					Label:       "Block Message",
 					Type:        FieldTypeString,
-					Description: "Optional message returned to the caller when content is blocked.",
+					Description: `Optional; returned to the caller when the guardrail blocks. Defaults to "This content violates our usage policy." when empty.`,
 				},
 			},
 		},
@@ -1029,7 +1074,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "message",
 					Label:       "Block Message",
 					Type:        FieldTypeString,
-					Description: "Optional operator message; the 403 body always carries the matched policy and name.",
+					Description: `Optional; returned to the caller when the guardrail blocks, alongside the matched policy and name. Defaults to "This content violates our usage policy." when empty.`,
 				},
 				{
 					Key:      "credentials",
@@ -1138,7 +1183,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "message",
 					Label:       "Block Message",
 					Type:        FieldTypeString,
-					Description: "Optional operator message; the 403 body always carries the filter that fired.",
+					Description: `Optional; returned to the caller when the guardrail blocks, alongside the filter that fired. Defaults to "This content violates our usage policy." when empty.`,
 				},
 			},
 		},

@@ -378,6 +378,45 @@ the isolated requests of a parallel batch, so a plugin ordered ahead of another
 can change what it sees there. Plugins that gate a call — `tool_allowlist` — read
 `MCPTool`, never the metadata key.
 
+**Rewriters run before readers within a priority.** A parallel batch runs on
+isolated copies of the request and writes a rewrite back only when it ends, so a
+policy that reads content would otherwise score the original text next to a
+masker at the same priority. The planner therefore splits such a run into the
+rewriters first and then the plugins that opted in as content readers:
+`openai_moderation`, `azure_content_safety` and `semantic_cache` (at
+`pre_request`). Readers stay parallel among themselves, and a run with no
+rewriter, no reader, or a different priority is planned as before. If an earlier
+rewriter blocks or short-circuits, the readers after it do not run. The cost is
+latency: the rewriter and the slowest reader now add up instead of overlapping.
+`semantic_cache` counts as a rewriter at the response stages, so nothing is
+moved after it there.
+
+**Streamed responses follow the same rule.** A streamed segment does not use
+batches: the chain walks the streaming entries one at a time. The walk is now
+ordered like a batch (rewriters first, then opted-in readers at the same
+priority; other entries keep their place, priorities are never crossed), and a
+rewrite is handed on. When an enforcing entry masks a segment, the entries
+behind it receive the masked text, so `openai_moderation` at the same priority
+as `regex_replace` never sends the unmasked text to its provider. Consequences:
+
+- The last transform wins, and it already contains the earlier ones, because
+  each rewriter transforms the previous rewriter's output. Before, only the first
+  transform in the chain was kept and the others were dropped.
+- An `observe` entry's transform is never applied to the client, so it is not
+  handed on: the entries behind it judge the text the client will actually get.
+- A block still ends the chain and discards any transform of the same segment.
+- If an enforcing entry fails after an earlier one masked the segment, the mask
+  travels with the error: `on_error: fail_open` releases the masked text, never
+  the raw text, and cuts the stream if the mask cannot be applied.
+- Masks can stack: a wide pattern in a later rewriter may match inside the
+  placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders change,
+  never raw data.
+- The rule applies only within consecutive `parallel` entries of the same
+  priority. A reader with `parallel: false`, or at another priority, is not
+  moved; the console always writes `parallel: true`.
+- If the composed mask cannot be applied to the held text, the stream is cut, as
+  for a single rewriter.
+
 ## Deny pattern: "only group X may call this tool"
 
 `tool_allowlist` now supports MCP and judges the native tool name. Combined

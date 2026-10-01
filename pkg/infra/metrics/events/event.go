@@ -131,6 +131,12 @@ type MCP struct {
 	AccountRef        string `json:"account_ref,omitempty"`
 
 	PolicyScope *MCPPolicyScope `json:"policy_scope,omitempty"`
+	// Decision is the tools/call-level outcome PluginRunner recorded directly
+	// on the MCP span — currently only "failed_open", when a plugin stage
+	// failed on a non-block error and the call proceeded uninspected. Empty
+	// when nothing at that level failed; a per-plugin decision still lives on
+	// its own PolicyChain entry.
+	Decision string `json:"decision,omitempty"`
 }
 
 // MCPPolicyScope tells which scoped policies of the consumer applied to a

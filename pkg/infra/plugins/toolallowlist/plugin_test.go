@@ -668,8 +668,24 @@ func TestPlugin_Execute(t *testing.T) {
 			},
 		},
 		{
-			name:     "no-op undecodable body",
+			// A body with a top-level tool key gets invalid_tools_field
+			// (below); one without still fails closed, since legacy
+			// functions reach the upstream all the same.
+			name:     "undecodable body fails closed",
 			mode:     policy.ModeEnforce,
+			settings: map[string]any{"allow_tools": []string{"search_*"}},
+			req:      reqFor("openai", `{"messages":123,"functions":[{"name":"delete_db"}]}`),
+			check: func(t *testing.T, res *appplugins.Result, err error) {
+				assert.Nil(t, res)
+				pe, ok := appplugins.AsPluginError(err)
+				require.True(t, ok, "err = %v", err)
+				assert.Equal(t, 400, pe.StatusCode)
+				assert.Equal(t, "invalid_request_body", pe.Type)
+			},
+		},
+		{
+			name:     "observe records an undecodable body",
+			mode:     policy.ModeObserve,
 			settings: map[string]any{"allow_tools": []string{"search_*"}},
 			req:      reqFor("openai", `{"messages":123}`),
 			check: func(t *testing.T, res *appplugins.Result, err error) {
@@ -903,52 +919,67 @@ func TestPlugin_Execute(t *testing.T) {
 	}
 }
 
-func TestGraftChangedFields(t *testing.T) {
-	full := []byte(`{"model":"gpt-4o","tools":[{"name":"a"},{"name":"b"}],"tool_choice":"auto"}`)
-	stripped := []byte(`{"model":"gpt-4o","tools":[{"name":"a"}],"tool_choice":"auto"}`)
+func TestPlugin_Execute_ResponsesInputItemItCannotDecode(t *testing.T) {
+	body := `{"model":"gpt-5","input":[` +
+		`{"role":"user","content":"find my calendar tool"},` +
+		`{"type":"tool_search_call","call_id":"ts1","execution":"client","arguments":{"query":"calendar"}},` +
+		`{"type":"function_call","call_id":"c1","name":"search_web","arguments":{"q":1}}` +
+		`],"tools":[{"type":"function","name":"search_web","parameters":{"type":"object"}},{"type":"function","name":"delete_db","parameters":{"type":"object"}}]}`
+	p := New(adapter.NewRegistry())
+
+	res, err := run(p, policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, reqFor(string(adapter.FormatOpenAIResponses), body))
+
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "the disallowed tool is stripped, not let through")
+	var out struct {
+		Input []json.RawMessage `json:"input"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(res.RequestBody, &out))
+	require.Len(t, out.Tools, 1)
+	assert.Equal(t, "search_web", out.Tools[0].Name)
+	assert.Len(t, out.Input, 3, "the input items are kept as the client sent them")
+}
+
+func TestPlugin_Execute_NonChatRequestsPassThrough(t *testing.T) {
 	tests := []struct {
-		name     string
-		original string
-		check    func(t *testing.T, out []byte, err error)
+		name       string
+		capability string
+		format     string
+		body       string
 	}{
-		{
-			name:     "null original returns error instead of panicking",
-			original: `null`,
-			check: func(t *testing.T, out []byte, err error) {
-				require.ErrorIs(t, err, errNullBody)
-				assert.Nil(t, out)
-			},
-		},
-		{
-			name:     "case variant of grafted key is dropped",
-			original: `{"model":"gpt-4o","Tools":[{"name":"a"},{"name":"b"}],"tool_choice":"auto","extra":1}`,
-			check: func(t *testing.T, out []byte, err error) {
-				require.NoError(t, err)
-				m := bodyMap(t, out)
-				_, hasVariant := m["Tools"]
-				assert.False(t, hasVariant)
-				assert.JSONEq(t, `[{"name":"a"}]`, string(m["tools"]))
-				assert.JSONEq(t, `1`, string(m["extra"]))
-			},
-		},
-		{
-			name:     "case variant of untouched key is preserved",
-			original: `{"model":"gpt-4o","tools":[{"name":"a"},{"name":"b"}],"Tool_Choice":"auto"}`,
-			check: func(t *testing.T, out []byte, err error) {
-				require.NoError(t, err)
-				m := bodyMap(t, out)
-				assert.JSONEq(t, `"auto"`, string(m["Tool_Choice"]))
-				assert.JSONEq(t, `[{"name":"a"}]`, string(m["tools"]))
-			},
-		},
+		{name: "embeddings token ids", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[1,2,3]}`},
+		{name: "embeddings token id batches", capability: "embeddings", format: "openai_embeddings", body: `{"model":"text-embedding-3-small","input":[[1,2],[3]]}`},
+		{name: "embeddings input it cannot decode", capability: "embeddings", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
+		{name: "rerank body it cannot decode", capability: "rerank", format: "cohere_rerank", body: `{"model":"m","query":1}`},
+		{name: "embeddings format without a capability", format: "openai_embeddings", body: `{"model":"m","input":[1,"a"]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			out, err := graftChangedFields([]byte(tt.original), full, stripped)
-			tt.check(t, out, err)
+			req := reqFor(tt.format, tt.body)
+			req.ProxyCapability = tt.capability
+
+			res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+			require.NoError(t, err)
+			assert.Equal(t, 200, res.StatusCode)
+			assert.Nil(t, res.RequestBody)
 		})
 	}
+}
+
+func TestPlugin_Execute_ChatRequestItCannotDecodeFailsClosed(t *testing.T) {
+	req := reqFor("openai", `{"messages":123,"functions":[{"name":"delete_db"}]}`)
+	req.ProxyCapability = "chat"
+
+	res, err := run(New(adapter.NewRegistry()), policy.ModeEnforce, map[string]any{"allow_tools": []string{"search_*"}}, req)
+
+	assert.Nil(t, res)
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, 400, pe.StatusCode)
 }
 
 func TestPlugin_ScopeInertSafe_IsFalseBecauseItGatesByToolName(t *testing.T) {

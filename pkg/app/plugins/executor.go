@@ -19,7 +19,10 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
+	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -129,13 +132,26 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		defer spans.publish()
 	}
 
+	// current is the segment the next entry is handed. It starts as the raw
+	// segment and, after an enforcing entry rewrites it, carries the masked
+	// text, so a later entry (a reader above all) never sends the unmasked
+	// text to its third party (RUN-1744).
+	current := seg
+	// cutKeys names the entries that would author a cut on THIS segment. The
+	// stored list is replaced at the end of every evaluated segment, because a
+	// cut can only happen on the last one: a mask an earlier block landed is not
+	// to be blamed for a later block's failure.
+	var cutKeys []string
+	if !seg.Closing {
+		defer func() { spans.setCut(seg, cutKeys) }()
+	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
 		if !ok {
 			continue
 		}
-		event := spans.eventFor(ctx, seg, entry)
-		call := seg
+		event := spans.eventFor(ctx, current, entry)
+		call := current
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
 			call.Findings = entryFindings(seg.Findings, entry)
@@ -159,15 +175,46 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 			if seg.Closing {
 				continue
 			}
-			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			// Observe never blocks, and streaming.on_error is the stream's
+			// answer for entries that can: an observe entry that could not
+			// inspect a segment records that it failed open and lets the
+			// rest of the chain carry on, as its buffered leg does.
+			if !Blocks(entry.mode) {
+				SetDecisionFromOutcome(event, decisionFailedOpen)
+				continue
+			}
+			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			// An earlier enforcing entry may already have masked this segment.
+			// Hand that mask back with the error: a caller that resolves the
+			// failure as fail_open releases the held text, and it must release
+			// the masked text, never the raw text a mask already covered.
+			if outcome.HasTransform {
+				return outcome, failure
+			}
+			return nil, failure
 		}
 		if seg.Closing || verdict == nil {
 			continue
 		}
-		transformed := outcome.HasTransform
 		stop := e.mergeVerdict(outcome, verdict, entry)
-		if stop || (!transformed && outcome.HasTransform) {
-			spans.markCut(seg, entry)
+		// Hand-off mirrors mergeVerdict: only a transform from an entry that
+		// blocks is applied to what the client receives, so only that one
+		// changes what the entries behind it see. An observe transform is
+		// never applied, and the entries behind must judge what is released.
+		if !stop && verdict.HasTransform && Blocks(entry.mode) {
+			current = segmentAfterTransform(current, verdict.Transformed)
+		}
+		switch {
+		case stop:
+			// A block is the cut's one author: the transforms of the same
+			// segment are discarded with it, so their entries do not share it.
+			cutKeys = []string{spanKey(seg, entry)}
+		case verdict.HasTransform && Blocks(entry.mode):
+			// Every entry whose transform ends up in the final mask is a
+			// candidate for the rewrite that could not be applied.
+			if key := spanKey(seg, entry); !slices.Contains(cutKeys, key) {
+				cutKeys = append(cutKeys, key)
+			}
 		}
 		if stop {
 			break
@@ -178,9 +225,34 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 
 func (e *executor) streamEntries(in StageInput) []chainEntry {
 	if in.Plan != nil {
-		return in.Plan.entriesFor(policy.StagePreResponse)
+		return in.Plan.streamEntriesFor()
 	}
-	return buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)
+	return OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false))
+}
+
+// segmentAfterTransform is the segment the entries behind a rewriter receive.
+// Transformed replaces the whole of Accumulated (SegmentVerdict), so it becomes
+// the new Accumulated. Text is the delta of the block: the tail of the masked
+// text from where the block began, or from where the mask first diverged from
+// the raw text when that is earlier, so masked text is never left out of it.
+// Reasoning and ToolCalls are unchanged: the guard refuses a transform over a
+// block that carries either.
+func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment {
+	start := len(seg.Accumulated) - len(seg.Text)
+	if start < 0 {
+		start = 0
+	}
+	common := 0
+	for common < len(seg.Accumulated) && common < len(transformed) && seg.Accumulated[common] == transformed[common] {
+		common++
+	}
+	from := min(start, common)
+	for from > 0 && from < len(transformed) && !utf8.RuneStart(transformed[from]) {
+		from--
+	}
+	seg.Accumulated = transformed
+	seg.Text = transformed[from:]
+	return seg
 }
 
 // mergeVerdict folds one verdict into the consolidated outcome and reports
@@ -213,23 +285,18 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		return true
 	}
 	if verdict.HasTransform {
-		if outcome.HasTransform {
-			e.warnExcessStreamTransform(entry)
-			return false
-		}
+		// The last transform wins: each entry is handed the text the previous
+		// rewriter produced (segmentAfterTransform), so the last one already
+		// carries every earlier mask.
 		outcome.HasTransform = true
 		outcome.Transformed = verdict.Transformed
+		// Type and Message describe the entry whose transform is kept.
+		if verdict.Type != "" {
+			outcome.Type = verdict.Type
+			outcome.Message = verdict.Message
+		}
 	}
 	return false
-}
-
-func (e *executor) warnExcessStreamTransform(entry chainEntry) {
-	if e.logger == nil {
-		return
-	}
-	e.logger.Warn("stream segment produced multiple transforms; keeping first in chain order",
-		slog.String("stage", string(policy.StagePreResponse)),
-		slog.String("slug", entry.config.Slug))
 }
 
 func (e *executor) runBatch(
@@ -302,6 +369,31 @@ func (e *executor) runOne(
 		Response: resp,
 		Event:    event,
 	})
+
+	if err != nil {
+		if _, ok := AsPluginError(err); !ok && !Blocks(entry.mode) && ctx.Err() == nil {
+			// Observe never blocks, and a plugin that could not run at all —
+			// a counter-store outage that slipped past its own fail-open
+			// handling, a transport error, anything that is not a deliberate
+			// PluginError verdict — must not stop the chain or bubble up as a
+			// 502 either. This mirrors what RunStreamSegment already does for
+			// observe-mode stream entries: fail open, record it, move on.
+			//
+			// ctx.Err() != nil is excluded on purpose: the caller's own
+			// cancellation (a client disconnect, an upstream deadline
+			// unwinding the whole chain, a sibling in the same parallel
+			// batch blocking and canceling gctx) is not this plugin failing
+			// on its own, and treating it as failed_open would misreport
+			// every abandoned request as an infrastructure incident.
+			origErr := err
+			if event != nil {
+				event.SetError(origErr)
+				SetDecisionFromOutcome(event, decisionFailedOpen)
+			}
+			e.warnFailedOpen(entry, stage, origErr)
+			res, err = &Result{StatusCode: http.StatusOK}, nil
+		}
+	}
 
 	if event != nil {
 		event.SetSLatency(time.Since(start))
@@ -442,6 +534,22 @@ func (e *executor) applyResults(
 		}
 	}
 	return stopApplied
+}
+
+// warnFailedOpen logs the one Warn line a buffered-path entry gets when it
+// failed open in a non-blocking mode: same shape as warnExcessWriter, kept
+// next to it since both are runOne/runBatch's own diagnostics rather than
+// something the plugin logged itself.
+func (e *executor) warnFailedOpen(entry chainEntry, stage policy.Stage, err error) {
+	if e.logger == nil {
+		return
+	}
+	e.logger.Warn("plugin failed open on a non-blocking mode",
+		slog.String("plugin", entry.plugin.Name()),
+		slog.String("stage", string(stage)),
+		slog.String("mode", string(entry.mode)),
+		slog.String("decision", decisionFailedOpen),
+		slog.Any("error", err))
 }
 
 func (e *executor) warnExcessWriter(stage policy.Stage, capability string) {

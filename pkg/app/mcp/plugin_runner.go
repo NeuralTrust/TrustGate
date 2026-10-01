@@ -21,12 +21,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 // codePolicyBlocked is a server-defined JSON-RPC error code (in the reserved
@@ -52,6 +54,12 @@ const (
 	directionInput  = "input"
 	directionOutput = "output"
 )
+
+// decisionFailedOpen is the same "failed_open" token every fail-open decision
+// uses elsewhere in the gateway (pkg/app/plugins/external_failure.go,
+// pkg/infra/plugins/trustguard); kept as its own constant here rather than an
+// import, since none of those packages export it.
+const decisionFailedOpen = "failed_open"
 
 // PluginRunner runs the resolved plugin chain on the native MCP tools/call
 // path, mirroring pkg/app/proxy for the LLM path. It is a thin adapter over the
@@ -131,9 +139,9 @@ func (r *PluginRunner) PreRequest(
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(rc, call)
+	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
 	}
 	in := r.stageInput(rc, call, policy.StagePreRequest)
@@ -143,7 +151,7 @@ func (r *PluginRunner) PreRequest(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -161,7 +169,7 @@ func (r *PluginRunner) PreRequest(
 	// place. Read the arguments back out so the upstream receives the masked
 	// payload; forwarding the originals would leak exactly what the plugin was
 	// asked to redact.
-	return &StageResult{Arguments: r.rewrittenArguments(rc, call.Exposed, call.Arguments, reqCtx.Body)}, nil
+	return &StageResult{Arguments: r.rewrittenArguments(ctx, rc, call.Exposed, call.Arguments, reqCtx.Body)}, nil
 }
 
 func (r *PluginRunner) stageInput(rc *appconsumer.RoutableConsumer, call ToolCall, stage policy.Stage) appplugins.StageInput {
@@ -175,6 +183,7 @@ func (r *PluginRunner) stageInput(rc *appconsumer.RoutableConsumer, call ToolCal
 // body, or nil when nothing usable changed. The tool name is deliberately not
 // honoured: routing is the gateway's decision, not a body writer's.
 func (r *PluginRunner) rewrittenArguments(
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	original json.RawMessage,
@@ -185,7 +194,7 @@ func (r *PluginRunner) rewrittenArguments(
 	}
 	var params mcpToolCallParams
 	if err := json.Unmarshal(body, &params); err != nil {
-		r.logFailOpen(rc, policy.StagePreRequest, directionInput,
+		r.logFailOpen(ctx, rc, policy.StagePreRequest, directionInput,
 			fmt.Errorf("mcp: plugin left an unparseable tools/call body: %w", err))
 		return nil
 	}
@@ -215,9 +224,9 @@ func (r *PluginRunner) PreResponse(
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(rc, call)
+	reqCtx, err := r.buildRequestContext(ctx, rc, call)
 	if err != nil {
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
 	}
 	in := r.stageInput(rc, call, policy.StagePreResponse)
@@ -232,7 +241,7 @@ func (r *PluginRunner) PreResponse(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return nil, blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -294,7 +303,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return blockToRPCError(pe)
 		}
-		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		r.logFailOpen(ctx, rc, policy.StagePreResponse, directionOutput, err)
 		return nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
@@ -316,14 +325,25 @@ func (r *PluginRunner) PreResponseDiscovery(
 // logFailOpen records a guard/plugin failure that the runner deliberately does
 // not surface. RUN-832 requires a tools/call to proceed on guard errors in both
 // directions; only ids and outcome are logged, never tool payloads.
-func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage policy.Stage, direction string, err error) {
+//
+// Per RUN-1675, the log line is no longer the only place this lands: the
+// failure is also recorded as decision failed_open on the request's own MCP
+// span (trace.SpanFromContext(ctx)) so it is visible on the event, the way
+// the LLM plane's plugin spans already record their own fail-open decisions.
+// ctx may carry no span (a caller with no HTTP request behind it, e.g. a unit
+// test) — SetMCPDecision is skipped, not defaulted, since there is nothing to
+// stamp it on.
+func (r *PluginRunner) logFailOpen(ctx context.Context, rc *appconsumer.RoutableConsumer, stage policy.Stage, direction string, err error) {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPDecision(decisionFailedOpen)
+	}
 	if r.logger == nil {
 		return
 	}
 	r.logger.Warn("mcp plugin stage failed, failing open",
 		slog.String("stage", string(stage)),
 		slog.String("direction", direction),
-		slog.String("outcome", "failed_open"),
+		slog.String("outcome", decisionFailedOpen),
 		slog.String("gateway_id", rc.Consumer.GatewayID.String()),
 		slog.String("error", err.Error()),
 	)
@@ -335,7 +355,27 @@ func (r *PluginRunner) logFailOpen(rc *appconsumer.RoutableConsumer, stage polic
 // isolated request; the MetadataMCP* keys mirror it for plugins that only read
 // metadata, but a plugin can overwrite those, so gating decisions read the
 // fields.
+//
+// Headers starts from the real inbound HTTP request headers (the transport
+// tools/call actually arrived on, stashed on ctx by the HTTP handler via
+// infracontext.WithInboundHeaders) so a header-keyed setting — Rate Limiter's
+// Group by header — partitions MCP the same way it partitions LLM (RUN-1674):
+// the LLM plane's own RequestContext.Headers is every header off the real
+// request verbatim (pkg/api/handler/http/proxy/proxy_handler.go
+// buildRequestContext), with no filtering, so mirroring that here means no
+// filtering either. Content-Length is then always overwritten with a
+// synthetic value: the real header (when the transport sent one at all)
+// describes the outer JSON-RPC envelope's length, not the marshaled
+// {name, arguments} body this RequestContext actually carries in Body and
+// that request_size_limiter measures — keeping the real value here would
+// satisfy the "header present" check with a number that describes a
+// different payload, which is not meaningfully true of this synthetic
+// request. ctx may be nil (kept accepted for callers without one); a request
+// with no stashed headers — nil ctx, or a caller that never went through the
+// HTTP handler — simply carries only the synthetic Content-Length, same as
+// before this header propagation existed.
 func (r *PluginRunner) buildRequestContext(
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	call ToolCall,
 ) (*infracontext.RequestContext, error) {
@@ -343,6 +383,11 @@ func (r *PluginRunner) buildRequestContext(
 	if err != nil {
 		return nil, fmt.Errorf("mcp: marshal tools/call params: %w", err)
 	}
+	headers := cloneInboundHeaders(ctx)
+	if headers == nil {
+		headers = make(map[string][]string, 1)
+	}
+	headers["Content-Length"] = []string{strconv.Itoa(len(body))}
 	reqCtx := &infracontext.RequestContext{
 		GatewayID:      rc.Consumer.GatewayID.String(),
 		ConsumerID:     rc.Consumer.ID.String(),
@@ -354,6 +399,7 @@ func (r *PluginRunner) buildRequestContext(
 		MCP:            true,
 		MCPToolCallID:  call.ClientToolCallID,
 		Body:           body,
+		Headers:        headers,
 	}
 	if call.Registry != nil {
 		reqCtx.RegistryID = call.Registry.ID.String()
@@ -366,6 +412,30 @@ func (r *PluginRunner) buildRequestContext(
 		}
 	}
 	return reqCtx, nil
+}
+
+// cloneInboundHeaders returns a fresh shallow copy of the headers
+// infracontext.WithInboundHeaders stashed on ctx (nil when none were stashed,
+// or ctx is nil — a caller with no HTTP request behind it, e.g. a unit test
+// building a ToolCall directly). Copying again on top of the clone
+// WithInboundHeaders already made keeps buildRequestContext's Content-Length
+// override from mutating the map a concurrent stage call sharing the same
+// ctx might still be reading; the value slices themselves are never mutated,
+// only the map's "Content-Length" entry is replaced wholesale, so sharing
+// those is safe.
+func cloneInboundHeaders(ctx context.Context) map[string][]string {
+	if ctx == nil {
+		return nil
+	}
+	src := infracontext.InboundHeadersFromContext(ctx)
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {

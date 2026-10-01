@@ -95,6 +95,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
 | `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
 | `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
+| `trustgate.mcp.decision` | `mcp.decision` (call-level outcome; only `failed_open` today, when a plugin stage failed on a non-block error and the call proceeded uninspected. Omitted when nothing at that level failed — a per-plugin decision still lives in `policy_chain[]`) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
@@ -258,7 +259,7 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | `guard_timeout` | `degraded_reason` | A block's verdict did not arrive and the held text was released uninspected |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
-| `provider_not_streaming` | `skip_reason` | The leg opted into per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
+| `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |
 
 **A cut is not always a verdict.** Under `on_error: fail_closed` a guard call that fails
 outright stops the stream too, and that stop is reported the way a verdict's is:
@@ -274,6 +275,156 @@ written and is a real HTTP 403 — carries a reason, while a cut after the first
 an HTTP 200 whose `status.reason` is empty. On the wire the response ends with the
 dialect's content-filter terminator, and on the event the cut is visible only through
 `streaming.cut_at_eval`. Charting cuts means reading that field, not `status.reason`.
+
+### External guardrail failures
+
+`azure_content_safety`, `bedrock_guardrail`, `google_model_armor` and `openai_moderation`
+record a failure to reach a verdict the same way. The entry's `decision` says what happened
+to the request, not what the policy would have done in enforce:
+
+| Mode | `decision` | Request |
+|------|------------|---------|
+| enforce | `failed_closed` | Refused with HTTP 502, error type `guardrail_unavailable`; later policies in the chain do not run |
+| observe | `failed_open` | Forwarded; the chain carries on |
+
+Their `extras` carry two keys:
+
+| Key | Meaning |
+|-----|---------|
+| `failure_reason` | `transport` (the call failed or returned non-2xx), `verdict_incomplete` (the provider answered without covering what the policy asked for), `config_invalid` (the stored settings or credentials could not be used), `decode_failed` (the gateway could not read the body; always `failed_open`, in both modes) |
+| `failure_detail` | Optional. The category, or the Model Armor sub-reason, that produced no verdict |
+
+A streamed response leg follows `streaming.on_error` for enforce entries; an observe entry
+that fails records `failed_open` and never cuts the stream.
+
+**Changed in RUN-1672.** `azure_content_safety` no longer emits the `failed_open` boolean,
+and its observe-mode failures used to say `failed_closed`. `google_model_armor`'s
+`failure_reason` used to carry `filter_not_in_template` / `filter_not_executed`; those
+values now travel in `failure_detail`, next to `failure_reason: verdict_incomplete`.
+`openai_moderation`'s enforce failures used to say `unavailable`.
+
+### Counter-store (rate-limit / budget) failures
+
+`rate_limiter`, `per_tool_rate_limiter` and `token_rate_limiter` all read and write a
+counter in Redis on every call. Unlike the external guardrails above, an outage here is
+**TrustGate's own infrastructure**, not a third party the operator asked to gate traffic:
+the product rule is that our own infrastructure fails open, in every mode, enforce
+included — only a third-party guardrail earns a fail-closed refusal. So, unlike the
+external guardrails' enforce/observe split, there is no mode-dependent branch here at all:
+
+| Mode | `decision` | Request |
+|------|------------|---------|
+| enforce, throttle or observe | `failed_open` | Forwarded; the chain carries on |
+
+This applies to both legs of the counter: a failed read (the limit/budget could not be
+checked) and a failed record/accrue (the check passed but the write-back failed) both
+fail open the same way — a successful read that only fails to persist must not turn into
+a refusal.
+
+**Exception: a canceled or timed-out request is not an outage.** When the request itself
+was already canceled or past its deadline (a client disconnect, an upstream timeout
+unwinding the chain), the counter-store call failing is a symptom of that, not evidence our
+infrastructure is down. That case emits no `failed_open` decision, no `counter_unavailable`
+extras and no warning: the plugin's error simply propagates as it would have without this
+behavior.
+
+Their `extras` carry the same two keys the external guardrails use, plus whatever the call
+already knew before the counter store failed:
+
+| Key | Meaning |
+|-----|---------|
+| `failure_reason` | Always `counter_unavailable` |
+| `failure_detail` | Which counter operation failed: `read` / `record` (`rate_limiter`, `per_tool_rate_limiter`), or `read_counter` / `record_tokens` / `record_cost` (`token_rate_limiter`) |
+
+For example, `rate_limiter`'s extras keep `rate_limit_exceeded`, `current_count` and
+`limit` from the read that already succeeded, and `token_rate_limiter`'s keep `provider`,
+`model` and any cost-cap fields — a record failure never wipes out what the read (or the
+request itself) already established.
+
+### Ran but had nothing to evaluate (`per_tool_rate_limiter`)
+
+A `policy_chain[]` entry normally exists only when the plugin recorded something: the builder
+drops a span with no decision, extras, score or error. `per_tool_rate_limiter` on a
+`pre_request` leg whose request declares no tools, or none matching a rule, used to record
+nothing, so the entry vanished and looked the same as a policy that was never attached. It now
+records the same `skipped` / `skip_reason` keys `trustguard` uses (additive, only on these entries):
+
+| Key | Meaning |
+|-----|---------|
+| `stage` | `pre_request` |
+| `skipped` | Always `true` |
+| `skip_reason` | `no_tools` (no tool declared, no tool result to count, or an MCP call with no tool name) or `no_matching_rule` (tools present, none matches a rule) |
+
+The entry carries **no `decision`**, so it is neither allowed nor blocked and is never `flagged`.
+This is opt-in per plugin: every other plugin that runs and records nothing is still dropped
+from the chain. It does not distinguish "not evaluated" from "not attached to this consumer";
+that needs the consumer's policy set and is not carried by the event.
+
+**Decision precedence when a window was already found exceeded.** `rate_limiter` runs in
+throttle or observe when its read already finds the window over budget (enforce would have
+refused the request outright, before any record is attempted). If the record that follows
+then fails, the `throttle` / `observe` decision from that exceeded read wins over
+`failed_open`: the exceeded signal is what those modes exist to report, and
+`failure_reason: counter_unavailable` still travels in the same extras to say the
+write-back failed on top of it. A read that was not already exceeded keeps `failed_open`.
+
+As a second layer, any policy running in a non-blocking mode (observe) that fails with an
+error of its own — from any plugin, not just this family, whenever that plugin did not
+already fail itself open — is also forwarded rather than surfaced as a gateway error, the
+same way a streamed response already handles an observe-mode inspection failure.
+
+**New in RUN-1675.**
+
+### TrustGuard failures
+
+`trustguard` treats a failure of TrustGuard itself differently from the providers above:
+it **fails open by default**, so a TrustGuard problem never cuts the client's request.
+A policy opts into refusing with `on_error: fail_closed`, and `on_timeout: fail_closed`
+for timeouts. An unset `on_timeout` inherits `on_error`. A TrustGuard block (a finding)
+and a 429 rate limit are the guard's answers, not failures, and always block.
+
+| `on_error` / `on_timeout` | `decision` | Request |
+|---------------------------|------------|---------|
+| `fail_open` (default) | `failed_open` | Forwarded uninspected; the chain carries on |
+| `fail_closed` | `failed_closed` | Refused (502, 503 or 504 depending on the reason) |
+
+`extras.failed_open` / `extras.failed_closed` is set to match, and `extras.failure_reason`
+names the cause. The same token labels `trustguard_evaluate_failures_total{reason}`:
+
+| `failure_reason` | Cause |
+|------------------|-------|
+| `transport` | The call failed, or returned a non-2xx status other than the ones below |
+| `timeout` | The call did not answer within the policy's `timeout` (governed by `on_timeout`) |
+| `unauthorized` | `/v1/evaluate` answered 401 (after one token refresh) or 403, or `/v1/token` answered 400, 401 or 403 |
+| `entitlements_unavailable` | `/v1/evaluate` answered 503 |
+| `credentials_missing` | The gateway has no `TRUSTGUARD_CLIENT_ID` / `TRUSTGUARD_CLIENT_SECRET` |
+| `base_url_missing` | The gateway has no `TRUSTGUARD_BASE_URL` |
+| `transform_failed` | TrustGuard asked for a mask the gateway could not write back; `degraded_reason` says which step failed. Under `fail_open` the content is forwarded **unmasked**. Under `fail_closed` the request is blocked and the decision is `blocked`, because TrustGuard did find something |
+| `config_invalid` | The stored settings could not be parsed. Always `failed_open`: there is no `on_error` to read |
+| `gateway_id_missing` | The request carried no gateway id. Always `failed_open` |
+| `payload_unreadable` | The gateway could not read the body. Always `failed_open` |
+
+On a streamed response leg the plugin resolves `streaming.on_error` itself. Under
+`fail_open` it allows the block, so later policies in the chain still inspect it, and the
+closing event carries `decision: failed_open` with the last `failure_reason`. After three
+failed blocks in a row the policy stops calling TrustGuard for the rest of that stream, and
+the closing event also carries `streaming.fallback_reason: segmentation_unavailable`. A block
+the guard does answer resets the count. A stream that was cut reports `blocked` even if earlier
+blocks failed open; those still count in `trustguard_evaluate_failures_total`. Under
+`fail_closed` the block is returned as a failure and the stream is cut. The
+`trustguard_stream_evals_total` / `trustguard_stream_responses_total` metrics label such a
+stream `outcome="failed_open"`, ranked just below `blocked`; the label reflects the policy
+that reports the stream, so on a route with two TrustGuard policies read the other one's span.
+Without a stream identity (telemetry disabled, so no trace) nothing is recorded per stream:
+each failed block fails open on its own and inspection never retires.
+
+**Changed in RUN-1725.** Rejected or missing credentials, a missing base URL and a 503 used
+to always fail closed, and an unappliable mask always blocked; all now follow `on_error`.
+`on_timeout` used to default to `fail_closed`; it now inherits `on_error`, whose default is
+`fail_open`. Policies saved through the console since `on_timeout` was added hold an
+explicit `on_timeout: fail_closed` and keep it. On a stream these failures used to be
+reported as `degraded_reason: guard_timeout`; they now appear as `failed_open` on the
+closing event.
 
 ### Savings semantics
 

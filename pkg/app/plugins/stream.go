@@ -213,7 +213,7 @@ type streamSpans struct {
 	mu     sync.Mutex
 	events map[string]*metrics.EventContext
 	spent  map[string]time.Duration
-	cutBy  map[string]string
+	cutBy  map[string][]string
 }
 
 // NewStreamSpanContext derives a context carrying the plugin spans of a single
@@ -229,7 +229,7 @@ func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 	spans := &streamSpans{
 		events: make(map[string]*metrics.EventContext),
 		spent:  make(map[string]time.Duration),
-		cutBy:  make(map[string]string),
+		cutBy:  make(map[string][]string),
 	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
@@ -297,17 +297,23 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 	s.spent[spanKey(seg, entry)] += d
 }
 
-// markCut names the entry whose verdict stopped the stream. The guard knows a
-// stream was cut but not by whom, and only the chain can tell: without this an
+// setCut records which entries author the cut on the segment just evaluated,
+// replacing whatever an earlier segment stored. The guard knows a stream was
+// cut but not by whom, and only the chain can tell: without this an
 // observe-mode entry that cut nothing would publish the cut an enforce-mode
-// entry beside it made.
-func (s *streamSpans) markCut(seg StreamSegment, entry chainEntry) {
+// entry beside it made. A block names one entry; a transform names every entry
+// whose mask went into the one that could not be applied.
+func (s *streamSpans) setCut(seg StreamSegment, keys []string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cutBy[seg.StreamID] = spanKey(seg, entry)
+	if len(keys) == 0 {
+		delete(s.cutBy, seg.StreamID)
+		return
+	}
+	s.cutBy[seg.StreamID] = append([]string(nil), keys...)
 }
 
 // reporter names the entry asked to publish what describes the whole stream.
@@ -328,8 +334,8 @@ func (s *streamSpans) reporter(seg StreamSegment, entries []chainEntry) string {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cutter, ok := s.cutBy[seg.StreamID]; ok {
-		return cutter
+	if cutters := s.cutBy[seg.StreamID]; len(cutters) > 0 {
+		return cutters[0]
 	}
 	return first
 }
@@ -346,8 +352,13 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	defer s.mu.Unlock()
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
-	cutter, claimed := s.cutBy[seg.StreamID]
-	if (claimed && cutter != key) || (!claimed && !Blocks(entry.mode)) {
+	cutters := s.cutBy[seg.StreamID]
+	claimed := len(cutters) > 0
+	claimedByEntry := false
+	for _, k := range cutters {
+		claimedByEntry = claimedByEntry || k == key
+	}
+	if (claimed && !claimedByEntry) || (!claimed && !Blocks(entry.mode)) {
 		report.CutAtEval = 0
 		report.CutOffsetChars = 0
 	}

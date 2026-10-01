@@ -38,11 +38,16 @@ type Data struct {
 	LatencyMS      int64  `json:"latency_ms,omitempty"`
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degraded_reason,omitempty"`
-	// FailureReason says why a failed_closed call failed when the cause was a
-	// filter selected in block_on that produced no verdict: the template never
-	// enabled it (filter_not_in_template) or it did not run on this call
-	// (filter_not_executed). Filter names which one.
+	// FailureReason is one of appplugins.FailureReason (transport,
+	// verdict_incomplete, config_invalid, decode_failed) — the taxonomy shared
+	// by every external guardrail. It is set only on a failed_open/failed_closed
+	// decision.
 	FailureReason string `json:"failure_reason,omitempty"`
+	// FailureDetail is this plugin's own reason within FailureReason
+	// "verdict_incomplete": why a filter selected in block_on produced no
+	// verdict — the template never enabled it (filter_not_in_template) or it
+	// did not run on this call (filter_not_executed). Filter names which one.
+	FailureDetail string `json:"failure_detail,omitempty"`
 	// FilterVersion is the Model Armor filter version that produced the
 	// verdict. A template pointed at an alias rather than a pinned version
 	// changes behaviour when Google promotes a new one, with no deploy on our

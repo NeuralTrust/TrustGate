@@ -31,13 +31,21 @@ func maskedText(result *SanitizationResult) (string, bool) {
 	return data.Text, true
 }
 
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, msgIndex int, masked string) ([]byte, bool) {
+// rewriteRequest re-encodes the request in full once the mask changes its
+// text: an in-place edit could leave a copy of the masked text in a field the
+// canonical request does not model, so a redaction never keeps those fields.
+// An unchanged text forwards original as it came, keeping the prompt's cache
+// prefix byte for byte.
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, original []byte, creq *adapter.CanonicalRequest, msgIndex int, masked string) ([]byte, bool) {
 	if reg == nil || creq == nil || msgIndex < 0 || msgIndex >= len(creq.Messages) {
 		return nil, false
 	}
 	adp, err := reg.GetAdapter(format)
 	if err != nil {
 		return nil, false
+	}
+	if creq.Messages[msgIndex].Content == masked && original != nil {
+		return original, true
 	}
 	creq.Messages[msgIndex].Content = masked
 	body, err := adp.EncodeRequest(creq)

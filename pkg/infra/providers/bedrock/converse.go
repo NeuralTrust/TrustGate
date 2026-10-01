@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -61,7 +62,18 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 		p.messages = append(p.messages, msg)
 	}
 	for _, s := range req.System {
-		p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberText{Value: s.Text})
+		switch {
+		case s.CachePoint != nil:
+			if cachePointAllowed(p.system) {
+				p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberCachePoint{Value: sdkCachePoint(s.CachePoint)})
+			}
+		case s.GuardContent != nil:
+			if guard := sdkGuardContent(s.GuardContent); guard != nil {
+				p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberGuardContent{Value: guard})
+			}
+		case s.Text != "":
+			p.system = append(p.system, &bedrockTypes.SystemContentBlockMemberText{Value: s.Text})
+		}
 	}
 	p.tools = sdkToolConfig(req.ToolConfig)
 	return p, nil
@@ -69,10 +81,20 @@ func decodeConverseBody(body []byte) (*converseParams, error) {
 
 // foldSystemIntoFirstTurn moves the system instructions into the first user
 // turn, the way the old prompt templates carried them for models that have no
-// system slot. It reports whether there was anything to fold.
+// system slot. It reports whether there was anything to fold. A system with a
+// cachePoint or guarded content is moved block by block and not merged into
+// the turn's text, so the cachePoint still ends the system prefix. It writes
+// into fresh slices, so an input built from the params earlier keeps what it
+// sent.
 func (p *converseParams) foldSystemIntoFirstTurn() bool {
 	if len(p.system) == 0 {
 		return false
+	}
+	p.messages = slices.Clone(p.messages)
+	if lead := foldedSystemBlocks(p.system); lead != nil {
+		p.system = nil
+		p.prependToFirstTurn(lead)
+		return true
 	}
 	var sb strings.Builder
 	for _, block := range p.system {
@@ -88,23 +110,58 @@ func (p *converseParams) foldSystemIntoFirstTurn() bool {
 		return false
 	}
 	lead := &bedrockTypes.ContentBlockMemberText{Value: sb.String()}
-	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser {
-		first := &p.messages[0]
-		if len(first.Content) > 0 {
-			if text, ok := first.Content[0].(*bedrockTypes.ContentBlockMemberText); ok {
-				lead.Value += "\n\n" + text.Value
-				first.Content[0] = lead
-				return true
+	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser && len(p.messages[0].Content) > 0 {
+		if text, ok := p.messages[0].Content[0].(*bedrockTypes.ContentBlockMemberText); ok {
+			lead.Value += "\n\n" + text.Value
+			content := slices.Clone(p.messages[0].Content)
+			content[0] = lead
+			p.messages[0].Content = content
+			return true
+		}
+	}
+	p.prependToFirstTurn([]bedrockTypes.ContentBlock{lead})
+	return true
+}
+
+// foldedSystemBlocks returns the system as turn blocks when it holds more than
+// plain text (a cachePoint or guarded content), and nil when merging the text
+// loses nothing.
+func foldedSystemBlocks(system []bedrockTypes.SystemContentBlock) []bedrockTypes.ContentBlock {
+	var (
+		lead     []bedrockTypes.ContentBlock
+		keepEach bool
+	)
+	for _, block := range system {
+		switch b := block.(type) {
+		case *bedrockTypes.SystemContentBlockMemberText:
+			if b.Value != "" {
+				lead = append(lead, &bedrockTypes.ContentBlockMemberText{Value: b.Value})
+			}
+		case *bedrockTypes.SystemContentBlockMemberGuardContent:
+			lead = append(lead, &bedrockTypes.ContentBlockMemberGuardContent{Value: b.Value})
+			keepEach = true
+		case *bedrockTypes.SystemContentBlockMemberCachePoint:
+			if cachePointAllowed(lead) {
+				lead = append(lead, &bedrockTypes.ContentBlockMemberCachePoint{Value: b.Value})
+				keepEach = true
 			}
 		}
-		first.Content = append([]bedrockTypes.ContentBlock{lead}, first.Content...)
-		return true
+	}
+	if !keepEach {
+		return nil
+	}
+	return lead
+}
+
+func (p *converseParams) prependToFirstTurn(lead []bedrockTypes.ContentBlock) {
+	if len(p.messages) > 0 && p.messages[0].Role == bedrockTypes.ConversationRoleUser {
+		p.messages[0].Content = slices.Concat(lead, p.messages[0].Content)
+		return
 	}
 	p.messages = append([]bedrockTypes.Message{{
 		Role:    bedrockTypes.ConversationRoleUser,
-		Content: []bedrockTypes.ContentBlock{lead},
+		Content: lead,
 	}}, p.messages...)
-	return true
 }
 
 // systemUnsupported reports whether Bedrock rejected the request because the
@@ -155,6 +212,147 @@ func converseWithSystemFallback[T any](
 	return call(params)
 }
 
+// cacheRejectionMarkers are the ways a Bedrock ValidationException names a
+// cache checkpoint: its own field (cachePoint) or the Anthropic wording it
+// passes through for Claude (cache_control).
+var cacheRejectionMarkers = []string{"cachepoint", "cache point", "cache_control", "cache checkpoint"}
+
+// cachePointRejected reports whether Bedrock refused the request over its
+// cache checkpoints: a ValidationException that names one, or that rejects a
+// ttl while talking about caching. Throttling, and a validation error that
+// only happens to contain "cache", never cost the tenant a cache-less retry.
+func cachePointRejected(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationException" {
+		return false
+	}
+	msg := strings.ToLower(apiErr.ErrorMessage())
+	for _, marker := range cacheRejectionMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return strings.Contains(msg, "ttl") && strings.Contains(msg, "cach")
+}
+
+// converseWithCachePointFallback runs call, and when Bedrock rejects the
+// cachePoints, retries that one request once without them. Nothing is
+// remembered: models outside the capability table never send a cachePoint,
+// and a listed model rejects one over what a single request carried (more
+// than four, a 1h ttl after a 5m one, a misplaced checkpoint). The client is
+// shared by every tenant, so a memo keyed by model would let one malformed
+// body switch caching off for all of them.
+func converseWithCachePointFallback[T any](
+	params *converseParams,
+	call func(*converseParams) (T, error),
+) (T, error) {
+	out, err := call(params)
+	if err == nil || !cachePointRejected(err) || !params.stripCachePoints() {
+		return out, err
+	}
+	return call(params)
+}
+
+// applyCacheCapability removes what the model cannot take before the first
+// call: every cachePoint for a model without explicit caching, the tools
+// cachePoints for one that only caches system and messages, and the 1h ttl
+// for a 5m-only model. Downgrading every ttl to 5m keeps the 1h-before-5m
+// order Bedrock requires.
+func (p *converseParams) applyCacheCapability(c cacheCapability) {
+	if !c.explicit {
+		p.stripCachePoints()
+		return
+	}
+	if !c.tools {
+		p.stripToolCachePoints()
+	}
+	if !c.ttl1h {
+		p.clearCacheTTL()
+	}
+}
+
+// stripCachePoints removes every cachePoint and reports whether there was
+// one. It never writes into a slice the params already held, so an input
+// built from them earlier keeps what it sent.
+func (p *converseParams) stripCachePoints() bool {
+	stripped := p.stripToolCachePoints()
+	system := make([]bedrockTypes.SystemContentBlock, 0, len(p.system))
+	for _, block := range p.system {
+		if _, ok := block.(*bedrockTypes.SystemContentBlockMemberCachePoint); ok {
+			stripped = true
+			continue
+		}
+		system = append(system, block)
+	}
+	if len(system) != len(p.system) {
+		p.system = system
+	}
+	messages := make([]bedrockTypes.Message, len(p.messages))
+	for i, msg := range p.messages {
+		content := make([]bedrockTypes.ContentBlock, 0, len(msg.Content))
+		for _, block := range msg.Content {
+			if _, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok {
+				continue
+			}
+			content = append(content, block)
+		}
+		if len(content) != len(msg.Content) {
+			stripped = true
+			msg.Content = content
+		}
+		messages[i] = msg
+	}
+	p.messages = messages
+	return stripped
+}
+
+func (p *converseParams) stripToolCachePoints() bool {
+	if p.tools == nil {
+		return false
+	}
+	tools := make([]bedrockTypes.Tool, 0, len(p.tools.Tools))
+	for _, tool := range p.tools.Tools {
+		if _, ok := tool.(*bedrockTypes.ToolMemberCachePoint); ok {
+			continue
+		}
+		tools = append(tools, tool)
+	}
+	if len(tools) == len(p.tools.Tools) {
+		return false
+	}
+	cfg := *p.tools
+	cfg.Tools = tools
+	p.tools = &cfg
+	return true
+}
+
+func (p *converseParams) clearCacheTTL() {
+	for i, block := range p.system {
+		if cp, ok := block.(*bedrockTypes.SystemContentBlockMemberCachePoint); ok && cp.Value.Ttl != "" {
+			p.system[i] = &bedrockTypes.SystemContentBlockMemberCachePoint{Value: defaultCachePoint()}
+		}
+	}
+	for _, msg := range p.messages {
+		for i, block := range msg.Content {
+			if cp, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok && cp.Value.Ttl != "" {
+				msg.Content[i] = &bedrockTypes.ContentBlockMemberCachePoint{Value: defaultCachePoint()}
+			}
+		}
+	}
+	if p.tools == nil {
+		return
+	}
+	for i, tool := range p.tools.Tools {
+		if cp, ok := tool.(*bedrockTypes.ToolMemberCachePoint); ok && cp.Value.Ttl != "" {
+			p.tools.Tools[i] = &bedrockTypes.ToolMemberCachePoint{Value: defaultCachePoint()}
+		}
+	}
+}
+
+func defaultCachePoint() bedrockTypes.CachePointBlock {
+	return bedrockTypes.CachePointBlock{Type: bedrockTypes.CachePointTypeDefault}
+}
+
 func (p *converseParams) input(model string) *bedrockruntime.ConverseInput {
 	return &bedrockruntime.ConverseInput{
 		ModelId:         aws.String(model),
@@ -185,15 +383,39 @@ func sdkMessage(m adapter.ConverseMessage) (bedrockTypes.Message, error) {
 		if err != nil {
 			return bedrockTypes.Message{}, err
 		}
-		if block != nil {
-			msg.Content = append(msg.Content, block)
+		if block == nil {
+			continue
 		}
+		if _, ok := block.(*bedrockTypes.ContentBlockMemberCachePoint); ok && !cachePointAllowed(msg.Content) {
+			continue
+		}
+		msg.Content = append(msg.Content, block)
 	}
 	return msg, nil
 }
 
+// cachePointAllowed reports whether a cachePoint may follow the blocks kept so
+// far. Bedrock rejects one that opens a list or follows another cachePoint,
+// which a valid client body turns into when the block it marked has no SDK
+// translation here (documents, videos, S3 images, citations).
+func cachePointAllowed[T any](kept []T) bool {
+	if len(kept) == 0 {
+		return false
+	}
+	switch any(kept[len(kept)-1]).(type) {
+	case *bedrockTypes.ContentBlockMemberCachePoint,
+		*bedrockTypes.SystemContentBlockMemberCachePoint,
+		*bedrockTypes.ToolMemberCachePoint:
+		return false
+	default:
+		return true
+	}
+}
+
 func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock, error) {
 	switch {
+	case b.CachePoint != nil:
+		return &bedrockTypes.ContentBlockMemberCachePoint{Value: sdkCachePoint(b.CachePoint)}, nil
 	case b.ToolUse != nil:
 		input, err := sdkDocument(b.ToolUse.Input)
 		if err != nil {
@@ -214,6 +436,34 @@ func sdkContentBlock(b adapter.ConverseContentBlock) (bedrockTypes.ContentBlock,
 		return &bedrockTypes.ContentBlockMemberText{Value: b.Text}, nil
 	default:
 		return nil, nil
+	}
+}
+
+// sdkCachePoint sets Ttl only for 1h; without it Bedrock applies the 5m
+// default.
+func sdkCachePoint(cp *adapter.ConverseCachePoint) bedrockTypes.CachePointBlock {
+	block := defaultCachePoint()
+	if cp.TTL == string(bedrockTypes.CacheTTLOneHour) {
+		block.Ttl = bedrockTypes.CacheTTLOneHour
+	}
+	return block
+}
+
+func sdkGuardContent(g *adapter.ConverseGuardContent) bedrockTypes.GuardrailConverseContentBlock {
+	switch {
+	case g.Text != nil && g.Text.Text != "":
+		text := bedrockTypes.GuardrailConverseTextBlock{Text: aws.String(g.Text.Text)}
+		for _, q := range g.Text.Qualifiers {
+			text.Qualifiers = append(text.Qualifiers, bedrockTypes.GuardrailConverseContentQualifier(q))
+		}
+		return &bedrockTypes.GuardrailConverseContentBlockMemberText{Value: text}
+	case g.Image != nil && len(g.Image.Source.Bytes) > 0:
+		return &bedrockTypes.GuardrailConverseContentBlockMemberImage{Value: bedrockTypes.GuardrailConverseImageBlock{
+			Format: bedrockTypes.GuardrailConverseImageFormat(g.Image.Format),
+			Source: &bedrockTypes.GuardrailConverseImageSourceMemberBytes{Value: g.Image.Source.Bytes},
+		}}
+	default:
+		return nil
 	}
 }
 
@@ -300,6 +550,12 @@ func sdkToolConfig(tc *adapter.ConverseToolConfig) *bedrockTypes.ToolConfigurati
 	}
 	out := &bedrockTypes.ToolConfiguration{Tools: make([]bedrockTypes.Tool, 0, len(tc.Tools))}
 	for _, t := range tc.Tools {
+		if t.CachePoint != nil {
+			if cachePointAllowed(out.Tools) {
+				out.Tools = append(out.Tools, &bedrockTypes.ToolMemberCachePoint{Value: sdkCachePoint(t.CachePoint)})
+			}
+			continue
+		}
 		if t.ToolSpec == nil {
 			continue
 		}
@@ -416,7 +672,22 @@ func wireUsage(u *bedrockTypes.TokenUsage) *adapter.ConverseUsage {
 		TotalTokens:           int(aws.ToInt32(u.TotalTokens)),
 		CacheReadInputTokens:  int(aws.ToInt32(u.CacheReadInputTokens)),
 		CacheWriteInputTokens: int(aws.ToInt32(u.CacheWriteInputTokens)),
+		CacheDetails:          wireCacheDetails(u.CacheDetails),
 	}
+}
+
+func wireCacheDetails(details []bedrockTypes.CacheDetail) []adapter.ConverseCacheDetail {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make([]adapter.ConverseCacheDetail, 0, len(details))
+	for _, d := range details {
+		out = append(out, adapter.ConverseCacheDetail{
+			InputTokens: int(aws.ToInt32(d.InputTokens)),
+			TTL:         string(d.Ttl),
+		})
+	}
+	return out
 }
 
 // converseEventStream is the part of the SDK's ConverseStream event stream the

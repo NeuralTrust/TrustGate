@@ -16,6 +16,7 @@ package openaimoderation
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 const PluginName = "openai_moderation"
 
 const (
-	defaultModel = "omni-moderation-latest"
+	defaultModel = ModelOmniLatest
 
 	stagePreRequest  = "pre_request"
 	stagePreResponse = "pre_response"
@@ -120,4 +121,34 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 		}
 	}
 	return false
+}
+
+// unknownAgainstModel reports, for s's own Model, whether that model is
+// unrecognised, plus this config's own thresholds/categories keys that model
+// does not know about. Unlike ValidateSettingsWrite's check, it does not
+// weigh a previous version of the settings: every stored gap is worth a
+// load-time warning once, regardless of how it got there.
+func (s Settings) unknownAgainstModel() (modelUnknown bool, thresholds, categories []string) {
+	known, ok := categoriesForModel(s.Model)
+	if !ok {
+		return true, nil, nil
+	}
+	for cat := range s.Thresholds {
+		if _, isKnown := known[cat]; !isKnown {
+			thresholds = append(thresholds, cat)
+		}
+	}
+	sort.Strings(thresholds)
+	seen := make(map[string]struct{}, len(s.Categories))
+	for _, cat := range s.Categories {
+		if _, dup := seen[cat]; dup {
+			continue
+		}
+		seen[cat] = struct{}{}
+		if _, isKnown := known[cat]; !isKnown {
+			categories = append(categories, cat)
+		}
+	}
+	sort.Strings(categories)
+	return false, thresholds, categories
 }

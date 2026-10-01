@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,6 +91,7 @@ type polSpec struct {
 	parallel bool
 	global   bool
 	stages   []policy.Stage
+	mode     policy.Mode
 }
 
 func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
@@ -105,6 +107,7 @@ func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
 			Parallel: s.parallel,
 			Global:   s.global,
 			Stages:   s.stages,
+			Mode:     s.mode,
 		})
 	}
 	return out
@@ -637,4 +640,259 @@ func TestExecutor_RunStage_ParallelMetadataWriterReadersRaceSafe(t *testing.T) {
 	assert.Equal(t, []byte(`{"mutated":true}`), req.Body, "the single body mutator's write is folded into the request")
 	assert.Equal(t, map[string]interface{}{"by": "a_meta"}, resp.Metadata["written"], "the single metadata writer's nested write is merged back")
 	assert.Equal(t, map[string]interface{}{"k": "v"}, resp.Metadata["shared"], "pre-existing nested metadata read concurrently must survive untouched")
+}
+
+// newGuardrailStylePlugin builds a fake plugin whose Execute mirrors exactly
+// what an external guardrail (azure_content_safety, bedrock_guardrail,
+// google_model_armor, openai_moderation) does on a transport failure: it
+// hands the failure to HandleExternalFailure and returns whatever that
+// decides, mode by mode. It exists so this test exercises the real
+// executor/mode contract rather than a stand-in for it.
+func newGuardrailStylePlugin(name string) *fakePlugin {
+	return &fakePlugin{
+		name:   name,
+		stages: []policy.Stage{policy.StagePreRequest},
+		execFn: func(in ExecInput) (*Result, error) {
+			outcome := HandleExternalFailure(ExternalFailure{
+				Plugin: name,
+				Stage:  in.Stage,
+				Mode:   in.Mode,
+				Reason: FailureTransport,
+				Err:    context.DeadlineExceeded,
+			})
+			return outcome.Result, outcome.Err
+		},
+	}
+}
+
+func TestExecutor_RunStage_EnforceGuardrailFailureStopsChain(t *testing.T) {
+	calls := int32(0)
+	guardrail := newGuardrailStylePlugin("guardrail")
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, guardrail, after)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "guardrail", enabled: true, priority: 1, mode: policy.ModeEnforce},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeEnforce},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.Nil(t, out)
+	pe, ok := AsPluginError(err)
+	require.True(t, ok, "expected a *PluginError from the failed-closed guardrail, got %v", err)
+	assert.Equal(t, 502, pe.StatusCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&calls), "a later plugin must not run once enforce fails the chain closed")
+}
+
+func TestExecutor_RunStage_ObserveGuardrailFailureLetsLaterPluginRun(t *testing.T) {
+	calls := int32(0)
+	guardrail := newGuardrailStylePlugin("guardrail")
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, guardrail, after)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "guardrail", enabled: true, priority: 1, mode: policy.ModeObserve},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeObserve},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "observe fails open, so the later plugin still runs")
+}
+
+// TestExecutor_RunStage_ObserveNonPluginErrorFailsOpen is the executor's own
+// safety net (RUN-1675), for a plugin that returns a plain, non-*PluginError
+// error without going through HandleExternalFailure/HandleCounterFailure
+// itself — a counter-store outage that slipped past its own fail-open
+// handling, or any other plugin that never learned the mode-aware pattern.
+// Observe never blocks, so runOne must swallow the error, record failed_open
+// on the plugin's own span, and let the chain continue, mirroring what
+// RunStreamSegment already does for observe-mode stream entries. The error
+// is deliberately a plain transport-style error, not a context error: this
+// safety net's ctx.Err() guard (see the canceled-context test below) must not
+// accidentally also swallow a genuine failure that merely happens to be a
+// context.DeadlineExceeded the plugin manufactured itself with its own timer,
+// so the fixture here is unambiguous either way.
+func TestExecutor_RunStage_ObserveNonPluginErrorFailsOpen(t *testing.T) {
+	calls := int32(0)
+	transportErr := errors.New("transport down")
+	broken := &fakePlugin{
+		name:   "broken",
+		stages: []policy.Stage{policy.StagePreRequest},
+		err:    transportErr,
+	}
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, broken, after)
+	exec := NewExecutor(reg, nil)
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	pols := policies(t,
+		polSpec{slug: "broken", enabled: true, priority: 1, mode: policy.ModeObserve},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeObserve},
+	)
+	out, err := exec.RunStage(ctx, StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err, "observe must fail open on a plain error, not surface it")
+	require.NotNil(t, out)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "the chain must continue past the failed-open entry")
+
+	spans := rt.Spans()
+	require.Len(t, spans, 2)
+	require.NotNil(t, spans[0].Plugin)
+	assert.Equal(t, "failed_open", spans[0].Plugin.Decision)
+	assert.Contains(t, spans[0].Error(), "transport down",
+		"the original cause must still be visible on the span, not just swallowed into a 200")
+}
+
+// TestExecutor_RunStage_EnforceNonPluginErrorStillFails proves the safety net
+// is scoped to non-blocking modes only: an enforce entry returning a plain
+// error is unchanged behaviour — it still stops the chain with that error,
+// exactly like today.
+func TestExecutor_RunStage_EnforceNonPluginErrorStillFails(t *testing.T) {
+	calls := int32(0)
+	transportErr := errors.New("transport down")
+	broken := &fakePlugin{
+		name:   "broken",
+		stages: []policy.Stage{policy.StagePreRequest},
+		err:    transportErr,
+	}
+	after := &fakePlugin{
+		name:   "after",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, broken, after)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "broken", enabled: true, priority: 1, mode: policy.ModeEnforce},
+		polSpec{slug: "after", enabled: true, priority: 2, mode: policy.ModeEnforce},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.Nil(t, out)
+	require.ErrorIs(t, err, transportErr)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&calls), "a later plugin must not run once enforce fails the chain")
+}
+
+// TestExecutor_RunStage_ObserveCanceledContextIsNotFailedOpen proves item 1 of
+// the RUN-1675 review: a ctx the caller itself canceled (or let deadline out)
+// is not this plugin failing — it is the caller giving up on the request for
+// its own reasons. The safety net must not relabel that as failed_open; it
+// must propagate the ctx error unchanged, exactly as it would have before
+// this safety net existed.
+func TestExecutor_RunStage_ObserveCanceledContextIsNotFailedOpen(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rt := trace.New("t", trace.Metadata{})
+	tctx := trace.NewContext(ctx, rt)
+
+	broken := &fakePlugin{
+		name:   "broken",
+		stages: []policy.Stage{policy.StagePreRequest},
+		err:    context.Canceled,
+	}
+	reg := newRegistry(t, broken)
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t, polSpec{slug: "broken", enabled: true, priority: 1, mode: policy.ModeObserve})
+	out, err := exec.RunStage(tctx, StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.Nil(t, out)
+	require.ErrorIs(t, err, context.Canceled, "a canceled ctx must propagate its error, not be swallowed into a 200")
+
+	spans := rt.Spans()
+	require.Len(t, spans, 1)
+	decision := ""
+	if spans[0].Plugin != nil {
+		decision = spans[0].Plugin.Decision
+	}
+	assert.NotEqual(t, "failed_open", decision, "a caller cancellation must not be recorded as this plugin failing open")
+}
+
+// TestExecutor_RunStage_ParallelBatchSiblingCancellationIsNotFailedOpen is the
+// review's parallel-batch scenario: an enforce sibling in the same batch
+// blocks (errors immediately), which cancels errgroup's shared gctx; an
+// observe sibling is still sleeping and picks that cancellation up as
+// ctx.Err() != nil through its own select on ctx.Done(). That must not be
+// recorded as the observe entry itself failing open — it never got the
+// chance to run to a real outcome at all.
+func TestExecutor_RunStage_ParallelBatchSiblingCancellationIsNotFailedOpen(t *testing.T) {
+	blockErr := errors.New("enforce sibling blocked")
+	enforceEntry := &fakePlugin{
+		name:   "enforce-blocker",
+		stages: []policy.Stage{policy.StagePreRequest},
+		err:    blockErr,
+	}
+	observeEntry := &fakePlugin{
+		name:   "observe-slow",
+		stages: []policy.Stage{policy.StagePreRequest},
+		delay:  50 * time.Millisecond,
+	}
+	reg := newRegistry(t, enforceEntry, observeEntry)
+	exec := NewExecutor(reg, nil)
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	pols := policies(t,
+		polSpec{slug: "enforce-blocker", enabled: true, priority: 1, parallel: true, mode: policy.ModeEnforce},
+		polSpec{slug: "observe-slow", enabled: true, priority: 1, parallel: true, mode: policy.ModeObserve},
+	)
+	_, err := exec.RunStage(ctx, StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.Error(t, err, "the enforce sibling's own error must still surface")
+
+	spans := rt.Spans()
+	require.Len(t, spans, 2)
+	for _, span := range spans {
+		if span.Name != "observe-slow" {
+			continue
+		}
+		decision := ""
+		if span.Plugin != nil {
+			decision = span.Plugin.Decision
+		}
+		assert.NotEqual(t, "failed_open", decision,
+			"a sibling's cancellation must not be recorded as this plugin failing open")
+	}
 }

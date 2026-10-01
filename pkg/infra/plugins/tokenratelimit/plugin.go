@@ -94,7 +94,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	case policy.StagePreRequest:
 		return p.preRequest(ctx, cfg, base, dimension, in.Request, in.Mode, in.Event)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Event)
+		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Mode, in.Event)
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
@@ -165,9 +165,10 @@ func (p *Plugin) postResponse(
 	base string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, event)
+	return p.accrue(ctx, cfg, base, modelFor(req), req, resp, mode, event)
 }
 
 func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {
