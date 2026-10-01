@@ -89,11 +89,32 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 		if err != nil {
 			return nil, err
 		}
-		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) {
+		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) && !handsOnResponse(in, outcome) {
 			return outcome, nil
 		}
 	}
 	return outcome, nil
+}
+
+// handsOnResponse reports whether a short-circuit at this stage is a response
+// rewrite the rest of the chain must still judge. At pre_response a plugin
+// rewrites the upstream body by short-circuiting with the new one and a 2xx
+// status (a mask, a de-identification, an injected tool error), and
+// applyResults has already written it to the response. Stopping there would
+// skip every later guard, across priorities, whenever an earlier plugin masked
+// something, and would drop the masks of every later rewriter. So the chain
+// goes on over the rewritten body, the way a streamed segment hands its
+// transform on; the outcome still ends the response, with the last body
+// written (RUN-1745).
+//
+// A non-2xx short-circuit is a denial, as the MCP runner reads it
+// (replacesPayload), and still ends the stage: nothing after it may overwrite
+// a block.
+func handsOnResponse(in StageInput, outcome *StageOutcome) bool {
+	if in.Stage != policy.StagePreResponse || in.Response == nil {
+		return false
+	}
+	return outcome.StatusCode == 0 || (outcome.StatusCode >= 200 && outcome.StatusCode < 300)
 }
 
 // RunStreamSegment runs the pre_response entries that implement StreamInspector

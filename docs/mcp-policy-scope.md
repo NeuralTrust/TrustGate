@@ -386,17 +386,43 @@ rewriters first and then the plugins that opted in as content readers:
 `openai_moderation`, `azure_content_safety` and `semantic_cache` (at
 `pre_request`). Readers stay parallel among themselves, and a run with no
 rewriter, no reader, or a different priority is planned as before. If an earlier
-rewriter blocks or short-circuits, the readers after it do not run. The cost is
-latency: the rewriter and the slowest reader now add up instead of overlapping.
-`semantic_cache` counts as a rewriter at the response stages, so nothing is
-moved after it there.
+rewriter blocks, or short-circuits at a request stage (a cache hit), the readers
+after it do not run. The cost is latency: the rewriter and the slowest reader
+now add up instead of overlapping. `semantic_cache` counts as a rewriter at the
+response stages, so nothing is moved after it there.
+
+**Local rewriters run before the rewriters that call a third party.** Among the
+rewriters of such a run, the ones that opted in as local (their rewrite never
+leaves the gateway: `regex_replace`, `prompt_template`, `prompt_compression`,
+`model_allowlist`, `tool_allowlist`, `tool_injection`, `token_rate_limiter`,
+`per_tool_rate_limiter`) take the rewriter slots first, and the rewriters that
+send the content to a provider (`bedrock_guardrail`, `google_model_armor`,
+`trustguard`) follow. So AWS, Google and TrustGuard receive the text with
+`regex_replace`'s masks applied, never the raw values the client will not see.
+Entries that neither rewrite nor read keep their exact place. A rewriter that
+does not declare itself local is treated as remote, so forgetting the opt-in
+can only move a plugin later. Two remote rewriters keep their order between
+themselves: whichever runs first still sees the text the other one masks. Two
+rewriters of one body were already sequential, so this adds no latency.
+
+**A buffered response rewrite is handed on.** At `pre_response` a plugin
+rewrites the upstream body by returning the new one with a 2xx status. That
+used to end the stage, so a mask at one priority silently skipped every later
+guard, at any later priority, and dropped every later rewriter's masks. The
+chain now goes on over the rewritten body: later guards judge what the client
+will receive, a later rewrite builds on the earlier one, and the last body
+written is the one sent. A block after a rewrite still blocks, and a non-2xx
+short-circuit is a denial that still ends the stage, so nothing can overwrite
+it. Request stages are unchanged: a short-circuit there (a cache hit) still
+ends the stage.
 
 **Streamed responses follow the same rule.** A streamed segment does not use
 batches: the chain walks the streaming entries one at a time. The walk is now
-ordered like a batch (rewriters first, then opted-in readers at the same
-priority; other entries keep their place, priorities are never crossed), and a
-rewrite is handed on. When an enforcing entry masks a segment, the entries
-behind it receive the masked text, so `openai_moderation` at the same priority
+ordered like a batch (local rewriters, then remote rewriters, then opted-in
+readers at the same priority; other entries keep their place, priorities are
+never crossed), and a rewrite is handed on. When an enforcing entry masks a
+segment, the entries behind it receive the masked text, so `openai_moderation`,
+`bedrock_guardrail`, `google_model_armor` or `trustguard` at the same priority
 as `regex_replace` never sends the unmasked text to its provider. Consequences:
 
 - The last transform wins, and it already contains the earlier ones, because
