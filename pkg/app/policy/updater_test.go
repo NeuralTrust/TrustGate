@@ -703,10 +703,41 @@ func TestUpdater_Update_KeepsAScopeThatReachesItsConsumer(t *testing.T) {
 	}
 }
 
-// An operator must be able to disable a policy the gateway cannot load: it is
-// the console's natural remedy for an "error" row. Disabling with nothing else
-// changed skips the load checks.
-func TestUpdater_Update_DisableAnUnloadablePolicySucceeds(t *testing.T) {
+// consoleWriteBody is the full write body the console sends on every save,
+// pause included: every field present, settings resent (normalised, so not
+// necessarily byte-equal to the stored ones).
+func consoleWriteBody(existing *domain.Policy, enabled bool) apppolicy.UpdateInput {
+	settings := map[string]any{"limit": -1}
+	stages := []domain.Stage{domain.StagePreRequest}
+	return apppolicy.UpdateInput{
+		ID:          existing.ID,
+		Name:        ptr(existing.Name),
+		Description: ptr(existing.Description),
+		Slug:        ptr(existing.Slug),
+		Enabled:     ptr(enabled),
+		Priority:    ptr(existing.Priority),
+		Parallel:    ptr(existing.Parallel),
+		Settings:    &settings,
+		Stages:      &stages,
+		Mode:        ptr(existing.Mode),
+	}
+}
+
+// brokenRegistry rejects everything: an unknown slug, or settings tightened
+// after the row was stored.
+func brokenRegistry(t *testing.T) *pluginmocks.Registry {
+	t.Helper()
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write rule")).Maybe()
+	return reg
+}
+
+// Pausing is the console's remedy for an "error" policy. The console resends
+// the whole body, so the rule keys on the resulting state, not on the shape.
+func TestUpdater_Update_PausingAnUnloadablePolicyWithTheFullConsoleBodySucceeds(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	existing := existingPolicy(t)
@@ -714,41 +745,52 @@ func TestUpdater_Update_DisableAnUnloadablePolicySucceeds(t *testing.T) {
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return !p.Enabled
 	}), false).Return(nil).Once()
-
-	reg := pluginmocks.NewRegistry(t)
-	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
-	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
-	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
-
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().
 		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
-		Return(nil).
-		Once()
+		Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
-	if _, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Enabled: ptr(false)}); err != nil {
-		t.Fatalf("disabling an unloadable policy failed: %v", err)
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), brokenRegistry(t), newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), consoleWriteBody(existing, false)); err != nil {
+		t.Fatalf("pausing an unloadable policy failed: %v", err)
 	}
 }
 
-// Disabling does not excuse a write that also changes what the plugin runs.
-func TestUpdater_Update_DisableWithNewSettingsStillValidates(t *testing.T) {
+// Re-enabling the same row with the same body goes through validation again.
+func TestUpdater_Update_ReEnablingAnUnloadablePolicyIsValidated(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	existing := existingPolicy(t)
+	existing.Enabled = false
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	reg := pluginmocks.NewRegistry(t)
-	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil)
-	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil)
-	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(errors.New("bad settings"))
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), brokenRegistry(t), newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), consoleWriteBody(existing, true)); err == nil {
+		t.Fatal("expected validation error on re-enable")
+	}
+}
 
-	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
-		ID: existing.ID, Enabled: ptr(false), Settings: ptr(map[string]any{"x": 1}),
-	})
-	if err == nil {
-		t.Fatal("expected validation error")
+// Enabling a valid policy still passes through the validators.
+func TestUpdater_Update_EnablingAValidPolicyStillValidates(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.Enabled = false
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).Once()
+
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Once()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Once()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Once()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), consoleWriteBody(existing, true)); err != nil {
+		t.Fatalf("Update error: %v", err)
 	}
 }
