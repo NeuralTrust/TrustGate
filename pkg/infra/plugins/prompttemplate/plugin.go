@@ -88,25 +88,50 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	properties, hadProperties := rb.takeProperties()
 
+	if skip := rb.applyFormat(in.Request.Provider, in.Request.SourceFormat, in.Request.MCP, in.Request.Body); skip != nil {
+		data := PromptTemplateData{
+			Decision:                   skip.decision,
+			SkippedReason:              skip.reason,
+			UnscannedTemplateReference: len(cfg.NamedTemplates) > 0 && hasTemplateReference(in.Request.Body),
+		}
+		if appplugins.Blocks(in.Mode) && len(cfg.NamedTemplates) > 0 && !cfg.AllowUntemplatedRequests {
+			// The policy requires every request to reference a template, and this
+			// one cannot carry one the plugin can read. Letting it through would
+			// serve the model an untemplated prompt, so it is refused exactly as
+			// a request with no reference is. The decision is the one that
+			// rejection records (no_op); skipped_reason says why.
+			data.Decision = decisionNoOp
+			setExtras(in.Event, data)
+			return nil, reject(http.StatusBadRequest, typeRequired, "request does not reference a template")
+		}
+		setExtras(in.Event, data)
+		if !appplugins.Blocks(in.Mode) {
+			appplugins.SetDecision(in.Event, in.Mode)
+		}
+		return forwardOrNoOp(rb, hadProperties, false)
+	}
+
 	modeA := len(cfg.InjectTemplates) > 0
 	modeB := len(cfg.NamedTemplates) > 0
 	ctxVars, _ := resolveContextVars(cfg, in.Request)
 
 	if !appplugins.Blocks(in.Mode) {
 		aOutcome, bOutcome, _ := runModes(cfg, rb.clone(), properties, ctxVars, modeA, modeB)
+		bOutcome.markUnscanned(modeB, in.Request.Body)
 		setExtras(in.Event, observeData(aOutcome, bOutcome))
 		appplugins.SetDecision(in.Event, in.Mode)
 		return forwardOrNoOp(rb, hadProperties, false)
 	}
 
 	aOutcome, bOutcome, runErr := runModes(cfg, rb, properties, ctxVars, modeA, modeB)
+	bOutcome.markUnscanned(modeB, in.Request.Body)
 	if runErr != nil {
 		setExtras(in.Event, rejectionData(aOutcome, bOutcome))
 		return nil, runErr
 	}
 
 	setExtras(in.Event, enforceData(aOutcome, bOutcome))
-	return forwardOrNoOp(rb, hadProperties, rb.systemDirty || rb.messagesDirty)
+	return forwardOrNoOp(rb, hadProperties, rb.dirty())
 }
 
 func forwardOrNoOp(rb *requestBody, hadProperties, mutated bool) (*appplugins.Result, error) {
@@ -151,11 +176,14 @@ func buildData(decision string, a modeAOutcome, b modeBResult) PromptTemplateDat
 	return PromptTemplateData{
 		Decision:               decision,
 		InjectedIDs:            a.injected,
+		Unapplied:              a.unapplied,
 		SkippedIDs:             a.skipped,
 		UnresolvedIDs:          a.unresolved,
 		ResolvedTemplate:       b.resolvedTemplate,
 		DiscardedMessages:      b.discarded,
 		DroppedClientVariables: b.droppedClientVars,
+
+		UnscannedTemplateReference: b.unscannedRef,
 	}
 }
 

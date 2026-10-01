@@ -614,7 +614,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "role",
 								Label:       "Role",
 								Type:        FieldTypeString,
-								Description: "Message role used when inserting the rendered content.",
+								Description: "Role used when inserting the rendered content. OpenAI-compatible: any role is prepended as a message. Anthropic: system goes to the top-level system field; user and assistant are prepended; other roles are not applied. Gemini: system goes to systemInstruction; user is prepended; other roles, including assistant, are not applied. Roles not applied are reported as unapplied.",
 								Default:     "system",
 							},
 							{
@@ -628,7 +628,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "on_existing_system",
 								Label:       "On Existing System",
 								Type:        FieldTypeEnum,
-								Description: "How to combine with an existing system prompt.",
+								Description: "How to combine with an existing system prompt. On Gemini, merge appends a text part to systemInstruction and replace leaves it with only the rendered text; a Mode B template's system text is merged into the client's systemInstruction there. On Anthropic with no system prompt, one is created as a plain string. On an Anthropic system prompt sent as content blocks, merge appends a text block and replace sets a plain string.",
 								Enum:        enumOptions("merge", "replace"),
 								Default:     "merge",
 							},
@@ -720,7 +720,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "allow_untemplated_requests",
 					Label:       "Allow Untemplated Requests",
 					Type:        FieldTypeBoolean,
-					Description: "When false and named templates are configured, reject requests without a template reference.",
+					Description: "When false and named templates are configured, reject requests without a template reference. In enforce mode, requests in a format the policy does not support (for example the OpenAI Responses API) or whose body it cannot edit are rejected too, since they cannot carry a reference it can read; observe mode never rejects.",
 					Default:     true,
 				},
 				{

@@ -33,6 +33,17 @@ type modeBResult struct {
 	// dropped in its favour, so the collision is visible to the caller and
 	// the operator instead of a silent, invisible substitution.
 	droppedClientVars []string
+	// unscannedRef is true when Mode B found no reference yet the raw body
+	// still carries a {template://...} token, for example inside a content
+	// block array, which the scanner does not read. Reported so the literal
+	// reaching the model is not silent.
+	unscannedRef bool
+}
+
+func (b *modeBResult) markUnscanned(modeB bool, body []byte) {
+	if modeB && !b.hasReference && hasTemplateReference(body) {
+		b.unscannedRef = true
+	}
 }
 
 func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars map[string]string) (modeBResult, error) {
@@ -76,7 +87,7 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	if err != nil {
 		return result, err
 	}
-	before := len(rb.messages)
+	before := rb.turnCount()
 	if err := rb.replaceMessages(rendered); err != nil {
 		return result, reject(http.StatusInternalServerError, typeRenderFailed, "rendered template is not a valid messages array")
 	}
@@ -85,7 +96,7 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	// Rendering replaces the conversation rather than the referencing message,
 	// so a multi-turn caller loses the history it sent. Reported because the
 	// caller cannot see it: the answer just gets worse.
-	if dropped := before - len(rb.messages); dropped > 0 {
+	if dropped := before - rb.turnCount(); dropped > 0 {
 		result.discarded = dropped
 	}
 	return result, nil
