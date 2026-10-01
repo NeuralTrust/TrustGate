@@ -543,4 +543,3 @@ representative records, not a live capture:
 ## Out of scope
 
 - OTLP → ClickHouse ingestion (collector / data-plane)
-- Kafka `trustgate.requests` path (legacy, being retired)

@@ -303,7 +303,7 @@ func TestMetricsMiddleware_PassesGatewayExporters(t *testing.T) {
 		ID: gatewayID,
 		Telemetry: &telemetrydomain.Telemetry{
 			Exporters: []telemetrydomain.ExporterConfig{
-				{Name: "kafka", Settings: map[string]interface{}{"topic": "extra"}},
+				{Name: "primary", Settings: map[string]interface{}{"topic": "extra"}},
 			},
 		},
 	}
@@ -327,6 +327,6 @@ func TestMetricsMiddleware_PassesGatewayExporters(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, gotExporters, 1)
-	assert.Equal(t, "kafka", gotExporters[0].Name)
+	assert.Equal(t, "primary", gotExporters[0].Name)
 	assert.Equal(t, "extra", gotExporters[0].Settings["topic"])
 }

@@ -118,7 +118,6 @@ func setDBLessSmokeEnv(t *testing.T) {
 	t.Cleanup(mr.Close)
 	t.Setenv("REDIS_HOST", mr.Host())
 	t.Setenv("REDIS_PORT", mr.Port())
-	t.Setenv("KAFKA_BROKERS", "localhost:9092")
 	t.Setenv("GATEWAY_BASE_DOMAIN", "example.com")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
