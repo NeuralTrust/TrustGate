@@ -122,13 +122,13 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	}
 
 	spans := streamSpansFrom(ctx)
-	var reporter string
+	var reporters map[string]bool
 	if seg.Closing {
 		// Finality and closure are mutually exclusive, and only one caller
 		// builds both flags: a segment that carries no text cannot also be the
 		// block that covered the end of the response.
 		seg.Final = false
-		reporter = spans.reporter(seg, entries)
+		reporters = spans.reporters(seg, entries)
 		defer spans.publish()
 	}
 
@@ -142,8 +142,9 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 	// cut can only happen on the last one: a mask an earlier block landed is not
 	// to be blamed for a later block's failure.
 	var cutKeys []string
+	var failedKey string
 	if !seg.Closing {
-		defer func() { spans.setCut(seg, cutKeys) }()
+		defer func() { spans.setCut(seg, cutKeys, failedKey, !outcome.Block) }()
 	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
@@ -155,7 +156,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
 			call.Findings = entryFindings(seg.Findings, entry)
-			call.ReportsStream = spanKey(seg, entry) == reporter
+			call.ReportsStream = reporters[spanKey(seg, entry)]
 		}
 		started := e.clock()
 		verdict, err := inspector.InspectSegment(ctx, ExecInput{
@@ -183,6 +184,7 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 				SetDecisionFromOutcome(event, decisionFailedOpen)
 				continue
 			}
+			failedKey = spanKey(seg, entry)
 			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
 			// An earlier enforcing entry may already have masked this segment.
 			// Hand that mask back with the error: a caller that resolves the
@@ -227,7 +229,7 @@ func (e *executor) streamEntries(in StageInput) []chainEntry {
 	if in.Plan != nil {
 		return in.Plan.streamEntriesFor()
 	}
-	return OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false))
+	return streamParticipants(OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)))
 }
 
 // segmentAfterTransform is the segment the entries behind a rewriter receive.

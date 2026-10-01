@@ -201,6 +201,9 @@ func (p *Plugin) recordStreamOutcome(
 	switch {
 	case seg.Report.CutAtEval > 0:
 		data.Decision = decisionBlocked
+	case seg.Report.MaskedEvals > 0:
+		// With no cut the guard applied every mask, as the buffered leg does.
+		data.Decision = decisionAnonymized
 	case len(stream.Findings) > 0:
 		data.Decision = decisionReported
 	default:

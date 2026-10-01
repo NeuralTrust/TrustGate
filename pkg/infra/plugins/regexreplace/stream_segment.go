@@ -126,6 +126,10 @@ func (p *Plugin) recordStreamOutcome(
 		// not land, so a cut here is a rewrite that did not happen rather than
 		// a policy decision to stop the response.
 		data.Decision = decisionRewriteUnapplied
+	case data.Changed && !appplugins.Blocks(in.Mode):
+		// Observe reports what it would have rewritten but never rewrites,
+		// so it reads as the buffered leg does: observed, not rewritten.
+		data.Decision = decisionObserved
 	case data.Changed:
 		data.Decision = decisionRewritten
 	default:
@@ -134,6 +138,9 @@ func (p *Plugin) recordStreamOutcome(
 
 	in.Event.SetSLatency(seg.Report.GuardLatency)
 	setExtras(in.Event, data)
+	if data.Decision == decisionObserved {
+		return
+	}
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 }
 

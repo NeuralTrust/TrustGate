@@ -92,6 +92,7 @@ func realChainGuardCfg(t *testing.T, cfg streamGuardConfig, plugins ...*chainIns
 			Parallel: true,
 			Stages:   []policy.Stage{policy.StagePreResponse},
 			Mode:     policy.ModeEnforce,
+			Settings: map[string]any{"enabled": true},
 		})
 	}
 	runner, ok := appplugins.NewExecutor(reg, nil).(segmentRunner)
@@ -231,4 +232,27 @@ func TestStreamGuard_FailOpenCutsWhenThePartialMaskCannotLand(t *testing.T) {
 	assert.Equal(t, openAICutLines(streamMaskedMessage), got[len(head):])
 	assert.NotContains(t, strings.Join(got, "\n"), "b2", "the raw block is never released")
 	assert.True(t, g.stopped)
+	assert.False(t, g.report().CutOnFailure, "the cut is the mask that could not land, not the failure")
+}
+
+// RUN-1745 F6: past the head, fail_closed cuts for the failure itself, and the
+// report says so, so the chain can name the entry whose call failed instead of
+// the masker of the same block.
+func TestStreamGuard_FailClosedAfterTheHeadReportsACutOnFailure(t *testing.T) {
+	t.Parallel()
+	lines := textStreamLines("a1", "b2", "c3")
+	calls := 0
+	reader := &chainInspector{name: "a_moderation", reads: true, err: assert.AnError, errWhen: func() bool { calls++; return calls == 2 }}
+	masker := &chainInspector{name: "z_masker", rewrites: true, fn: replaceIn("b2", "XX")}
+	g := realChainGuardCfg(t, streamGuardConfig{onError: streamFailClosed, minChars: 1, headChars: 1}, reader, masker)
+
+	out, pe := g.Run(context.Background(), invariantSource(t, g, lines, nil))
+	require.Nil(t, pe, "past the head the status is already committed")
+	_, err := collectGuardOutput(t, g, out)
+	require.NoError(t, err)
+
+	require.True(t, g.stopped)
+	report := g.report()
+	assert.Equal(t, 2, report.CutAtEval)
+	assert.True(t, report.CutOnFailure)
 }
