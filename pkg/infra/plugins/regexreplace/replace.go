@@ -14,7 +14,11 @@
 
 package regexreplace
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+import (
+	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+)
 
 func applyRules(rules []compiledRule, input string) (string, bool) {
 	out := input
@@ -22,6 +26,50 @@ func applyRules(rules []compiledRule, input string) (string, bool) {
 		out = r.re.ReplaceAllString(out, r.replacement)
 	}
 	return out, out != input
+}
+
+// applyRulesFrom runs the rules over input the way applyRules does, except that
+// a match lying wholly before from is left as it stands. It returns the
+// rewritten text and the index of every rule that replaced something.
+//
+// A streamed block hands over the whole accumulated text, and everything before
+// from has already been through these rules on an earlier block and been
+// released with their masks in it. Matching it again only finds what those
+// passes left behind: a placeholder that matches its own pattern ([SSN] under
+// (?i)ssn), or a ^ or \b that now matches where a tail window happens to start.
+// Rewriting either changes text the client already holds, which the guard
+// refuses and turns into a cut (RUN-1745). A match that reaches from into the
+// new text is still replaced, so a value split across two blocks is masked.
+//
+// When a rule replaces a match that starts before from, the text it touched is
+// no longer what earlier passes saw, so from moves back to that match and the
+// later rules judge it again.
+func applyRulesFrom(rules []compiledRule, input string, from int) (string, []int) {
+	out := input
+	var fired []int
+	for i, r := range rules {
+		var b strings.Builder
+		last, first := 0, -1
+		for _, m := range r.re.FindAllStringSubmatchIndex(out, -1) {
+			if m[1] <= from {
+				continue
+			}
+			if first < 0 {
+				first = m[0]
+			}
+			b.WriteString(out[last:m[0]])
+			b.Write(r.re.ExpandString(nil, r.replacement, out, m))
+			last = m[1]
+		}
+		if first < 0 {
+			continue
+		}
+		b.WriteString(out[last:])
+		out = b.String()
+		fired = append(fired, i)
+		from = min(from, first)
+	}
+	return out, fired
 }
 
 func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, rules []compiledRule) ([]byte, bool, error) {

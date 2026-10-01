@@ -81,8 +81,12 @@ func (p *Plugin) InspectSegment(
 		return segmentAllow(), nil
 	}
 
-	masked, changed := applyRules(cfg.compiled, seg.Accumulated)
-	if !changed {
+	// Everything in front of this block's text was rewritten and released on
+	// an earlier block; only matches reaching into the new text are this
+	// block's to replace.
+	from := max(len(seg.Accumulated)-len(seg.Text), 0)
+	masked, fired := applyRulesFrom(cfg.compiled, seg.Accumulated, from)
+	if masked == seg.Accumulated {
 		// A transform whose output equals the produced text ends the stream:
 		// the guard cannot tell "nothing matched" from "a mask the guard
 		// already applied was handed back unchanged", and releasing on the
@@ -93,7 +97,7 @@ func (p *Plugin) InspectSegment(
 	return &appplugins.SegmentVerdict{
 		HasTransform: true,
 		Transformed:  masked,
-		Fingerprints: ruleFingerprints(cfg, seg.Accumulated),
+		Fingerprints: ruleFingerprints(cfg, fired),
 	}, nil
 }
 
@@ -137,30 +141,28 @@ func (p *Plugin) recordStreamOutcome(
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 }
 
-// ruleFingerprints names which rules matched, so that a stream reports one
+// ruleFingerprints names which rules fired, so that a stream reports one
 // incident per rule instead of one per block.
 //
 // Unlike the guardrail plugins, this one reports in every mode. They skip the
 // blocking modes because a finding there ends the stream, so no later block
 // comes back carrying it; this plugin never ends a stream, so enforce keeps
-// calling and the set is what says a response was rewritten at all. Repeats
-// still collapse on their own: the guard rewrites the accumulated buffer in
-// place, so a later block carries the masked text and the rule that produced
-// it no longer matches.
+// calling and the set is what says a response was rewritten at all. Only the
+// rules that replaced something in this block are named: one that matches
+// nothing but its own placeholder in released text did not fire.
 //
 // The key is the rule's pattern and its position, never the text it matched:
 // the matched span is response content, and a digest of it on a span that
 // publishes to OTLP is a second route for exactly the data these rules exist to
 // remove. Position is in because two rules can share a pattern with different
 // replacements, and an operator reading the set needs to know which one fired.
-func ruleFingerprints(cfg Settings, text string) []string {
-	prints := make([]string, 0, len(cfg.compiled))
-	for i, rule := range cfg.compiled {
-		if rule.re.MatchString(text) {
-			prints = append(prints, pluginutil.StreamFingerprint(
-				PluginName, strconv.Itoa(i), rule.re.String(),
-			))
-		}
+func ruleFingerprints(cfg Settings, fired []int) []string {
+	prints := make([]string, 0, len(fired))
+	for _, i := range fired {
+		rule := cfg.compiled[i]
+		prints = append(prints, pluginutil.StreamFingerprint(
+			PluginName, strconv.Itoa(i), rule.re.String(),
+		))
 	}
 	return pluginutil.DedupeFingerprints(prints)
 }
