@@ -166,6 +166,20 @@ func NormalizeEntitlements(e Entitlements) (Entitlements, error) {
 	if *e.MaxInstances < 0 {
 		return Entitlements{}, fmt.Errorf("gateway: entitlements.max_instances must be >= 0: %w", commonerrors.ErrValidation)
 	}
+	// The caps are stored per tenant as INTEGER and travel in the config
+	// snapshot as int32: a larger value would abort the write or wrap.
+	for _, c := range []struct {
+		name  string
+		value int
+	}{
+		{"burst_per_min", *e.BurstPerMin},
+		{"quota_per_month", *e.QuotaPerMonth},
+		{"max_instances", *e.MaxInstances},
+	} {
+		if c.value > ratelimit.MaxCap {
+			return Entitlements{}, fmt.Errorf("gateway: entitlements.%s must be <= %d: %w", c.name, ratelimit.MaxCap, commonerrors.ErrValidation)
+		}
+	}
 	return e, nil
 }
 

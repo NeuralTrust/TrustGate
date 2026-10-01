@@ -105,8 +105,10 @@ func (r *restamper) RestampTenant(
 		invalidation.GatewayData(ctx, r.publisher, r.logger, g.ID)
 	}
 	// One signal for the whole batch — the snapshot is rebuilt wholesale, so N
-	// signals would be N rebuilds of the same thing.
-	if r.signaler != nil && len(touched) > 0 {
+	// signals would be N rebuilds of the same thing. It is sent even when no
+	// gateway was touched: the tenant's plan row is part of the snapshot, and a
+	// restamp of a tenant that has no gateway yet still changes it.
+	if r.signaler != nil {
 		r.signaler.Signal(ctx)
 	}
 
