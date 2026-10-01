@@ -332,6 +332,9 @@ func (p *providerInvoker) prepare(
 	}
 
 	body = adapter.NormalizeRequestForProvider(bk.Provider(), targetFormat, body)
+	if crossFormat {
+		body = adapter.CarryModel(req.Body, body)
+	}
 
 	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
 	if verr != nil {
