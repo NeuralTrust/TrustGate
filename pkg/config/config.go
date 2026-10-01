@@ -73,10 +73,7 @@ const (
 	defaultSessionStoreEnabled = true
 	defaultSessionStoreTTL     = time.Hour
 
-	defaultKafkaBrokers = "localhost:9092"
-
 	defaultTelemetryEnabled             = true
-	defaultTelemetryKafkaTopic          = "trustgate.requests"
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
@@ -157,7 +154,6 @@ type Config struct {
 	Cache               CacheConfig
 	SemanticCache       SemanticCacheConfig
 	SessionStore        SessionStoreConfig
-	Kafka               KafkaConfig
 	Telemetry           TelemetryConfig
 	Metrics             MetricsConfig
 	Playground          PlaygroundConfig
@@ -352,13 +348,8 @@ type SessionStoreConfig struct {
 	TTL     time.Duration
 }
 
-type KafkaConfig struct {
-	Brokers []string
-}
-
 type TelemetryConfig struct {
 	Enabled                bool
-	KafkaTopic             string
 	ExportersFile          string
 	ExportersMetadata      string
 	ExportersRaw           string
@@ -495,7 +486,6 @@ func LoadConfig() (*Config, error) {
 		Cache:               getCacheConfig(),
 		SemanticCache:       getSemanticCacheConfig(),
 		SessionStore:        getSessionStoreConfig(),
-		Kafka:               getKafkaConfig(),
 		Telemetry:           getTelemetryConfig(),
 		Metrics:             getMetricsConfig(),
 		Playground:          getPlaygroundConfig(),
@@ -644,14 +634,9 @@ func getSessionStoreConfig() SessionStoreConfig {
 	}
 }
 
-func getKafkaConfig() KafkaConfig {
-	return KafkaConfig{Brokers: splitCSV(getEnv("KAFKA_BROKERS", defaultKafkaBrokers))}
-}
-
 func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
-		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
 		ExportersFile:       getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
 		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
@@ -1098,9 +1083,6 @@ func (c *Config) Validate() error {
 		if c.Redis.Username == "" {
 			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
 		}
-	}
-	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
-		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
 	}
 	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
 		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
