@@ -57,10 +57,11 @@ import (
 )
 
 const (
-	serverAdmin = "admin"
-	serverProxy = "proxy"
-	serverMCP   = "mcp"
-	serverRun   = "run"
+	serverAdmin  = "admin"
+	serverProxy  = "proxy"
+	serverMCP    = "mcp"
+	serverRun    = "run"
+	serverWorker = "worker"
 )
 
 // serverConfigSyncGRPC names the control-plane config-sync gRPC listener in the shared serve loop.
@@ -114,6 +115,13 @@ func main() {
 		return
 	}
 
+	if plane == serverWorker {
+		if err := c.Invoke(runTopicWorker); err != nil {
+			log.Fatalf("failed to start application: %v", err)
+		}
+		return
+	}
+
 	if plane == serverRun {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
@@ -143,7 +151,7 @@ func serverType() string {
 }
 
 func isDataPlane(plane string) bool {
-	return plane == serverProxy || plane == serverMCP
+	return plane == serverProxy || plane == serverMCP || plane == serverWorker
 }
 
 func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
@@ -169,12 +177,13 @@ type adminParam struct {
 
 type proxyParam struct {
 	dig.In
-	Srv          server.Server `name:"proxy"`
-	Worker       appmetrics.Worker
-	Conn         *database.Connection
-	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
-	OpsSDK       *o11y.SDK
+	Srv             server.Server `name:"proxy"`
+	Worker          appmetrics.Worker
+	TopicClassifier modules.TopicClassifierParams
+	Conn            *database.Connection
+	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
+	OpsSDK          *o11y.SDK
 }
 
 type mcpParam struct {
@@ -189,13 +198,14 @@ type mcpParam struct {
 
 type allParam struct {
 	dig.In
-	Admin          server.Server `name:"admin"`
-	Proxy          server.Server `name:"proxy"`
-	Worker         appmetrics.Worker
-	Conn           *database.Connection
-	Dispatcher     *appsnapshot.Dispatcher
-	ConfigSyncGRPC *configsyncgrpc.Server
-	OpsSDK         *o11y.SDK
+	Admin           server.Server `name:"admin"`
+	Proxy           server.Server `name:"proxy"`
+	Worker          appmetrics.Worker
+	TopicClassifier modules.TopicClassifierParams
+	Conn            *database.Connection
+	Dispatcher      *appsnapshot.Dispatcher
+	ConfigSyncGRPC  *configsyncgrpc.Server
+	OpsSDK          *o11y.SDK
 }
 
 func runAdmin(p adminParam, logger *slog.Logger) {
@@ -224,7 +234,31 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
+	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
 	runServer(p.Srv, serverProxy, logger)
+}
+
+type topicWorkerParam struct {
+	dig.In
+	TopicClassifier modules.TopicClassifierParams
+	Worker          appmetrics.Worker
+	Conn            *database.Connection
+	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
+	OpsSDK          *o11y.SDK
+}
+
+func runTopicWorker(p topicWorkerParam, logger *slog.Logger) {
+	stopConfig := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
+	defer flushOpsTelemetry(p.OpsSDK, logger)
+	defer closeResources(p.Conn, logger)
+	defer stopConfig()
+	defer p.Worker.Shutdown()
+	defer modules.StartTopicClassifier(p.TopicClassifier, false)()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
 }
 
 func runAll(p allParam, logger *slog.Logger) {
@@ -233,6 +267,7 @@ func runAll(p allParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()
+	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
 		namedServer{name: serverProxy, srv: p.Proxy},

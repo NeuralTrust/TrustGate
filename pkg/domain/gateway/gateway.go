@@ -24,6 +24,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 )
 
 const MetadataTenantIDKey = "tenant_id"
@@ -34,17 +35,18 @@ const MetadataTenantIDKey = "tenant_id"
 const MetadataLegacyTeamIDKey = "team_id"
 
 type Gateway struct {
-	ID              ids.GatewayID        `json:"id"`
-	Slug            string               `json:"slug"`
-	Status          string               `json:"status"`
-	Domain          string               `json:"domain,omitempty"`
-	Metadata        map[string]string    `json:"metadata,omitempty"`
-	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
-	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
-	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
-	Entitlements    Entitlements         `json:"entitlements"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	ID                  ids.GatewayID        `json:"id"`
+	Slug                string               `json:"slug"`
+	Status              string               `json:"status"`
+	Domain              string               `json:"domain,omitempty"`
+	Metadata            map[string]string    `json:"metadata,omitempty"`
+	Telemetry           *telemetry.Telemetry `json:"telemetry,omitempty"`
+	ClientTLSConfig     ClientTLSConfig      `json:"client_tls,omitempty"`
+	SessionConfig       *SessionConfig       `json:"session_config,omitempty"`
+	Entitlements        Entitlements         `json:"entitlements"`
+	TopicClassification *topic.Config        `json:"topic_classification,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 }
 
 func (g *Gateway) TenantID() string {
@@ -267,7 +269,7 @@ func (g *Gateway) Validate() error {
 	}
 	g.Domain = domain
 
-	return nil
+	return g.TopicClassification.Validate()
 }
 
 func NormalizeDomain(domain string) (string, error) {

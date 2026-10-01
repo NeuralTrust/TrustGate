@@ -21,16 +21,18 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 )
 
 type UpdateGatewayRequest struct {
-	Slug            *string                 `json:"slug,omitempty"`
-	Status          *string                 `json:"status,omitempty"`
-	Domain          *string                 `json:"domain,omitempty"`
-	Metadata        map[string]string       `json:"metadata,omitempty"`
-	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
-	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
+	Slug                *string                 `json:"slug,omitempty"`
+	Status              *string                 `json:"status,omitempty"`
+	Domain              *string                 `json:"domain,omitempty"`
+	Metadata            map[string]string       `json:"metadata,omitempty"`
+	Telemetry           *telemetry.Telemetry    `json:"telemetry,omitempty"`
+	ClientTLSConfig     *domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig       *domain.SessionConfig   `json:"session_config,omitempty"`
+	TopicClassification *topic.Config           `json:"topic_classification,omitempty"`
 	// Entitlements is optional; only platform admins may set it (tenant callers get 422).
 	// When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
 	// has more gateways than the new MaxInstances returns 409 — delete excess first.
@@ -42,6 +44,9 @@ type UpdateGatewayRequest struct {
 }
 
 func (r *UpdateGatewayRequest) Validate() error {
+	if err := r.TopicClassification.Validate(); err != nil {
+		return err
+	}
 	if r.Slug != nil {
 		if strings.TrimSpace(*r.Slug) == "" {
 			return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)

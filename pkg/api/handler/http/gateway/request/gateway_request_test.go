@@ -15,9 +15,13 @@
 package request
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 )
 
 func intPtr(v int) *int { return &v }
@@ -183,5 +187,39 @@ func TestUpdateGatewayRequest_ValidateStoreMode(t *testing.T) {
 	reqBad := UpdateGatewayRequest{StoreMode: &bad}
 	if err := reqBad.Validate(); err == nil {
 		t.Fatal("expected invalid store_mode error, got nil")
+	}
+}
+
+func TestGatewayRequests_ValidateTopicClassification(t *testing.T) {
+	t.Parallel()
+
+	tooMany := make([]topic.Topic, topic.MaxTopics+1)
+	for i := range tooMany {
+		tooMany[i] = topic.Topic{Name: fmt.Sprintf("t%d", i), Definition: "d"}
+	}
+	valid := &topic.Config{Enabled: true, Topics: []topic.Topic{{Name: "billing", Definition: "refunds"}}}
+	invalid := &topic.Config{Enabled: true, Topics: tooMany}
+
+	if err := (&CreateGatewayRequest{}).Validate(); err != nil {
+		t.Fatalf("create without topic_classification rejected: %v", err)
+	}
+	if err := (&CreateGatewayRequest{TopicClassification: valid}).Validate(); err != nil {
+		t.Fatalf("create with a valid config rejected: %v", err)
+	}
+	if err := (&UpdateGatewayRequest{TopicClassification: valid}).Validate(); err != nil {
+		t.Fatalf("update with a valid config rejected: %v", err)
+	}
+
+	for name, validate := range map[string]func() error{
+		"create": (&CreateGatewayRequest{TopicClassification: invalid}).Validate,
+		"update": (&UpdateGatewayRequest{TopicClassification: invalid}).Validate,
+	} {
+		err := validate()
+		if err == nil {
+			t.Fatalf("%s accepted %d topics", name, len(tooMany))
+		}
+		if !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("%s error %v does not wrap ErrValidation", name, err)
+		}
 	}
 }
