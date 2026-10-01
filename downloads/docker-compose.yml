@@ -3,8 +3,8 @@ name: trustgate-dataplane
 services:
   dataplane:
     image: neuraltrust/dataplane:stable
-    # TrustGate links glibc/librdkafka and is built linux/amd64; on Apple Silicon
-    # this runs under emulation.
+    # The published image is linux/amd64 only; on Apple Silicon this runs under
+    # emulation.
     platform: linux/amd64
     restart: unless-stopped
     ports:
