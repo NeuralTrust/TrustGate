@@ -113,57 +113,57 @@ PR rules:
 
 ## Phase T3: Use case (TrustGate, base T2)
 
-- [ ] T3.1 `pkg/domain/policy/errors.go`: add `ErrMCPWideUnsupported`, wrapping `ErrValidation`.
-- [ ] T3.2 `pkg/app/policy/validate.go`: `pluginRunsOnMCP`, shared with `validateMCPScopePlugin`, and `validateMCPWidePlugin`.
-- [ ] T3.3 `pkg/app/policy/scoper.go`:
+- [x] T3.1 `pkg/domain/policy/errors.go`: add `ErrMCPWideUnsupported`, wrapping `ErrValidation`.
+- [x] T3.2 `pkg/app/policy/validate.go`: `pluginRunsOnMCP`, shared with `validateMCPScopePlugin`, and `validateMCPWidePlugin`.
+- [x] T3.3 `pkg/app/policy/scoper.go`:
   - Add `SetMCPWide`/`UnsetMCPWide` through a shared flag write.
   - `NewScoper` takes `appplugins.Registry`.
   - `setGlobal` uses `existing.SetGlobal(...)` and `promoted.SetGlobal(true)` instead of assigning the fields, so the cached copy drops `MCPWide` the way the row does.
   - Close the scoper's read-before-lock race, found in the T1 review. The sequence: the scoper reads a disabled draft and the guard skips the lock. A PUT `{enabled:true}` then commits, and `SetGlobal(true)` lands on the now-enabled row unchecked. The fix: make the promotion conditional on the row the guard read. Preferred: `SetGlobal`/`SetMCPWide` also match the read row's `updated_at`, and a mismatch returns `ErrPlacementChanged` (409). Taking the slug lock and re-reading inside it also works if it is cheaper. Add a repository test (stale promotion → `ErrPlacementChanged`, row unchanged) and a scoper table row.
   - Run `go generate ./pkg/app/policy/...`.
-- [ ] T3.4 `pkg/app/policy/updater.go`: a slug change on an MCP-wide policy runs `validateMCPWidePlugin`.
-- [ ] T3.5 `pkg/container/modules/policy.go`: wire the new `NewScoper` argument.
-- [ ] T3.6 Test `pkg/app/policy/scoper_test.go` (table):
+- [x] T3.4 `pkg/app/policy/updater.go`: a slug change on an MCP-wide policy runs `validateMCPWidePlugin`.
+- [x] T3.5 `pkg/container/modules/policy.go`: wire the new `NewScoper` argument.
+- [x] T3.6 Test `pkg/app/policy/scoper_test.go` (table):
   - set, swap from global (`Global` cleared), no-op
   - foreign gateway → `ErrNotFound`
   - non-MCP plugin → 422 with no write
   - unset; `UnsetGlobal` on an MCP-wide policy is a no-op
-- [ ] T3.7 Test `pkg/app/policy/level_guard_test.go`:
+- [x] T3.7 Test `pkg/app/policy/level_guard_test.go`:
   - An overlapping MCP-wide occupant refuses `SetMCPWide` with `ErrPolicyLevelConflict`, and nothing is written.
   - The swap is guarded once.
   - `UnsetMCPWide` is not guarded.
-- [ ] T3.8 Test `pkg/app/policy/updater_test.go`: a PUT that changes the slug to a non-MCP plugin → `ErrMCPWideUnsupported`, no write.
-- [ ] T3.9 Spec delta `specs/policy-level-uniqueness/spec.md`:
+- [x] T3.8 Test `pkg/app/policy/updater_test.go`: a PUT that changes the slug to a non-MCP plugin → `ErrMCPWideUnsupported`, no write.
+- [x] T3.9 Spec delta `specs/policy-level-uniqueness/spec.md`:
   - MCP-wide takes the global cell.
   - `SetMCPWide` is guarded and `UnsetMCPWide` is not.
   - Add the 409 scenarios.
-- [ ] T3.10 Run VG.
+- [x] T3.10 Run VG.
 
 ## Phase T4: HTTP, OpenAPI, docs (TrustGate, base T3)
 
-- [ ] T4.1 Create `pkg/api/handler/http/policy/mcp_wide_policy_handler.go`: POST and DELETE with swagger annotations. POST also documents 409 and 422.
-- [ ] T4.2 `pkg/api/handler/http/policy/response/policy_response.go`: `MCPWide` with tag `mcp_wide`, always present.
-- [ ] T4.3 Swagger text: `global_policy_handler.go` (the swap) and `duplicate_policy_handler.go` ("neither global nor MCP-wide").
-- [ ] T4.4 `pkg/server/router/admin_router.go` (field and 2 routes) and `pkg/container/modules/{policy,server_admin}.go`. `admin_router_wiring_test.go` must pass.
-- [ ] T4.5 Run `make docs`. Test `docs/openapi_test.go`: the path, POST 409 and 422, DELETE, and `mcp_wide` in `PolicyResponse`.
-- [ ] T4.6 `tests/functional/common_test.go`: add a `SetPolicyMCPWide` helper.
-- [ ] T4.7 Test `tests/functional/mcp_wide_policy_test.go`, admin API:
+- [x] T4.1 Create `pkg/api/handler/http/policy/mcp_wide_policy_handler.go`: POST and DELETE with swagger annotations. POST also documents 409 and 422.
+- [x] T4.2 `pkg/api/handler/http/policy/response/policy_response.go`: `MCPWide` with tag `mcp_wide`, always present.
+- [x] T4.3 Swagger text: `global_policy_handler.go` (the swap) and `duplicate_policy_handler.go` ("neither global nor MCP-wide").
+- [x] T4.4 `pkg/server/router/admin_router.go` (field and 2 routes) and `pkg/container/modules/{policy,server_admin}.go`. `admin_router_wiring_test.go` must pass.
+- [x] T4.5 Run `make docs`. Test `docs/openapi_test.go`: the path, POST 409 and 422, DELETE, and `mcp_wide` in `PolicyResponse`.
+- [x] T4.6 `tests/functional/common_test.go`: add a `SetPolicyMCPWide` helper.
+- [x] T4.7 Test `tests/functional/mcp_wide_policy_test.go`, admin API:
   - POST returns `mcp_wide=true`, `global=false` and no orphan warning.
   - GET reads it back.
   - The `/global` swap works; DELETE is idempotent.
   - Overlapping groups → 409 with `already runs plugin`.
-- [ ] T4.8 Same file, runtime (`tool_allowlist` deny-all for Finanzas):
+- [x] T4.8 Same file, runtime (`tool_allowlist` deny-all for Finanzas):
   - Created but not promoted → Finanzas is echoed.
   - Promoted → Finanzas is blocked and Marketing is echoed.
   - An MCP consumer created afterwards is blocked too.
-- [ ] T4.9 `docs/mcp-policy-scope.md`:
+- [x] T4.9 `docs/mcp-policy-scope.md`:
   - placement and level tables, the `:256` and `:259` rows, and an `mcp_wide` row
   - Admin API table
   - Rollout section. An old binary, or one rolled back, places an MCP-wide policy by its links alone: with none it runs nowhere; with links it runs on those consumers, as before the promotion. The console detaches links on promotion.
   - Note (T2 review): say that MCP-wide plugin state reports the dimension `global`, like a global policy: `exceeded_type` is `global` and the Redis key carries the `global` label (e.g. `ratelimit:<policy>:global:<gateway>`).
-- [ ] T4.10 Spec delta `specs/mcp-policy-scope/spec.md`: the orphan warning applies to drafts only; 422. Create `specs/policy-mcp-wide-placement/spec.md`.
+- [x] T4.10 Spec delta `specs/mcp-policy-scope/spec.md`: the orphan warning applies to drafts only; 422. Create `specs/policy-mcp-wide-placement/spec.md`.
   - Note (T2 review): T2 already created `specs/mcp-policy-scope/spec.md` with the MODIFIED "Validación en la Admin API" block, covering the orphan warning only. T4.10 extends that same block: the 422 on `POST /mcp-wide` for a plugin without MCP support, and `/mcp-wide` next to "promoción a `global`" in the 409 sentence.
-- [ ] T4.11 Run VG.
+- [x] T4.11 Run VG.
 
 ## Phase A1: Engine (app, base `develop`, parallel with T1)
 
@@ -184,27 +184,27 @@ PR rules:
 
 ## Phase A2: Groups promotes MCP-wide (app, base A1, deploy after T4)
 
-- [ ] A2.1 `$P/lib/policyScopeOf.ts`:
+- [x] A2.1 `$P/lib/policyScopeOf.ts`:
   - `group` → `'mcp-wide'`.
   - Add `policyScopeOfItem`, `isPromotedPolicy` and `isRequestsFromIncomplete`.
   - `$P/hooks/usePolicyDraft.ts` passes `policyScopeOfItem(rawItem)`.
-- [ ] A2.2 `$P/lib/policyMapper.ts` `requestsFromOf`: check `global`, then `mcp_wide`, then links, then groups. Update the doc comments at `:142-164`.
-- [ ] A2.3 `$P/lib/policyLevelConflict.ts`: an MCP-wide placement uses consumer key `*`. A draft takes that cell only when its group choice is complete.
-- [ ] A2.4 Groups validation:
+- [x] A2.2 `$P/lib/policyMapper.ts` `requestsFromOf`: check `global`, then `mcp_wide`, then links, then groups. Update the doc comments at `:142-164`.
+- [x] A2.3 `$P/lib/policyLevelConflict.ts`: an MCP-wide placement uses consumer key `*`. A draft takes that cell only when its group choice is complete.
+- [x] A2.4 Groups validation:
   - `PolicyRequestsFromSection.tsx`: `showErrors` and the helper line; fix the "Users" doc.
   - `GroupMultiSelect.tsx`: `error?` prop.
   - Submit gate in `PolicyCreateSidePanel.tsx`, `PolicyDetailSidePanel.tsx` and `CreatePolicyModal.tsx`.
-- [ ] A2.5 Copy:
+- [x] A2.5 Copy:
   - security banner, `PolicyDeleteModal.tsx`
   - `listPoliciesAction.ts`, `policyCoverageLabel.ts`, `policyScopeSummary.ts`
   - `messages/en/v2Policies.json`
-- [ ] A2.6 Auto-attach uses `isPromotedPolicy` in `features/consumers/components/ConsumerAddPolicyModal.tsx:134` and `features/applications/components/ApplicationPoliciesTab.tsx:298`.
-- [ ] A2.7 Tests:
+- [x] A2.6 Auto-attach uses `isPromotedPolicy` in `features/consumers/components/ConsumerAddPolicyModal.tsx:134` and `features/applications/components/ApplicationPoliciesTab.tsx:298`.
+- [x] A2.7 Tests:
   - `$T/policyScopeOf.test.ts`: flip `:20-22`, keep `:30-33`.
   - `$T/policyLevelConflict.test.ts`: flip `:91-92`, keep `:30`; add overlap, disjoint, against global, and empty groups.
   - `$T/policyMapper.test.ts`.
-- [ ] A2.8 Test `$T/{PolicyRequestsFromSection,PolicyCreateSidePanel,PolicyDetailSidePanel,CreatePolicyModal}.test.tsx`: *Groups* with nothing picked blocks the save and shows the error. Also `__tests__/v2/features/policies/{PolicyInstanceCard,policyScopeSummary}.test.*`.
-- [ ] A2.9 Run VA.
+- [x] A2.8 Test `$T/{PolicyRequestsFromSection,PolicyCreateSidePanel,PolicyDetailSidePanel,CreatePolicyModal}.test.tsx`: *Groups* with nothing picked blocks the save and shows the error. Also `__tests__/v2/features/policies/{PolicyInstanceCard,policyScopeSummary}.test.*`.
+- [x] A2.9 Run VA.
 
 ## Phase R: Rollout (manual, per environment)
 

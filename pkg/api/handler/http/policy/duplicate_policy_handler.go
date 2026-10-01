@@ -33,7 +33,7 @@ func NewDuplicatePolicyHandler(duplicator apppolicy.Duplicator, status apppolicy
 
 // Handle godoc
 // @Summary      Duplicate a policy
-// @Description  Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.
+// @Description  Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is neither global nor MCP-wide.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth

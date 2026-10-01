@@ -51,9 +51,10 @@ type openAPISchema struct {
 
 type openAPIDocument struct {
 	Paths map[string]struct {
-		Get  openAPIOperation `json:"get"`
-		Post openAPIOperation `json:"post"`
-		Put  openAPIOperation `json:"put"`
+		Get    openAPIOperation `json:"get"`
+		Post   openAPIOperation `json:"post"`
+		Put    openAPIOperation `json:"put"`
+		Delete openAPIOperation `json:"delete"`
 	} `json:"paths"`
 	Components struct {
 		Schemas map[string]openAPISchema `json:"schemas"`
@@ -198,6 +199,58 @@ func TestPolicyOpenAPIDocumentsLevelConflictOnTheWritesThatTakeALevel(t *testing
 	assert.NotContains(t, createConflict.Description, "level",
 		"a created policy is a draft and takes no level, so its 409 is the name clash alone")
 	assert.Contains(t, collection.Post.Description, "runs nowhere and holds no level until it is attached or promoted")
+}
+
+// The MCP-wide placement mirrors /global: promoting takes the all-consumers
+// levels and can be refused, demoting only releases levels and never is. The
+// schema only proves mcp_wide is a property; that every response carries it,
+// false included, is pinned by policy_response_test.go.
+func TestPolicyOpenAPIDocumentsTheMCPWidePlacement(t *testing.T) {
+	document := loadOpenAPIDocument(t)
+
+	placement, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}/mcp-wide"]
+	require.True(t, ok, "the MCP-wide placement must be documented")
+
+	for _, status := range []string{"200", "404", "409", "422"} {
+		_, ok := placement.Post.Responses[status]
+		assert.True(t, ok, "POST /mcp-wide must document %s", status)
+	}
+	assert.Contains(t, placement.Post.Responses["409"].Description, "already runs this plugin at one of the levels")
+	assert.Contains(t, placement.Post.Responses["409"].Description, "changed while it was being promoted")
+	assert.Contains(t, placement.Post.Responses["422"].Description, "does not support MCP")
+	assert.Contains(t, placement.Post.Description, "never runs on LLM or A2A consumers")
+
+	for _, status := range []string{"200", "404"} {
+		_, ok := placement.Delete.Responses[status]
+		assert.True(t, ok, "DELETE /mcp-wide must document %s", status)
+	}
+	for _, status := range []string{"409", "422"} {
+		_, ok := placement.Delete.Responses[status]
+		assert.False(t, ok, "demoting releases levels, so DELETE /mcp-wide never answers %s", status)
+	}
+
+	promoted, ok := placement.Post.Responses["200"].Content["application/json"]
+	require.True(t, ok)
+	schema := schemaByRef(t, document, promoted.Schema.Ref)
+	assert.Contains(t, schema.Properties, "mcp_wide")
+	assert.Contains(t, schema.Properties, "global")
+	assert.Contains(t, schema.Properties, "warnings")
+
+	global, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}/global"]
+	require.True(t, ok)
+	assert.Contains(t, global.Post.Description, "clears mcp_wide")
+	assert.Contains(t, global.Post.Responses["409"].Description, "changed while it was being promoted")
+	assert.Contains(t, global.Delete.Description, "Clears only global")
+
+	item, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}"]
+	require.True(t, ok)
+	updateInvalid, ok := item.Put.Responses["422"]
+	require.True(t, ok, "a slug change of an MCP-wide policy to a plugin without MCP support answers 422")
+	assert.Contains(t, updateInvalid.Description, "without MCP support")
+
+	duplicate, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}/duplicate"]
+	require.True(t, ok)
+	assert.Contains(t, duplicate.Post.Description, "neither global nor MCP-wide")
 }
 
 // Rule 2 opened the attach of a group-only scope to a non-MCP consumer, so the

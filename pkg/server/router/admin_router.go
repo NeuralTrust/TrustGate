@@ -91,6 +91,7 @@ type AdminRouterDeps struct {
 	UpdatePolicy    *policyhttp.UpdatePolicyHandler
 	DeletePolicy    *policyhttp.DeletePolicyHandler
 	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
@@ -202,6 +203,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Delete("/:id", r.deps.DeletePolicy.Handle)
 	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
+	policies.Post("/:id/mcp-wide", r.deps.MCPWidePolicy.SetMCPWide)
+	policies.Delete("/:id/mcp-wide", r.deps.MCPWidePolicy.UnsetMCPWide)
 	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
 
 	consumers := gw.Group("/:gateway_id/consumers", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceConsumers))

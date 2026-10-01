@@ -107,6 +107,9 @@ func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(policyhttp.NewGlobalPolicyHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(policyhttp.NewMCPWidePolicyHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(policyhttp.NewDuplicatePolicyHandler); err != nil {
 		return err
 	}

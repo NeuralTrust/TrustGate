@@ -19,23 +19,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 )
 
-type GlobalPolicyHandler struct {
+type MCPWidePolicyHandler struct {
 	scoper apppolicy.Scoper
 	warner apppolicy.Warner
-	status apppolicy.StatusEvaluator
 }
 
-func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, status apppolicy.StatusEvaluator) *GlobalPolicyHandler {
-	return &GlobalPolicyHandler{scoper: scoper, warner: warner, status: status}
+func NewMCPWidePolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *MCPWidePolicyHandler {
+	return &MCPWidePolicyHandler{scoper: scoper, warner: warner}
 }
 
-// SetGlobal godoc
-// @Summary      Mark a policy as global
-// @Description  Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.
+// SetMCPWide godoc
+// @Summary      Mark a policy as MCP-wide
+// @Description  Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers, and consumer links are ignored while the flag is set. Promoting clears global in the same write. The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -45,23 +43,24 @@ func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, st
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody  "The gateway already runs this plugin at the all-traffic level, or the policy changed while it was being promoted"
-// @Router       /v1/gateways/{gateway_id}/policies/{id}/global [post]
-func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
+// @Failure      409         {object}  httpio.ErrorBody  "The gateway already runs this plugin at one of the levels the policy would take on every MCP consumer, or the policy changed while it was being promoted"
+// @Failure      422         {object}  httpio.ErrorBody  "The plugin does not support MCP"
+// @Router       /v1/gateways/{gateway_id}/policies/{id}/mcp-wide [post]
+func (h *MCPWidePolicyHandler) SetMCPWide(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	p, err := h.scoper.SetGlobal(c.UserContext(), gatewayID, id)
+	p, err := h.scoper.SetMCPWide(c.UserContext(), gatewayID, id)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)).WithStatus(h.evaluate(p)))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
 }
 
-// UnsetGlobal godoc
-// @Summary      Clear a policy's global scope
-// @Description  Demotes a global policy back to consumer-scoped (applies only to linked consumers). Clears only global: a policy that is not global is returned unchanged with 200, an MCP-wide one included.
+// UnsetMCPWide godoc
+// @Summary      Clear a policy's MCP-wide placement
+// @Description  Demotes an MCP-wide policy back to consumer-scoped (applies only to linked consumers; with none it runs nowhere). Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -71,20 +70,15 @@ func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/policies/{id}/global [delete]
-func (h *GlobalPolicyHandler) UnsetGlobal(c *fiber.Ctx) error {
+// @Router       /v1/gateways/{gateway_id}/policies/{id}/mcp-wide [delete]
+func (h *MCPWidePolicyHandler) UnsetMCPWide(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	p, err := h.scoper.UnsetGlobal(c.UserContext(), gatewayID, id)
+	p, err := h.scoper.UnsetMCPWide(c.UserContext(), gatewayID, id)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p).WithStatus(h.evaluate(p)))
-}
-
-func (h *GlobalPolicyHandler) evaluate(p *domain.Policy) (string, string) {
-	status, message := h.status.Evaluate(p)
-	return string(status), message
+	return httpio.WriteOK(c, response.FromPolicy(p))
 }

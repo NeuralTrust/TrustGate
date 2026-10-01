@@ -37,7 +37,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) 
 
 // Handle godoc
 // @Summary      Update a policy
-// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.
+// @Description  Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. An update racing a promotion or demotion of the same policy is refused with 409: reload it and retry. Changing the slug of an MCP-wide policy to a plugin without MCP support is refused with 422. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Accept       json
 // @Produce      json
@@ -49,7 +49,8 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater, warner apppolicy.Warner) 
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
-// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take"
+// @Failure      409         {object}  httpio.ErrorBody  "A policy of this name already exists, the gateway already runs this plugin at one of the levels the update would take, or the policy's placement changed while it was being updated"
+// @Failure      422         {object}  httpio.ErrorBody  "The request fails validation, such as an MCP-wide policy moved to a plugin without MCP support"
 // @Router       /v1/gateways/{gateway_id}/policies/{id} [put]
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
