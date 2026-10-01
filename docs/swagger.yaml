@@ -1103,19 +1103,24 @@ definitions:
         type: object
       slug:
         type: string
-      status:
-        description: |-
-          Status is "active", "paused" (disabled) or "error" (enabled but the
-          gateway cannot load it). FromPolicy derives it from Enabled alone;
-          list and get overwrite it with the validated value via WithStatus.
-        type: string
-      status_message:
-        description: StatusMessage is the load failure reason when Status is "error".
-        type: string
       stages:
         items:
           type: string
         type: array
+      status:
+        description: |-
+          Status is "active" (enabled and running), "paused" (disabled) or "error"
+          (enabled but the gateway cannot run it; see status_message).
+        enum:
+        - active
+        - paused
+        - error
+        type: string
+      status_message:
+        description: |-
+          StatusMessage is the reason the gateway cannot run the policy. It is
+          present only when status is "error".
+        type: string
       updated_at:
         type: string
       warnings:

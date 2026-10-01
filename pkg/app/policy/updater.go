@@ -155,17 +155,24 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		previousForWrite = nil
 	}
 	// Write-time rules apply only when the update carries settings or points
-	// the stored ones at another plugin, so a disable or rename still succeeds.
-	if err := validatePlugin(
-		u.registry,
-		existing.Slug,
-		existing.Stages,
-		existing.Mode,
-		existing.Settings,
-		previousForWrite,
-		in.Settings != nil || slugChanged,
-	); err != nil {
-		return nil, err
+	// the stored ones at another plugin, so a rename still succeeds. A pure
+	// disable (nothing the plugin runs changes) skips the load checks too: it
+	// is the remedy for a policy the gateway cannot load, and a disabled policy
+	// is never loaded.
+	pureDisable := in.Enabled != nil && !*in.Enabled &&
+		in.Settings == nil && in.Stages == nil && in.Mode == nil && !slugChanged
+	if !pureDisable {
+		if err := validatePlugin(
+			u.registry,
+			existing.Slug,
+			existing.Stages,
+			existing.Mode,
+			existing.Settings,
+			previousForWrite,
+			in.Settings != nil || slugChanged,
+		); err != nil {
+			return nil, err
+		}
 	}
 	if err := u.validateScopeAfterPatch(ctx, in, existing); err != nil {
 		return nil, err
