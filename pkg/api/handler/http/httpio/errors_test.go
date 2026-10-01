@@ -52,6 +52,7 @@ func TestMapDomainError(t *testing.T) {
 		{name: "conflict → 409", err: commonerrors.ErrConflict, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "conflict"},
 		{name: "policy placement changed → 409", err: policydomain.ErrPlacementChanged, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "placement changed"},
 		{name: "invalid policy placement → 422", err: policydomain.ErrInvalidPlacement, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid placement"},
+		{name: "mcp-wide on a plugin without MCP → 422", err: fmt.Errorf("%w: plugin model_allowlist does not support protocol MCP", policydomain.ErrMCPWideUnsupported), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "plugin model_allowlist does not support protocol MCP"},
 		{name: "validation → 422", err: commonerrors.ErrValidation, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "schema"},
 		{name: "validation with detail → 422 keeps detail", err: fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "tenant_id is required"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},

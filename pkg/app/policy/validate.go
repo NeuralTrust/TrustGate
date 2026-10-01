@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -86,16 +87,27 @@ func validateMCPScope(
 }
 
 func validateMCPScopePlugin(reg appplugins.Registry, slug string) error {
-	p, ok := reg.Get(slug)
-	if !ok {
+	if pluginRunsOnMCP(reg, slug) {
 		return nil
 	}
-	for _, protocol := range p.SupportedProtocols() {
-		if protocol == appplugins.ProtocolMCP {
-			return nil
-		}
-	}
 	return fmt.Errorf("%w: plugin %s does not support protocol %s", domain.ErrInvalidMCPScope, slug, appplugins.ProtocolMCP)
+}
+
+func validateMCPWidePlugin(reg appplugins.Registry, slug string) error {
+	if pluginRunsOnMCP(reg, slug) {
+		return nil
+	}
+	return fmt.Errorf("%w: plugin %s does not support protocol %s", domain.ErrMCPWideUnsupported, slug, appplugins.ProtocolMCP)
+}
+
+// pluginRunsOnMCP lets an unknown slug through: that is not a protocol
+// question, and validatePlugin refuses it wherever a slug is written.
+func pluginRunsOnMCP(reg appplugins.Registry, slug string) bool {
+	p, ok := reg.Get(slug)
+	if !ok {
+		return true
+	}
+	return slices.Contains(p.SupportedProtocols(), appplugins.ProtocolMCP)
 }
 
 func validateMCPScopeRegistries(

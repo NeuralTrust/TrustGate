@@ -16,6 +16,7 @@ package policy
 
 import (
 	"context"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
@@ -39,6 +40,14 @@ type ListFilter struct {
 	Sort            listing.Sort
 }
 
+// Placement is where a policy row runs after a placement write, with the
+// updated_at that write gave it.
+type Placement struct {
+	Global    bool
+	MCPWide   bool
+	UpdatedAt time.Time
+}
+
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=policy_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, p *Policy) error
@@ -52,12 +61,20 @@ type Repository interface {
 	// promotion committed since the read fails the update with
 	// ErrPlacementChanged instead of storing a state nobody checked.
 	Update(ctx context.Context, p *Policy, writeMCPScope bool) error
-	// SetGlobal writes the global flag. Promoting also clears mcp_wide in the
-	// same row write; demoting touches global only.
-	SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error
-	// SetMCPWide writes the mcp_wide flag. Promoting also clears global in the
-	// same row write; demoting touches mcp_wide only.
-	SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool) error
+	// SetGlobal writes the global flag and returns the placement the row holds
+	// after the write. Promoting also clears mcp_wide in the same row write;
+	// demoting touches global only, so the result can still be MCP-wide.
+	//
+	// A non-zero readAt makes the write conditional on the row the caller
+	// decided on: it lands only while updated_at still equals readAt, and
+	// fails with ErrPlacementChanged otherwise. A promotion passes the
+	// updated_at it read, because the level check it ran describes that row
+	// and no other; a demotion only releases levels and passes the zero time.
+	SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool, readAt time.Time) (Placement, error)
+	// SetMCPWide writes the mcp_wide flag and returns the placement the row
+	// holds after the write. Promoting also clears global in the same row
+	// write; demoting touches mcp_wide only. readAt works as in SetGlobal.
+	SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool, readAt time.Time) (Placement, error)
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error
 	FindByID(ctx context.Context, id ids.PolicyID) (*Policy, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, policyIDs []ids.PolicyID) ([]*Policy, error)

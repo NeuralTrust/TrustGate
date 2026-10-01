@@ -16,6 +16,7 @@ package adapters
 
 import (
 	"context"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -70,12 +71,12 @@ func (r *policyRepository) Update(_ context.Context, _ *domain.Policy, _ bool) e
 	return configsync.ErrReadOnly
 }
 
-func (r *policyRepository) SetGlobal(_ context.Context, _ ids.GatewayID, _ ids.PolicyID, _ bool) error {
-	return configsync.ErrReadOnly
+func (r *policyRepository) SetGlobal(_ context.Context, _ ids.GatewayID, _ ids.PolicyID, _ bool, _ time.Time) (domain.Placement, error) {
+	return domain.Placement{}, configsync.ErrReadOnly
 }
 
-func (r *policyRepository) SetMCPWide(_ context.Context, _ ids.GatewayID, _ ids.PolicyID, _ bool) error {
-	return configsync.ErrReadOnly
+func (r *policyRepository) SetMCPWide(_ context.Context, _ ids.GatewayID, _ ids.PolicyID, _ bool, _ time.Time) (domain.Placement, error) {
+	return domain.Placement{}, configsync.ErrReadOnly
 }
 
 func (r *policyRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.PolicyID) error {
