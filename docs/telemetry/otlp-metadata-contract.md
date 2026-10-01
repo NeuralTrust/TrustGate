@@ -224,6 +224,25 @@ Every key is emitted even when zero. Once the object is present a zero is an ans
 cut", "no degradation" — and dropping it would make an absent key ambiguous with a leg
 that never reported.
 
+Since RUN-1745:
+
+- **Only policies that opted into per-block inspection get an entry.** A policy of a
+  streaming-capable plugin whose settings leave streaming off is no longer walked per block,
+  so it writes no streamed entry with no decision. Its settings no longer failing to parse
+  cannot fail the blocks of a stream another policy opted into.
+- **A cut on a failure is the failing policy's.** When a block's call fails and
+  `streaming.on_error` is `fail_closed`, `cut_at_eval` lands on the policy whose call
+  failed, not on a policy that masked the same block. A mask that `fail_open` could not
+  apply is still the masking policy's cut.
+- **A masked stream says so.** An enforcing policy whose mask reached the client reports
+  the same decision as its buffered leg: `transformed` (`trustguard`) or `anonymized`
+  (`bedrock_guardrail`, `google_model_armor`); it used to read `allowed`.
+  `regex_replace` in observe mode reports `observed`, not `rewritten`.
+- **Per-response metrics are recorded once per plugin.** The policy that reports the
+  stream is chosen per plugin (the one that cut, else the first in the chain), so
+  `trustguard_stream_*` is written whenever a TrustGuard policy inspected the stream, even
+  when another plugin cut it or came first.
+
 #### `added_latency_ms` and `guard_latency_ms_total` are different quantities
 
 They are not two views of one number and neither bounds the other. Only
@@ -256,7 +275,8 @@ rest of the stream; `skip_reason` says the leg never inspected anything at all:
 | Token | Field | Meaning |
 |-------|-------|---------|
 | `accumulation_cap` | `degraded_reason` | The payload crossed its size cap and the block was inspected against a tail window rather than the whole prefix |
-| `guard_timeout` | `degraded_reason` | A block's verdict did not arrive and the held text was released uninspected |
+| `guard_timeout` | `degraded_reason` | A block's verdict did not arrive within `guard_timeout` and the held text was released uninspected |
+| `guard_error` | `degraded_reason` | A block's call failed for another reason (the provider rejected it, a transport error) and the held text was released uninspected. Before RUN-1745 these read `guard_timeout` |
 | `segmentation_unavailable` | `fallback_reason` | Consecutive failures retired per-block inspection. The buffered `post_response` pass still audits the whole response |
 | `client_disconnected` | `fallback_reason` | The client stopped reading. Inspection stops; no further calls are issued |
 | `provider_not_streaming` | `skip_reason` | The leg ran with per-block inspection and no block ever closed. Emitted with `skipped: true`, so it is distinguishable from a stream inspected and found clean. The token names the common cause but not the only one: a response that did stream and was wholly opaque — no assistant text, reasoning or tool call to close a block on — reports it too |

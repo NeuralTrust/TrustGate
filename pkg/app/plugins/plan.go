@@ -24,9 +24,11 @@ import (
 type StagePlan struct {
 	byStage map[policy.Stage][]chainEntry
 	batches map[policy.Stage][][]chainEntry
-	// streamed is the pre_response list in the order a streamed segment walks
-	// it (OrderStreamEntries). Plans built without finishStage leave it nil and
-	// the executor derives the order on demand.
+	// streamed is the pre_response list a streamed segment walks: the entries
+	// that take part in per-segment inspection (streamParticipants), in
+	// OrderStreamEntries order. finishStage always sets it, empty but non-nil
+	// when no entry takes part; plans built without finishStage leave it nil
+	// and the executor derives it on demand.
 	streamed []chainEntry
 }
 
@@ -136,7 +138,7 @@ func (p *StagePlan) finishStage(stage policy.Stage, entries []chainEntry, logger
 	p.byStage[stage] = entries
 	p.batches[stage] = groupBatches(entries, stage, logger)
 	if stage == policy.StagePreResponse {
-		p.streamed = OrderStreamEntries(entries)
+		p.streamed = streamParticipants(OrderStreamEntries(entries))
 	}
 }
 
@@ -222,7 +224,7 @@ func (p *StagePlan) streamEntriesFor() []chainEntry {
 	if p.streamed != nil {
 		return p.streamed
 	}
-	return OrderStreamEntries(p.byStage[policy.StagePreResponse])
+	return streamParticipants(OrderStreamEntries(p.byStage[policy.StagePreResponse]))
 }
 
 func (p *StagePlan) batchesFor(stage policy.Stage) [][]chainEntry {
@@ -296,6 +298,28 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 		batches = append(batches, current)
 	}
 	return batches
+}
+
+// streamParticipants keeps the entries that take part in per-segment
+// inspection: their plugin implements StreamInspector and their settings opt
+// in. An entry that opted out has nothing to say about a block, yet walking it
+// cost a span with no decision on every stream (RUN-1745 F5), could leave the
+// stream's per-response instruments to an entry that records none, and let a
+// policy whose settings no longer parse fail every block of a stream another
+// policy opted into (F8). The opt-in reads only the policy's settings, so it
+// is answered once when the plan is built. The result is never nil.
+func streamParticipants(entries []chainEntry) []chainEntry {
+	out := make([]chainEntry, 0, len(entries))
+	for _, entry := range entries {
+		inspector, ok := streamInspector(entry.plugin)
+		if !ok {
+			continue
+		}
+		if enabled, _ := inspector.StreamSettings(entry.config.Settings); enabled {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // OrderStreamEntries returns the pre_response entries in the order a streamed

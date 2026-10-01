@@ -17,6 +17,7 @@ package proxy
 import (
 	"cmp"
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
 	"net/http"
@@ -123,6 +124,7 @@ const (
 const (
 	degradeAccumulationCap      = appplugins.StreamDegradeAccumulationCap
 	degradeGuardTimeout         = appplugins.StreamDegradeGuardTimeout
+	degradeGuardError           = appplugins.StreamDegradeGuardError
 	fallbackSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
 	fallbackClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )
@@ -232,7 +234,10 @@ type streamGuard struct {
 	releasedChars int
 	cutAtEval     int
 	cutOffset     int
-	closed        bool
+	// cutOnFailure says the cut resolved a failed call as fail_closed rather
+	// than a verdict, so the chain can name the entry whose call failed.
+	cutOnFailure bool
+	closed       bool
 
 	// findings is every finding fingerprint the chain reported over this
 	// stream, in first-seen order and tagged with the entry that reported it,
@@ -846,6 +851,7 @@ func (g *streamGuard) report() appplugins.StreamReport {
 		AddedLatency:    g.addedLatency,
 		CutAtEval:       g.cutAtEval,
 		CutOffsetChars:  g.cutOffset,
+		CutOnFailure:    g.cutOnFailure,
 		FinalPass:       g.finalSent,
 		DegradedReason:  g.degradedReason,
 		FallbackReason:  g.fallbackReason,
@@ -962,6 +968,7 @@ func tailWithin(s string, limit int) (string, bool) {
 func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome) {
 	g.failures++
 	if g.cfg.onError == streamFailClosed {
+		g.cutOnFailure = g.cutAtEval == 0
 		g.stopStream(nil)
 		return
 	}
@@ -971,7 +978,7 @@ func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome
 		g.stopStream(partial)
 		return
 	}
-	g.degrade(degradeGuardTimeout)
+	g.degrade(blockFailureReason(err))
 	g.clearedIdx = len(g.produced)
 	if g.logger != nil {
 		g.logger.Warn("stream block inspection failed; releasing the block",
@@ -981,6 +988,18 @@ func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome
 	if g.failures >= maxConsecutiveFailures {
 		g.retire(fallbackSegmentationUnavail)
 	}
+}
+
+// blockFailureReason names why a released block went uninspected. Every
+// failure used to read guard_timeout, so a provider rejecting the payload or a
+// call failing outright looked like a slow guard and pointed the operator at
+// the wrong knob (RUN-1745 F10). Each inspector bounds its own call with
+// guard_timeout, so only a deadline is a timeout.
+func blockFailureReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return degradeGuardTimeout
+	}
+	return degradeGuardError
 }
 
 // retire stops calling for the rest of the stream and releases what is held.

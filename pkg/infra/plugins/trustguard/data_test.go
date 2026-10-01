@@ -431,6 +431,19 @@ func TestStreamOutcomeShape(t *testing.T) {
 			},
 		},
 		{
+			// RUN-1745 F7: a masked stream used to read allowed.
+			name:   "a stream this entry masked reads transformed",
+			report: appplugins.StreamReport{Evals: 4, GuardCalls: 4, FinalPass: true, MaskedEvals: 2},
+			want: guardData{
+				Direction: directionOutput,
+				Decision:  decisionTransformed,
+				Streaming: &streamData{
+					Enabled: true, StreamID: "trace-1:response",
+					EvalsTotal: 4, GuardCalls: 4, FinalPass: true,
+				},
+			},
+		},
+		{
 			name: "a degraded stream is degraded on the event, not only inside the aggregate",
 			report: appplugins.StreamReport{
 				Evals: 3, GuardCalls: 2, FinalPass: true,
