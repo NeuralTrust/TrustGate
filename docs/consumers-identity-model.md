@@ -575,7 +575,9 @@ can reach:
    `POST .../registries/{id}/shared-account/connect-link` mints the connect page
    with the subject pinned to `instance:<registry_id>`. This is the answer for
    an application that runs as itself: it has no person to walk a consent page,
-   so the account cannot be its own.
+   so the account cannot be its own. Its optional `resume_url` is the console
+   screen the admin started from; once the account is connected the page sends
+   them back there (an absolute https URL, see `oauth.NormalizeResumeURL`).
 2. **A person links their own** — the `trustgate_connect_<provider>` tool
    (`pkg/app/mcp/connection_tool.go`) on the consumer's own tool list returns a
    connect URL for the current principal, and `ConsentRequiredError` carries the

@@ -390,7 +390,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 	}
 	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
-		return g.headFailure(err)
+		return g.headFailure(err, outcome)
 	}
 	if outcome != nil && outcome.Block {
 		g.markCut()
@@ -413,7 +413,7 @@ func (g *streamGuard) evaluate(ctx context.Context) *appplugins.PluginError {
 // failure back as an error precisely so that it is resolved here: only the
 // guard knows that at the head nothing is committed, which is what makes
 // fail_closed a clean status code instead of a truncated body.
-func (g *streamGuard) headFailure(err error) *appplugins.PluginError {
+func (g *streamGuard) headFailure(err error, partial *appplugins.SegmentOutcome) *appplugins.PluginError {
 	g.failures++
 	if g.logger != nil {
 		g.logger.Warn("stream head inspection failed",
@@ -422,6 +422,12 @@ func (g *streamGuard) headFailure(err error) *appplugins.PluginError {
 	}
 	if g.cfg.onError == streamFailClosed {
 		return streamError(g.source, streamUnverifiableType, streamUnverifiableMessage)
+	}
+	// fail_open releases the held text, but never the raw text a mask already
+	// covered: apply the mask the earlier entries produced, or cut.
+	if partial != nil && partial.HasTransform && !g.rewrite(partial) {
+		g.markCut()
+		return streamError(g.source, streamMaskedType, streamMaskedMessage)
 	}
 	g.clearedIdx = len(g.produced)
 	return nil
@@ -552,7 +558,7 @@ func (g *streamGuard) inspect(ctx context.Context) {
 	}
 	outcome, err := g.call(ctx, g.nextSegment())
 	if err != nil {
-		g.blockFailure(err)
+		g.blockFailure(err, outcome)
 		return
 	}
 	g.failures = 0
@@ -785,7 +791,11 @@ func (g *streamGuard) call(
 	}
 	if err != nil {
 		g.callFailures++
-		return nil, err
+		// The chain hands back the mask an earlier enforcing entry produced
+		// together with the failure of a later one, so fail_open can release
+		// masked text rather than raw text.
+		g.remember(outcome)
+		return outcome, err
 	}
 	g.remember(outcome)
 	return outcome, nil
@@ -949,10 +959,16 @@ func tailWithin(s string, limit int) (string, bool) {
 // reading. fail_closed can no longer be a clean status code, so it is the same
 // stop a block verdict is; fail_open releases and counts, because a guard that
 // is failing is not a reason to hold text indefinitely.
-func (g *streamGuard) blockFailure(err error) {
+func (g *streamGuard) blockFailure(err error, partial *appplugins.SegmentOutcome) {
 	g.failures++
 	if g.cfg.onError == streamFailClosed {
 		g.stopStream(nil)
+		return
+	}
+	// Release only what a mask already covers: apply the mask the earlier
+	// entries produced before the block is released, and cut if it cannot land.
+	if partial != nil && partial.HasTransform && !g.rewrite(partial) {
+		g.stopStream(partial)
 		return
 	}
 	g.degrade(degradeGuardTimeout)

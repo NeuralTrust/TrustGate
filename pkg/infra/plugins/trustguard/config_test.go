@@ -193,7 +193,8 @@ func TestStreamingDefaults(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed})
 	require.NoError(t, err)
 
-	assert.False(t, cfg.Streaming.Enabled)
+	assert.True(t, cfg.Streaming.enabled(),
+		"a policy that says nothing about streaming inspects streamed responses: RUN-1712")
 	assert.Equal(t, defaultStreamingHeadChars, cfg.Streaming.HeadChars)
 	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, defaultStreamingMaxHoldMS, cfg.Streaming.MaxHoldMS)
@@ -221,7 +222,7 @@ func TestStreamingExplicitValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.True(t, cfg.Streaming.Enabled)
+	assert.True(t, cfg.Streaming.enabled())
 	assert.Equal(t, 1024, cfg.Streaming.HeadChars)
 	assert.Equal(t, 4096, cfg.Streaming.MinCharsBetweenEvals)
 	assert.Equal(t, 1500, cfg.Streaming.MaxHoldMS)
@@ -319,5 +320,34 @@ func TestSelectsStage(t *testing.T) {
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))
 		})
+	}
+}
+
+// An unset on_timeout inherits on_error, so a policy that asked for fail_closed
+// does not quietly fail open on the one failure a caller can bring about, and
+// the default for both stays fail_open.
+func TestOnTimeoutInheritsOnError(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		settings map[string]any
+		want     string
+	}{
+		{map[string]any{}, onErrorFailOpen},
+		{map[string]any{"on_error": onErrorFailClosed}, onErrorFailClosed},
+		{map[string]any{"on_error": onErrorFailClosed, "on_timeout": onErrorFailOpen}, onErrorFailOpen},
+		{map[string]any{"on_timeout": onErrorFailClosed}, onErrorFailClosed},
+	} {
+		set := map[string]any{"collector_id": testCollectorID}
+		for k, v := range tc.settings {
+			set[k] = v
+		}
+		cfg, err := parseConfig(set)
+		if err != nil {
+			t.Fatalf("parseConfig(%v): %v", tc.settings, err)
+		}
+		if cfg.OnTimeout != tc.want {
+			t.Fatalf("on_timeout for %v = %q, want %q", tc.settings, cfg.OnTimeout, tc.want)
+		}
 	}
 }

@@ -193,7 +193,10 @@ func TestPluginE2E_GoogleModelArmor_Enforce(t *testing.T) {
 		)
 		assert.Equal(t, http.StatusForbidden, status)
 		assert.Equal(t, "application/json", header.Get("Content-Type"))
-		assert.JSONEq(t, `{"error":{"type":"model_armor_blocked","filter":"rai"}}`, string(raw))
+		assert.JSONEq(t,
+			`{"error":{"type":"model_armor_blocked","message":"Request blocked by Model Armor.","filter":"rai"}}`,
+			string(raw),
+		)
 		assert.Equal(t, hitsBefore, up.Hits(), "a blocked request must not reach the upstream")
 	})
 

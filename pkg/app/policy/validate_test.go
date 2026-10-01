@@ -142,7 +142,7 @@ func TestCreator_Create_MCPScope_UnknownPluginIsLeftToPluginValidation(t *testin
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
-	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateSettingsWrite(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Get(mock.Anything).Return(nil, false).Once()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()

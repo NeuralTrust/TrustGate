@@ -266,6 +266,7 @@ func (h *PrincipalHandler) ConnectLink(c *fiber.Ctx) error {
 		PrincipalSub: principalSub,
 		Code:         strings.TrimSpace(req.Code),
 		RegistryID:   registryID,
+		ResumeURL:    strings.TrimSpace(req.ResumeURL),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

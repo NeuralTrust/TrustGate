@@ -109,3 +109,20 @@ func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
 }
+
+// TestNewPluginRegistry_ContentReaderSet pins which plugins the planner
+// sequences after same-priority rewriters (RUN-1693). Opting a plugin in
+// changes where it runs relative to rewriters, so it must be a conscious edit
+// here as well as in the plugin.
+func TestNewPluginRegistry_ContentReaderSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.IsContentReader(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"azure_content_safety", "openai_moderation", "semantic_cache"}, got)
+}

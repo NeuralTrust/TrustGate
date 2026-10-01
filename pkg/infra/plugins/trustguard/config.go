@@ -34,6 +34,19 @@ const (
 	onErrorFailOpen   = "fail_open"
 	onErrorFailClosed = "fail_closed"
 	defaultOnError    = onErrorFailOpen
+
+	// A timeout fails open by default like every other failure of the guard: a
+	// TrustGuard problem must not cut the client's request. The cost is known
+	// and accepted: a caller can push the detector past the deadline with
+	// enough text and so get a payload through uninspected. It is never
+	// silent — the span carries failed_open with reason timeout — and a policy
+	// that would rather refuse can set on_timeout (or on_error, which an unset
+	// on_timeout inherits) to fail_closed.
+
+	// minPolicyTimeout keeps a policy from setting a deadline so short that
+	// every call trips it, which would turn the safe default into an outage.
+	minPolicyTimeout = 250 * time.Millisecond
+	maxPolicyTimeout = 120 * time.Second
 )
 
 const (
@@ -72,9 +85,20 @@ type Settings struct {
 	// input/output direction reported to TrustGuard per evaluate call.
 	Direction   string `mapstructure:"direction"`
 	CollectorID string `mapstructure:"collector_id"`
-	// OnError controls transport / 5xx failure behaviour. Auth/config
-	// rejections (401/403) always fail closed regardless of this setting.
-	OnError   string            `mapstructure:"on_error"`
+	// OnError controls every failure of the guard other than a timeout:
+	// transport and 5xx, rejected or missing credentials, a missing base URL,
+	// unavailable entitlements, and a mask that could not be applied. It
+	// defaults to fail_open. A block or a 429 is an answer, not a failure, and
+	// is never subject to it.
+	OnError string `mapstructure:"on_error"`
+	// OnTimeout is separate from OnError because the two failures differ in
+	// who can cause them. Unset, it inherits OnError.
+	OnTimeout string `mapstructure:"on_timeout"`
+	// Timeout bounds one evaluate call for this policy. Empty means the
+	// deployment-wide TRUSTGUARD_TIMEOUT, which is the only control that
+	// existed before and which cannot be raised for one slow detector without
+	// raising it for every call on every gateway.
+	Timeout   string            `mapstructure:"timeout"`
 	Streaming StreamingSettings `mapstructure:"streaming"`
 }
 
@@ -82,11 +106,16 @@ type Settings struct {
 // leg. There is no max_inflight key: exactly one guard call is in flight by
 // construction, which is what makes the contiguous-prefix invariant hold.
 type StreamingSettings struct {
-	Enabled              bool `mapstructure:"enabled"`
-	HeadChars            int  `mapstructure:"head_chars"`
-	MinCharsBetweenEvals int  `mapstructure:"min_chars_between_evals"`
-	MaxHoldMS            int  `mapstructure:"max_hold_ms"`
-	MaxAccumulatedBytes  int  `mapstructure:"max_accumulated_bytes"`
+	// Enabled defaults to true: a policy whose direction includes the
+	// response has to inspect a streamed response too, or "Request &
+	// Response" silently means "request only" on the traffic that streams,
+	// which for chat is most of it. It is a pointer so an explicit false,
+	// the opt-out, is distinguishable from an absent key.
+	Enabled              *bool `mapstructure:"enabled"`
+	HeadChars            int   `mapstructure:"head_chars"`
+	MinCharsBetweenEvals int   `mapstructure:"min_chars_between_evals"`
+	MaxHoldMS            int   `mapstructure:"max_hold_ms"`
+	MaxAccumulatedBytes  int   `mapstructure:"max_accumulated_bytes"`
 	// FinalPass is a pointer so that an explicit false is distinguishable from
 	// an absent key, which defaults to true.
 	FinalPass    *bool  `mapstructure:"final_pass"`
@@ -116,6 +145,13 @@ func (s *Settings) applyDefaults() {
 	if s.OnError == "" {
 		s.OnError = defaultOnError
 	}
+	// An unset on_timeout inherits on_error, as streaming.on_error does, so a
+	// policy that asked for fail_closed does not quietly fail open on the one
+	// failure a caller can bring about.
+	if s.OnTimeout == "" {
+		s.OnTimeout = s.OnError
+	}
+	s.Timeout = strings.TrimSpace(s.Timeout)
 	s.Streaming.applyDefaults(s.OnError)
 }
 
@@ -151,6 +187,21 @@ func (s *Settings) validate() error {
 	case onErrorFailOpen, onErrorFailClosed:
 	default:
 		return fmt.Errorf("trustguard: on_error must be one of fail_open, fail_closed")
+	}
+	switch s.OnTimeout {
+	case onErrorFailOpen, onErrorFailClosed:
+	default:
+		return fmt.Errorf("trustguard: on_timeout must be one of fail_open, fail_closed")
+	}
+	if s.Timeout != "" {
+		d, err := time.ParseDuration(s.Timeout)
+		if err != nil {
+			return fmt.Errorf("trustguard: timeout must be a valid duration: %w", err)
+		}
+		if d < minPolicyTimeout || d > maxPolicyTimeout {
+			return fmt.Errorf("trustguard: timeout must be between %s and %s, got %s",
+				minPolicyTimeout, maxPolicyTimeout, d)
+		}
 	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")
@@ -206,6 +257,10 @@ func (s StreamingSettings) validate() error {
 	return nil
 }
 
+func (s StreamingSettings) enabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
 func (s StreamingSettings) finalPass() bool {
 	return s.FinalPass == nil || *s.FinalPass
 }
@@ -220,6 +275,24 @@ func (s StreamingSettings) guardTimeout() time.Duration {
 
 func (s Settings) failClosedOnTransport() bool {
 	return s.OnError == onErrorFailClosed
+}
+
+func (s Settings) failClosedOnTimeout() bool {
+	return s.OnTimeout == onErrorFailClosed
+}
+
+// timeoutOr resolves the per-policy deadline, falling back to the
+// deployment-wide one the plugin was built with. validate has already rejected
+// anything unparseable, so a bad value here cannot silently widen the deadline.
+func (s Settings) timeoutOr(fallback time.Duration) time.Duration {
+	if s.Timeout == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s.Timeout)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {

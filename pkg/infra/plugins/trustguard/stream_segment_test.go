@@ -208,18 +208,32 @@ func TestSegmentVerdicts(t *testing.T) {
 		{"transform carries the masked buffer", produced,
 			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "Hello [MASKED]"}},
 			appplugins.SegmentVerdict{HasTransform: true, Transformed: "Hello [MASKED]"}},
-		{"transform without a payload blocks", produced, GuardResponse{Status: statusTransform},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
-		{"transform with nothing accumulated blocks instead of injecting", toolCallOnly,
-			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "[MASKED]"}},
-			appplugins.SegmentVerdict{Block: true, Type: typeBlocked, Message: blockMessage}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			verdict := segmentVerdict(tt.seg, &tt.resp)
+			verdict, err := segmentVerdict(tt.seg, &tt.resp)
+			require.NoError(t, err)
 			require.NotNil(t, verdict)
 			assert.Equal(t, tt.want, *verdict)
+		})
+	}
+
+	// A mask this plugin cannot apply is a failure on our side, not a finding:
+	// it goes back for streaming.on_error to resolve instead of cutting.
+	for name, tc := range map[string]struct {
+		seg  appplugins.StreamSegment
+		resp GuardResponse
+	}{
+		"transform without a payload": {produced, GuardResponse{Status: statusTransform}},
+		"transform with nothing accumulated": {toolCallOnly,
+			GuardResponse{Status: statusTransform, TransformedPayload: map[string]any{"input": "[MASKED]"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			verdict, err := segmentVerdict(tc.seg, &tc.resp)
+			require.ErrorIs(t, err, errTransformUnappliable)
+			assert.Nil(t, verdict)
 		})
 	}
 }
@@ -244,15 +258,21 @@ type segmentGuard struct {
 	captured   []GuardRequest
 	delays     []time.Duration
 	tokenDelay time.Duration
-	release    chan struct{}
-	status     int
-	response   GuardResponse
+	// tokenStatus, when set, is how the token leg answers every call.
+	tokenStatus int
+	release     chan struct{}
+	status      int
+	response    GuardResponse
 }
 
 func (g *segmentGuard) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == tokenPath {
 			if !g.hold(r, g.tokenDelay) {
+				return
+			}
+			if g.tokenStatus != 0 {
+				w.WriteHeader(g.tokenStatus)
 				return
 			}
 			w.Header().Set("Content-Type", contentTypeJSON)
@@ -439,36 +459,51 @@ func TestInspectSegmentDropsTheEnvelopeWithoutAnID(t *testing.T) {
 		"an empty id would correlate every stream in the process into one bucket")
 }
 
-func TestInspectSegmentDeliberateRejectionsIgnoreOnError(t *testing.T) {
+// A 429 is the engine answering, and cuts whatever streaming.on_error says.
+// Rejected credentials and unavailable entitlements are failures of the guard
+// and follow streaming.on_error.
+func TestInspectSegmentSortsAnswersFromFailures(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
-		status   int
-		wantType string
-	}{
-		{"forbidden", http.StatusForbidden, typeUnauthorized},
-		{"unauthorized after refresh", http.StatusUnauthorized, typeUnauthorized},
-		{"rate limited", http.StatusTooManyRequests, typeRateLimited},
-		{"entitlements unavailable", http.StatusServiceUnavailable, typeUnavailable},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	t.Run("rate limited", func(t *testing.T) {
+		t.Parallel()
+		g := &segmentGuard{status: http.StatusTooManyRequests}
+		p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
+		set := streamingSettings(map[string]any{"on_error": onErrorFailOpen})
+		verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
+			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+		require.NoError(t, err)
+		require.NotNil(t, verdict)
+		assert.True(t, verdict.Block)
+		assert.Equal(t, typeRateLimited, verdict.Type)
+	})
+
+	for name, status := range map[string]int{
+		"forbidden":                  http.StatusForbidden,
+		"unauthorized after refresh": http.StatusUnauthorized,
+		"entitlements unavailable":   http.StatusServiceUnavailable,
+	} {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			g := &segmentGuard{status: tt.status}
+			g := &segmentGuard{status: status}
 			p := newTestPlugin(t, adapter.NewRegistry(), newSegmentServer(t, g).URL)
 			set := streamingSettings(map[string]any{"on_error": onErrorFailOpen})
 			verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 				appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
 			require.NoError(t, err)
 			require.NotNil(t, verdict)
-			assert.True(t, verdict.Block, "a deliberate engine rejection must not be left to streaming.on_error")
-			assert.Equal(t, tt.wantType, verdict.Type)
+			assert.False(t, verdict.Block, "a failure of the guard is not a finding and must not cut")
+
+			set = streamingSettings(map[string]any{"on_error": onErrorFailClosed})
+			verdict, err = p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
+				appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"})
+			require.Error(t, err, "fail_closed goes back to the caller")
+			assert.Nil(t, verdict)
 		})
 	}
 }
 
-func TestInspectSegmentTransportFailureIsLeftToTheCaller(t *testing.T) {
+func TestInspectSegmentTransportFailureFollowsStreamingOnError(t *testing.T) {
 	t.Parallel()
 
 	for _, onError := range []string{onErrorFailOpen, onErrorFailClosed} {
@@ -479,8 +514,14 @@ func TestInspectSegmentTransportFailureIsLeftToTheCaller(t *testing.T) {
 			set := streamingSettings(map[string]any{"on_error": onError})
 			verdict, err := p.InspectSegment(segmentTraceContext(), segmentInput(t, set),
 				appplugins.StreamSegment{Seq: 2, Accumulated: "Hello world"})
-			require.Error(t, err)
-			assert.Nil(t, verdict, "the plugin never resolves a configurable failure itself")
+			if onError == onErrorFailClosed {
+				require.Error(t, err)
+				assert.Nil(t, verdict, "fail_closed goes back to the caller, which cuts")
+				return
+			}
+			require.NoError(t, err, "fail_open is resolved here, so the rest of the chain still inspects the block")
+			require.NotNil(t, verdict)
+			assert.False(t, verdict.Block)
 		})
 	}
 }
@@ -495,7 +536,7 @@ func TestInspectSegmentPerBlockDeadline(t *testing.T) {
 	srv := newSegmentServer(t, g)
 	p := New(adapter.NewRegistry(), srv.URL, testClientTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)))
-	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms"}))
+	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms", "on_error": onErrorFailClosed}))
 	ctx := segmentTraceContext()
 
 	start := time.Now()
@@ -527,7 +568,7 @@ func TestInspectSegmentDeadlineCoversTheTokenFetch(t *testing.T) {
 	srv := newSegmentServer(t, g)
 	p := New(adapter.NewRegistry(), srv.URL, testClientTimeout, "test-client", "test-secret", nil,
 		withBaseTransport(testTransport(t)))
-	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms"}))
+	in := segmentInput(t, streamingSettings(map[string]any{"guard_timeout": "250ms", "on_error": onErrorFailClosed}))
 
 	start := time.Now()
 	verdict, err := p.InspectSegment(segmentTraceContext(), in,
@@ -552,7 +593,7 @@ func TestInspectSegmentSkipsWithoutCallingTheGuard(t *testing.T) {
 		settings map[string]any
 		seg      appplugins.StreamSegment
 	}{
-		{"streaming disabled", map[string]any{"collector_id": testCollectorID},
+		{"streaming disabled", streamingSettings(map[string]any{"enabled": false}),
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
 		{"policy excludes the response leg", requestLeg,
 			appplugins.StreamSegment{Seq: 1, Accumulated: "Hello world"}},
@@ -604,11 +645,22 @@ func TestStreamSettingsIsTheOptIn(t *testing.T) {
 	assert.Equal(t, onErrorFailClosed, opts.OnError,
 		"streaming.on_error inherits the policy on_error, and the caller must be given what it inherited")
 
+	// RUN-1712: a policy that says nothing about streaming is on, with the
+	// defaults, because its direction already says it inspects the response.
+	// Before this, the same policy streamed its responses uninspected while the
+	// console told the operator both legs were covered.
+	enabled, opts = p.StreamSettings(map[string]any{"collector_id": testCollectorID})
+	assert.True(t, enabled, "an absent streaming block must mean on, not off")
+	assert.Equal(t, defaultStreamingHeadChars, opts.HeadChars)
+	assert.Equal(t, defaultStreamingMinCharsBetweenEvals, opts.MinCharsBetweenEvals)
+
+	optedOut := streamingSettings(map[string]any{"enabled": false})
+
 	for _, tt := range []struct {
 		name     string
 		settings map[string]any
 	}{
-		{"streaming disabled", map[string]any{"collector_id": testCollectorID}},
+		{"streaming explicitly disabled", optedOut},
 		{"policy excludes the response leg", requestLeg},
 		{"settings that do not parse", map[string]any{"collector_id": "not-a-uuid"}},
 	} {
@@ -705,7 +757,7 @@ func TestInspectSegmentClosingWritesNothingWhenStreamingIsOff(t *testing.T) {
 	p := newTestPlugin(t, adapter.NewRegistry(), "")
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce,
-		map[string]any{"collector_id": testCollectorID}, segmentRequest(), nil, event)
+		streamingSettings(map[string]any{"enabled": false}), segmentRequest(), nil, event)
 
 	_, err := p.InspectSegment(segmentTraceContext(), in,
 		appplugins.StreamSegment{Closing: true, Report: appplugins.StreamReport{Evals: 2}})

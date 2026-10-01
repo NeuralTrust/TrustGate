@@ -62,13 +62,20 @@ type trustGuardStub struct {
 
 	mu            sync.Mutex
 	lastTokenReq  trustGuardTokenCapture
-	lastGuardReq  trustGuardGuardCapture
 	lastGuardAuth string
 	guardDelay    time.Duration
 	blockOnCall   int
 	guardPayloads []json.RawMessage
 	guardStreams  []GuardStream
+	guardTraceIDs []string
+	guardCaptures []trustGuardGuardCapture
 }
+
+// trustGuardEvaluateTraceHeader is the header pkg/infra/plugins/trustguard/client.go
+// sets on every /v1/evaluate call, carrying the same gateway trace id the
+// proxy echoes to the client as X-AG-Trace-Id. Capturing it lets a test
+// correlate a buffered call to the one request it is waiting on.
+const trustGuardEvaluateTraceHeader = "X-Trace-ID"
 
 type trustGuardTokenCapture struct {
 	GrantType    string `json:"grant_type"`
@@ -187,9 +194,15 @@ func (s *trustGuardStub) SetGuardDelay(d time.Duration) {
 	s.mu.Unlock()
 }
 
-// BlockOnCall makes the n-th /v1/evaluate answer with a block verdict and
-// leaves every call before and after it allowed, so a test picks which point of
-// a stream the violation surfaces at: n == 1 is the head, n > 1 is mid-stream.
+// BlockOnCall makes the /v1/evaluate answer for stream sequence n of a
+// response-stage streamed evaluation a block verdict, and leaves every other
+// call allowed, so a test picks which point of a stream the violation
+// surfaces at: n == 1 is the head, n > 1 is mid-stream.
+//
+// Matching is on the stream envelope's seq, not on call arrival order. A
+// buffered call (pre_request, or the asynchronous post_response pass) carries
+// no envelope and can never match, however it is timed relative to any other
+// request on the shared stub.
 func (s *trustGuardStub) BlockOnCall(n int) {
 	s.mu.Lock()
 	s.blockOnCall = n
@@ -213,17 +226,72 @@ func (s *trustGuardStub) GuardStreams() []GuardStream {
 	return append([]GuardStream(nil), s.guardStreams...)
 }
 
+// InStreamHits is GuardHits narrowed to calls that carried a stream envelope,
+// i.e. the streaming pre_response leg. It excludes buffered calls (pre_request
+// or post_response), which is what keeps a BlockOnCall assertion meaningful in
+// the presence of a stray buffered call: GuardHits counts it, InStreamHits does
+// not, because BlockOnCall can never match it either.
+func (s *trustGuardStub) InStreamHits() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, st := range s.guardStreams {
+		if st.ID != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// BufferedHitsForTrace counts calls carrying no stream envelope (the buffered
+// pre_request/post_response leg) for the given gateway trace id. A test waits
+// on or asserts this rather than on GuardHits to prove or disprove its own
+// request's buffered calls, unaffected by any other request's buffered call
+// racing in on the shared stub.
+func (s *trustGuardStub) BufferedHitsForTrace(traceID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for i, st := range s.guardStreams {
+		if st.ID != "" {
+			continue
+		}
+		if i < len(s.guardTraceIDs) && s.guardTraceIDs[i] == traceID {
+			n++
+		}
+	}
+	return n
+}
+
+// GuardForTrace returns the last buffered (envelope-less) capture for the
+// given trace id, so a test reads its own request's call instead of whichever
+// one landed last stub-wide.
+func (s *trustGuardStub) GuardForTrace(traceID string) (trustGuardGuardCapture, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.guardCaptures) - 1; i >= 0; i-- {
+		if s.guardStreams[i].ID != "" {
+			continue
+		}
+		if i < len(s.guardTraceIDs) && s.guardTraceIDs[i] == traceID {
+			return s.guardCaptures[i], true
+		}
+	}
+	return trustGuardGuardCapture{}, false
+}
+
 func (s *trustGuardStub) Reset() {
 	atomic.StoreInt64(&s.tokenHits, 0)
 	atomic.StoreInt64(&s.guardHits, 0)
 	s.mu.Lock()
 	s.lastTokenReq = trustGuardTokenCapture{}
-	s.lastGuardReq = trustGuardGuardCapture{}
 	s.lastGuardAuth = ""
 	s.guardDelay = 0
 	s.blockOnCall = 0
 	s.guardPayloads = nil
 	s.guardStreams = nil
+	s.guardTraceIDs = nil
+	s.guardCaptures = nil
 	s.mu.Unlock()
 }
 
@@ -233,10 +301,21 @@ func (s *trustGuardStub) lastToken() trustGuardTokenCapture {
 	return s.lastTokenReq
 }
 
-func (s *trustGuardStub) lastGuard() trustGuardGuardCapture {
+// LastGuardForGateway returns the last capture whose gateway_id matches, so an
+// MCP test (which has no stream envelope and no client-visible trace id to
+// correlate on the way GuardForTrace does) still reads its own request's call
+// rather than whichever one landed last stub-wide. Every functional test
+// provisions its own gateway, so the id is as unique a key here as a trace id
+// is for an LLM request.
+func (s *trustGuardStub) LastGuardForGateway(gatewayID string) (trustGuardGuardCapture, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lastGuardReq
+	for i := len(s.guardCaptures) - 1; i >= 0; i-- {
+		if s.guardCaptures[i].GatewayID == gatewayID {
+			return s.guardCaptures[i], true
+		}
+	}
+	return trustGuardGuardCapture{}, false
 }
 
 func newTrustGuardStubServer() *trustGuardStub {
@@ -283,7 +362,6 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &req)
 
 	s.mu.Lock()
-	s.lastGuardReq = req
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.guardPayloads = append(s.guardPayloads, req.Payload)
 	stream := GuardStream{}
@@ -291,20 +369,24 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 		stream = *req.Attributes.Stream
 	}
 	s.guardStreams = append(s.guardStreams, stream)
+	s.guardTraceIDs = append(s.guardTraceIDs, r.Header.Get(trustGuardEvaluateTraceHeader))
+	s.guardCaptures = append(s.guardCaptures, req)
 	delay, blockOn := s.guardDelay, s.blockOnCall
 	s.mu.Unlock()
 
-	// The counter is published after the capture: a test that waits on
-	// GuardHits() for an async post_response would otherwise read a zero-value
-	// lastGuard between the increment and this write.
-	call := int(atomic.AddInt64(&s.guardHits, 1))
+	// The counter is published after the capture, so a test that sees
+	// GuardHits() move can already read the call's capture.
+	atomic.AddInt64(&s.guardHits, 1)
 
 	if delay > 0 {
 		time.Sleep(delay)
 	}
 
 	text := trustGuardInspectText(req.Payload)
-	if blockOn > 0 && blockOn == call {
+	// Matching is on the envelope's seq, not on arrival order: a buffered call
+	// (pre_request or post_response) carries stream.ID == "" and can never
+	// match.
+	if blockOn > 0 && stream.ID != "" && stream.Seq == blockOn {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, trustGuardBlockResponse)
 		return

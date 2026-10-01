@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -79,6 +80,9 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			}
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
+			// Read the verified outcome at completion rather than when req was
+			// built, so it holds even if Metrics is ever mounted before Auth.
+			markPlaygroundVerified(c, req)
 			requestTrace.OnComplete(func() {
 				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 			})
@@ -169,6 +173,14 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 	}
 	stampRequestTarget(c, req)
 	return req
+}
+
+// markPlaygroundVerified flags req as a verified playground request. The signal
+// is the AuthContext the playground identity resolver produced, never the raw
+// header a client can send.
+func markPlaygroundVerified(c *fiber.Ctx, req *infracontext.RequestContext) {
+	authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
+	req.PlaygroundVerified = ok && authCtx.Method == appauth.MethodPlayground
 }
 
 func gatewayIDFromContext(c *fiber.Ctx) string {

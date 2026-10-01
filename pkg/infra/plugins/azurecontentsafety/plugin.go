@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,10 +31,9 @@ import (
 const PluginName = "azure_content_safety"
 
 const (
-	decisionBlocked      = "blocked"
-	decisionReported     = "reported"
-	decisionAllowed      = "allowed"
-	decisionFailedClosed = "failed_closed"
+	decisionBlocked  = "blocked"
+	decisionReported = "reported"
+	decisionAllowed  = "allowed"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -76,15 +76,46 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// ReadsContent opts into being sequenced after any same-priority rewriter, so
+// the verdict is scored on the rewritten content (RUN-1693).
+func (p *Plugin) ReadsContent() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
 }
 
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a category_severity key that names a
+// category not requested in categories. This cannot live in parseConfig (run
+// via ValidateConfig on every load): a policy saved before this rule existed
+// would turn into a run-time config_invalid failure the moment it did.
+// Execute instead requests the union of categories and category_severity's
+// keys (Settings.requestCategories) so an already-saved mismatched policy
+// keeps working; this only stops a new one from being saved with the same
+// gap.
+//
+// previous (the settings stored before this write) is unused here: this
+// plugin's rule is a same-settings internal consistency check, not one that
+// depends on what changed.
+func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	if missing := cfg.unrequestedThresholds(); len(missing) > 0 {
+		return fmt.Errorf(
+			"azure_content_safety: category_severity key %q is not in categories", missing[0],
+		)
+	}
+	return nil
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("azure_content_safety: %w", err)
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureConfigInvalid, "", err)
 	}
 
 	if in.Stage != policy.StagePreRequest {
@@ -96,10 +127,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", err)
 	}
 	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
-	if decErr != nil || creq == nil {
+	if decErr != nil {
+		return p.externalFailure(ctx, in, cfg, 0, appplugins.FailureDecodeFailed, "", decErr)
+	}
+	if creq == nil {
 		return passThrough(), nil
 	}
 	text := joinRequestText(creq)
@@ -110,39 +144,20 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	start := time.Now()
 	resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
 		Text:       text,
-		Categories: cfg.Categories,
+		Categories: cfg.requestCategories(),
 		OutputType: cfg.OutputType,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		data := &Data{
-			Endpoint:   cfg.Endpoint,
-			OutputType: cfg.OutputType,
-			Mode:       string(in.Mode),
-			LatencyMS:  latency,
-			FailedOpen: true,
-			Decision:   decisionFailedClosed,
-		}
-		if appplugins.Blocks(in.Mode) {
-			p.warn(ctx, "azure content safety call failed, failing closed",
-				slog.String("plugin", PluginName),
-				slog.String("stage", string(in.Stage)),
-				slog.Any("error", err),
-			)
-			setExtras(in.Event, data)
-			return nil, fmt.Errorf("azure_content_safety: analyze: %w", err)
-		}
-		p.warn(ctx, "azure content safety call failed, observe mode passing through",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.Any("error", err),
-		)
-		setExtras(in.Event, data)
-		appplugins.SetDecisionFromOutcome(in.Event, decisionFailedClosed)
-		return passThrough(), nil
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureTransport, "", err)
 	}
 
-	severities, breaches := evaluate(resp, cfg)
+	severities, breaches, missing := evaluate(resp, cfg)
+	if len(breaches) == 0 && missing != "" {
+		return p.externalFailure(ctx, in, cfg, latency, appplugins.FailureVerdictIncomplete, missing,
+			fmt.Errorf("azure_content_safety: thresholded category %q missing from response", missing))
+	}
+
 	data := &Data{
 		Endpoint:   cfg.Endpoint,
 		OutputType: cfg.OutputType,
@@ -174,11 +189,42 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	return passThrough(), nil
 }
 
-func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
-	if p.logger == nil {
-		return
-	}
-	p.logger.WarnContext(ctx, msg, attrs...)
+// externalFailure turns a failed guardrail call into a plugin outcome via
+// the shared appplugins.HandleExternalFailure: fail closed (502
+// guardrail_unavailable) in a blocking mode, fail open (pass through) in
+// observe, or always fail open for a decode_failed reason. It builds this
+// plugin's own Data so the failure_reason/failure_detail pair travels with
+// every other external guardrail's telemetry in the same shape.
+func (p *Plugin) externalFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	latencyMS int64,
+	reason appplugins.FailureReason,
+	detail string,
+	err error,
+) (*appplugins.Result, error) {
+	outcome := appplugins.HandleExternalFailure(appplugins.ExternalFailure{
+		Ctx:    ctx,
+		Plugin: PluginName,
+		Stage:  in.Stage,
+		Mode:   in.Mode,
+		Reason: reason,
+		Detail: detail,
+		Err:    err,
+		Logger: p.logger,
+		Event:  in.Event,
+	})
+	setExtras(in.Event, &Data{
+		Endpoint:      cfg.Endpoint,
+		OutputType:    cfg.OutputType,
+		Mode:          string(in.Mode),
+		LatencyMS:     latencyMS,
+		Decision:      outcome.Decision,
+		FailureReason: string(reason),
+		FailureDetail: detail,
+	})
+	return outcome.Result, outcome.Err
 }
 
 func joinRequestText(creq *adapter.CanonicalRequest) string {
@@ -194,14 +240,21 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 	return strings.Join(parts, "\n")
 }
 
-func evaluate(resp *analyzeResponse, cfg Settings) (map[string]int, []breachedCategory) {
+// evaluate reports every breached category plus, when none breached, the
+// first (sorted) thresholded category Azure's response said nothing about.
+// requestCategories already asks Azure to analyze every category_severity
+// key, so a category still missing from CategoriesAnalysis means Azure could
+// not or did not evaluate it — a silent gap this call must not read as a
+// clean pass.
+func evaluate(resp *analyzeResponse, cfg Settings) (severities map[string]int, breaches []breachedCategory, missingThreshold string) {
 	if resp == nil {
-		return nil, nil
+		return nil, nil, ""
 	}
-	severities := make(map[string]int, len(resp.CategoriesAnalysis))
-	var breaches []breachedCategory
+	severities = make(map[string]int, len(resp.CategoriesAnalysis))
+	present := make(map[string]struct{}, len(resp.CategoriesAnalysis))
 	for _, analysis := range resp.CategoriesAnalysis {
 		severities[analysis.Category] = analysis.Severity
+		present[analysis.Category] = struct{}{}
 		threshold, ok := cfg.CategorySeverity[analysis.Category]
 		if !ok {
 			continue
@@ -214,7 +267,18 @@ func evaluate(resp *analyzeResponse, cfg Settings) (map[string]int, []breachedCa
 			})
 		}
 	}
-	return severities, breaches
+	names := make([]string, 0, len(cfg.CategorySeverity))
+	for c := range cfg.CategorySeverity {
+		names = append(names, c)
+	}
+	sort.Strings(names)
+	for _, c := range names {
+		if _, ok := present[c]; !ok {
+			missingThreshold = c
+			break
+		}
+	}
+	return severities, breaches, missingThreshold
 }
 
 func breachedNames(breaches []breachedCategory) []string {

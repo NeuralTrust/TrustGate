@@ -15,6 +15,7 @@
 package trustguard
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -85,5 +86,30 @@ func TestStreamCanonicalResponseKeepaliveAndEmpty(t *testing.T) {
 	sse := ": keepalive\n\ndata: [DONE]\n"
 	if got := streamCanonicalResponse(reg, []byte(sse), adapter.FormatOpenAI); got != nil {
 		t.Fatalf("got %#v, want nil", got)
+	}
+}
+
+func TestStreamCanonicalResponseGeminiParallelCalls(t *testing.T) {
+	t.Parallel()
+
+	reg := adapter.NewRegistry()
+	sse := "" +
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"},"thoughtSignature":"EpYE"}],"role":"model"},"index":0}]}` + "\n" +
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Rome"},"id":"call_2"}}],"role":"model"},"index":0}]}` + "\n" +
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Berlin"},"id":"call_3"}}],"role":"model"},"index":0}]}` + "\n" +
+		`data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP","index":0}]}` + "\n"
+	want := []adapter.CanonicalToolCall{
+		{ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`},
+		{ID: "call_2", Name: "get_weather", Arguments: `{"city":"Rome"}`},
+		{ID: "call_3", Name: "get_weather", Arguments: `{"city":"Berlin"}`},
+	}
+	for _, format := range []adapter.Format{adapter.FormatGemini, adapter.FormatVertex} {
+		cresp := streamCanonicalResponse(reg, []byte(sse), format)
+		if cresp == nil {
+			t.Fatalf("%s: streamCanonicalResponse = nil", format)
+		}
+		if !reflect.DeepEqual(cresp.ToolCalls, want) {
+			t.Fatalf("%s: tool calls = %+v, want %+v", format, cresp.ToolCalls, want)
+		}
 	}
 }

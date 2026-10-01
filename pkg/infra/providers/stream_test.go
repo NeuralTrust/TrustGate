@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -146,4 +148,58 @@ func TestStreamResponse_ClosesBodyAndNoGoroutineLeak(t *testing.T) {
 	after := runtime.NumGoroutine()
 	assert.LessOrEqual(t, after, baseline+2,
 		"goroutines must not grow across StreamResponse runs (baseline=%d after=%d)", baseline, after)
+}
+
+func TestStreamSSE_ContextEndInterruptsABlockedRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		ctx     func() (context.Context, context.CancelFunc)
+		wantErr error
+	}{
+		{
+			name: "deadline",
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 200*time.Millisecond)
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+		{
+			name: "cancel",
+			ctx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				time.AfterFunc(200*time.Millisecond, cancel)
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstreamGone := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: {\"a\":1}\n\n")
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+				close(upstreamGone)
+			}))
+			t.Cleanup(srv.Close)
+			resp, err := http.Get(srv.URL) // #nosec G107 -- test server URL
+			require.NoError(t, err)
+
+			ctx, cancel := tt.ctx()
+			defer cancel()
+			start := time.Now()
+			lines, err := collect(t, providers.StreamSSE(ctx, resp.Body))
+
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.Equal(t, []string{`data: {"a":1}`, ``}, lines)
+			assert.Less(t, time.Since(start), 5*time.Second)
+			select {
+			case <-upstreamGone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the upstream connection stayed open")
+			}
+		})
+	}
 }

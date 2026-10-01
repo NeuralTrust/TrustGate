@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type Format string
@@ -69,11 +70,38 @@ func GeminiModelFromPath(path string) string {
 	if idx < 0 {
 		return ""
 	}
-	model := path[idx+len(marker):]
-	if c := strings.IndexByte(model, ':'); c >= 0 {
-		model = model[:c]
-	}
+	model, _ := SplitGeminiModelAction(path[idx+len(marker):])
 	return model
+}
+
+// geminiMethods are the methods TrustGate routes on a Gemini or Vertex model
+// path. Any other suffix after a ':' is part of the model id.
+var geminiMethods = map[string]struct{}{
+	"generateContent":       {},
+	"streamGenerateContent": {},
+	"countTokens":           {},
+	"embedContent":          {},
+	"batchEmbedContents":    {},
+	"predict":               {},
+	"streamRawPredict":      {},
+	"rawPredict":            {},
+}
+
+// SplitGeminiModelAction splits the last segment of a Gemini model path into
+// the model and its method. The split is at the last ':' followed by one of
+// the methods TrustGate routes (geminiMethods), because model ids can contain
+// ':' themselves (Bedrock "eu.amazon.nova-lite-v1:0"). A segment without such
+// a method, an unknown one such as batchGenerateContent included, is all
+// model. The segment is not percent-decoded: no SDK encodes the ':', and
+// decoding here alone would let the stream detection, which reads the raw
+// path, disagree with routing, and would let %3F or %23 into model ids.
+func SplitGeminiModelAction(segment string) (model, action string) {
+	if c := strings.LastIndexByte(segment, ':'); c >= 0 {
+		if _, ok := geminiMethods[segment[c+1:]]; ok {
+			return segment[:c], segment[c+1:]
+		}
+	}
+	return segment, ""
 }
 
 func DetectFormat(body []byte) Format {
@@ -128,6 +156,23 @@ func (f Format) SupportsCanonicalToolCalls() bool {
 // protocol: Chat Completions (openai, azure, groq, deepseek) or the Responses API.
 func (f Format) IsOpenAIFamily() bool {
 	return f == FormatOpenAIResponses || IsSameWireFormat(f, FormatOpenAI)
+}
+
+// IsChatRequest reports whether a request of the proxy capability, sent in
+// wire format f, is a chat request, the only kind that declares tools. The
+// capability decides when set; a caller that does not route by capability
+// leaves it to the format.
+func IsChatRequest(capability string, f Format) bool {
+	if capability != "" {
+		return capability == providers.CapabilityChat
+	}
+	switch f {
+	case FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatCohereEmbed, FormatCohereRerank, FormatVertexEmbed, FormatBedrockTitanEmbed:
+		return false
+	default:
+		return true
+	}
 }
 
 func SupportedSourceFormat(f Format) bool {

@@ -147,6 +147,16 @@ type ConnectService interface {
 	// instanceID optionally pins the ticket to the exact installation instance
 	// the install recorded; empty when none was.
 	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
+	// CreateResumableServerTicket is CreateServerTicket for a page the user
+	// opened from somewhere they should go back to: once the account is
+	// connected, the page returns them to resumeURL. It must be an absolute
+	// https URL (http only on loopback, for local development); empty means
+	// nowhere, as CreateServerTicket.
+	CreateResumableServerTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub, consumerPath, code, instanceID, resumeURL string,
+	) (string, error)
 	// CreateAppTicket mints a connect ticket for an application's own upstream
 	// accounts, pinned to that consumer and to the providers bound to it at mint
 	// time. authID is the api key the ticket was minted from, so revoking that

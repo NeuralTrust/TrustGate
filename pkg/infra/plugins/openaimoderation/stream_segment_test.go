@@ -144,9 +144,9 @@ func TestInspectSegmentBlocksOnAViolation(t *testing.T) {
 	require.NotNil(t, got)
 	assert.True(t, got.Block)
 	assert.Equal(t, typeContentFlagged, got.Type)
-	assert.Equal(t, defaultStreamBlockMessage, got.Message)
+	assert.Equal(t, appplugins.DefaultBlockMessage, got.Message)
 	assert.NotContains(t, got.Message, "request",
-		"the buffered default says \"request blocked\", which is wrong for a response cut")
+		"the shared default is vendor- and leg-neutral, so it must not name the request leg")
 }
 
 func TestInspectSegmentUsesTheConfiguredMessage(t *testing.T) {
@@ -172,7 +172,13 @@ func TestInspectSegmentModeratesTheAccumulatedPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&sent)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(moderationResponse{Results: []moderationResult{{}}})
+		// streamSettings(nil) thresholds "hate": the response must carry a
+		// score for it (below threshold, so this stays a clean allow), or
+		// the new verdict_incomplete rule (a known thresholded category
+		// missing from the response) fails the call this test is not about.
+		_ = json.NewEncoder(w).Encode(moderationResponse{Results: []moderationResult{{
+			CategoryScores: map[string]float64{"hate": 0.1},
+		}}})
 	}))
 	t.Cleanup(srv.Close)
 	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)

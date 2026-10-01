@@ -15,6 +15,7 @@
 package bedrockguardrail
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -309,6 +310,67 @@ func TestInspectIntervenedFlag(t *testing.T) {
 	res = inspect(&bedrockruntime.ApplyGuardrailOutput{Action: types.GuardrailActionNone}, piiActionBlock)
 	if res.intervened {
 		t.Fatal("expected intervened false")
+	}
+}
+
+func TestUnparsedPolicies(t *testing.T) {
+	t.Parallel()
+	reasoning := &types.GuardrailAutomatedReasoningPolicyAssessment{}
+	tests := []struct {
+		name        string
+		assessments []types.GuardrailAssessment
+		want        string
+	}{
+		{name: "no assessments", want: ""},
+		{name: "empty assessment", assessments: []types.GuardrailAssessment{{}}, want: ""},
+		{
+			name: "read policies and metadata are not named",
+			assessments: []types.GuardrailAssessment{{
+				TopicPolicy:                &types.GuardrailTopicPolicyAssessment{},
+				ContentPolicy:              &types.GuardrailContentPolicyAssessment{},
+				WordPolicy:                 &types.GuardrailWordPolicyAssessment{},
+				SensitiveInformationPolicy: &types.GuardrailSensitiveInformationPolicyAssessment{},
+				ContextualGroundingPolicy:  &types.GuardrailContextualGroundingPolicyAssessment{},
+				InvocationMetrics:          &types.GuardrailInvocationMetrics{},
+				AppliedGuardrailDetails:    &types.AppliedGuardrailDetails{},
+			}},
+			want: "",
+		},
+		{
+			name:        "automated reasoning is named",
+			assessments: []types.GuardrailAssessment{{AutomatedReasoningPolicy: reasoning}},
+			want:        "automated_reasoning_policy",
+		},
+		{
+			name: "named once across assessments",
+			assessments: []types.GuardrailAssessment{
+				{AutomatedReasoningPolicy: reasoning},
+				{AutomatedReasoningPolicy: reasoning, TopicPolicy: &types.GuardrailTopicPolicyAssessment{}},
+			},
+			want: "automated_reasoning_policy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := unparsedPolicies(tt.assessments); got != tt.want {
+				t.Fatalf("unparsedPolicies = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A readPolicies key that is not a real GuardrailAssessment field (a typo, or
+// a rename in an SDK bump) would silently stop excluding the policy it meant,
+// and a policy inspect does read would be reported as unparsed.
+func TestReadPoliciesAreAssessmentFields(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeOf(types.GuardrailAssessment{})
+	for name := range readPolicies {
+		f, ok := typ.FieldByName(name)
+		if !ok || f.Type.Kind() != reflect.Pointer {
+			t.Errorf("readPolicies key %q is not a pointer field of types.GuardrailAssessment", name)
+		}
 	}
 }
 

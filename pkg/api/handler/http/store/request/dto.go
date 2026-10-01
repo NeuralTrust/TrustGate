@@ -47,6 +47,10 @@ type ConnectLink struct {
 	// InstanceID pins the link to one installed instance of Code, for a server
 	// the gateway holds more than once. Empty opens the code's own card.
 	InstanceID string `json:"instance_id"`
+	// ResumeURL is where the connect page sends the user once their account is
+	// connected — the Portal screen they came from. An absolute https URL;
+	// empty leaves them on the page.
+	ResumeURL string `json:"resume_url"`
 }
 
 // ConfigureLink asks for the hosted form one user fills in to finish setting up

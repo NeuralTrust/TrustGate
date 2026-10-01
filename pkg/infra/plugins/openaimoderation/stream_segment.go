@@ -17,7 +17,6 @@ package openaimoderation
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
@@ -30,11 +29,6 @@ import (
 const streamIDSeparator = ":"
 
 const streamLegResponse = "response"
-
-// defaultStreamBlockMessage is the response-leg wording. The buffered default
-// says "request blocked", which is right where it is used and wrong on a cut
-// stream: the client sees "request" for a response that was stopped halfway.
-const defaultStreamBlockMessage = "response blocked by content policy"
 
 var _ appplugins.StreamInspector = (*Plugin)(nil)
 
@@ -73,8 +67,9 @@ func (p *Plugin) InspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("openai_moderation: %w", err)
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
 	}
+	p.warnUnknownConfig(ctx, in, cfg)
 	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
@@ -103,17 +98,25 @@ func (p *Plugin) InspectSegment(
 	if err != nil {
 		// Returned rather than resolved here: only the guard knows whether the
 		// status is still uncommitted, which is what makes streaming.on_error
-		// a clean 403 at the head and a terminator after it.
-		p.warn(ctx, "openai moderation stream block failed",
-			slog.String("plugin", PluginName),
-			slog.Int("seq", seg.Seq),
-			slog.Any("error", err),
-		)
-		return nil, fmt.Errorf("openai_moderation: moderating stream block %d: %w", seg.Seq, err)
+		// a clean 403 at the head and a terminator after it. The guard itself
+		// logs this failure (headFailure/blockFailure in stream_guard.go), so
+		// this does not log a second time; it only tags the error with the
+		// same reason vocabulary the buffered leg uses.
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureTransport, "",
+			fmt.Errorf("moderating stream block %d: %w", seg.Seq, err))
+	}
+	if len(resp.Results) == 0 {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, "",
+			fmt.Errorf("stream block %d: moderations response carried no results", seg.Seq))
 	}
 
-	violations := evaluate(cfg, aggregate(resp.Results))
+	agg := aggregate(resp.Results)
+	violations := evaluate(cfg, agg)
 	if len(violations) == 0 {
+		if missing := missingKnownThreshold(cfg, agg); missing != "" {
+			return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureVerdictIncomplete, missing,
+				fmt.Errorf("stream block %d: thresholded category %q missing from response", seg.Seq, missing))
+		}
 		return segmentAllow(), nil
 	}
 	return &appplugins.SegmentVerdict{
@@ -191,7 +194,7 @@ func blockMessage(cfg Settings) string {
 	if msg := strings.TrimSpace(cfg.Action.Message); msg != "" {
 		return msg
 	}
-	return defaultStreamBlockMessage
+	return appplugins.DefaultBlockMessage
 }
 
 // streamID correlates every block of one response. An empty id is not a missing

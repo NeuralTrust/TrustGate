@@ -1,0 +1,1 @@
+{"model":"llama-3.1-8b-instant","messages":[{"role":"system","content":"You are terse."},{"role":"user","content":"Say hi"}],"max_tokens":5,"temperature":0.2,"top_p":1,"stop":["\n\n"],"response_format":{"type":"text"}}

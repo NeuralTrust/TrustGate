@@ -69,12 +69,41 @@ func inertSafe(d PluginDescriptor) bool {
 	return ok && s.ScopeInertSafe()
 }
 
+// ContentReader is the opt-in a plugin declares when it inspects the text of
+// the request or response to reach a verdict (a moderation or scoring
+// guardrail). It is what lets the planner sequence a same-priority parallel
+// rewriter (MutatesRequestBody / MutatesResponseBody) ahead of it, so the
+// reader judges the rewritten content instead of the original (RUN-1693).
+//
+// The default is false: a plugin that does not implement it, or that does not
+// look at content (a rate limiter, a size limit), keeps its placement. A plugin
+// that both rewrites and reads is treated as a rewriter.
+type ContentReader interface {
+	ReadsContent() bool
+}
+
+// IsContentReader reports whether the descriptor opted in as a content reader.
+// Adding a plugin to that set is a scheduling decision, so the registry wiring
+// test enumerates it and fails when the set changes unannounced.
+func IsContentReader(d PluginDescriptor) bool {
+	r, ok := d.(ContentReader)
+	return ok && r.ReadsContent()
+}
+
 // SettingsWriteValidator is implemented by plugins with rules that apply only
 // when settings are written, never when a stored policy is loaded. It can
 // reject a shape ValidateConfig must still accept, such as one saved before
 // the rule existed.
+//
+// previous is the settings as they were stored immediately before this
+// write: nil on create, and nil when the write also repoints the policy at a
+// different plugin (a slug change), since settings from another plugin are
+// not a previous version of this one's. A validator that wants to keep a
+// pre-existing shape editable (RUN-1711's option "b": reject only a newly
+// introduced unknown key) compares against previous; one with no such rule
+// simply ignores it.
 type SettingsWriteValidator interface {
-	ValidateSettingsWrite(settings map[string]any) error
+	ValidateSettingsWrite(settings, previous map[string]any) error
 }
 
 // IsInertSafe reports whether the plugin registered under slug opted into

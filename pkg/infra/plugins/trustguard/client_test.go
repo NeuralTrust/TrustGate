@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -388,5 +389,46 @@ func TestGuardOmitsTraceIDHeaderWhenEmpty(t *testing.T) {
 	c := newTestClient(t, time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
+	}
+}
+
+func timeoutHeaderServer(t *testing.T) (*httptest.Server, <-chan string) {
+	t.Helper()
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get(evaluateTimeoutHeader)
+		_, _ = io.WriteString(w, `{"status":"allow"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, got
+}
+
+func TestGuardSendsTheTimeLeftOnTheCall(t *testing.T) {
+	t.Parallel()
+	srv, got := timeoutHeaderServer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := newTestClient(t, time.Second).Guard(ctx, srv.URL, "k", "", sampleRequest(), false); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	header := <-got
+	ms, err := strconv.ParseInt(header, 10, 64)
+	if err != nil || ms < 14_000 || ms > 15_000 {
+		t.Fatalf("%s = %q, want the ~15000ms left on the call", evaluateTimeoutHeader, header)
+	}
+}
+
+func TestGuardWithoutDeadlineSendsNoTimeout(t *testing.T) {
+	t.Parallel()
+	srv, got := timeoutHeaderServer(t)
+
+	if _, err := newTestClient(t, time.Second).Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+
+	if header := <-got; header != "" {
+		t.Fatalf("%s = %q, want none for a call without a deadline", evaluateTimeoutHeader, header)
 	}
 }

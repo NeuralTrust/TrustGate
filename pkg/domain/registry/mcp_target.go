@@ -124,6 +124,11 @@ type MCPAuth struct {
 	// token endpoint for client_credentials: client_secret_basic (default) or
 	// client_secret_post.
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
+	// UserinfoURL is the upstream's userinfo endpoint, as its authorization
+	// server metadata declared it when the connect flow discovered it. Never
+	// stored or accepted from a client: the gateway only calls an endpoint the
+	// upstream itself advertised, with the token that upstream just issued.
+	UserinfoURL string `json:"-"`
 }
 
 type MCPTarget struct {

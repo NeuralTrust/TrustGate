@@ -118,6 +118,13 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return true }
 
+// ReadsContent opts into being sequenced after any same-priority rewriter at
+// pre_request, where it only reads the prompt to key its cache lookup, so the
+// lookup key matches the one post_response stores under (the rewritten body).
+// At post_response MutatesResponseBody is true, so the planner treats it as a
+// rewriter there and this opt-in has no effect (RUN-1693).
+func (p *Plugin) ReadsContent() bool { return true }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
@@ -187,7 +194,7 @@ func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
 	if req.HeaderValue(cfg.bypassHeader()) != "" {
 		return true
 	}
-	if cfg.SkipIfStreaming && p.requestWantsStream(req) {
+	if cfg.skipIfStreaming() && p.requestWantsStream(req) {
 		return true
 	}
 	return false
@@ -415,7 +422,7 @@ func (p *Plugin) postResponse(
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope(), Mode: cfg.mode()})
 		return passThrough(), nil
 	}
-	if cfg.SkipIfStreaming && resp.Streaming {
+	if cfg.skipIfStreaming() && resp.Streaming {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonStreaming})
 		return passThrough(), nil
 	}

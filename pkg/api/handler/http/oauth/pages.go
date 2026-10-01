@@ -55,17 +55,26 @@ type connectPageView struct {
 }
 
 func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
+	return renderConnectPageAfter(c, page, ticket, flash, false, catalog)
+}
+
+// renderConnectPageAfter renders the connect page, told whether the account
+// was connected by the request that led here (the OAuth callback). Only then
+// does a focused page with somewhere to return to go back there on its own:
+// opened later, a connected page stays put, or the user could never reach
+// Disconnect.
+func renderConnectPageAfter(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, justConnected bool, catalog appcatalog.MCPServerCatalog) error {
 	// A ticket minted for one server (e.g. a Store install) shows the focused
 	// single-server page instead of the full provider grid.
 	if strings.TrimSpace(page.Code) != "" {
-		return renderSingleConnectPage(c, page, ticket, flash, catalog)
+		return renderSingleConnectPage(c, page, ticket, flash, justConnected, catalog)
 	}
 	return renderHTML(c, connectPageTmpl, connectPageView{
 		ConsumerPath: page.ConsumerPath,
 		Flash:        flash,
 		Ticket:       ticket,
 		Providers:    decorateProviders(catalog, page.Providers),
-		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
+		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
 	})
 }
 
@@ -90,6 +99,9 @@ type singleConnectView struct {
 	RetryAfter int
 	RetryURL   string
 	ResumeURL  template.URL
+	// AutoReturn sends the user back to ResumeURL on its own: set on the page
+	// the OAuth callback lands on, once the account is connected.
+	AutoReturn bool
 	// Description is the catalog one-liner for the server, shown under the
 	// headline so the card says what the user is connecting to.
 	Description string
@@ -127,11 +139,11 @@ func providerRowsForPage(page *appoauth.ConnectPage) []appoauth.ProviderStatus {
 // the provider the ticket is scoped to (by catalog code, and by instance when it
 // names one) out of the consumer's providers; if none matches, the server needs
 // no connection (or is not on this consumer) and the page says so.
-func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
+func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, justConnected bool, catalog appcatalog.MCPServerCatalog) error {
 	view := singleConnectView{
 		Ticket:    ticket,
 		Flash:     flash,
-		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
+		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- the registered redirect_uri, or an https URL checked by NormalizeResumeURL
 	}
 	var granted []string
 	for _, p := range providerRowsForPage(page) {
@@ -151,6 +163,7 @@ func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, f
 	if view.ServerName == "" {
 		view.ServerName = serverDisplayName(catalog, page.Code)
 	}
+	view.AutoReturn = justConnected && view.Linked && flash == "" && view.ResumeURL != ""
 	// Not here yet, the server still has a logo: the catalog's, rather than the
 	// generic MCP mark the "getting ready" page showed in its place.
 	if !view.Found {

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27-bookworm AS builder
+FROM golang:1.27-trixie AS builder
 
 WORKDIR /build
 
@@ -49,7 +49,9 @@ RUN go build \
 
 # --- Runtime stage ---------------------------------------------------------
 # distroless "base" (not "static") because the cgo binary dynamically links glibc.
-FROM gcr.io/distroless/base-debian12:nonroot AS runtime
+# The "nossl" variant: the binary links only libc, libm and the loader (Go does
+# TLS natively), so a system OpenSSL would be unused surface for scanners.
+FROM gcr.io/distroless/base-nossl-debian13:nonroot AS runtime
 
 WORKDIR /app
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/common/requestmeta"
@@ -38,16 +39,26 @@ func (p *Plugin) inspectSegment(
 ) (*appplugins.SegmentVerdict, error) {
 	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("trustguard: %w", err)
+		// Another policy on the route can have streaming on, and then this
+		// entry is asked about every block. An error would stop the executor
+		// from running the rest of the chain, so settings that do not parse
+		// fail open here as they do in Execute.
+		if !seg.Closing {
+			recordEvaluateFailure(ctx, failureReasonConfigInvalid)
+		}
+		return segmentAllow(), nil
 	}
-	if !cfg.Streaming.Enabled || !cfg.selectsStage(policy.StagePreResponse) {
+	if !cfg.Streaming.enabled() || !cfg.selectsStage(policy.StagePreResponse) {
 		return segmentAllow(), nil
 	}
 	if seg.Closing {
 		p.recordStreamOutcome(ctx, in, seg)
 		return segmentAllow(), nil
 	}
-	if p.baseURL == "" || !p.tokens.configured() || p.registry == nil {
+	if p.registry == nil {
+		return segmentAllow(), nil
+	}
+	if p.streamRetired(ctx, in, seg) {
 		return segmentAllow(), nil
 	}
 	if in.Request == nil || in.Request.Provider == "" || strings.TrimSpace(in.Request.GatewayID) == "" {
@@ -57,6 +68,12 @@ func (p *Plugin) inspectSegment(
 	payload, ok := p.segmentPayload(ctx, in, seg)
 	if !ok {
 		return segmentAllow(), nil
+	}
+	if p.baseURL == "" {
+		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonBaseURLMissing, errors.New("trustguard: base url not configured"))
+	}
+	if !p.tokens.configured() {
+		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
 	}
 	traceID := gatewayTraceID(ctx)
 	body := GuardRequest{
@@ -94,9 +111,13 @@ func (p *Plugin) inspectSegment(
 		requestHasPlaygroundToken(in.Request),
 	)
 	if err != nil {
-		return p.segmentFailure(ctx, in, seg, err)
+		return p.segmentFailure(ctx, in, cfg, seg, err)
 	}
-	verdict := segmentVerdict(seg, resp)
+	p.streamRecovered(ctx, in, seg)
+	verdict, err := segmentVerdict(seg, resp)
+	if err != nil {
+		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonTransformFailed, err)
+	}
 	fingerprints, unidentified := streamFingerprints(in.Mode, resp.Findings)
 	verdict.Fingerprints = fingerprints
 	if unidentified > 0 {
@@ -132,10 +153,29 @@ func (p *Plugin) recordStreamOutcome(
 	in appplugins.ExecInput,
 	seg appplugins.StreamSegment,
 ) {
+	// Taken out before anything can return, so a stream with no event does
+	// not leave its entry behind.
+	var failure *streamFailure
+	if key, ok := streamFailureKey(ctx, in, seg); ok {
+		if v, loaded := p.streamFailures.LoadAndDelete(key); loaded {
+			failure, _ = v.(*streamFailure)
+		}
+	}
 	if in.Event == nil {
 		return
 	}
 	data := streamOutcome(segmentStreamID(gatewayTraceID(ctx), seg), seg.Report)
+	// A stream that was cut reports blocked even if earlier blocks failed
+	// open; those still count in trustguard_evaluate_failures_total.
+	failedOpen := failure != nil && data.Decision != decisionBlocked
+	if failedOpen {
+		data.Decision = decisionFailedOpen
+		data.FailedOpen = true
+		data.FailureReason = failure.reason
+		if failure.retired() && data.Streaming != nil && data.Streaming.FallbackReason == "" {
+			data.Streaming.FallbackReason = fallbackReasonSegmentationUnavail
+		}
+	}
 	if prints := findingPrints(seg.Findings); len(prints) > 0 {
 		data.FindingsCount = len(prints)
 		data.Streaming.Findings = prints
@@ -144,7 +184,7 @@ func (p *Plugin) recordStreamOutcome(
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	if seg.ReportsStream {
-		recordStreamEvals(ctx, seg.Report)
+		recordStreamEvals(ctx, seg.Report, failedOpen)
 	}
 }
 
@@ -257,15 +297,15 @@ func (p *Plugin) requestTools(req *infracontext.RequestContext) []adapter.Canoni
 	return request.Tools
 }
 
-// segmentFailure splits the guard's failures into the ones the caller may
-// weigh against streaming.on_error and the ones it may not. A rejection the
-// engine issued deliberately — 401/403, 429, 503 — comes back as a blocking
-// verdict, which no configuration can relax, matching what Execute does on the
-// buffered path. Everything else is returned as an error for the caller to
-// resolve.
+// segmentFailure splits the guard's failures from its answers. A 429 is the
+// engine refusing deliberately and comes back as a blocking verdict, matching
+// what Execute does on the buffered path. Everything else — transport, 5xx,
+// a block that ran out of time, rejected credentials, unavailable entitlements
+// — is a failure of the guard and is resolved by segmentGuardFailure.
 func (p *Plugin) segmentFailure(
 	ctx context.Context,
 	in appplugins.ExecInput,
+	cfg Settings,
 	seg appplugins.StreamSegment,
 	err error,
 ) (*appplugins.SegmentVerdict, error) {
@@ -273,32 +313,157 @@ func (p *Plugin) segmentFailure(
 	if errors.As(err, &limited) {
 		return segmentBlock(typeRateLimited, rateLimitMessage), nil
 	}
+	reason := failureReasonTransport
 	var unavailable *entitlementsUnavailableError
-	if errors.As(err, &unavailable) {
-		return segmentBlock(typeUnavailable, unavailableMessage), nil
-	}
 	var auth *authRejectedError
-	if errors.As(err, &auth) || errors.Is(err, errUnauthorized) {
-		recordEvaluateFailure(ctx, failureReasonUnauthorized)
-		p.error(ctx, "trustguard stream auth/config rejected, failing closed",
-			slog.String("plugin", PluginName),
-			slog.String("direction", directionOutput),
-			slog.Int("seq", seg.Seq),
-			slog.Any("error", err),
-		)
-		return segmentBlock(typeUnauthorized, unauthorizedMessage), nil
+	switch {
+	case errors.As(err, &unavailable):
+		reason = failureReasonEntitlementsUnavailable
+	case errors.As(err, &auth), errors.Is(err, errUnauthorized):
+		reason = failureReasonUnauthorized
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		reason = failureReasonTimeout
 	}
-	recordEvaluateFailure(ctx, failureReasonTransport)
-	p.warn(ctx, "trustguard stream segment call failed",
-		slog.String("plugin", PluginName),
-		slog.String("stage", string(in.Stage)),
-		slog.Int("seq", seg.Seq),
-		slog.Any("error", err),
-	)
-	return nil, fmt.Errorf("trustguard: inspecting stream segment %d: %w", seg.Seq, err)
+	return p.segmentGuardFailure(ctx, in, cfg, seg, reason, err)
 }
 
-func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) *appplugins.SegmentVerdict {
+// segmentGuardFailure is guardFailure for one streamed block. Under the
+// default streaming.on_error (fail_open) it allows the block and remembers why,
+// so the closing segment publishes failed_open and the reason on the stream's
+// span; the rest of the chain keeps inspecting the block and the stream guard
+// never retires on our account. Under fail_closed the failure goes back as an
+// error for the caller to cut on.
+func (p *Plugin) segmentGuardFailure(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg Settings,
+	seg appplugins.StreamSegment,
+	reason string,
+	err error,
+) (*appplugins.SegmentVerdict, error) {
+	recordEvaluateFailure(ctx, reason)
+	attrs := []any{
+		slog.String("plugin", PluginName),
+		slog.String("direction", directionOutput),
+		slog.Int("seq", seg.Seq),
+		slog.String("reason", reason),
+		slog.Any("error", err),
+	}
+	if cfg.Streaming.OnError == onErrorFailClosed {
+		p.error(ctx, "trustguard could not inspect stream segment, failing closed", attrs...)
+		return nil, fmt.Errorf("trustguard: inspecting stream segment %d: %w", seg.Seq, err)
+	}
+	p.warn(ctx, "trustguard could not inspect stream segment, failing open", attrs...)
+	p.streamFailed(ctx, in, seg, reason)
+	return segmentAllow(), nil
+}
+
+// streamFailure is one stream's record, for one policy, of a guard that could
+// not inspect it.
+type streamFailure struct {
+	reason      string
+	consecutive int
+	at          time.Time
+}
+
+const (
+	// streamRetireAfter failed blocks in a row stop this policy calling the
+	// guard for the rest of the stream, as the stream guard does for failures
+	// it sees. Failing open hides them from it, and without this a guard that
+	// hangs would hold every block of every stream for guard_timeout.
+	streamRetireAfter = 3
+	// streamFailureTTL bounds an entry whose closing segment never came.
+	streamFailureTTL = 10 * time.Minute
+)
+
+func (f *streamFailure) retired() bool { return f.consecutive >= streamRetireAfter }
+
+// streamFailureKey names one stream for one policy. Without a stream identity
+// (no trace, which is the case with telemetry off) there is no key: every
+// stream on the pod would share one, and one stream's failures would retire
+// inspection for all the others. Such a stream fails open block by block and
+// keeps no record.
+func streamFailureKey(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment) (string, bool) {
+	id := segmentStreamID(gatewayTraceID(ctx), seg)
+	if id == "" {
+		return "", false
+	}
+	return id + "\x00" + in.Config.ID, true
+}
+
+func (p *Plugin) streamRetired(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment) bool {
+	key, ok := streamFailureKey(ctx, in, seg)
+	if !ok {
+		return false
+	}
+	v, ok := p.streamFailures.Load(key)
+	if !ok {
+		return false
+	}
+	f, _ := v.(*streamFailure)
+	if f == nil || !f.retired() {
+		return false
+	}
+	// A retired entry is never written again by streamFailed, so the sweep
+	// would otherwise take it from a stream that is still running.
+	p.streamFailures.Store(key, &streamFailure{reason: f.reason, consecutive: f.consecutive, at: time.Now()})
+	return true
+}
+
+// streamFailed and streamRecovered run for one stream's blocks, which the
+// stream guard evaluates one at a time, so each entry has a single writer.
+func (p *Plugin) streamFailed(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment, reason string) {
+	key, ok := streamFailureKey(ctx, in, seg)
+	if !ok {
+		return
+	}
+	f := &streamFailure{reason: reason, consecutive: 1, at: time.Now()}
+	if v, ok := p.streamFailures.Load(key); ok {
+		if prev, _ := v.(*streamFailure); prev != nil {
+			f.consecutive = prev.consecutive + 1
+		}
+	}
+	p.streamFailures.Store(key, f)
+	p.sweepStreamFailures(f.at)
+}
+
+// streamRecovered resets the run of failures after a block the guard did
+// answer, and keeps the reason: earlier blocks still went through uninspected.
+func (p *Plugin) streamRecovered(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment) {
+	key, ok := streamFailureKey(ctx, in, seg)
+	if !ok {
+		return
+	}
+	v, ok := p.streamFailures.Load(key)
+	if !ok {
+		return
+	}
+	if prev, _ := v.(*streamFailure); prev != nil {
+		p.streamFailures.Store(key, &streamFailure{reason: prev.reason, at: time.Now()})
+	}
+}
+
+// sweepStreamFailures drops entries older than streamFailureTTL, at most once
+// a minute, so a stream whose closing never arrived cannot grow the map.
+func (p *Plugin) sweepStreamFailures(now time.Time) {
+	last := p.streamSweptAt.Load()
+	if now.UnixNano()-last < int64(time.Minute) || !p.streamSweptAt.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	p.streamFailures.Range(func(k, v any) bool {
+		if f, _ := v.(*streamFailure); f == nil || now.Sub(f.at) > streamFailureTTL {
+			p.streamFailures.Delete(k)
+		}
+		return true
+	})
+}
+
+// errTransformUnappliable is a transform this plugin cannot write into the
+// stream. It is a failure on our side, not a finding, and is resolved like any
+// other: by default the text goes on unmasked.
+var errTransformUnappliable = errors.New("trustguard: stream transform cannot be applied")
+
+func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) (*appplugins.SegmentVerdict, error) {
 	switch resp.Status {
 	case statusTransform:
 		// A transform replaces the whole accumulated buffer. With nothing
@@ -306,19 +471,19 @@ func segmentVerdict(seg appplugins.StreamSegment, resp *GuardResponse) *appplugi
 		// which the buffer does not carry: applying the mask would neither
 		// remove the flagged bytes nor leave them where they were, it would
 		// inject assistant text where a tool call or a thought stood. Execute
-		// refuses the same response through reasonTransformUnsupported.
+		// treats the same response through reasonTransformUnsupported.
 		if strings.TrimSpace(seg.Accumulated) == "" {
-			return segmentBlock(typeBlocked, clientBlockMessage(resp))
+			return nil, errTransformUnappliable
 		}
 		masked, ok := transformedInput(resp.TransformedPayload)
 		if !ok {
-			return segmentBlock(typeBlocked, clientBlockMessage(resp))
+			return nil, errTransformUnappliable
 		}
-		return &appplugins.SegmentVerdict{HasTransform: true, Transformed: masked}
+		return &appplugins.SegmentVerdict{HasTransform: true, Transformed: masked}, nil
 	case statusBlock, statusAsk:
-		return segmentBlock(typeBlocked, clientBlockMessage(resp))
+		return segmentBlock(typeBlocked, clientBlockMessage(resp)), nil
 	default:
-		return segmentAllow()
+		return segmentAllow(), nil
 	}
 }
 
