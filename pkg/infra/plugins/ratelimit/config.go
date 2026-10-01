@@ -26,8 +26,8 @@ import (
 const minWindow = time.Second
 
 // config is the rate_limiter settings. The limit is a single sliding window;
-// whether it is enforced gateway-wide or per consumer is decided by the policy
-// scope (Policy.Global) at runtime, not by configuration.
+// whether it is enforced gateway-wide or per consumer is decided by the policy's
+// gateway-wide placement (global or MCP-wide) at runtime, not by configuration.
 //
 // GroupByHeader optionally sub-partitions the counter within the policy scope by
 // the value of a request header (e.g. a tenant or end-user id), so each distinct

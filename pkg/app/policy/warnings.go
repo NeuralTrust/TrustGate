@@ -92,7 +92,9 @@ type Warner interface {
 	// policy of the same slug.
 	Overlaps(ctx context.Context, p *domain.Policy) ([]string, error)
 	// OverlapsOnAttach is the per-consumer half of Overlaps, restricted to the
-	// consumer a policy has just been attached to.
+	// consumer a policy has just been attached to. It reports nothing when the
+	// policy never runs on that consumer's plane, as an MCP-wide policy linked
+	// to an LLM or A2A consumer does not.
 	OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) ([]string, error)
 }
 
@@ -155,6 +157,9 @@ func (w *warner) OverlapsOnAttach(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return nil, err
 	}
+	if !runsOnPlaneOf(p, c) {
+		return nil, nil
+	}
 	reach := []reachedConsumer{{id: consumerID, mcp: isMCP(c), authIDs: authIDsOf(c)}}
 	warnings, err := w.apiKeyReach(ctx, p, reach)
 	if err != nil {
@@ -179,7 +184,7 @@ func (w *warner) reachWarnings(p *domain.Policy) []string {
 	case p.Global && p.Enabled && p.MCPScope.CrossesPlanes() && !appplugins.IsInertSafe(w.plugins, p.Slug):
 		out = append(out, inertUnsafeGlobalWarning(p.Slug))
 	}
-	if !p.Global && len(p.ConsumerIDs) == 0 {
+	if p.Draft() {
 		out = append(out, orphanWarning)
 	}
 	return out
@@ -195,20 +200,20 @@ type reachedConsumer struct {
 // types are candidates: a scope narrowing by group alone runs on LLM and A2A
 // traffic too, inert there, so leaving them out would hide exactly the
 // collisions these warnings exist for. Only a scope naming a registry or a
-// tool is still MCP-only, and that one drops the other two types.
+// tool is still MCP-only, and that one drops the other two types, as does an
+// MCP-wide policy whatever its scope (see runsOnPlaneOf).
 func (w *warner) reach(ctx context.Context, p *domain.Policy) ([]reachedConsumer, error) {
 	consumers, err := w.consumers.ListByGateway(ctx, p.GatewayID)
 	if err != nil {
 		return nil, err
 	}
 	var attached map[ids.ConsumerID]struct{}
-	if !p.Global {
+	if !p.GatewayWide() {
 		attached = make(map[ids.ConsumerID]struct{}, len(p.ConsumerIDs))
 		for _, cid := range p.ConsumerIDs {
 			attached[cid] = struct{}{}
 		}
 	}
-	crosses := p.MCPScope.CrossesPlanes()
 	out := make([]reachedConsumer, 0, len(consumers))
 	for _, c := range consumers {
 		if c == nil {
@@ -219,12 +224,19 @@ func (w *warner) reach(ctx context.Context, p *domain.Policy) ([]reachedConsumer
 				continue
 			}
 		}
-		if !isMCP(c) && !crosses {
+		if !runsOnPlaneOf(p, c) {
 			continue
 		}
 		out = append(out, reachedConsumer{id: c.ID, mcp: isMCP(c), authIDs: authIDsOf(c)})
 	}
 	return out, nil
+}
+
+// runsOnPlaneOf reports whether p can run on c's plane at all. Every MCP
+// consumer can; an LLM or A2A consumer only for a scope that narrows by group
+// alone, and never for an MCP-wide policy, which no non-MCP chain takes.
+func runsOnPlaneOf(p *domain.Policy, c *consumerdomain.Consumer) bool {
+	return isMCP(c) || (p.MCPScope.CrossesPlanes() && !p.MCPWide)
 }
 
 // apiKeyReach names the MCP consumers the policy reaches that admit an api-key
@@ -310,11 +322,11 @@ func (w *warner) collisions(ctx context.Context, p *domain.Policy, reach []reach
 	var warnings []string
 	for _, c := range reach {
 		switch {
-		case unscoped.reaches(c.id) && c.mcp:
+		case unscoped.reaches(c) && c.mcp:
 			warnings = append(warnings, overlapWarning(c.id, p.Slug))
-		case unscoped.reaches(c.id):
+		case unscoped.reaches(c):
 			warnings = append(warnings, coalescedOntoUnscopedWarning(c.id, p.Slug))
-		case !c.mcp && crossing.reaches(c.id):
+		case !c.mcp && crossing.reaches(c):
 			warnings = append(warnings, collapsedLevelWarning(c.id, p.Slug))
 		}
 	}
@@ -324,19 +336,21 @@ func (w *warner) collisions(ctx context.Context, p *domain.Policy, reach []reach
 
 // sameSlugRuns is where a plugin already runs under a policy other than the
 // one being written: everywhere in the gateway when one of them is global, on
-// the listed consumers otherwise.
+// every MCP consumer when one of them is MCP-wide, and on the listed consumers
+// otherwise.
 type sameSlugRuns struct {
 	global    bool
+	mcpWide   bool
 	consumers map[ids.ConsumerID]struct{}
 }
 
-func (r sameSlugRuns) any() bool { return r.global || len(r.consumers) > 0 }
+func (r sameSlugRuns) any() bool { return r.global || r.mcpWide || len(r.consumers) > 0 }
 
-func (r sameSlugRuns) reaches(consumerID ids.ConsumerID) bool {
-	if r.global {
+func (r sameSlugRuns) reaches(c reachedConsumer) bool {
+	if r.global || (r.mcpWide && c.mcp) {
 		return true
 	}
-	_, ok := r.consumers[consumerID]
+	_, ok := r.consumers[c.id]
 	return ok
 }
 
@@ -349,12 +363,15 @@ func sameSlugRunsWhere(policies []*domain.Policy, p *domain.Policy, match func(*
 		if q == nil || q.ID == p.ID || q.Slug != p.Slug || !q.Enabled || !match(q) {
 			continue
 		}
-		if q.Global {
+		switch {
+		case q.Global:
 			out.global = true
-			continue
-		}
-		for _, cid := range q.ConsumerIDs {
-			out.consumers[cid] = struct{}{}
+		case q.MCPWide:
+			out.mcpWide = true
+		default:
+			for _, cid := range q.ConsumerIDs {
+				out.consumers[cid] = struct{}{}
+			}
 		}
 	}
 	return out
