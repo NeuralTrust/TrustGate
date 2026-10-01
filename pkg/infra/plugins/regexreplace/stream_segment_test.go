@@ -337,6 +337,33 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 	}
 }
 
+// RUN-1745 F7: observe reports the rules it would have applied but rewrites
+// nothing, so the closing decision is observed, as on the buffered leg, never
+// rewritten.
+func TestClosingSegmentInObserveReportsObserved(t *testing.T) {
+	t.Parallel()
+	p := New(nil, nil)
+	event, span := newEvent()
+
+	if _, err := p.InspectSegment(context.Background(),
+		streamInput(policy.ModeObserve, streamSettings(targetResponse, cardRule()), event),
+		appplugins.StreamSegment{
+			StreamID: "s-1", Closing: true,
+			Findings: []appplugins.StreamFinding{{Entry: "p", Fingerprint: "abcd"}},
+			Report:   appplugins.StreamReport{Evals: 3, GuardCalls: 3},
+		}); err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+
+	data, ok := span.PluginAttrsCopy().Extras.(*Data)
+	if !ok {
+		t.Fatalf("extras = %T, want *Data", span.PluginAttrsCopy().Extras)
+	}
+	if data.Decision != decisionObserved {
+		t.Errorf("Decision = %q, want %q", data.Decision, decisionObserved)
+	}
+}
+
 // RUN-1745 F2: a rule whose replacement matches its own pattern used to rewrite
 // the placeholder it released on the previous block, which the guard refuses
 // and turns into a cut. The buffered path applies the rule once and is fine.

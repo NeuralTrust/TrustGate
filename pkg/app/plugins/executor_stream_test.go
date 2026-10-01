@@ -127,6 +127,7 @@ func streamChain(t *testing.T, specs ...entrySpec) (Executor, []*policy.Policy, 
 			stages:   []policy.Stage{policy.StagePreResponse},
 		})[0]
 		pol.Mode = spec.mode
+		pol.Settings = map[string]any{"enabled": true}
 		pols = append(pols, pol)
 	}
 	return NewExecutor(newRegistry(t, plugins...), nil), pols, inspectors
@@ -202,13 +203,21 @@ func TestExecutor_RunStreamSegment_FiltersTheChain(t *testing.T) {
 	plain := &fakePlugin{name: "plain", stages: []policy.Stage{policy.StagePreResponse}, result: &Result{StatusCode: 200}}
 	preRequestOnly := newStreamPlugin("early", &SegmentVerdict{Block: true, Type: "pii"})
 	preRequestOnly.stages = []policy.Stage{policy.StagePreRequest}
-	exec := NewExecutor(newRegistry(t, inspector, plain, preRequestOnly), nil)
+	// An inspector whose policy did not opt in: on a stream another policy
+	// opted into, it must not be walked, so it can neither fail every block
+	// (RUN-1745 F8) nor leave a span with no decision (F5).
+	optedOut := newStreamPlugin("quiet", &SegmentVerdict{Block: true, Type: "pii"})
+	optedOut.err = errors.New("settings no longer parse")
+	exec := NewExecutor(newRegistry(t, inspector, plain, preRequestOnly, optedOut), nil)
 
 	pols := policies(t,
 		polSpec{slug: "guard", enabled: true, priority: 10, stages: []policy.Stage{policy.StagePreResponse}},
 		polSpec{slug: "plain", enabled: true, priority: 20, stages: []policy.Stage{policy.StagePreResponse}},
 		polSpec{slug: "early", enabled: true, priority: 30, stages: []policy.Stage{policy.StagePreRequest}},
+		polSpec{slug: "quiet", enabled: true, priority: 5, stages: []policy.Stage{policy.StagePreResponse}},
 	)
+	pols[0].Settings = map[string]any{"enabled": true}
+	pols[2].Settings = map[string]any{"enabled": true}
 
 	out, err := runSegment(t, exec, StageInput{
 		Stage:    policy.StagePreResponse,
@@ -221,6 +230,7 @@ func TestExecutor_RunStreamSegment_FiltersTheChain(t *testing.T) {
 	assert.Equal(t, []string{"f1"}, fingerprints(out.Fingerprints))
 	assert.Len(t, inspector.seen, 1)
 	assert.Empty(t, preRequestOnly.seen)
+	assert.Empty(t, optedOut.seen, "an opted-out policy is not part of the stream chain")
 }
 
 func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
@@ -548,9 +558,8 @@ func TestExecutor_RunStreamSegment_ChargesTheHoldOncePerChain(t *testing.T) {
 
 	assert.Equal(t, 3, watcher.Report.Evals, "what the stream cost reaches every entry unchanged")
 	assert.Equal(t, 200*time.Millisecond, watcher.Report.AddedLatency)
-	assert.False(t, watcher.ReportsStream,
-		"a per-response instrument recorded by every entry counts one response once per policy")
-	assert.True(t, enforcer.ReportsStream, "the entry that cut speaks for the stream")
+	assert.True(t, watcher.ReportsStream, "each plugin records its own per-response instruments")
+	assert.True(t, enforcer.ReportsStream, "the entry that cut speaks for its plugin")
 
 	spans := rt.Spans()
 	require.Len(t, spans, 2)
@@ -692,4 +701,45 @@ func TestExecutor_RunStreamSegment_ChargesASilentSpanItsOwnShare(t *testing.T) {
 	assert.Equal(t, 50*time.Millisecond, spans[0].Latency(),
 		"the two blocks it did inspect, not the span's wall clock")
 	assert.NotEmpty(t, spans[0].Error(), "the failure is still recorded")
+}
+
+// RUN-1745 F5: a per-response instrument belongs to its plugin, so one entry
+// per plugin records it. Two policies of one plugin must not count the response
+// twice, and the one that cut speaks for the plugin.
+func TestExecutor_RunStreamSegment_OneReporterPerPlugin(t *testing.T) {
+	guard := newStreamPlugin("guard", &SegmentVerdict{Block: true, Type: "jailbreak"})
+	other := newStreamPlugin("other", nil)
+	exec := NewExecutor(newRegistry(t, guard, other), nil)
+	pols := policies(t,
+		polSpec{slug: "other", enabled: true, priority: 5, stages: []policy.Stage{policy.StagePreResponse}},
+		polSpec{slug: "guard", enabled: true, priority: 10, stages: []policy.Stage{policy.StagePreResponse}},
+		polSpec{slug: "guard", enabled: true, priority: 20, stages: []policy.Stage{policy.StagePreResponse}},
+	)
+	for _, pol := range pols {
+		pol.Settings = map[string]any{"enabled": true}
+	}
+	pols[1].Mode = policy.ModeObserve
+	pols[2].Mode = policy.ModeEnforce
+	in := StageInput{Stage: policy.StagePreResponse, Policies: pols, Response: &infracontext.ResponseContext{}}
+
+	rt := trace.New("t", trace.Metadata{})
+	ctx, publish := NewStreamSpanContext(trace.NewContext(context.Background(), rt))
+	defer publish()
+	out, err := exec.(*executor).RunStreamSegment(ctx, in, segment(1, false))
+	require.NoError(t, err)
+	require.True(t, out.Block)
+	_, err = exec.(*executor).RunStreamSegment(ctx, in, StreamSegment{StreamID: "stream-1", Seq: 1, Closing: true, Report: chainReport()})
+	require.NoError(t, err)
+
+	reports := map[string]bool{}
+	for i, seg := range guard.seen {
+		if seg.Closing {
+			reports[guard.inputs[i].Config.ID] = seg.ReportsStream
+		}
+	}
+	require.Len(t, reports, 2)
+	assert.False(t, reports[pols[1].ID.String()], "the observing policy of the same plugin does not record again")
+	assert.True(t, reports[pols[2].ID.String()], "the policy that cut records for its plugin")
+	require.True(t, lastSeen(t, other).Closing)
+	assert.True(t, lastSeen(t, other).ReportsStream, "another plugin still records its own")
 }

@@ -76,6 +76,7 @@ const (
 const (
 	degradedReasonAccumulationCap     = appplugins.StreamDegradeAccumulationCap
 	degradedReasonGuardTimeout        = appplugins.StreamDegradeGuardTimeout
+	degradedReasonGuardError          = appplugins.StreamDegradeGuardError
 	fallbackReasonSegmentationUnavail = appplugins.StreamFallbackSegmentationUnavail
 	fallbackReasonClientDisconnected  = appplugins.StreamFallbackClientDisconnected
 )

@@ -99,6 +99,7 @@ func orderChain(t *testing.T, specs ...orderSpec) (*executor, []*policy.Policy, 
 			stages:   []policy.Stage{policy.StagePreResponse},
 		})[0]
 		pol.Mode = spec.mode
+		pol.Settings = map[string]any{"enabled": true}
 		pols = append(pols, pol)
 	}
 	exec, ok := NewExecutor(newRegistry(t, plugins...), nil).(*executor)
@@ -390,8 +391,8 @@ func TestRunStreamSegment_FailureAfterAMaskCarriesTheMask(t *testing.T) {
 
 // TestRunStreamSegment_CutIsBlamedOnTheSegmentThatCut: a mask entry X landed in
 // segment 1, a different entry Y transformed segment 2 and that mask could not
-// be applied, so the guard cut there. Only Y authored the cut and only Y
-// reports the stream; X's earlier mask is not blamed for a later block.
+// be applied, so the guard cut there. Only Y authored the cut; X's earlier mask
+// is not blamed for a later block.
 func TestRunStreamSegment_CutIsBlamedOnTheSegmentThatCut(t *testing.T) {
 	t.Parallel()
 	exec, pols, stubs, _ := orderChain(t,
@@ -420,5 +421,5 @@ func TestRunStreamSegment_CutIsBlamedOnTheSegmentThatCut(t *testing.T) {
 	assert.Zero(t, x.Report.CutAtEval, "an earlier block's mask is not blamed for a later cut")
 	assert.Equal(t, 2, y.Report.CutAtEval)
 	assert.True(t, y.ReportsStream)
-	assert.False(t, x.ReportsStream)
+	assert.True(t, x.ReportsStream, "x records its own plugin's per-response instruments")
 }

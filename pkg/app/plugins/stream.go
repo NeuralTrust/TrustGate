@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -90,9 +91,9 @@ type StreamSegment struct {
 //
 // The guard fills it for the whole chain, and the executor narrows it per entry
 // before an inspector sees it: GuardLatency becomes that entry's own share and
-// the cut fields are cleared on every entry but the one whose verdict cut. The
-// rest — Evals, GuardCalls, GuardLatencyMax, AddedLatency, FinalPass and the
-// two reasons — describe the stream, not the entry, and reach every entry
+// the cut fields are cleared on every entry but the one that authored the cut.
+// The rest — Evals, GuardCalls, GuardLatencyMax, AddedLatency, FinalPass and
+// the two reasons — describe the stream, not the entry, and reach every entry
 // unchanged.
 type StreamReport struct {
 	Evals           int
@@ -102,9 +103,18 @@ type StreamReport struct {
 	AddedLatency    time.Duration
 	CutAtEval       int
 	CutOffsetChars  int
-	FinalPass       bool
-	DegradedReason  string
-	FallbackReason  string
+	// CutOnFailure says the cut resolved a failed call as fail_closed. Its
+	// author is the entry whose call failed, not the maskers of that block,
+	// whose mask the guard never got to apply (RUN-1745 F6).
+	CutOnFailure bool
+	// MaskedEvals counts the blocks on which this entry's enforced mask went
+	// into the one handed to the guard. Only the executor knows it, so it is
+	// zero on the guard's chain-wide report and set per entry. With no cut,
+	// the guard applied every one of them: it applies a mask or cuts.
+	MaskedEvals    int
+	FinalPass      bool
+	DegradedReason string
+	FallbackReason string
 }
 
 // Stable tokens for why a stream stopped being inspected the way the policy
@@ -118,6 +128,7 @@ type StreamReport struct {
 const (
 	StreamDegradeAccumulationCap      = "accumulation_cap"
 	StreamDegradeGuardTimeout         = "guard_timeout"
+	StreamDegradeGuardError           = "guard_error"
 	StreamFallbackSegmentationUnavail = "segmentation_unavailable"
 	StreamFallbackClientDisconnected  = "client_disconnected"
 )
@@ -210,10 +221,12 @@ func streamInspector(d PluginDescriptor) (StreamInspector, bool) {
 type streamSpansKey struct{}
 
 type streamSpans struct {
-	mu     sync.Mutex
-	events map[string]*metrics.EventContext
-	spent  map[string]time.Duration
-	cutBy  map[string][]string
+	mu       sync.Mutex
+	events   map[string]*metrics.EventContext
+	spent    map[string]time.Duration
+	cutBy    map[string][]string
+	failedBy map[string]string
+	masked   map[string]int
 }
 
 // NewStreamSpanContext derives a context carrying the plugin spans of a single
@@ -227,9 +240,11 @@ type streamSpans struct {
 // releases the hold, and is safe to call more than once.
 func NewStreamSpanContext(ctx context.Context) (context.Context, func()) {
 	spans := &streamSpans{
-		events: make(map[string]*metrics.EventContext),
-		spent:  make(map[string]time.Duration),
-		cutBy:  make(map[string][]string),
+		events:   make(map[string]*metrics.EventContext),
+		spent:    make(map[string]time.Duration),
+		cutBy:    make(map[string][]string),
+		failedBy: make(map[string]string),
+		masked:   make(map[string]int),
 	}
 	rt := trace.FromContext(ctx)
 	if rt != nil {
@@ -302,13 +317,26 @@ func (s *streamSpans) charge(seg StreamSegment, entry chainEntry, d time.Duratio
 // cut but not by whom, and only the chain can tell: without this an
 // observe-mode entry that cut nothing would publish the cut an enforce-mode
 // entry beside it made. A block names one entry; a transform names every entry
-// whose mask went into the one that could not be applied.
-func (s *streamSpans) setCut(seg StreamSegment, keys []string) {
+// whose mask went into the one that could not be applied. failed names the
+// enforcing entry whose call failed on the segment, the author of the cut when
+// the guard resolves that failure as fail_closed. masks says the keys' masks
+// were handed to the guard, which counts them per entry (MaskedEvals).
+func (s *streamSpans) setCut(seg StreamSegment, keys []string, failed string, masks bool) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if masks {
+		for _, key := range keys {
+			s.masked[key]++
+		}
+	}
+	if failed == "" {
+		delete(s.failedBy, seg.StreamID)
+	} else {
+		s.failedBy[seg.StreamID] = failed
+	}
 	if len(keys) == 0 {
 		delete(s.cutBy, seg.StreamID)
 		return
@@ -316,28 +344,57 @@ func (s *streamSpans) setCut(seg StreamSegment, keys []string) {
 	s.cutBy[seg.StreamID] = append([]string(nil), keys...)
 }
 
-// reporter names the entry asked to publish what describes the whole stream.
-// The one that cut is preferred: the cut is what a per-response instrument is
-// labelled by, and it is the only fact entryReport takes away from every entry
-// but one. With nothing cut, chain order decides.
-func (s *streamSpans) reporter(seg StreamSegment, entries []chainEntry) string {
-	first := ""
+// cutAuthorsLocked names the entries that authored the stream's cut. A cut
+// that resolved a failed call as fail_closed belongs to the entry whose call
+// failed: blaming the maskers of that block, as the verdict list alone would,
+// reported a cut against a policy that masked and none against the one that
+// failed (RUN-1745 F6). Every other cut belongs to the verdicts setCut kept.
+// The caller holds s.mu.
+func (s *streamSpans) cutAuthorsLocked(seg StreamSegment) []string {
+	if seg.Report.CutOnFailure {
+		if failed := s.failedBy[seg.StreamID]; failed != "" {
+			return []string{failed}
+		}
+	}
+	return s.cutBy[seg.StreamID]
+}
+
+// reporters names, for each plugin on the chain, the one entry asked to
+// publish what describes the whole stream. The instruments an inspector records
+// for a response are its own (trustguard_stream_*), so one entry per plugin
+// records them: two policies of one plugin would count the response twice, and
+// a single reporter for the whole chain left every other plugin's instruments
+// unwritten whenever it was not that plugin's entry (RUN-1745 F5). Within a
+// plugin the entry that cut is preferred: the cut is what a per-response
+// instrument is labelled by, and it is the only fact entryReport takes away
+// from every entry but the cutter. With nothing cut, chain order decides.
+func (s *streamSpans) reporters(seg StreamSegment, entries []chainEntry) map[string]bool {
+	var cutters []string
+	if s != nil {
+		s.mu.Lock()
+		cutters = append(cutters, s.cutAuthorsLocked(seg)...)
+		s.mu.Unlock()
+	}
+	chosen := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key := spanKey(seg, entry)
+		if _, done := chosen[entry.plugin.Name()]; !done && slices.Contains(cutters, key) {
+			chosen[entry.plugin.Name()] = key
+		}
+	}
 	for _, entry := range entries {
 		if _, ok := streamInspector(entry.plugin); !ok {
 			continue
 		}
-		first = spanKey(seg, entry)
-		break
+		if _, done := chosen[entry.plugin.Name()]; !done {
+			chosen[entry.plugin.Name()] = spanKey(seg, entry)
+		}
 	}
-	if s == nil {
-		return first
+	out := make(map[string]bool, len(chosen))
+	for _, key := range chosen {
+		out[key] = true
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cutters := s.cutBy[seg.StreamID]; len(cutters) > 0 {
-		return cutters[0]
-	}
-	return first
+	return out
 }
 
 // entryReport narrows the guard's chain-wide account to one entry. A cut no
@@ -352,7 +409,8 @@ func (s *streamSpans) entryReport(seg StreamSegment, entry chainEntry) StreamRep
 	defer s.mu.Unlock()
 	key := spanKey(seg, entry)
 	report.GuardLatency = s.spent[key]
-	cutters := s.cutBy[seg.StreamID]
+	report.MaskedEvals = s.masked[key]
+	cutters := s.cutAuthorsLocked(seg)
 	claimed := len(cutters) > 0
 	claimedByEntry := false
 	for _, k := range cutters {
