@@ -21,7 +21,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net/http"
-	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -663,16 +663,6 @@ func TestResponsesShapedBodyUnderChatFormat(t *testing.T) {
 		_, data := runPlugin(t, policy.ModeEnforce, injectSettings("system", "merge", "INJ"), "openai", "openai_embeddings", `{"input":"{template://x}"}`)
 		assert.False(t, data.UnscannedTemplateReference)
 	})
-}
-
-func execOpenAI(t *testing.T, settings map[string]any, body string) error {
-	t.Helper()
-	_, err := New().Execute(context.Background(), appplugins.ExecInput{
-		Mode:    policy.ModeEnforce,
-		Config:  policy.PluginConfig{Settings: settings},
-		Request: &infracontext.RequestContext{Provider: "openai", Body: []byte(body)},
-	})
-	return err
 }
 
 func TestResponsesModeASystem(t *testing.T) {
@@ -1391,34 +1381,35 @@ var shapeOnlyReasons = map[string]bool{}
 // operator causes silently defaults.
 func TestEveryReasonConstantIsClassified(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	paths, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	var found []string
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok || gen.Tok != token.CONST {
-					continue
-				}
-				for _, spec := range gen.Specs {
-					vs := spec.(*ast.ValueSpec)
-					for i, name := range vs.Names {
-						if !strings.HasPrefix(name.Name, "reason") || i >= len(vs.Values) {
-							continue
-						}
-						lit, ok := vs.Values[i].(*ast.BasicLit)
-						if !ok || lit.Kind != token.STRING {
-							continue
-						}
-						value, err := strconv.Unquote(lit.Value)
-						require.NoError(t, err)
-						found = append(found, value)
-						_, classified := unappliedCauses[value]
-						assert.True(t, classified || shapeOnlyReasons[value], "reason %s (%q) is not in unappliedCauses", name.Name, value)
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		require.NoError(t, err)
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if !strings.HasPrefix(name.Name, "reason") || i >= len(vs.Values) {
+						continue
 					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					value, err := strconv.Unquote(lit.Value)
+					require.NoError(t, err)
+					found = append(found, value)
+					_, classified := unappliedCauses[value]
+					assert.True(t, classified || shapeOnlyReasons[value], "reason %s (%q) is not in unappliedCauses", name.Name, value)
 				}
 			}
 		}
