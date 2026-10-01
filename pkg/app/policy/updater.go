@@ -155,13 +155,18 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		previousForWrite = nil
 	}
 	// Write-time rules apply only when the update carries settings or points
-	// the stored ones at another plugin, so a rename still succeeds. A pure
-	// disable (nothing the plugin runs changes) skips the load checks too: it
-	// is the remedy for a policy the gateway cannot load, and a disabled policy
-	// is never loaded.
-	pureDisable := in.Enabled != nil && !*in.Enabled &&
-		in.Settings == nil && in.Stages == nil && in.Mode == nil && !slugChanged
-	if !pureDisable {
+	// the stored ones at another plugin, so a rename still succeeds.
+	//
+	// A write whose RESULT is disabled skips every plugin check, including
+	// ValidateSettingsWrite: the gateway never loads a disabled policy, and
+	// pausing is the remedy for a row it cannot load. The console resends the
+	// whole body on a pause (normalised settings, so not byte-equal to the
+	// stored ones), which is why this keys on the resulting state and not on
+	// the shape of the input. Running ValidateSettingsWrite here would block
+	// pausing a row whose stored settings are merely grandfathered. Nothing is
+	// lost: enabling goes through validatePlugin again, and the console
+	// resends settings on that write, so the write-only rules apply then.
+	if existing.Enabled {
 		if err := validatePlugin(
 			u.registry,
 			existing.Slug,
