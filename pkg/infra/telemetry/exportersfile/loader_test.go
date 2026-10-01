@@ -65,7 +65,7 @@ func TestLoad(t *testing.T) {
     - name: first
       type: otlp
     - name: second
-      type: kafka
+      type: datadog
   raw:
     - name: third
       type: postgres
@@ -74,7 +74,7 @@ func TestLoad(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, configs, 3)
 				assert.Equal(t, []string{"first", "second", "third"}, []string{configs[0].Name, configs[1].Name, configs[2].Name})
-				assert.Equal(t, []string{"otlp", "kafka", "postgres"}, []string{configs[0].Type, configs[1].Type, configs[2].Type})
+				assert.Equal(t, []string{"otlp", "datadog", "postgres"}, []string{configs[0].Type, configs[1].Type, configs[2].Type})
 			},
 		},
 		{
@@ -98,7 +98,7 @@ func TestLoad(t *testing.T) {
 			content: `exporters:
   raw:
     - name: leaky
-      type: kafka
+      type: datadog
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.Error(t, err)
@@ -223,12 +223,12 @@ func TestLoad(t *testing.T) {
 			write: true,
 			content: `exporters:
   metadata:
-    - name: kafka
+    - name: otlp
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
 				require.Len(t, configs, 1)
-				assert.Equal(t, "kafka", configs[0].Name)
+				assert.Equal(t, "otlp", configs[0].Name)
 				assert.Equal(t, "", configs[0].Type)
 			},
 		},

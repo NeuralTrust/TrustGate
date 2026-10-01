@@ -14,7 +14,7 @@ against a local compose stack:
 bash scripts/telemetry/verify_three_sinks.sh
 ```
 
-The script boots postgres/redis/kafka/otel-collector, starts admin+proxy with
+The script boots postgres/redis/otel-collector, starts admin+proxy with
 `config/telemetry.verify.yaml`, drives a proxy request, and asserts **51 checks**
 including `EventName: trustgate.3.metadata` / `trustgate.3.raw`, body presence/absence
 per class, and a `trustgate_data` row.

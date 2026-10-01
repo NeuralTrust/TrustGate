@@ -20,7 +20,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common/valuecopy"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
 	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
@@ -52,26 +51,12 @@ func TestExporterTemplates_TreatSettingsAsReadOnly(t *testing.T) {
 
 	// ValidateConfig is the entry point under test rather than WithSettings,
 	// because in every template both route the settings map through the same
-	// decode — ResolveBaseConfig for kafka, parseSettings for the others — and
-	// WithSettings goes on to dial a broker or open a pool.
+	// parseSettings decode, and WithSettings goes on to open a pool.
 	cases := []struct {
 		name     string
 		settings map[string]any
 		validate func(settings map[string]any) error
 	}{
-		{
-			name: "kafka",
-			settings: map[string]any{
-				"topic":   "events",
-				"brokers": []any{"localhost:9092"},
-			},
-			validate: func(settings map[string]any) error {
-				template := kafka.NewKafkaTemplate(testLogger(), config.KafkaConfig{
-					Brokers: []string{"localhost:9092"},
-				})
-				return template.ValidateConfig(settings)
-			},
-		},
 		{
 			name: "otlp",
 			settings: map[string]any{
@@ -120,12 +105,11 @@ func TestExporterLocator_ValidateTreatsSettingsAsReadOnly(t *testing.T) {
 	t.Parallel()
 
 	cfg := telemetrydomain.ExporterConfig{
-		Name: kafka.ExporterName,
+		Name: otlp.ExporterName,
 		Settings: map[string]any{
-			"topic":   "events",
-			"brokers": []any{"localhost:9092"},
-			"nested": map[string]any{
-				"retries": 3,
+			"endpoint": "otel.invalid:4317",
+			"headers": map[string]any{
+				"authorization": "Bearer token",
 			},
 		},
 	}

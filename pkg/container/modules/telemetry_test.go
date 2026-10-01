@@ -48,8 +48,8 @@ func TestNewDefaultExporters(t *testing.T) {
   metadata:
     - name: otlp
       type: otlp
-    - name: kafka
-      type: kafka
+    - name: datadog
+      type: datadog
 `,
 			setup: func(factory *mocks.ExporterFactory) {
 				factory.EXPECT().Validate(mock.Anything).Return(nil)
@@ -57,7 +57,7 @@ func TestNewDefaultExporters(t *testing.T) {
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
 				require.Len(t, configs, 2)
-				assert.Equal(t, []string{"otlp", "kafka"}, []string{configs[0].Name, configs[1].Name})
+				assert.Equal(t, []string{"otlp", "datadog"}, []string{configs[0].Name, configs[1].Name})
 			},
 		},
 		{
