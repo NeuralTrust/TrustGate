@@ -15,17 +15,9 @@
 package proxy
 
 import (
-	"strings"
-
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
-
-// geminiStreamAction is the Gemini/Vertex URL action that signals a streamed
-// response (clients hit ".../models/<model>:streamGenerateContent"). The leading
-// colon is part of the match so unrelated paths that merely contain the word
-// "streamGenerateContent" do not trigger a false positive.
-const geminiStreamAction = ":streamGenerateContent"
 
 // DetectStream reports whether the inbound request asks for a streamed response.
 //
@@ -45,10 +37,7 @@ func DetectStream(req *infracontext.RequestContext) bool {
 	case capabilityFiles, capabilityImages, capabilityAudioSpeech, capabilityAudioTranscription:
 		return false
 	}
-	if strings.Contains(req.Path, geminiStreamAction) {
-		return true
-	}
-	if req.Query != nil && req.Query.Get("alt") == "sse" {
+	if adapter.URLRequestsStream(req.Path, req.Query) {
 		return true
 	}
 	if stream, explicit := adapter.RequestWantsStream(req.Body); explicit {

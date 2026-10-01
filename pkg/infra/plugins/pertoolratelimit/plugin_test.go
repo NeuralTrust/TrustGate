@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -1692,4 +1693,60 @@ func TestPlugin_MCP_PreResponse_CounterStoreRecordFailureFailsOpen(t *testing.T)
 
 	res, err := p.Execute(context.Background(), in)
 	assertCounterFailedOpen(t, res, err, span, "record")
+}
+
+func geminiReqBody(t *testing.T, tools ...string) []byte {
+	t.Helper()
+	decls := make([]map[string]any, 0, len(tools))
+	for _, name := range tools {
+		decls = append(decls, map[string]any{"name": name, "parameters": map[string]any{"type": "object"}})
+	}
+	b, err := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+		"tools":    []any{map[string]any{"functionDeclarations": decls}},
+	})
+	require.NoError(t, err)
+	return b
+}
+
+// RUN-1745: Gemini and Vertex signal a stream in the URL and their bodies carry
+// no stream flag. Inject read only the decoded flag, so on a Gemini stream the
+// request leg left the tool in and the response leg skipped the stream: an
+// over-budget tool went through.
+func TestPlugin_PreRequest_InjectGeminiURLStreamDegradesToStrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		query url.Values
+		strip bool
+	}{
+		{name: "streamGenerateContent action", path: "/v1beta/models/gemini-2.0-flash:streamGenerateContent", strip: true},
+		{name: "alt=sse query", path: "/v1beta/models/gemini-2.0-flash:generateContent", query: url.Values{"alt": {"sse"}}, strip: true},
+		{name: "buffered generateContent", path: "/v1beta/models/gemini-2.0-flash:generateContent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "inject_error_result", "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+			req := &infracontext.RequestContext{
+				Provider: "google", SourceFormat: "google",
+				Path: tt.path, Query: tt.query,
+				Body: geminiReqBody(t, "send_email", "lookup"),
+			}
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, nil))
+			require.NoError(t, err)
+
+			if !tt.strip {
+				assert.Nil(t, res.RequestBody, "buffered inject is handled at pre_response")
+				return
+			}
+			require.NotNil(t, res.RequestBody, "a Gemini stream must strip the tool at pre_request")
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatGemini)
+			require.NoError(t, err)
+			require.Len(t, decoded.Tools, 1)
+			assert.Equal(t, "lookup", decoded.Tools[0].Name)
+		})
+	}
 }

@@ -67,6 +67,11 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	if _, err := parseConfig(settings); err != nil {
 		return fmt.Errorf("prompt_compression: %w", err)
