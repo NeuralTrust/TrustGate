@@ -257,8 +257,13 @@ func ResolveTargetFormat(providerName string, providerOptions map[string]any) Fo
 
 	if providerFormat == FormatOpenAI || providerFormat == FormatAzure {
 		if api, ok := providerOptions["api"]; ok {
-			if s, ok := api.(string); ok && s == "responses" {
-				return FormatOpenAIResponses
+			if s, ok := api.(string); ok {
+				switch s {
+				case providers.OpenAIAPIResponses:
+					return FormatOpenAIResponses
+				case providers.AzureAPIAnthropic:
+					return FormatAnthropic
+				}
 			}
 		}
 	}
@@ -333,9 +338,9 @@ const (
 // OpenAI exposes two chat surfaces, and a client picks one by calling either
 // /v1/chat/completions or /v1/responses. Honour that choice: downgrading a
 // Responses request to Chat Completions drops everything the newer surface
-// adds. An explicit provider_options.api still wins, which is the only way to
-// reach a surface the client did not ask for. Azure is excluded from the
-// mirroring because its client only builds chat/completions URLs.
+// adds. An explicit provider_options.api still wins. Azure registries select
+// their Foundry wire format explicitly because the resource endpoint alone
+// does not identify the deployed model protocol.
 func resolveChatTargetFormat(providerName string, sourceFormat Format, providerOptions map[string]any) Format {
 	wireFormat := resolveProviderWireFormat(providerName)
 	providerFormat := Format(providerName)
@@ -346,6 +351,8 @@ func resolveChatTargetFormat(providerName string, sourceFormat Format, providerO
 		switch api {
 		case OpenAIAPIResponses:
 			return FormatOpenAIResponses
+		case providers.AzureAPIAnthropic:
+			return FormatAnthropic
 		case OpenAIAPICompletions:
 			return wireFormat
 		}

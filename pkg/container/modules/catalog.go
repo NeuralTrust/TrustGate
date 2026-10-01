@@ -140,7 +140,7 @@ func (s *liveModelSource) List(
 	}
 	out := make([]appcatalog.LiveModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, appcatalog.LiveModel{ID: model.ID, DisplayName: model.DisplayName})
+		out = append(out, appcatalog.LiveModel{ID: model.ID, DisplayName: model.DisplayName, ProviderModel: model.ProviderModel})
 	}
 	return out, nil
 }

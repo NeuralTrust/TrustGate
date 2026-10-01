@@ -124,7 +124,7 @@ const (
 
 	defaultSemanticCacheVectorStore = "redis"
 
-	defaultTrustGuardTimeout = 15 * time.Second
+	defaultTrustGuardTimeout = 30 * time.Second
 
 	defaultFirewallComplexityTimeout = 30 * time.Second
 

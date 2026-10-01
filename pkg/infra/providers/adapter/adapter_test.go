@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -244,8 +245,6 @@ func TestResolveTargetFormatForCapability_MirrorsInboundRoute(t *testing.T) {
 			want:     FormatOpenAI,
 		},
 		{
-			// The Azure client only builds chat/completions URLs, so mirroring
-			// there would produce a body its endpoint cannot accept.
 			name:     "azure does not mirror the route",
 			provider: "azure",
 			source:   FormatOpenAIResponses,
@@ -257,6 +256,20 @@ func TestResolveTargetFormatForCapability_MirrorsInboundRoute(t *testing.T) {
 			source:   FormatOpenAI,
 			options:  map[string]any{"api": "responses"},
 			want:     FormatOpenAIResponses,
+		},
+		{
+			name:     "azure anthropic surface adapts the request",
+			provider: "azure",
+			source:   FormatOpenAI,
+			options:  map[string]any{"api": providers.AzureAPIAnthropic},
+			want:     FormatAnthropic,
+		},
+		{
+			name:     "azure openai v1 chat stays openai compatible",
+			provider: "azure",
+			source:   FormatOpenAI,
+			options:  map[string]any{"api": providers.AzureAPIOpenAIV1},
+			want:     FormatAzure,
 		},
 		{
 			name:     "an explicit api option overrides the route",
