@@ -42,12 +42,22 @@ type ListFilter struct {
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=policy_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, p *Policy) error
-	// Update persists every column of p. writeMCPScope false leaves
+	// Update persists the columns of p. writeMCPScope false leaves
 	// policies.mcp_scope as stored: an update that did not ask to change the
 	// scope must not write back the value it read, or it would resurrect a
 	// registry a concurrent prune had just removed.
+	//
+	// Update never writes global or mcp_wide, and it lands only while the
+	// stored flags still equal p's: the level check ran on p's placement, so a
+	// promotion committed since the read fails the update with
+	// ErrPlacementChanged instead of storing a state nobody checked.
 	Update(ctx context.Context, p *Policy, writeMCPScope bool) error
+	// SetGlobal writes the global flag. Promoting also clears mcp_wide in the
+	// same row write; demoting touches global only.
 	SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error
+	// SetMCPWide writes the mcp_wide flag. Promoting also clears global in the
+	// same row write; demoting touches mcp_wide only.
+	SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error
 	FindByID(ctx context.Context, id ids.PolicyID) (*Policy, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, policyIDs []ids.PolicyID) ([]*Policy, error)

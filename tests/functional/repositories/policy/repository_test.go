@@ -25,6 +25,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -460,6 +461,153 @@ func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	}
 	if globals != 1 || scopedCount != 1 {
 		t.Fatalf("expected 1 global + 1 scoped, got %d/%d", globals, scopedCount)
+	}
+}
+
+func TestRepository_PlacementSetters_SwapAndDemote(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement")
+
+	p := validPolicy(t, gwID, "placement")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	setGlobal := func(on bool) func() error { return func() error { return r.SetGlobal(ctx, gwID, p.ID, on) } }
+	setMCPWide := func(on bool) func() error { return func() error { return r.SetMCPWide(ctx, gwID, p.ID, on) } }
+	steps := []struct {
+		name        string
+		write       func() error
+		wantGlobal  bool
+		wantMCPWide bool
+	}{
+		{name: "promote to mcp-wide", write: setMCPWide(true), wantMCPWide: true},
+		{name: "swap to global clears mcp-wide", write: setGlobal(true), wantGlobal: true},
+		{name: "demoting mcp-wide keeps global", write: setMCPWide(false), wantGlobal: true},
+		{name: "swap to mcp-wide clears global", write: setMCPWide(true), wantMCPWide: true},
+		{name: "demoting global keeps mcp-wide", write: setGlobal(false), wantMCPWide: true},
+		{name: "demoting mcp-wide leaves a draft", write: setMCPWide(false)},
+	}
+	for _, step := range steps {
+		if err := step.write(); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		got, err := r.FindByID(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("%s: FindByID: %v", step.name, err)
+		}
+		if got.Global != step.wantGlobal || got.MCPWide != step.wantMCPWide {
+			t.Fatalf("%s: global, mcp_wide = %t, %t, want %t, %t",
+				step.name, got.Global, got.MCPWide, step.wantGlobal, step.wantMCPWide)
+		}
+	}
+
+	if err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetMCPWide on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+	if err := r.SetGlobal(ctx, ids.New[ids.GatewayKind](), p.ID, true); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetGlobal on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+
+	saved := validPolicy(t, gwID, "saved mcp-wide")
+	saved.MCPWide = true
+	if err := r.Save(ctx, saved); err != nil {
+		t.Fatalf("Save mcp-wide: %v", err)
+	}
+	if got, err := r.FindByID(ctx, saved.ID); err != nil || !got.MCPWide || got.Global {
+		t.Fatalf("FindByID after Save = %+v, %v, want mcp_wide round-tripped", got, err)
+	}
+}
+
+func TestRepository_PlacementCheck_RefusesBothFlags(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-check")
+
+	p := validPolicy(t, gwID, "both flags")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	_, err := conn.Pool.Exec(ctx, `UPDATE policies SET global = true, mcp_wide = true WHERE id = $1`, p.ID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "policies_global_mcp_wide_check" {
+		t.Fatalf("err = %v, want a 23514 from policies_global_mcp_wide_check", err)
+	}
+
+	both := validPolicy(t, gwID, "saved with both flags")
+	both.Global, both.MCPWide = true, true
+	if err := r.Save(ctx, both); !errors.Is(err, domain.ErrInvalidPlacement) {
+		t.Fatalf("Save with both flags: err = %v, want ErrInvalidPlacement", err)
+	}
+}
+
+// The level guard approves a PUT on the placement the caller read. A promotion
+// that commits in between must fail the update, or the row would end up with a
+// placement and a scope that were never checked together.
+func TestRepository_Update_RefusesAStalePlacement(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-update")
+
+	p := validPolicy(t, gwID, "stale placement")
+	p.Enabled = false
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	stale := *p
+	if err := r.SetGlobal(ctx, gwID, p.ID, true); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+
+	stale.Name = "renamed"
+	stale.Enabled = true
+	stale.UpdatedAt = time.Now().UTC()
+	err := r.Update(ctx, &stale, false)
+	if !errors.Is(err, domain.ErrPlacementChanged) || !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrPlacementChanged wrapping ErrConflict", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !got.Global || got.MCPWide {
+		t.Fatalf("global, mcp_wide = %t, %t, want the promotion to stand", got.Global, got.MCPWide)
+	}
+	if got.Name != p.Name || got.Enabled {
+		t.Fatalf("name, enabled = %q, %t, want the stale update unwritten", got.Name, got.Enabled)
+	}
+}
+
+func TestRepository_Update_LandsWhileThePlacementMatches(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-placement-match")
+
+	p := validPolicy(t, gwID, "matching placement")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := r.SetMCPWide(ctx, gwID, p.ID, true); err != nil {
+		t.Fatalf("SetMCPWide: %v", err)
+	}
+	current, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	current.Name = "renamed"
+	current.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, current, false); err != nil {
+		t.Fatalf("Update with the current placement: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
+	if got.Name != "renamed" || !got.MCPWide || got.Global {
+		t.Fatalf("got name %q, global %t, mcp_wide %t, want the rename with the placement kept", got.Name, got.Global, got.MCPWide)
 	}
 }
 

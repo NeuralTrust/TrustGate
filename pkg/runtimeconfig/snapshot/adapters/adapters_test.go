@@ -311,6 +311,7 @@ func TestPolicyAdapter(t *testing.T) {
 	assert.Empty(t, crossGateway)
 
 	assert.ErrorIs(t, repo.SetGlobal(ctx, f.gateway.ID, f.policy.ID, true), configsync.ErrReadOnly)
+	assert.ErrorIs(t, repo.SetMCPWide(ctx, f.gateway.ID, f.policy.ID, true), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Save(ctx, &policydomain.Policy{}), configsync.ErrReadOnly)
 }
 

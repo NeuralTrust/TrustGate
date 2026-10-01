@@ -412,6 +412,55 @@ func (_c *Repository_SetGlobal_Call) RunAndReturn(run func(context.Context, ids.
 	return _c
 }
 
+// SetMCPWide provides a mock function with given fields: ctx, gatewayID, id, mcpWide
+func (_m *Repository) SetMCPWide(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.PolicyKind], mcpWide bool) error {
+	ret := _m.Called(ctx, gatewayID, id, mcpWide)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetMCPWide")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind], bool) error); ok {
+		r0 = rf(ctx, gatewayID, id, mcpWide)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_SetMCPWide_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetMCPWide'
+type Repository_SetMCPWide_Call struct {
+	*mock.Call
+}
+
+// SetMCPWide is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - id ids.ID[ids.PolicyKind]
+//   - mcpWide bool
+func (_e *Repository_Expecter) SetMCPWide(ctx interface{}, gatewayID interface{}, id interface{}, mcpWide interface{}) *Repository_SetMCPWide_Call {
+	return &Repository_SetMCPWide_Call{Call: _e.mock.On("SetMCPWide", ctx, gatewayID, id, mcpWide)}
+}
+
+func (_c *Repository_SetMCPWide_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.PolicyKind], mcpWide bool)) *Repository_SetMCPWide_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.PolicyKind]), args[3].(bool))
+	})
+	return _c
+}
+
+func (_c *Repository_SetMCPWide_Call) Return(_a0 error) *Repository_SetMCPWide_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_SetMCPWide_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind], bool) error) *Repository_SetMCPWide_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Update provides a mock function with given fields: ctx, p, writeMCPScope
 func (_m *Repository) Update(ctx context.Context, p *policy.Policy, writeMCPScope bool) error {
 	ret := _m.Called(ctx, p, writeMCPScope)

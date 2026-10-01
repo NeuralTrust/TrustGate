@@ -74,6 +74,10 @@ func (r *policyRepository) SetGlobal(_ context.Context, _ ids.GatewayID, _ ids.P
 	return configsync.ErrReadOnly
 }
 
+func (r *policyRepository) SetMCPWide(_ context.Context, _ ids.GatewayID, _ ids.PolicyID, _ bool) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *policyRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.PolicyID) error {
 	return configsync.ErrReadOnly
 }
