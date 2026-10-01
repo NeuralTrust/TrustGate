@@ -28,10 +28,11 @@ import (
 
 type ListPolicyHandler struct {
 	finder apppolicy.Finder
+	status apppolicy.StatusEvaluator
 }
 
-func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
-	return &ListPolicyHandler{finder: finder}
+func NewListPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvaluator) *ListPolicyHandler {
+	return &ListPolicyHandler{finder: finder, status: status}
 }
 
 // Handle godoc
@@ -125,7 +126,8 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		Total: total,
 	}
 	for _, p := range items {
-		out.Items = append(out.Items, response.FromPolicy(p))
+		status, message := h.status.Evaluate(p)
+		out.Items = append(out.Items, response.FromPolicy(p).WithStatus(string(status), message))
 	}
 	return httpio.WriteOK(c, out)
 }

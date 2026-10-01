@@ -24,10 +24,11 @@ import (
 
 type GetPolicyHandler struct {
 	finder apppolicy.Finder
+	status apppolicy.StatusEvaluator
 }
 
-func NewGetPolicyHandler(finder apppolicy.Finder) *GetPolicyHandler {
-	return &GetPolicyHandler{finder: finder}
+func NewGetPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvaluator) *GetPolicyHandler {
+	return &GetPolicyHandler{finder: finder, status: status}
 }
 
 // Handle godoc
@@ -52,5 +53,6 @@ func (h *GetPolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	status, message := h.status.Evaluate(p)
+	return httpio.WriteOK(c, response.FromPolicy(p).WithStatus(string(status), message))
 }
