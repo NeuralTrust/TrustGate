@@ -22,6 +22,9 @@ func ValidateProviderOptions(provider string, options map[string]any) error {
 	case ProviderOpenAI:
 		_, err := DecodeOpenAIOptions(options)
 		return err
+	case ProviderAzure:
+		_, err := DecodeAzureOptions(options)
+		return err
 	case ProviderVertex:
 		_, err := DecodeVertexOptions(options)
 		return err

@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,9 @@ import (
 
 const (
 	liveModelsCacheTTL = 10 * time.Minute
-	liveModelsTimeout  = 8 * time.Second
+	// liveModelsTimeout bounds the provider GET so a slow provider cannot hold
+	// the admin API request open.
+	liveModelsTimeout = 8 * time.Second
 	// Source recorded on a model that exists only in the provider's live
 	// listing, so a reader can tell it apart from a synced catalog row.
 	liveCatalogSource = "live"
@@ -63,6 +66,9 @@ type LiveCatalogLister interface {
 type LiveModel struct {
 	ID          string
 	DisplayName string
+	// ProviderModel is the model a deployment serves, when the provider names
+	// one (Azure: a deployment called "prod-chat" serving gpt-4o).
+	ProviderModel string
 }
 
 type LiveModelSource interface {
@@ -132,6 +138,9 @@ func (f *liveAvailabilityFilter) Filter(ctx context.Context, in ServerlessFilter
 	live, ok := f.listRegistryModels(ctx, in)
 	if !ok || len(live) == 0 {
 		return in.Models
+	}
+	if in.ProviderCode == providerdomain.Azure {
+		return azureDeploymentModels(in.Models, live)
 	}
 
 	liveIDs := make(map[string]struct{}, len(live))
@@ -252,6 +261,46 @@ func (f *liveAvailabilityFilter) listRegistryModels(
 		return nil, false
 	}
 	return live, true
+}
+
+func azureDeploymentModels(catalogModels []domain.Model, live []LiveModel) []domain.Model {
+	capHint := len(catalogModels)
+	if capHint <= math.MaxInt/2 {
+		capHint *= 2
+	}
+	byProviderModel := make(map[string]domain.Model, capHint)
+	for _, model := range catalogModels {
+		for _, candidate := range SlugCandidates(model.Slug, model.ExternalID) {
+			byProviderModel[strings.ToLower(candidate)] = model
+		}
+	}
+
+	seen := make(map[string]struct{}, len(live))
+	out := make([]domain.Model, 0, len(live))
+	for _, model := range live {
+		deployment := strings.TrimSpace(model.ID)
+		if deployment == "" {
+			continue
+		}
+		key := strings.ToLower(deployment)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		entry, matched := byProviderModel[strings.ToLower(strings.TrimSpace(model.ProviderModel))]
+		if !matched {
+			entry = domain.Model{Enabled: true, Source: liveCatalogSource}
+		}
+		entry.Slug = deployment
+		entry.ExternalID = deployment
+		entry.DisplayName = strings.TrimSpace(model.DisplayName)
+		if entry.DisplayName == "" {
+			entry.DisplayName = deployment
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func (f *liveAvailabilityFilter) liveModels(

@@ -18,10 +18,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +31,8 @@ import (
 // detected runs detectEndUser against a request carrying headers.
 func detected(t *testing.T, headers map[string]string) *trace.EndUser {
 	t.Helper()
-	app := fiber.New()
+	// Large enough to carry the oversized-token case to the handler.
+	app := fiber.New(fiber.Config{ReadBufferSize: 16 * 1024})
 	var got *trace.EndUser
 	app.Post("/v1/chat/completions", func(c *fiber.Ctx) error {
 		got = detectEndUser(c)
@@ -148,4 +151,94 @@ func TestDetectEndUser_HeaderNamesAreCaseInsensitive(t *testing.T) {
 
 	require.NotNil(t, got)
 	assert.Equal(t, "ana@acme.test", got.Email)
+}
+
+// openWebUIJWT mints the token Open WebUI sends when
+// FORWARD_USER_INFO_HEADER_JWT_SECRET is set (utils/headers.py).
+func openWebUIJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("secret-only-open-webui-holds"))
+	require.NoError(t, err)
+	return token
+}
+
+func openWebUIClaims() jwt.MapClaims {
+	now := time.Now().Unix()
+	return jwt.MapClaims{
+		"sub":   "u-42",
+		"email": "ana@acme.test",
+		"name":  "Ana",
+		"role":  "admin",
+		"iss":   "open-webui",
+		"iat":   now,
+		"exp":   now + 300,
+	}
+}
+
+// With signing on, Open WebUI drops the plain headers and sends only the JWT.
+func TestDetectEndUser_ReadsOpenWebUISignedJWT(t *testing.T) {
+	got := detected(t, map[string]string{"X-OpenWebUI-User-Jwt": openWebUIJWT(t, openWebUIClaims())})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "u-42", got.ID)
+	assert.Equal(t, "ana@acme.test", got.Email)
+	assert.Equal(t, "Ana", got.Name)
+	assert.Equal(t, "admin", got.Role)
+	assert.Equal(t, events.EndUserSourceOpenWebUI, got.Source)
+}
+
+// The gateway does not hold the secret, so an expired token still attributes:
+// its claims are worth exactly what the plain headers were.
+func TestDetectEndUser_ReadsAnExpiredOpenWebUIJWT(t *testing.T) {
+	claims := openWebUIClaims()
+	claims["exp"] = time.Now().Add(-time.Hour).Unix()
+
+	got := detected(t, map[string]string{"X-OpenWebUI-User-Jwt": openWebUIJWT(t, claims)})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "u-42", got.ID)
+}
+
+func TestDetectEndUser_IgnoresAJWTOpenWebUIDidNotIssue(t *testing.T) {
+	claims := openWebUIClaims()
+	claims["iss"] = "someone-else"
+
+	assert.Nil(t, detected(t, map[string]string{"X-OpenWebUI-User-Jwt": openWebUIJWT(t, claims)}))
+	assert.Nil(t, detected(t, map[string]string{"X-OpenWebUI-User-Jwt": "not-a-jwt"}))
+	assert.Nil(t, detected(t, map[string]string{"X-OpenWebUI-User-Jwt": strings.Repeat("a", maxEndUserJWTLen+1)}))
+}
+
+func TestDetectEndUser_BoundsOpenWebUIJWTClaims(t *testing.T) {
+	claims := openWebUIClaims()
+	claims["email"] = strings.Repeat("a", maxEndUserValueLen+50)
+	claims["role"] = 7 // not a string: dropped, not stringified
+
+	got := detected(t, map[string]string{"X-OpenWebUI-User-Jwt": openWebUIJWT(t, claims)})
+
+	require.NotNil(t, got)
+	assert.Len(t, got.Email, maxEndUserValueLen)
+	assert.Empty(t, got.Role)
+}
+
+// Plain headers a caller set outrank the token, as they outrank nothing else.
+func TestDetectEndUser_TrustGateHeadersOutrankTheOpenWebUIJWT(t *testing.T) {
+	got := detected(t, map[string]string{
+		"X-TG-User-Email":      "configured@acme.test",
+		"X-OpenWebUI-User-Jwt": openWebUIJWT(t, openWebUIClaims()),
+	})
+
+	require.NotNil(t, got)
+	assert.Equal(t, "configured@acme.test", got.Email)
+	assert.Equal(t, events.EndUserSourceTrustGate, got.Source)
+}
+
+// Open WebUI percent-encodes the name header (quote(name, safe=' ')).
+func TestDetectEndUser_DecodesTheOpenWebUIName(t *testing.T) {
+	got := detected(t, map[string]string{"X-OpenWebUI-User-Name": "Jos%C3%A9 Mar%C3%ADa"})
+	require.NotNil(t, got)
+	assert.Equal(t, "José María", got.Name)
+
+	got = detected(t, map[string]string{"X-OpenWebUI-User-Name": "100%"})
+	require.NotNil(t, got)
+	assert.Equal(t, "100%", got.Name)
 }

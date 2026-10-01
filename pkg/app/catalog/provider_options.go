@@ -56,6 +56,21 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Description: "Optional override for the OpenAI base URL (http/https).",
 		},
 	},
+	providers.ProviderAzure: {
+		{
+			Key:         "api",
+			Label:       "API surface",
+			Type:        OptionFieldTypeEnum,
+			Description: "Azure inference protocol used by this registry.",
+			Default:     providers.AzureAPIDeployments,
+			Enum: []appplugins.EnumOption{
+				{Value: providers.AzureAPIDeployments, Label: "Azure OpenAI deployments"},
+				{Value: providers.AzureAPIOpenAIV1, Label: "Foundry OpenAI v1 chat"},
+				{Value: providers.AzureAPIResponses, Label: "Foundry OpenAI v1 responses"},
+				{Value: providers.AzureAPIAnthropic, Label: "Foundry Anthropic messages"},
+			},
+		},
+	},
 	providers.ProviderOpenAICompatible: {
 		{
 			Key:         "base_url",
