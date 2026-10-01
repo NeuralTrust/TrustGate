@@ -79,7 +79,7 @@ func TestPipeline_PublishTopicReachesOnlyTopicExporters(t *testing.T) {
 	factory := &topicFactory{topicAware: map[string]bool{"otlp-default": true, "otlp-gateway": true}}
 	p := newTopicPipeline(factory,
 		telemetrydomain.ExporterConfig{Name: "otlp-default"},
-		telemetrydomain.ExporterConfig{Name: "kafka-default"})
+		telemetrydomain.ExporterConfig{Name: "postgres-default"})
 	explicit := []telemetrydomain.ExporterConfig{{Name: "otlp-gateway"}, {Name: "postgres-gateway"}}
 
 	evt := &events.TopicClassification{TraceID: "trace-1", GatewayID: "gw-1"}
@@ -89,7 +89,7 @@ func TestPipeline_PublishTopicReachesOnlyTopicExporters(t *testing.T) {
 	require.Len(t, targets, 4)
 	assert.Equal(t, 1, targets["otlp-default"].(*topicAwareExporter).topicCount())
 	assert.Equal(t, 1, targets["otlp-gateway"].(*topicAwareExporter).topicCount(), "the gateway's own collector gets it too")
-	for _, name := range []string{"otlp-default", "otlp-gateway", "kafka-default", "postgres-gateway"} {
+	for _, name := range []string{"otlp-default", "otlp-gateway", "postgres-default", "postgres-gateway"} {
 		var published int
 		switch exp := targets[name].(type) {
 		case *topicAwareExporter:

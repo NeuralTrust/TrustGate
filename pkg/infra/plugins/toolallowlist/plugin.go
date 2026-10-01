@@ -54,6 +54,11 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }

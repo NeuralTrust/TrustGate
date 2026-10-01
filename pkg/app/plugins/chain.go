@@ -32,6 +32,7 @@ type chainEntry struct {
 	mutatesResp  bool
 	mutatesMeta  bool
 	readsContent bool
+	local        bool
 }
 
 // rewritesAt reports whether the entry rewrites the content the given stage
@@ -50,6 +51,13 @@ func (e chainEntry) rewritesAt(stage policy.Stage) bool {
 // rewriting it. Such an entry must run after the rewriters of its priority.
 func (e chainEntry) onlyReadsAt(stage policy.Stage) bool {
 	return e.readsContent && !e.rewritesAt(stage)
+}
+
+// rewritesOffBoxAt reports whether the entry rewrites the stage's content and
+// did not opt in as a local rewriter, so it may send that content to a third
+// party. Such an entry must run after the local rewriters of its priority.
+func (e chainEntry) rewritesOffBoxAt(stage policy.Stage) bool {
+	return e.rewritesAt(stage) && !e.local
 }
 
 func lessEntry(a, b chainEntry) bool {
@@ -113,6 +121,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			mutatesResp:  plugin.MutatesResponseBody(),
 			mutatesMeta:  plugin.MutatesMetadata(),
 			readsContent: IsContentReader(plugin),
+			local:        RewritesLocally(plugin),
 		})
 	}
 

@@ -247,6 +247,7 @@ func (f *forwarder) invokeWithFailover(
 
 	last := failoverState{}
 	lastKind := failureNone
+	var misses []modelMiss
 	current := route.route
 	fromFallback := route.fromFallback
 	sequential := len(route.chain) > 0
@@ -298,11 +299,15 @@ func (f *forwarder) invokeWithFailover(
 				if !route.pinned && filesIDNotFound(dto.request, resp) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					if sequential {
+						misses = append(misses, newModelMiss(bk, resp))
+					}
 					break
 				}
 				if sequential && responseCarriesModelNotFound(resp) {
 					last = failoverState{resp: resp}
 					lastKind = failureNone
+					misses = append(misses, newModelMiss(bk, resp))
 					break
 				}
 				reportSuccess(lb, bk)
@@ -331,7 +336,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	if sequential && modelMissOnly && budget.attempts > 0 {
-		return nil, noRegistryServesModelError(dto.request.RequestedModel, route.chain, last)
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, rc.Consumer.Slug, route.chain, misses)
 	}
 	return f.relayLast(ctx, dto, last)
 }
@@ -375,9 +380,6 @@ func (f *forwarder) nextCandidate(
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
-	if len(chain) > 0 {
-		return nextChainRoute(chain, excluded), false
-	}
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
 	}

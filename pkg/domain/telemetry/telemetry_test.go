@@ -36,8 +36,8 @@ func TestExporterConfig_EffectiveType(t *testing.T) {
 		},
 		{
 			name: "type empty returns name",
-			cfg:  telemetrydomain.ExporterConfig{Name: "kafka"},
-			want: "kafka",
+			cfg:  telemetrydomain.ExporterConfig{Name: "otlp"},
+			want: "otlp",
 		},
 		{
 			name: "both empty returns empty",

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -393,6 +395,116 @@ func TestForward_SequentialChain_NoRegistryServesTheModelKeepsTheProviderDetail(
 	assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
 	assert.Contains(t, err.Error(), "do not have access",
 		"the provider's own diagnosis must survive alongside the gateway's verdict")
+}
+
+func TestForward_SequentialChain_NoRegistryServesTheModelAttributesEveryProvider(t *testing.T) {
+	longReason := strings.Repeat("x", 500)
+	anthropicMiss := `{"type":"error","error":{"type":"not_found_error","message":"model: claude-opus-4"}}`
+	openaiMiss := `{"error":{"message":"The model claude-opus-4 does not exist","code":"model_not_found"}}`
+	tests := []struct {
+		name       string
+		maxRetries int
+		bodies     map[string]string
+		contains   []string
+		excludes   []string
+	}{
+		{
+			name:   "each provider's reason in chain order",
+			bodies: map[string]string{"anthropic": anthropicMiss, "openai": openaiMiss},
+			contains: []string{
+				`"claude-opus-4" (tried anthropic, openai)`,
+				"[anthropic: model: claude-opus-4] [openai: The model claude-opus-4 does not exist]",
+				"List the models this application can use with GET /cons1234/v1/models",
+			},
+		},
+		{
+			name: "a body without a message still names its provider",
+			bodies: map[string]string{
+				"anthropic": `{"type":"error","error":{"type":"not_found_error","code":"model_not_found"}}`,
+				"openai":    `{"error":{"code":"model_not_found","type":"invalid_request_error"}}`,
+			},
+			contains: []string{"[anthropic: no detail] [openai: no detail]"},
+		},
+		{
+			name: "a long reason is truncated",
+			bodies: map[string]string{
+				"anthropic": `{"error":{"type":"not_found_error","message":"model not_found ` + longReason + `"}}`,
+				"openai":    openaiMiss,
+			},
+			contains: []string{"…] [openai: The model claude-opus-4 does not exist]"},
+			excludes: []string{longReason},
+		},
+		{
+			name:       "retries do not repeat a provider",
+			maxRetries: 2,
+			bodies:     map[string]string{"anthropic": anthropicMiss, "openai": openaiMiss},
+			contains:   []string{"[anthropic: model: claude-opus-4] [openai: The model claude-opus-4 does not exist]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "anthropic"), backendFor(gatewayID, "openai"))
+
+			invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+				return &appproxy.ProviderResponse{StatusCode: 404, Body: []byte(tt.bodies[provider])}, nil
+			})
+			fwd := newSequentialForwarderWithRetries(t, invoker, tt.maxRetries)
+
+			_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{Body: chatBody("claude-opus-4")},
+			})
+
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, routingdomain.ErrNoRegistryServesModel))
+			assert.Equal(t, []string{"anthropic", "openai"}, *invoked)
+			assert.Equal(t, 1, strings.Count(err.Error(), "[anthropic:"))
+			assert.Equal(t, 1, strings.Count(err.Error(), "[openai:"))
+			for _, want := range tt.contains {
+				assert.Contains(t, err.Error(), want)
+			}
+			for _, unwanted := range tt.excludes {
+				assert.NotContains(t, err.Error(), unwanted)
+			}
+		})
+	}
+}
+
+func TestForward_SequentialChain_UpstreamFailureAfterModelMissIsRelayed(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID, backendFor(gatewayID, "anthropic"), backendFor(gatewayID, "openai"))
+
+	invoker, invoked := invocationRecorder(t, func(provider string) (*appproxy.ProviderResponse, error) {
+		if provider == "anthropic" {
+			return &appproxy.ProviderResponse{StatusCode: 404, Body: modelNotFoundBody(provider)}, nil
+		}
+		return &appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil
+	})
+	fwd := newSequentialForwarder(t, invoker, stubListing{})
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: chatBody("claude-opus-4")},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 503, res.StatusCode,
+		"an upstream failure is not a model miss; the gateway must relay it instead of claiming model_not_supported")
+	assert.Equal(t, []string{"anthropic", "openai"}, *invoked)
+}
+
+func newSequentialForwarderWithRetries(t *testing.T, invoker appproxy.ProviderInvoker, maxRetries int) appproxy.Forwarder {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Provider.MaxRetries = maxRetries
+	return appproxy.NewForwarder(
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		newPermissiveCache(t), cache.NewTTLMapManager(time.Minute), invoker, nil, nil,
+		approuting.NewResolver(), stubListing{}, nil, cfg, newTestLogger(),
+	)
 }
 
 func TestForward_SequentialChain_NonShortIntentsIgnoreProviderAvailability(t *testing.T) {
