@@ -15,11 +15,13 @@
 package middleware
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // A chat front-end like Open WebUI authenticates to the gateway with one shared
@@ -33,7 +35,7 @@ import (
 // — it describes a request, it never decides anything about it. It must not
 // reach the principal (see trace.Metadata.Principal*), which authorizes and
 // reaches TrustGuard's gate attributes, where a forged value would buy the
-// sender someone else's policy. `end_user_detection_test.go` locks that
+// sender someone else's policy. `pkg/infra/plugins/trustguard/end_user_isolation_test.go` locks that
 // separation; keep it locked.
 
 // maxEndUserValueLen bounds each captured value. The headers are caller-supplied
@@ -75,9 +77,23 @@ var endUserHeaderSets = []endUserHeaderSet{
 	},
 }
 
-// detectEndUser reads the first known end-user header set the request carries.
-// Returns nil when the request carries none, which is the common case and must
-// stay free: a request without these headers is attributed exactly as before.
+// Open WebUI sends one HS256 JWT in this header instead of its plain
+// X-OpenWebUI-User-* headers once FORWARD_USER_INFO_HEADER_JWT_SECRET is set.
+// The claims carry the same user, and the iss it always stamps tells its token
+// apart from anything else a caller might put there.
+const (
+	openWebUIUserJWTHeader = "X-OpenWebUI-User-Jwt"
+	openWebUIJWTIssuer     = "open-webui"
+)
+
+// maxEndUserJWTLen bounds the token before it is parsed. Open WebUI's is a few
+// hundred bytes; anything far past that is not one of its tokens.
+const maxEndUserJWTLen = 4096
+
+// detectEndUser reads the first known end-user header set the request carries,
+// then Open WebUI's signed user JWT. Returns nil when the request carries none,
+// which is the common case and must stay free: a request without these headers
+// is attributed exactly as before.
 func detectEndUser(c *fiber.Ctx) *trace.EndUser {
 	if c == nil {
 		return nil
@@ -90,16 +106,66 @@ func detectEndUser(c *fiber.Ctx) *trace.EndUser {
 			Name:   endUserHeaderValue(c, set.name),
 			Role:   endUserHeaderValue(c, set.role),
 		}
+		if set.source == events.EndUserSourceOpenWebUI {
+			// Open WebUI percent-encodes the name (so "José" arrives as
+			// "Jos%C3%A9"); a value that does not decode is kept as sent.
+			if name, err := url.PathUnescape(endUser.Name); err == nil {
+				endUser.Name = boundEndUserValue(strings.TrimSpace(name))
+			}
+		}
 		// A set that contributed nothing did not match; the next one may.
-		if endUser.ID != "" || endUser.Email != "" || endUser.Name != "" || endUser.Role != "" {
+		if !endUserIsEmpty(endUser) {
 			return &endUser
 		}
 	}
-	return nil
+	return openWebUIJWTEndUser(c)
+}
+
+// openWebUIJWTEndUser reads the user from Open WebUI's signed user JWT.
+//
+// The signature is NOT checked: that takes the secret the customer set in Open
+// WebUI, which the gateway does not hold. Unverified, the token says no more
+// than the plain headers it replaces — anyone holding the API key could mint
+// one — so it is read under the same telemetry-only rule as they are.
+func openWebUIJWTEndUser(c *fiber.Ctx) *trace.EndUser {
+	token := strings.TrimSpace(c.Get(openWebUIUserJWTHeader))
+	if token == "" || len(token) > maxEndUserJWTLen {
+		return nil
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {
+		return nil
+	}
+	if iss, _ := claims["iss"].(string); iss != openWebUIJWTIssuer {
+		return nil
+	}
+	endUser := trace.EndUser{
+		Source: events.EndUserSourceOpenWebUI,
+		ID:     endUserClaim(claims, "sub"),
+		Email:  endUserClaim(claims, "email"),
+		Name:   endUserClaim(claims, "name"),
+		Role:   endUserClaim(claims, "role"),
+	}
+	if endUserIsEmpty(endUser) {
+		return nil
+	}
+	return &endUser
+}
+
+func endUserIsEmpty(endUser trace.EndUser) bool {
+	return endUser.ID == "" && endUser.Email == "" && endUser.Name == "" && endUser.Role == ""
+}
+
+func endUserClaim(claims jwt.MapClaims, name string) string {
+	value, _ := claims[name].(string)
+	return boundEndUserValue(strings.TrimSpace(value))
 }
 
 func endUserHeaderValue(c *fiber.Ctx, header string) string {
-	value := strings.TrimSpace(c.Get(header))
+	return boundEndUserValue(strings.TrimSpace(c.Get(header)))
+}
+
+func boundEndUserValue(value string) string {
 	if len(value) > maxEndUserValueLen {
 		return value[:maxEndUserValueLen]
 	}
