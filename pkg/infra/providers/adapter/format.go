@@ -17,6 +17,7 @@ package adapter
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
@@ -186,6 +187,24 @@ func SupportedSourceFormat(f Format) bool {
 	default:
 		return false
 	}
+}
+
+// geminiStreamAction is the Gemini/Vertex URL action that signals a streamed
+// response (clients hit ".../models/<model>:streamGenerateContent"). The leading
+// colon is part of the match so unrelated paths that merely contain the word
+// "streamGenerateContent" do not trigger a false positive.
+const geminiStreamAction = ":streamGenerateContent"
+
+// URLRequestsStream reports whether the request URL asks for a streamed
+// response, the way Gemini and Vertex signal it: the ":streamGenerateContent"
+// action in the path or "alt=sse" in the query. Their bodies carry no stream
+// flag, so a decoded Gemini request always reads as buffered; anything that
+// decides on the stream flag must consult the URL as well.
+func URLRequestsStream(path string, query url.Values) bool {
+	if strings.Contains(path, geminiStreamAction) {
+		return true
+	}
+	return query != nil && query.Get("alt") == "sse"
 }
 
 func RequestWantsStream(body []byte) (stream bool, explicit bool) {
