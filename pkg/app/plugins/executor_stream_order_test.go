@@ -34,6 +34,7 @@ type orderStub struct {
 	fn    func(StreamSegment) *SegmentVerdict
 	err   error
 	reads bool
+	local bool
 	log   *[]string
 }
 
@@ -54,12 +55,15 @@ func (o *orderStub) InspectSegment(_ context.Context, _ ExecInput, seg StreamSeg
 
 func (o *orderStub) ReadsContent() bool { return o.reads }
 
+func (o *orderStub) RewritesLocally() bool { return o.local }
+
 type orderSpec struct {
 	slug     string
 	priority int
 	mode     policy.Mode
 	rewrites bool
 	reads    bool
+	local    bool
 	fn       func(StreamSegment) *SegmentVerdict
 	err      error
 }
@@ -84,7 +88,7 @@ func orderChain(t *testing.T, specs ...orderSpec) (*executor, []*policy.Policy, 
 	for _, spec := range specs {
 		sp := newStreamPlugin(spec.slug, nil)
 		sp.mutResp = spec.rewrites
-		stub := &orderStub{streamPlugin: sp, fn: spec.fn, err: spec.err, reads: spec.reads, log: log}
+		stub := &orderStub{streamPlugin: sp, fn: spec.fn, err: spec.err, reads: spec.reads, local: spec.local, log: log}
 		stubs[spec.slug] = stub
 		plugins = append(plugins, stub)
 		pol := policies(t, polSpec{
@@ -134,6 +138,23 @@ func TestRunStreamSegment_ReaderSeesTheMaskedSegment(t *testing.T) {
 	assert.Equal(t, "card ****", stubs["a_moderation"].seen[0].Accumulated)
 	assert.Equal(t, " ****", stubs["a_moderation"].seen[0].Text)
 	assert.True(t, out.HasTransform)
+	assert.Equal(t, "card ****", out.Transformed)
+}
+
+// RUN-1745: bedrock_guardrail sorts before regex_replace; at one priority it
+// used to receive the raw card number the client never sees.
+func TestRunStreamSegment_OffBoxRewriterSeesTheLocalMask(t *testing.T) {
+	t.Parallel()
+	exec, pols, stubs, log := orderChain(t,
+		orderSpec{slug: "a_bedrock", priority: 10, mode: policy.ModeEnforce, rewrites: true},
+		orderSpec{slug: "z_regex", priority: 10, mode: policy.ModeEnforce, rewrites: true, local: true, fn: replaceWith("4111", "****")},
+	)
+
+	out := runOrder(t, exec, pols, rawSegment())
+
+	assert.Equal(t, []string{"z_regex", "a_bedrock"}, *log)
+	require.Len(t, stubs["a_bedrock"].seen, 1)
+	assert.Equal(t, "card ****", stubs["a_bedrock"].seen[0].Accumulated)
 	assert.Equal(t, "card ****", out.Transformed)
 }
 
@@ -215,6 +236,17 @@ func TestRunStreamSegment_OrderingRules(t *testing.T) {
 				{slug: "d_masker", priority: 10, mode: policy.ModeEnforce, rewrites: true},
 			},
 			want: []string{"c_masker", "d_masker", "a_reader", "b_reader"},
+		},
+		{
+			name: "a local rewriter runs before an off-box one and a neutral keeps its place",
+			specs: []orderSpec{
+				{slug: "a_bedrock", priority: 10, mode: policy.ModeEnforce, rewrites: true},
+				{slug: "b_neutral", priority: 10, mode: policy.ModeEnforce},
+				{slug: "c_moderation", priority: 10, mode: policy.ModeEnforce, reads: true},
+				{slug: "d_armor", priority: 10, mode: policy.ModeEnforce, rewrites: true},
+				{slug: "e_regex", priority: 10, mode: policy.ModeEnforce, rewrites: true, local: true},
+			},
+			want: []string{"e_regex", "b_neutral", "a_bedrock", "d_armor", "c_moderation"},
 		},
 		{
 			name: "a run with no rewriter is left as it was",

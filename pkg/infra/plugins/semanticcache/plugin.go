@@ -51,8 +51,6 @@ const (
 	cacheStatusMiss = "MISS"
 )
 
-const geminiStreamAction = ":streamGenerateContent"
-
 const (
 	toolCallsFinishReason = "tool_calls"
 
@@ -204,10 +202,7 @@ func (p *Plugin) requestWantsStream(req *infracontext.RequestContext) bool {
 	if req == nil {
 		return false
 	}
-	if strings.Contains(req.Path, geminiStreamAction) {
-		return true
-	}
-	if req.Query != nil && req.Query.Get("alt") == "sse" {
+	if adapter.URLRequestsStream(req.Path, req.Query) {
 		return true
 	}
 	if req.Provider != "" && p.registry != nil {

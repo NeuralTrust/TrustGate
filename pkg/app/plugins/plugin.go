@@ -90,6 +90,28 @@ func IsContentReader(d PluginDescriptor) bool {
 	return ok && r.ReadsContent()
 }
 
+// LocalRewriter is the opt-in a body rewriter declares when the content it
+// rewrites never leaves the gateway: no provider, no remote guard, only local
+// rules (a regex mask, a template, a tool filter). The planner runs such a
+// rewriter ahead of the rewriters of its priority that send the content to a
+// third party, so a remote guard (bedrock_guardrail, google_model_armor,
+// trustguard) is handed the masked text and not the raw one (RUN-1745).
+//
+// The default is false. A rewriter that does not implement it is treated as one
+// that sends content off the box, which can only move it later, never hand it
+// text a local mask was meant to hide. The flag has no effect on a plugin that
+// does not rewrite the stage's body.
+type LocalRewriter interface {
+	RewritesLocally() bool
+}
+
+// RewritesLocally reports whether the descriptor opted in as a local rewriter.
+// Like the content reader set, the registry wiring test enumerates it.
+func RewritesLocally(d PluginDescriptor) bool {
+	r, ok := d.(LocalRewriter)
+	return ok && r.RewritesLocally()
+}
+
 // SettingsWriteValidator is implemented by plugins with rules that apply only
 // when settings are written, never when a stored policy is loaded. It can
 // reject a shape ValidateConfig must still accept, such as one saved before
