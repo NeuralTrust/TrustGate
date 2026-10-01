@@ -288,13 +288,13 @@ func TestExecutor_RunStreamSegment_MergesTheChainVerdicts(t *testing.T) {
 			wantConsulted: []string{"a_masker", "b_blocker"},
 		},
 		{
-			name: "transform beats allow and the first one in chain order wins",
+			name: "transform beats allow and the last one in chain order wins",
 			specs: []entrySpec{
 				{slug: "a_allow", mode: policy.ModeEnforce, verdict: &SegmentVerdict{Fingerprints: []string{"f-allow"}}},
 				{slug: "b_first", mode: policy.ModeEnforce, verdict: mask("first", "pii")},
 				{slug: "c_second", mode: policy.ModeEnforce, verdict: mask("second", "secret")},
 			},
-			want:          SegmentOutcome{HasTransform: true, Transformed: "first", Type: "pii"},
+			want:          SegmentOutcome{HasTransform: true, Transformed: "second", Type: "secret"},
 			wantPrints:    []string{"f-allow"},
 			wantConsulted: []string{"a_allow", "b_first", "c_second"},
 		},

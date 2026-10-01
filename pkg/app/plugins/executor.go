@@ -20,7 +20,9 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -130,13 +132,26 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 		defer spans.publish()
 	}
 
+	// current is the segment the next entry is handed. It starts as the raw
+	// segment and, after an enforcing entry rewrites it, carries the masked
+	// text, so a later entry (a reader above all) never sends the unmasked
+	// text to its third party (RUN-1744).
+	current := seg
+	// cutKeys names the entries that would author a cut on THIS segment. The
+	// stored list is replaced at the end of every evaluated segment, because a
+	// cut can only happen on the last one: a mask an earlier block landed is not
+	// to be blamed for a later block's failure.
+	var cutKeys []string
+	if !seg.Closing {
+		defer func() { spans.setCut(seg, cutKeys) }()
+	}
 	for _, entry := range entries {
 		inspector, ok := streamInspector(entry.plugin)
 		if !ok {
 			continue
 		}
-		event := spans.eventFor(ctx, seg, entry)
-		call := seg
+		event := spans.eventFor(ctx, current, entry)
+		call := current
 		if seg.Closing {
 			call.Report = spans.entryReport(seg, entry)
 			call.Findings = entryFindings(seg.Findings, entry)
@@ -168,15 +183,38 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 				SetDecisionFromOutcome(event, decisionFailedOpen)
 				continue
 			}
-			return nil, fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			failure := fmt.Errorf("plugins: inspecting stream segment %d with %s: %w", seg.Seq, entry.plugin.Name(), err)
+			// An earlier enforcing entry may already have masked this segment.
+			// Hand that mask back with the error: a caller that resolves the
+			// failure as fail_open releases the held text, and it must release
+			// the masked text, never the raw text a mask already covered.
+			if outcome.HasTransform {
+				return outcome, failure
+			}
+			return nil, failure
 		}
 		if seg.Closing || verdict == nil {
 			continue
 		}
-		transformed := outcome.HasTransform
 		stop := e.mergeVerdict(outcome, verdict, entry)
-		if stop || (!transformed && outcome.HasTransform) {
-			spans.markCut(seg, entry)
+		// Hand-off mirrors mergeVerdict: only a transform from an entry that
+		// blocks is applied to what the client receives, so only that one
+		// changes what the entries behind it see. An observe transform is
+		// never applied, and the entries behind must judge what is released.
+		if !stop && verdict.HasTransform && Blocks(entry.mode) {
+			current = segmentAfterTransform(current, verdict.Transformed)
+		}
+		switch {
+		case stop:
+			// A block is the cut's one author: the transforms of the same
+			// segment are discarded with it, so their entries do not share it.
+			cutKeys = []string{spanKey(seg, entry)}
+		case verdict.HasTransform && Blocks(entry.mode):
+			// Every entry whose transform ends up in the final mask is a
+			// candidate for the rewrite that could not be applied.
+			if key := spanKey(seg, entry); !slices.Contains(cutKeys, key) {
+				cutKeys = append(cutKeys, key)
+			}
 		}
 		if stop {
 			break
@@ -187,9 +225,34 @@ func (e *executor) RunStreamSegment(ctx context.Context, in StageInput, seg Stre
 
 func (e *executor) streamEntries(in StageInput) []chainEntry {
 	if in.Plan != nil {
-		return in.Plan.entriesFor(policy.StagePreResponse)
+		return in.Plan.streamEntriesFor()
 	}
-	return buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false)
+	return OrderStreamEntries(buildStageChain(e.registry, in.Policies, policy.StagePreResponse, false))
+}
+
+// segmentAfterTransform is the segment the entries behind a rewriter receive.
+// Transformed replaces the whole of Accumulated (SegmentVerdict), so it becomes
+// the new Accumulated. Text is the delta of the block: the tail of the masked
+// text from where the block began, or from where the mask first diverged from
+// the raw text when that is earlier, so masked text is never left out of it.
+// Reasoning and ToolCalls are unchanged: the guard refuses a transform over a
+// block that carries either.
+func segmentAfterTransform(seg StreamSegment, transformed string) StreamSegment {
+	start := len(seg.Accumulated) - len(seg.Text)
+	if start < 0 {
+		start = 0
+	}
+	common := 0
+	for common < len(seg.Accumulated) && common < len(transformed) && seg.Accumulated[common] == transformed[common] {
+		common++
+	}
+	from := min(start, common)
+	for from > 0 && from < len(transformed) && !utf8.RuneStart(transformed[from]) {
+		from--
+	}
+	seg.Accumulated = transformed
+	seg.Text = transformed[from:]
+	return seg
 }
 
 // mergeVerdict folds one verdict into the consolidated outcome and reports
@@ -222,23 +285,18 @@ func (e *executor) mergeVerdict(outcome *SegmentOutcome, verdict *SegmentVerdict
 		return true
 	}
 	if verdict.HasTransform {
-		if outcome.HasTransform {
-			e.warnExcessStreamTransform(entry)
-			return false
-		}
+		// The last transform wins: each entry is handed the text the previous
+		// rewriter produced (segmentAfterTransform), so the last one already
+		// carries every earlier mask.
 		outcome.HasTransform = true
 		outcome.Transformed = verdict.Transformed
+		// Type and Message describe the entry whose transform is kept.
+		if verdict.Type != "" {
+			outcome.Type = verdict.Type
+			outcome.Message = verdict.Message
+		}
 	}
 	return false
-}
-
-func (e *executor) warnExcessStreamTransform(entry chainEntry) {
-	if e.logger == nil {
-		return
-	}
-	e.logger.Warn("stream segment produced multiple transforms; keeping first in chain order",
-		slog.String("stage", string(policy.StagePreResponse)),
-		slog.String("slug", entry.config.Slug))
 }
 
 func (e *executor) runBatch(
