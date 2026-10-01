@@ -24,30 +24,25 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
-// ListLiveModels lists what this Azure resource can actually serve: its
-// deployments. Requests are routed by deployment name, so both the deployment
-// id and its underlying model name are reported as live ids — the catalog's
-// model slugs match through the latter.
 func (c *client) ListLiveModels(ctx context.Context, config *providers.Config) ([]providers.LiveModel, error) {
 	if config.Credentials.Azure == nil || config.Credentials.Azure.Endpoint == "" {
 		return nil, fmt.Errorf("%w: azure endpoint is required", providers.ErrModelListingFailed)
 	}
-	auth, err := c.resolveAuth(ctx, config)
+	targetURL, api, err := c.buildModelsURL(config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
 	}
-	return providers.ListModelsGET(ctx, providers.ProviderAzure, c.buildDeploymentsURL(config), func(req *http.Request) {
-		auth.apply(req)
-	}, parseAzureDeploymentList)
-}
-
-func (c *client) buildDeploymentsURL(config *providers.Config) string {
-	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
-	apiVersion := defaultAPIVersion
-	if config.Credentials.Azure.ApiVersion != "" {
-		apiVersion = config.Credentials.Azure.ApiVersion
+	auth, err := c.resolveAuthForAPI(ctx, config, api)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", providers.ErrModelListingFailed, err.Error())
 	}
-	return fmt.Sprintf("%s/openai/deployments?api-version=%s", endpoint, apiVersion)
+	parse := providers.ParseOpenAIModelList
+	if api == providers.AzureAPIDeployments {
+		parse = parseAzureDeploymentList
+	}
+	return providers.ListModelsGET(ctx, providers.ProviderAzure, targetURL, func(req *http.Request) {
+		auth.apply(req)
+	}, parse)
 }
 
 func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
@@ -60,22 +55,22 @@ func parseAzureDeploymentList(body []byte) ([]providers.LiveModel, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decode deployments: %s", providers.ErrModelListingFailed, err.Error())
 	}
-	seen := make(map[string]struct{}, len(payload.Data)*2)
-	models := make([]providers.LiveModel, 0, len(payload.Data)*2)
-	add := func(id, display string) {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			return
-		}
-		if _, dup := seen[id]; dup {
-			return
-		}
-		seen[id] = struct{}{}
-		models = append(models, providers.LiveModel{ID: id, DisplayName: display})
-	}
+	seen := make(map[string]struct{}, len(payload.Data))
+	models := make([]providers.LiveModel, 0, len(payload.Data))
 	for _, item := range payload.Data {
-		add(item.ID, item.ID)
-		add(item.Model, "")
+		deployment := strings.TrimSpace(item.ID)
+		if deployment == "" {
+			continue
+		}
+		if _, dup := seen[deployment]; dup {
+			continue
+		}
+		seen[deployment] = struct{}{}
+		models = append(models, providers.LiveModel{
+			ID:            deployment,
+			DisplayName:   deployment,
+			ProviderModel: strings.TrimSpace(item.Model),
+		})
 	}
 	return models, nil
 }
