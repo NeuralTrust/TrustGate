@@ -378,9 +378,6 @@ func (f *forwarder) nextCandidate(
 	if len(chain) > 0 {
 		return nextChainRoute(chain, excluded), false
 	}
-	if len(chain) > 0 {
-		return nextChainRoute(chain, excluded), false
-	}
 	if lb != nil {
 		if next, err := lb.NextRoute(ctx, req, excluded); err == nil && next != nil {
 			if _, seen := excluded[next.Key()]; !seen {
