@@ -21,6 +21,14 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
+// Policy status values. They mirror app/policy.Status; the response package
+// stays free of app-layer imports.
+const (
+	StatusActive = "active"
+	StatusPaused = "paused"
+	StatusError  = "error"
+)
+
 type PolicyResponse struct {
 	ID          ids.PolicyID     `json:"id"`
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
@@ -35,11 +43,11 @@ type PolicyResponse struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []string         `json:"stages,omitempty"`
 	Mode        string           `json:"mode"`
-	// Status is "active", "paused" (disabled) or "error" (enabled but the
-	// gateway cannot load it). FromPolicy derives it from Enabled alone;
-	// list and get overwrite it with the validated value via WithStatus.
-	Status string `json:"status"`
-	// StatusMessage is the load failure reason when Status is "error".
+	// Status is "active" (enabled and running), "paused" (disabled) or "error"
+	// (enabled but the gateway cannot run it; see status_message).
+	Status string `json:"status" enums:"active,paused,error"`
+	// StatusMessage is the reason the gateway cannot run the policy. It is
+	// present only when status is "error".
 	StatusMessage string `json:"status_message,omitempty"`
 	// MCPScope is echoed as stored: absent when the policy is consumer-wide,
 	// {} when a registry delete pruned every destination.
@@ -52,14 +60,6 @@ type PolicyResponse struct {
 }
 
 // MCPToolRefResponse names one upstream tool by registry and native name.
-// Policy status values. They mirror app/policy.Status; the response package
-// stays free of app-layer imports.
-const (
-	StatusActive = "active"
-	StatusPaused = "paused"
-	StatusError  = "error"
-)
-
 type MCPToolRefResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Tool       string         `json:"tool"`
@@ -99,7 +99,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 	}
 }
 
-// WithStatus overrides the derived status with an evaluated one.
+// WithStatus overrides the status derived from Enabled with an evaluated one.
 func (r PolicyResponse) WithStatus(status, message string) PolicyResponse {
 	r.Status = status
 	r.StatusMessage = message

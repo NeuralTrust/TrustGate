@@ -41,28 +41,6 @@ func validatePlugin(
 	previous map[string]any,
 	settingsWritten bool,
 ) error {
-	if err := validateStored(reg, slug, stages, mode, settings); err != nil {
-		return err
-	}
-	if settingsWritten {
-		if err := reg.ValidateSettingsWrite(slug, settings, previous); err != nil {
-			return errors.Join(commonerrors.ErrValidation, err)
-		}
-	}
-	return nil
-}
-
-// validateStored is the part of validatePlugin that depends only on the policy
-// itself - stages, mode and settings against the plugin's own rules, with an
-// unknown slug rejected. It is what the gateway needs to load a stored policy,
-// so it is shared with the read-side status evaluation.
-func validateStored(
-	reg appplugins.Registry,
-	slug string,
-	stages []domain.Stage,
-	mode domain.Mode,
-	settings map[string]any,
-) error {
 	if err := reg.ValidateStages(slug, stages); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
 	}
@@ -71,6 +49,11 @@ func validateStored(
 	}
 	if err := reg.Validate(slug, settings); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
+	}
+	if settingsWritten {
+		if err := reg.ValidateSettingsWrite(slug, settings, previous); err != nil {
+			return errors.Join(commonerrors.ErrValidation, err)
+		}
 	}
 	return nil
 }

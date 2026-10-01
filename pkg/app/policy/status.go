@@ -15,6 +15,8 @@
 package policy
 
 import (
+	"fmt"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
@@ -47,17 +49,29 @@ func NewStatusEvaluator(registry appplugins.Registry) StatusEvaluator {
 	return &statusEvaluator{registry: registry}
 }
 
-// Evaluate re-runs the write-time checks (validateStored) against the stored
-// row. ValidateSettingsWrite is deliberately NOT run: it guards write
-// transitions (a NEWLY introduced bad key, a consistency rule added after
-// rows existed) and its plugins document that an already-saved policy keeps
-// working at run time. Running it with no previous version would flag
-// grandfathered rows the gateway loads and executes fine.
+// Evaluate reports whether the gateway can RUN an enabled policy, which is
+// narrower than whether a write of it would be accepted. The data plane never
+// calls ValidateStages, ValidateMode or ValidateSettingsWrite on a stored row
+// (plan.go): it skips an unknown slug, drops unsupported stages and keeps the
+// supported ones, and normalises the mode. So only what actually stops the
+// policy from running is an error:
+//   - unknown slug (plan.go skips the row);
+//   - no effective stage left after that filtering (EffectiveStages is the same
+//     rule isEffectiveStage applies), so the policy never fires;
+//   - settings the plugin rejects: Execute parses them with the same parseConfig
+//     ValidateConfig uses, so a row that fails here fails on every request.
 func (e *statusEvaluator) Evaluate(p *domain.Policy) (Status, string) {
 	if !p.Enabled {
 		return StatusPaused, ""
 	}
-	if err := validateStored(e.registry, p.Slug, p.Stages, p.Mode, p.Settings); err != nil {
+	plugin, ok := e.registry.Get(p.Slug)
+	if !ok {
+		return StatusError, fmt.Errorf("%w: %s", appplugins.ErrUnknownPlugin, p.Slug).Error()
+	}
+	if len(appplugins.EffectiveStages(plugin, p.Stages)) == 0 {
+		return StatusError, appplugins.ErrNoEffectiveStages.Error()
+	}
+	if err := e.registry.Validate(p.Slug, p.Settings); err != nil {
 		return StatusError, err.Error()
 	}
 	return StatusActive, ""

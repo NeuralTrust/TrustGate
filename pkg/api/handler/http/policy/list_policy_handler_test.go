@@ -38,22 +38,15 @@ func TestListPolicyHandler_ReportsLoadStatus(t *testing.T) {
 	t.Parallel()
 
 	gatewayID := ids.New[ids.GatewayKind]()
-	good := &domain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gatewayID, Slug: "good", Enabled: true}
+	good := &domain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gatewayID, Slug: "good", Enabled: true, Stages: []domain.Stage{domain.StagePreRequest}}
 	paused := &domain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gatewayID, Slug: "gone", Enabled: false}
-	broken := &domain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gatewayID, Slug: "broken", Enabled: true}
+	broken := &domain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gatewayID, Slug: "broken", Enabled: true, Stages: []domain.Stage{domain.StagePreRequest}}
 
 	finder := policymocks.NewFinder(t)
 	finder.EXPECT().List(mock.Anything, mock.Anything).
 		Return([]*domain.Policy{good, paused, broken}, 3, nil).Once()
 
-	reg := pluginmocks.NewRegistry(t)
-	reg.EXPECT().ValidateStages("good", mock.Anything).Return(nil)
-	reg.EXPECT().ValidateMode("good", mock.Anything).Return(nil)
-	reg.EXPECT().Validate("good", mock.Anything).Return(nil)
-	reg.EXPECT().ValidateStages("broken", mock.Anything).Return(nil)
-	reg.EXPECT().ValidateMode("broken", mock.Anything).Return(nil)
-	reg.EXPECT().Validate("broken", mock.Anything).Return(errors.New("limit must be positive"))
-
+	reg := statusRegistry(t)
 	handler := policyhttp.NewListPolicyHandler(finder, apppolicy.NewStatusEvaluator(reg))
 	app := fiber.New()
 	app.Get("/v1/gateways/:gateway_id/policies", handler.Handle)
@@ -77,4 +70,21 @@ func TestListPolicyHandler_ReportsLoadStatus(t *testing.T) {
 	assert.NotContains(t, body.Items[1], "status_message")
 	assert.Equal(t, "error", body.Items[2]["status"])
 	assert.Contains(t, body.Items[2]["status_message"], "limit must be positive")
+}
+
+// statusRegistry knows "good" (valid settings) and "broken" (invalid settings);
+// any other slug is unknown.
+func statusRegistry(t *testing.T) *pluginmocks.Registry {
+	t.Helper()
+	reg := pluginmocks.NewRegistry(t)
+	plugin := pluginmocks.NewPlugin(t)
+	plugin.EXPECT().SupportedStages().Return([]domain.Stage{domain.StagePreRequest}).Maybe()
+	plugin.EXPECT().MandatoryStages().Return(nil).Maybe()
+	for _, slug := range []string{"good", "broken"} {
+		reg.EXPECT().Get(slug).Return(plugin, true).Maybe()
+	}
+	reg.EXPECT().Get("gone").Return(nil, false).Maybe()
+	reg.EXPECT().Validate("good", mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().Validate("broken", mock.Anything).Return(errors.New("limit must be positive")).Maybe()
+	return reg
 }
