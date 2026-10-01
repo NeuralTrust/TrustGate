@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const (
@@ -67,6 +69,9 @@ type requestBody struct {
 	// rawDirty marks edits written straight into fields (Anthropic blocks and
 	// Gemini), where the typed system and messages mirrors are not used.
 	rawDirty bool
+	// format is the wire format the body was recognised as; empty when it
+	// could not be resolved.
+	format adapter.Format
 }
 
 type bodyShape int
@@ -75,6 +80,8 @@ const (
 	shapeMessages bodyShape = iota
 	shapeAnthropic
 	shapeGemini
+	shapeResponses
+	shapeBedrock
 )
 
 func (rb *requestBody) dirty() bool {
@@ -119,8 +126,13 @@ func decodeBody(raw []byte) (*requestBody, error) {
 // request. When it did not, the second result names why, so the caller never
 // records an injection the model will not see.
 func (rb *requestBody) injectSystem(mode onExistingSystem, role, content string) (bool, string) {
-	if rb.shape == shapeGemini {
+	switch rb.shape {
+	case shapeGemini:
 		return rb.injectGemini(mode, role, content)
+	case shapeResponses:
+		return rb.injectResponses(mode, role, content)
+	case shapeBedrock:
+		return rb.injectBedrock(mode, role, content)
 	}
 	if rb.shape == shapeAnthropic {
 		return rb.injectAnthropic(mode, role, content)
@@ -321,6 +333,7 @@ func (rb *requestBody) clone() *requestBody {
 		systemBlocks:    rb.systemBlocks,
 		hasSystemBlocks: rb.hasSystemBlocks,
 		rawDirty:        rb.rawDirty,
+		format:          rb.format,
 	}
 }
 
@@ -341,8 +354,13 @@ func (rb *requestBody) takeProperties() (map[string]any, bool) {
 }
 
 func (rb *requestBody) findReferences() []templateRef {
-	if rb.shape == shapeGemini {
+	switch rb.shape {
+	case shapeGemini:
 		return rb.findGeminiReferences()
+	case shapeResponses:
+		return rb.findResponsesReferences()
+	case shapeBedrock:
+		return rb.findBedrockReferences()
 	}
 	var refs []templateRef
 	for i := range rb.messages {
@@ -376,16 +394,30 @@ func scanReferences(s string) []templateRef {
 // turnCount is the number of conversation turns the body carries, which a
 // rendered template replaces.
 func (rb *requestBody) turnCount() int {
-	if rb.shape == shapeGemini {
+	switch rb.shape {
+	case shapeGemini:
 		return len(rb.geminiContents())
+	case shapeResponses:
+		return rb.responsesTurnCount()
 	}
 	return len(rb.messages)
 }
 
 func (rb *requestBody) replaceMessages(rendered string) error {
-	if rb.shape == shapeGemini {
+	switch rb.shape {
+	case shapeGemini:
 		return rb.replaceGeminiContents(rendered)
+	case shapeResponses:
+		return rb.replaceResponsesInput(rendered)
+	case shapeBedrock:
+		return rb.replaceBedrockMessages(rendered)
+	case shapeAnthropic:
+		return rb.replaceAnthropicMessages(rendered)
 	}
+	return rb.replaceMessagesDefault(rendered)
+}
+
+func (rb *requestBody) replaceMessagesDefault(rendered string) error {
 	if strings.HasPrefix(strings.TrimSpace(rendered), "[") {
 		var msgs []json.RawMessage
 		if err := json.Unmarshal([]byte(rendered), &msgs); err != nil {
@@ -423,4 +455,46 @@ func mergeSystem(mode onExistingSystem, existing, content string) string {
 		}
 		return existing + "\n\n" + content
 	}
+}
+
+// replaceAnthropicMessages is replaceMessages for an Anthropic body. Messages
+// of the fragment are kept verbatim, except system ones: Anthropic has no
+// system role, so their text is merged into the top-level system field.
+func (rb *requestBody) replaceAnthropicMessages(rendered string) error {
+	if !strings.HasPrefix(strings.TrimSpace(rendered), "[") {
+		return rb.replaceMessagesDefault(rendered)
+	}
+	var msgs []json.RawMessage
+	if err := json.Unmarshal([]byte(rendered), &msgs); err != nil {
+		return fmt.Errorf("parse rendered messages fragment: %w", err)
+	}
+	kept := make([]json.RawMessage, 0, len(msgs))
+	var system []string
+	for _, raw := range msgs {
+		var m struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil || m.Role != roleSystem {
+			kept = append(kept, raw)
+			continue
+		}
+		texts, err := fragmentTexts(m.Content)
+		if err != nil {
+			return err
+		}
+		if text := strings.Join(texts, "\n\n"); text != "" {
+			system = append(system, text)
+		}
+	}
+	rb.messages = kept
+	rb.hasMessages = true
+	rb.messagesOpaque = false
+	rb.messagesDirty = true
+	if len(system) > 0 {
+		if applied, reason := rb.injectAnthropic(onExistingMerge, roleSystem, strings.Join(system, "\n\n")); !applied {
+			return foldError("system", reason)
+		}
+	}
+	return nil
 }

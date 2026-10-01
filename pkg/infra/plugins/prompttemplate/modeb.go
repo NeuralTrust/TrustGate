@@ -16,6 +16,7 @@ package prompttemplate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -38,6 +39,9 @@ type modeBResult struct {
 	// block array, which the scanner does not read. Reported so the literal
 	// reaching the model is not silent.
 	unscannedRef bool
+	// shapeReason is set when the client's body, not the template, stopped the
+	// rendering: the request is refused as an unsupported shape.
+	shapeReason string
 }
 
 func (b *modeBResult) markUnscanned(modeB bool, body []byte) {
@@ -89,7 +93,16 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	}
 	before := rb.turnCount()
 	if err := rb.replaceMessages(rendered); err != nil {
-		return result, reject(http.StatusInternalServerError, typeRenderFailed, "rendered template is not a valid messages array")
+		msg := "rendered template is not a valid messages array"
+		var fe *fragmentError
+		if errors.As(err, &fe) {
+			if fe.clientOwned {
+				result.shapeReason = fe.reason
+				return result, rejectUnsupportedShape(fe.reason)
+			}
+			msg = fe.msg
+		}
+		return result, reject(http.StatusInternalServerError, typeRenderFailed, msg)
 	}
 
 	result.changed = true

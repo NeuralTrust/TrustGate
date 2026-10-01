@@ -47,27 +47,55 @@ func (rb *requestBody) applyFormat(provider, sourceFormat string, mcp bool, body
 			// system+messages shape there would inject into nothing.
 			return &passThrough{decision: decisionSkippedFormat, reason: "unresolved_format"}
 		}
+		if veto := rb.vetoNonCanonical(false, "messages", "system"); veto != nil {
+			return veto
+		}
 		return rb.vetoOpaqueMessages()
 	}
 	if format == adapter.FormatVertex && adapter.IsSameWireFormat(format, adapter.FormatGemini) {
 		format = adapter.FormatGemini
 	}
 	switch {
-	case adapter.IsSameWireFormat(format, adapter.FormatOpenAI), format == adapter.FormatCohere, format == adapter.FormatMistral:
+	case adapter.IsSameWireFormat(format, adapter.FormatOpenAI), format == adapter.FormatMistral:
+		// These adapters decode a body with input and no messages as a
+		// Responses request (OpenAIAdapter.DecodeRequest; Mistral and OpenRouter
+		// delegate to it), so that is how it is edited here too.
 		if rb.isResponsesShaped() {
-			return &passThrough{decision: decisionSkippedShape, reason: "responses_shaped_body"}
+			rb.shape, rb.format = shapeResponses, adapter.FormatOpenAI
+			return rb.vetoResponses(adapter.FormatOpenAI, body)
+		}
+		rb.format = format
+		if veto := rb.vetoNonCanonical(false, "messages", "system"); veto != nil {
+			return veto
+		}
+		return rb.vetoOpaqueMessages()
+	case format == adapter.FormatCohere:
+		rb.format = format
+		if veto := rb.vetoNonCanonical(false, "messages", "system"); veto != nil {
+			return veto
 		}
 		return rb.vetoOpaqueMessages()
 	case format == adapter.FormatAnthropic:
-		rb.shape = shapeAnthropic
+		rb.shape, rb.format = shapeAnthropic, format
+		if veto := rb.vetoNonCanonical(false, "messages", "system"); veto != nil {
+			return veto
+		}
 		return rb.vetoOpaqueMessages()
 	case format == adapter.FormatGemini:
-		rb.shape = shapeGemini
+		rb.shape, rb.format = shapeGemini, format
 		if adapter.HasAmbiguousKeys(adapter.FormatGemini, body) {
 			return &passThrough{decision: decisionSkippedShape, reason: "ambiguous_gemini_keys"}
 		}
-		if hasNonCanonicalGeminiKey(rb.fields) {
-			return &passThrough{decision: decisionSkippedShape, reason: "non_canonical_gemini_key"}
+		// The adapter reads both spellings of systemInstruction and ignores
+		// underscores in the fold (adapter.geminiKey).
+		if veto := rb.vetoNonCanonical(true, "contents", "systemInstruction", "system_instruction"); veto != nil {
+			return veto
+		}
+		if raw, ok := rb.fields[rb.systemInstructionKey()]; ok && !isJSONNull(raw) {
+			var obj map[string]json.RawMessage
+			if json.Unmarshal(raw, &obj) != nil || obj == nil {
+				return &passThrough{decision: decisionSkippedShape, reason: reasonSystemInstructionBad}
+			}
 		}
 		if raw, ok := rb.fields["contents"]; ok && !isJSONNull(raw) {
 			var contents []json.RawMessage
@@ -76,40 +104,85 @@ func (rb *requestBody) applyFormat(provider, sourceFormat string, mcp bool, body
 			}
 		}
 		return nil
+	case format == adapter.FormatOpenAIResponses:
+		rb.shape, rb.format = shapeResponses, format
+		return rb.vetoResponses(format, body)
+	case format == adapter.FormatBedrock:
+		rb.shape, rb.format = shapeBedrock, format
+		if adapter.HasAmbiguousKeys(format, body) {
+			return &passThrough{decision: decisionSkippedShape, reason: "ambiguous_bedrock_keys"}
+		}
+		if veto := rb.vetoNonCanonical(false, "messages", "system"); veto != nil {
+			return veto
+		}
+		return rb.vetoOpaqueMessages()
 	default:
 		return &passThrough{decision: decisionSkippedFormat, reason: "unsupported_format:" + string(format)}
 	}
 }
 
-// hasNonCanonicalGeminiKey reports a top-level key the adapter reads as
-// contents or systemInstruction (it folds keys as adapter.geminiKey does: case
-// insensitive, underscores ignored) that this plugin would not find, such as
-// "Contents" or "SYSTEM_INSTRUCTION". Editing the canonical spelling next to
-// it would leave two fields the upstream may read in either order.
-func hasNonCanonicalGeminiKey(fields map[string]json.RawMessage) bool {
-	for k := range fields {
-		switch k {
-		case "contents", "systemInstruction", "system_instruction":
+func (rb *requestBody) vetoResponses(f adapter.Format, body []byte) *passThrough {
+	if adapter.HasAmbiguousKeys(f, body) {
+		return &passThrough{decision: decisionSkippedShape, reason: "ambiguous_responses_keys"}
+	}
+	if veto := rb.vetoNonCanonical(false, "input", "instructions"); veto != nil {
+		return veto
+	}
+	if raw, ok := rb.fields["input"]; ok && !isJSONNull(raw) {
+		if _, ok := rb.responsesInput(); !ok {
+			return &passThrough{decision: decisionSkippedShape, reason: reasonInputUnreadable}
+		}
+	}
+	return nil
+}
+
+// vetoNonCanonical refuses a body with a top-level key that the adapter would
+// match to a field this plugin reads or writes but that is not spelled exactly
+// like it. encoding/json matches struct fields with Unicode simple folding, so
+// "Messages" and "inſtructions" (U+017F) both decode into the field; editing
+// the canonical spelling next to one would leave two keys, and after marshal
+// the client's copy can win and silently drop the injection. strings.EqualFold
+// uses the same folding. exact lists the spellings that are fine as they are;
+// with ignoreUnderscores the fold also drops "_", as adapter.geminiKey does.
+func (rb *requestBody) vetoNonCanonical(ignoreUnderscores bool, exact ...string) *passThrough {
+	fold := func(s string) string {
+		if ignoreUnderscores {
+			return strings.ReplaceAll(s, "_", "")
+		}
+		return s
+	}
+	for k := range rb.fields {
+		if slicesContains(exact, k) {
 			continue
 		}
-		switch strings.ToLower(strings.ReplaceAll(k, "_", "")) {
-		case "contents", "systeminstruction":
+		for _, c := range exact {
+			if strings.EqualFold(fold(k), fold(c)) {
+				return &passThrough{decision: decisionSkippedShape, reason: "non_canonical_key"}
+			}
+		}
+	}
+	return nil
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
 			return true
 		}
 	}
 	return false
 }
 
-// isResponsesShaped reports an OpenAI Responses API body that arrived under a
-// chat format: it has input and no messages. It mirrors the criterion of
-// adapter.isResponsesAPIRequest (unexported), except that an explicit
-// "messages": null also counts as absent.
+// isResponsesShaped reports a body the OpenAI chat adapter decodes as a
+// Responses request: it mirrors adapter.isResponsesAPIRequest (unexported),
+// input present and messages absent. An explicit "messages": null is still a
+// chat body there.
 func (rb *requestBody) isResponsesShaped() bool {
 	if _, ok := rb.fields["input"]; !ok {
 		return false
 	}
-	raw, ok := rb.fields["messages"]
-	return !ok || isJSONNull(raw)
+	_, hasMessages := rb.fields["messages"]
+	return !hasMessages
 }
 
 func (rb *requestBody) vetoOpaqueMessages() *passThrough {

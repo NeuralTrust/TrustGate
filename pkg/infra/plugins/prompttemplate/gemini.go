@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 const (
@@ -190,53 +189,35 @@ func (rb *requestBody) findGeminiReferences() []templateRef {
 // instruction, assistant becomes model, anything else user. A plain string is
 // one user turn.
 func (rb *requestBody) replaceGeminiContents(rendered string) error {
-	if !strings.HasPrefix(strings.TrimSpace(rendered), "[") {
-		turn, err := geminiTurn("user", []string{rendered})
+	frag, err := parseFragment(rendered)
+	if err != nil {
+		return err
+	}
+	if frag.isPlain {
+		turn, err := geminiTurn("user", []string{frag.plain})
 		if err != nil {
 			return err
 		}
 		return rb.setGeminiContents([]json.RawMessage{turn})
 	}
-	var fragment []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal([]byte(rendered), &fragment); err != nil {
-		return fmt.Errorf("parse rendered messages fragment: %w", err)
-	}
-	turns := make([]json.RawMessage, 0, len(fragment))
-	var system []string
-	for _, m := range fragment {
-		texts, err := fragmentTexts(m.Content)
+	turns := make([]json.RawMessage, 0, len(frag.turns))
+	for _, t := range frag.turns {
+		role := "user"
+		if t.role == "assistant" {
+			role = "model"
+		}
+		turn, err := geminiTurn(role, t.texts)
 		if err != nil {
 			return err
 		}
-		switch m.Role {
-		case roleSystem:
-			if text := strings.Join(texts, "\n\n"); text != "" {
-				system = append(system, text)
-			}
-		default:
-			if len(texts) == 0 {
-				continue
-			}
-			role := "user"
-			if m.Role == "assistant" {
-				role = "model"
-			}
-			turn, err := geminiTurn(role, texts)
-			if err != nil {
-				return err
-			}
-			turns = append(turns, turn)
-		}
+		turns = append(turns, turn)
 	}
 	if err := rb.setGeminiContents(turns); err != nil {
 		return err
 	}
-	if len(system) > 0 {
-		if applied, reason := rb.injectGeminiSystem(onExistingMerge, strings.Join(system, "\n\n")); !applied {
-			return fmt.Errorf("fold rendered system message into systemInstruction: %s", reason)
+	if frag.system != "" {
+		if applied, reason := rb.injectGeminiSystem(onExistingMerge, frag.system); !applied {
+			return foldError("systemInstruction", reason)
 		}
 	}
 	return nil
