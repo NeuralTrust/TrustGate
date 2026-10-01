@@ -127,6 +127,13 @@ type Plugin struct {
 	// closing never reached expire after streamFailureTTL.
 	streamFailures sync.Map
 	streamSweptAt  atomic.Int64
+
+	// streamBlocks holds, per stream and policy, a *streamPosition: how many
+	// evaluates were sent for it so far. It is keyed like streamFailures, the
+	// closing segment takes it out, and entries a closing never reached expire
+	// after streamFailureTTL.
+	streamBlocks        sync.Map
+	streamBlocksSweptAt atomic.Int64
 }
 
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger, opts ...clientOption) *Plugin {

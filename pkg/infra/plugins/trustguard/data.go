@@ -72,6 +72,14 @@ type GuardStream struct {
 	// Final marks the last evaluate of the stream and is the engine's cue to
 	// settle whatever it deferred across the earlier blocks.
 	Final bool `json:"final"`
+	// Block is the 1-based position of this evaluate among the evaluates the
+	// plugin actually sent for the stream. Seq counts every segment the stream
+	// guard produced, including those this plugin skipped (empty text, a retired
+	// stream), so a response whose first segments were skipped would never put a
+	// seq 1 on the wire. The engine reads Block to decide which calls of a
+	// stream own a plan charge; omitted, it falls back to Seq. An engine that
+	// predates the field ignores it, since attributes are free-form.
+	Block int `json:"block,omitempty"`
 	// Truncated says the accumulation cap swapped the payload from a full
 	// prefix to a tail window, so the engine can tell the two apart instead of
 	// reading a window as the whole response.
