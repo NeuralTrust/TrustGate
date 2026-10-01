@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
@@ -38,6 +39,11 @@ const (
 )
 
 const placementCheckConstraint = "policies_global_mcp_wide_check"
+
+// nextUpdatedAt is the updated_at a placement or prune write stores. It is
+// strictly later than the one it replaces even when the clock has not moved,
+// so a conditional write that read the old value can never match the new one.
+const nextUpdatedAt = `GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')`
 
 const policySelectColumns = `
 		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.mcp_wide, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description, p.mode, p.mcp_scope,
@@ -174,40 +180,66 @@ func missingOrMoved(ctx context.Context, tx pgx.Tx, gatewayID ids.GatewayID, id 
 
 // SetGlobal writes global. The right-hand side of SET reads the row as it was,
 // so promoting clears mcp_wide in the same write and demoting leaves it alone:
-// each setter owns one flag and the exclusivity CHECK cannot fire.
-func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error {
+// each setter owns one flag and the exclusivity CHECK cannot fire. It returns
+// the flags and updated_at the row holds once written.
+//
+// A non-zero readAt adds updated_at = readAt to the match. Every write of the
+// row moves updated_at, so a row updated or re-placed since the caller read it
+// matches nothing and the write fails with ErrPlacementChanged.
+func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool, readAt time.Time) (domain.Placement, error) {
 	const query = `
 		UPDATE policies
 		   SET global     = $2::boolean,
 		       mcp_wide   = mcp_wide AND NOT $2::boolean,
-		       updated_at = now()
-		 WHERE id = $1 AND gateway_id = $3`
-	return r.setPlacementFlag(ctx, query, gatewayID, id, global)
+		       updated_at = ` + nextUpdatedAt + `
+		 WHERE id = $1 AND gateway_id = $3
+		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
+		RETURNING global, mcp_wide, updated_at`
+	return r.setPlacementFlag(ctx, query, gatewayID, id, global, readAt)
 }
 
 // SetMCPWide writes mcp_wide, clearing global on promotion the way SetGlobal
-// clears mcp_wide.
-func (r *Repository) SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool) error {
+// clears mcp_wide, and matching readAt the same way.
+func (r *Repository) SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool, readAt time.Time) (domain.Placement, error) {
 	const query = `
 		UPDATE policies
 		   SET mcp_wide   = $2::boolean,
 		       global     = global AND NOT $2::boolean,
-		       updated_at = now()
-		 WHERE id = $1 AND gateway_id = $3`
-	return r.setPlacementFlag(ctx, query, gatewayID, id, mcpWide)
+		       updated_at = ` + nextUpdatedAt + `
+		 WHERE id = $1 AND gateway_id = $3
+		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
+		RETURNING global, mcp_wide, updated_at`
+	return r.setPlacementFlag(ctx, query, gatewayID, id, mcpWide, readAt)
 }
 
-func (r *Repository) setPlacementFlag(ctx context.Context, query string, gatewayID ids.GatewayID, id ids.PolicyID, on bool) error {
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id, on, gatewayID)
+func (r *Repository) setPlacementFlag(
+	ctx context.Context,
+	query string,
+	gatewayID ids.GatewayID,
+	id ids.PolicyID,
+	on bool,
+	readAt time.Time,
+) (domain.Placement, error) {
+	var unchangedSince any
+	if !readAt.IsZero() {
+		unchangedSince = readAt
+	}
+	var written domain.Placement
+	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, query, id, on, gatewayID, unchangedSince).
+			Scan(&written.Global, &written.MCPWide, &written.UpdatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return missingOrMoved(ctx, tx, gatewayID, id)
+		}
 		if err != nil {
 			return mapPgError(err)
 		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
-		}
 		return nil
 	})
+	if err != nil {
+		return domain.Placement{}, err
+	}
+	return written, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error {

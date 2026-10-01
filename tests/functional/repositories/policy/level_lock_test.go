@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -128,7 +129,7 @@ func TestLevelLock_WithSlugLocked_ReadsTheMCPWideFlag(t *testing.T) {
 	if err := r.Save(ctx, occupant); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.SetMCPWide(ctx, gwID, occupant.ID, true); err != nil {
+	if _, err := r.SetMCPWide(ctx, gwID, occupant.ID, true, time.Time{}); err != nil {
 		t.Fatalf("SetMCPWide: %v", err)
 	}
 

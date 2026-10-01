@@ -810,3 +810,127 @@ func TestUpdater_Update_EditingAnAlreadyPausedPolicyWithInvalidSettingsIsRejecte
 		t.Fatal("expected validation error when editing an already-paused policy")
 	}
 }
+
+// A slug change points an MCP-wide policy at another plugin, and one that does
+// not run on MCP would leave the policy placed where it can never run.
+func TestUpdater_Update_SlugChangeOfAnMCPWidePolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		scope     *domain.MCPScope
+		slug      func(existing *domain.Policy) string
+		protocols []appplugins.Protocol
+		wantErr   error
+	}{
+		{
+			name:      "to a plugin without MCP is refused",
+			slug:      func(*domain.Policy) string { return "semantic_cache" },
+			protocols: []appplugins.Protocol{appplugins.ProtocolLLM},
+			wantErr:   domain.ErrMCPWideUnsupported,
+		},
+		{
+			name:      "to a plugin without MCP is refused for the placement before the scope",
+			scope:     &domain.MCPScope{Groups: []string{"Finanzas"}},
+			slug:      func(*domain.Policy) string { return "semantic_cache" },
+			protocols: []appplugins.Protocol{appplugins.ProtocolLLM},
+			wantErr:   domain.ErrMCPWideUnsupported,
+		},
+		{
+			name:      "to a plugin with MCP lands",
+			slug:      func(*domain.Policy) string { return "trustguard" },
+			protocols: []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		},
+		{
+			name:      "echoing the stored slug is not a change",
+			slug:      func(existing *domain.Policy) string { return existing.Slug },
+			protocols: []appplugins.Protocol{appplugins.ProtocolLLM},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			existing := existingPolicy(t)
+			existing.SetMCPWide(true)
+			existing.MCPScope = tt.scope
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tt.wantErr == nil {
+				repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
+				publisher = expectInvalidation(t, existing.GatewayID)
+			}
+
+			updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t),
+				newScopedRegistryMock(t, tt.protocols...), newCacheManager(), publisher, newTestLogger(), nil)
+			_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+				ID:   existing.ID,
+				Slug: ptr(tt.slug(existing)),
+			})
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Update error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) || !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want %v wrapping ErrValidation", err, tt.wantErr)
+			}
+			if errors.Is(err, domain.ErrInvalidMCPScope) {
+				t.Fatalf("err = %v, want the placement refusal, not the scope one", err)
+			}
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// The links of a gateway-wide policy are ignored at load, but demoting it
+// brings them back and the demotion checks nothing. So a scope that does not
+// reach a linked LLM consumer is refused here too, as on a targeted policy.
+func TestUpdater_Update_GatewayWideScopeIsCheckedAgainstItsLinks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		place func(p *domain.Policy)
+	}{
+		{name: "mcp-wide", place: func(p *domain.Policy) { p.SetMCPWide(true) }},
+		{name: "global", place: func(p *domain.Policy) { p.SetGlobal(true) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			existing := existingPolicy(t)
+			consumerID := ids.New[ids.ConsumerKind]()
+			existing.ConsumerIDs = []ids.ConsumerID{consumerID}
+			tt.place(existing)
+			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+			jira := ids.New[ids.RegistryKind]()
+			registryRepo := registrymocks.NewRepository(t)
+			registryRepo.EXPECT().
+				FindByIDs(mock.Anything, existing.GatewayID, sameRegistryIDs(jira)).
+				Return([]*registrydomain.Registry{mcpRegistry(existing.GatewayID, jira)}, nil).
+				Once()
+
+			consumers := consumermocks.NewRepository(t)
+			consumers.EXPECT().
+				FindByID(mock.Anything, consumerID).
+				Return(&consumerdomain.Consumer{ID: consumerID, Type: consumerdomain.TypeLLM}, nil).
+				Once()
+
+			updater := apppolicy.NewUpdater(
+				repo, consumers, freeLevels(t), registryRepo,
+				newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP),
+				newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
+			)
+			_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+				ID:       existing.ID,
+				MCPScope: apppolicy.MCPScopePatch{Set: true, Value: &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}}},
+			})
+			if !errors.Is(err, consumerdomain.ErrPolicyScopeDoesNotCross) || !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross wrapping ErrValidation", err)
+			}
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}

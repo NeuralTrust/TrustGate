@@ -75,8 +75,8 @@ func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewStatusEvaluator); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Scoper {
-		return apppolicy.NewScoper(repo, levels, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, levels apppolicy.LevelGuard, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Scoper {
+		return apppolicy.NewScoper(repo, levels, registry, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}

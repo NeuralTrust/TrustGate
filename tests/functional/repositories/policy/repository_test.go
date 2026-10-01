@@ -427,7 +427,7 @@ func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	if err := r.Save(ctx, global); err != nil {
 		t.Fatalf("Save global: %v", err)
 	}
-	if err := r.SetGlobal(ctx, gwID, global.ID, true); err != nil {
+	if _, err := r.SetGlobal(ctx, gwID, global.ID, true, time.Time{}); err != nil {
 		t.Fatalf("SetGlobal: %v", err)
 	}
 
@@ -473,11 +473,15 @@ func TestRepository_PlacementSetters_SwapAndDemote(t *testing.T) {
 	if err := r.Save(ctx, p); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	setGlobal := func(on bool) func() error { return func() error { return r.SetGlobal(ctx, gwID, p.ID, on) } }
-	setMCPWide := func(on bool) func() error { return func() error { return r.SetMCPWide(ctx, gwID, p.ID, on) } }
+	setGlobal := func(on bool) func() (domain.Placement, error) {
+		return func() (domain.Placement, error) { return r.SetGlobal(ctx, gwID, p.ID, on, time.Time{}) }
+	}
+	setMCPWide := func(on bool) func() (domain.Placement, error) {
+		return func() (domain.Placement, error) { return r.SetMCPWide(ctx, gwID, p.ID, on, time.Time{}) }
+	}
 	steps := []struct {
 		name        string
-		write       func() error
+		write       func() (domain.Placement, error)
 		wantGlobal  bool
 		wantMCPWide bool
 	}{
@@ -488,8 +492,13 @@ func TestRepository_PlacementSetters_SwapAndDemote(t *testing.T) {
 		{name: "demoting global keeps mcp-wide", write: setGlobal(false), wantMCPWide: true},
 		{name: "demoting mcp-wide leaves a draft", write: setMCPWide(false)},
 	}
+	previous, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
 	for _, step := range steps {
-		if err := step.write(); err != nil {
+		written, err := step.write()
+		if err != nil {
 			t.Fatalf("%s: %v", step.name, err)
 		}
 		got, err := r.FindByID(ctx, p.ID)
@@ -500,12 +509,20 @@ func TestRepository_PlacementSetters_SwapAndDemote(t *testing.T) {
 			t.Fatalf("%s: global, mcp_wide = %t, %t, want %t, %t",
 				step.name, got.Global, got.MCPWide, step.wantGlobal, step.wantMCPWide)
 		}
+		if written.Global != got.Global || written.MCPWide != got.MCPWide || !written.UpdatedAt.Equal(got.UpdatedAt) {
+			t.Fatalf("%s: returned %+v, want the row as stored (global %t, mcp_wide %t, updated_at %s)",
+				step.name, written, got.Global, got.MCPWide, got.UpdatedAt)
+		}
+		if !got.UpdatedAt.After(previous.UpdatedAt) {
+			t.Fatalf("%s: updated_at %s did not move past %s", step.name, got.UpdatedAt, previous.UpdatedAt)
+		}
+		previous = got
 	}
 
-	if err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true, time.Time{}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("SetMCPWide on a foreign gateway: err = %v, want ErrNotFound", err)
 	}
-	if err := r.SetGlobal(ctx, ids.New[ids.GatewayKind](), p.ID, true); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := r.SetGlobal(ctx, ids.New[ids.GatewayKind](), p.ID, true, time.Time{}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("SetGlobal on a foreign gateway: err = %v, want ErrNotFound", err)
 	}
 
@@ -555,7 +572,7 @@ func TestRepository_Update_RefusesAStalePlacement(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	stale := *p
-	if err := r.SetGlobal(ctx, gwID, p.ID, true); err != nil {
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, time.Time{}); err != nil {
 		t.Fatalf("SetGlobal: %v", err)
 	}
 
@@ -588,7 +605,7 @@ func TestRepository_Update_LandsWhileThePlacementMatches(t *testing.T) {
 	if err := r.Save(ctx, p); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.SetMCPWide(ctx, gwID, p.ID, true); err != nil {
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, time.Time{}); err != nil {
 		t.Fatalf("SetMCPWide: %v", err)
 	}
 	current, err := r.FindByID(ctx, p.ID)
@@ -608,6 +625,114 @@ func TestRepository_Update_LandsWhileThePlacementMatches(t *testing.T) {
 	}
 	if got.Name != "renamed" || !got.MCPWide || got.Global {
 		t.Fatalf("got name %q, global %t, mcp_wide %t, want the rename with the placement kept", got.Name, got.Global, got.MCPWide)
+	}
+}
+
+// The level guard decides a promotion on the row the scoper read, and takes no
+// lock when the promoted policy occupies nothing, as a disabled one does. A PUT
+// that turns the policy on in between must fail the promotion, or it would land
+// on an enabled row nobody checked.
+func TestRepository_PlacementSetters_RefuseAStalePromotion(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-stale-promotion")
+
+	p := validPolicy(t, gwID, "stale promotion")
+	p.Enabled = false
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	enabled := *read
+	enabled.Enabled = true
+	enabled.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, &enabled, false); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	promotions := map[string]func(readAt time.Time) error{
+		"SetGlobal": func(readAt time.Time) error {
+			_, err := r.SetGlobal(ctx, gwID, p.ID, true, readAt)
+			return err
+		},
+		"SetMCPWide": func(readAt time.Time) error {
+			_, err := r.SetMCPWide(ctx, gwID, p.ID, true, readAt)
+			return err
+		},
+	}
+	for name, promote := range promotions {
+		err := promote(read.UpdatedAt)
+		if !errors.Is(err, domain.ErrPlacementChanged) || !errors.Is(err, commonerrors.ErrConflict) {
+			t.Fatalf("%s with a stale read: err = %v, want ErrPlacementChanged wrapping ErrConflict", name, err)
+		}
+	}
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the stale promotions: %v", err)
+	}
+	if got.Global || got.MCPWide || !got.Enabled {
+		t.Fatalf("global, mcp_wide, enabled = %t, %t, %t, want the update alone", got.Global, got.MCPWide, got.Enabled)
+	}
+
+	if _, err := r.SetMCPWide(ctx, ids.New[ids.GatewayKind](), p.ID, true, got.UpdatedAt); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetMCPWide on a foreign gateway: err = %v, want ErrNotFound", err)
+	}
+	written, err := r.SetMCPWide(ctx, gwID, p.ID, true, got.UpdatedAt)
+	if err != nil {
+		t.Fatalf("SetMCPWide with the current read: %v", err)
+	}
+	promoted, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the promotion: %v", err)
+	}
+	if !promoted.MCPWide {
+		t.Fatal("a promotion matching the current row must land")
+	}
+	if !written.MCPWide || written.Global || !written.UpdatedAt.Equal(promoted.UpdatedAt) {
+		t.Fatalf("returned %+v, want the row as stored (updated_at %s)", written, promoted.UpdatedAt)
+	}
+}
+
+// Every placement write moves updated_at, so of two promotions decided on the
+// same read only the first lands.
+func TestRepository_PlacementSetters_RacingPromotionsConflict(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-racing-promotions")
+
+	p := validPolicy(t, gwID, "racing promotions")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, read.UpdatedAt); err != nil {
+		t.Fatalf("first promotion: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt); !errors.Is(err, domain.ErrPlacementChanged) {
+		t.Fatalf("second promotion on the same read: err = %v, want ErrPlacementChanged", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !got.Global || got.MCPWide {
+		t.Fatalf("global, mcp_wide = %t, %t, want the first promotion to stand", got.Global, got.MCPWide)
+	}
+	if got.UpdatedAt.Equal(read.UpdatedAt) {
+		t.Fatal("a placement write must move updated_at")
+	}
+
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, false, time.Time{}); err != nil {
+		t.Fatalf("an unconditional demotion after the read: %v", err)
 	}
 }
 

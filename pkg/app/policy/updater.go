@@ -22,8 +22,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -179,6 +179,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 			return nil, err
 		}
 	}
+	if slugChanged && existing.MCPWide {
+		if err := validateMCPWidePlugin(u.registry, existing.Slug); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.validateScopeAfterPatch(ctx, in, existing); err != nil {
 		return nil, err
 	}
@@ -228,6 +233,9 @@ func (u *updater) validateScopeAfterPatch(ctx context.Context, in UpdateInput, e
 // consumer is refused, but attaching it unscoped and then setting the scope is
 // not — the same end state, and a policy that runs nowhere on that consumer
 // while its screen says otherwise.
+//
+// It also runs for a gateway-wide policy, whose links loadPolicies ignores:
+// demoting it brings them back into play, and the demotion checks nothing.
 func (u *updater) validateScopeReachesConsumers(ctx context.Context, p *domain.Policy) error {
 	if p.MCPScope == nil || len(p.ConsumerIDs) == 0 || u.consumers == nil {
 		return nil
