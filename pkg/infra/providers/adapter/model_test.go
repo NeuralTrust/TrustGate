@@ -62,6 +62,54 @@ func TestOverrideModel(t *testing.T) {
 	})
 }
 
+func TestCarryModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		src  string
+		dst  string
+		want string
+	}{
+		{
+			name: "copies the requested model onto a body that dropped it",
+			src:  `{"model":"eu.anthropic.claude-opus-5","messages":[]}`,
+			dst:  `{"messages":[]}`,
+			want: `"eu.anthropic.claude-opus-5"`,
+		},
+		{
+			name: "keeps the model the adapted body already names",
+			src:  `{"model":"claude-opus-5"}`,
+			dst:  `{"model":"claude-sonnet-4-5"}`,
+			want: `"claude-sonnet-4-5"`,
+		},
+		{
+			name: "source without a model leaves the body model-less",
+			src:  `{"messages":[]}`,
+			dst:  `{"messages":[]}`,
+		},
+		{
+			name: "unparseable source leaves the body untouched",
+			src:  `not json`,
+			dst:  `{"messages":[]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out := CarryModel([]byte(tt.src), []byte(tt.dst))
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(out, &raw); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got := string(raw["model"]); got != tt.want {
+				t.Fatalf("model = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStripModel(t *testing.T) {
 	t.Parallel()
 
