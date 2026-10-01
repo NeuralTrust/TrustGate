@@ -136,3 +136,69 @@ func TestApplyRules(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyRulesFrom(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		rules     []Rule
+		input     string
+		from      int
+		want      string
+		wantFired []int
+	}{
+		{
+			name:  "from zero matches applyRules",
+			rules: []Rule{{Pattern: `(\d{3})-(\d{4})`, Replacement: "$1-XXXX"}, {Pattern: "^foo$", Replacement: "bar", Multiline: true}},
+			input: "call 555-1234\nfoo", want: "call 555-XXXX\nbar", wantFired: []int{0, 1},
+		},
+		{
+			// RUN-1745 F2: the placeholder an earlier block released matches the
+			// rule's own pattern.
+			name:  "a placeholder already released is left alone",
+			rules: []Rule{{Pattern: `(?i)ssn`, Replacement: "[SSN]"}},
+			input: "my [SSN] is 1234", from: len("my [SSN] is 1"), want: "my [SSN] is 1234",
+		},
+		{
+			name:  "a new match after released text is replaced",
+			rules: []Rule{{Pattern: `(?i)ssn`, Replacement: "[SSN]"}},
+			input: "my [SSN] and ssn", from: len("my [SSN] and "), want: "my [SSN] and [SSN]", wantFired: []int{0},
+		},
+		{
+			// RUN-1745 F4: past the accumulation cap the window starts mid-text.
+			name:  "an anchor at the start of a tail window is left alone",
+			rules: []Rule{{Pattern: `^\d{3}`, Replacement: "NNN"}},
+			input: "123 more text", from: len("123 more"), want: "123 more text",
+		},
+		{
+			name:  "a match straddling into the new text is still replaced",
+			rules: []Rule{{Pattern: `\d{16}`, Replacement: "[CARD]"}},
+			input: "card 4111111111111111", from: len("card 411111"), want: "card [CARD]", wantFired: []int{0},
+		},
+		{
+			// The first rule rewrote text before from, so the second judges it
+			// again instead of trusting what earlier blocks saw there.
+			name:  "a straddling replacement moves from back for later rules",
+			rules: []Rule{{Pattern: "ab", Replacement: "YYb"}, {Pattern: "Y", Replacement: "Z"}},
+			input: "xab", from: 2, want: "xZZb", wantFired: []int{0, 1},
+		},
+		{
+			name:  "nothing past from matches",
+			rules: []Rule{{Pattern: `\d{16}`, Replacement: "[CARD]"}},
+			input: "4111111111111111 then words", from: 20, want: "4111111111111111 then words",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rules := mustCompile(t, tt.rules...)
+			got, fired := applyRulesFrom(rules, tt.input, tt.from)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantFired, fired)
+			if tt.from == 0 {
+				want, _ := applyRules(rules, tt.input)
+				assert.Equal(t, want, got, "from zero must rewrite exactly as the buffered path")
+			}
+		})
+	}
+}
