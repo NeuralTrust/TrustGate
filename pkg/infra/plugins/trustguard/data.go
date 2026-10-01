@@ -227,6 +227,10 @@ func streamOutcome(streamID string, r appplugins.StreamReport) guardData {
 	case r.Evals == 0:
 		data.Skipped = true
 		data.SkipReason = skipReasonProviderNotStreaming
+	case r.MaskedEvals > 0:
+		// The guard applies a mask or cuts, so with no cut every mask this
+		// entry produced reached the client, as a buffered mask does.
+		data.Decision = decisionTransformed
 	}
 	return data
 }
@@ -243,6 +247,7 @@ func streamOutcomeLabel(r appplugins.StreamReport) string {
 		r.FallbackReason == fallbackReasonClientDisconnected:
 		return streamOutcomeFallback
 	case r.DegradedReason == degradedReasonGuardTimeout,
+		r.DegradedReason == degradedReasonGuardError,
 		r.DegradedReason == degradedReasonAccumulationCap:
 		return streamOutcomeDegraded
 	case r.Evals == 0:

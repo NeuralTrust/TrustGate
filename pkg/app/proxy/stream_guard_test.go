@@ -17,6 +17,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"log/slog"
@@ -798,7 +799,7 @@ func TestStreamGuard_AccumulationCapIsASumAcrossThePayload(t *testing.T) {
 func TestStreamGuard_ThreeConsecutiveFailuresRetireTheLoop(t *testing.T) {
 	t.Parallel()
 	lines := textStreamLines("a1", "b2", "c3", "d4", "e5")
-	runner := &scriptedRunner{err: errors.New("guard timeout")}
+	runner := &scriptedRunner{err: fmt.Errorf("guard call: %w", context.DeadlineExceeded)}
 	g := loopGuard(t, runner, adapter.NewRegistry(), streamGuardConfig{
 		minChars: 1,
 		onError:  streamFailOpen,
@@ -1786,7 +1787,7 @@ func TestStreamGuard_ClosesTheStreamExactlyOnce(t *testing.T) {
 			name:     "a block loop retired by consecutive failures",
 			lines:    textStreamLines("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"),
 			cfg:      streamGuardConfig{headChars: 1, minChars: 1},
-			runErr:   errors.New("guard unreachable"),
+			runErr:   fmt.Errorf("guard unreachable: %w", context.DeadlineExceeded),
 			wantFall: fallbackSegmentationUnavail,
 			wantFin:  false,
 		},
@@ -2243,4 +2244,12 @@ func TestStreamGuard_TransformRewritesABlockBehindTheReleasePointer(t *testing.T
 	assert.Equal(t, "tail", runner.segments[2].Text,
 		"the block delta is measured from the rewritten buffer, not the produced one")
 	assert.Equal(t, "a1[REDACTED]tail", runner.segments[2].Accumulated)
+}
+
+// RUN-1745 F10: only a deadline is a timeout. Any other failure used to read
+// guard_timeout too, which sent operators to tune a timeout that never fired.
+func TestBlockFailureReason(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, degradeGuardTimeout, blockFailureReason(fmt.Errorf("call: %w", context.DeadlineExceeded)))
+	assert.Equal(t, degradeGuardError, blockFailureReason(errors.New("provider rejected the payload")))
 }

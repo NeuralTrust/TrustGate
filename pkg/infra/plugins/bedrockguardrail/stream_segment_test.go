@@ -408,6 +408,9 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 			decisionReported,
 		},
 		{"cut", appplugins.StreamReport{Evals: 2, CutAtEval: 1}, nil, decisionBlocked},
+		// RUN-1745 F7: a masked stream used to read allowed.
+		{"masked", appplugins.StreamReport{Evals: 3, GuardCalls: 3, MaskedEvals: 2}, nil, decisionAnonymized},
+		{"masked, then cut", appplugins.StreamReport{Evals: 3, CutAtEval: 3, MaskedEvals: 2}, nil, decisionBlocked},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
