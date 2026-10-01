@@ -126,3 +126,29 @@ func TestNewPluginRegistry_ContentReaderSet(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"azure_content_safety", "openai_moderation", "semantic_cache"}, got)
 }
+
+// TestNewPluginRegistry_LocalRewriterSet pins which rewriters the planner runs
+// ahead of the same-priority rewriters that send content to a third party
+// (RUN-1745). A plugin listed here must never send the body it rewrites off the
+// box: opting in a remote guard would hand it the text a local mask hides.
+func TestNewPluginRegistry_LocalRewriterSet(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	var got []string
+	for _, name := range reg.Names() {
+		p, ok := reg.Get(name)
+		require.True(t, ok)
+		if appplugins.RewritesLocally(p) {
+			got = append(got, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"model_allowlist",
+		"per_tool_rate_limiter",
+		"prompt_compression",
+		"prompt_template",
+		"regex_replace",
+		"token_rate_limiter",
+		"tool_allowlist",
+		"tool_injection",
+	}, got)
+}

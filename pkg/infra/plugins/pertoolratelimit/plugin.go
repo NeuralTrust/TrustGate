@@ -116,6 +116,11 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
+// RewritesLocally opts into running ahead of the same-priority rewriters that
+// send content to a third party: what this plugin rewrites never leaves the
+// gateway (RUN-1745).
+func (p *Plugin) RewritesLocally() bool { return true }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
 }
@@ -246,6 +251,10 @@ func (p *Plugin) preRequest(
 	}
 
 	strip := toolStrip{}
+	// Gemini and Vertex signal a stream in the URL, never in the body, so the
+	// decoded flag alone would read every Gemini stream as buffered and leave
+	// inject to a response leg that skips streams (RUN-1745).
+	streaming := canonical.Stream || adapter.URLRequestsStream(in.Request.Path, in.Request.Query)
 	// A legacy function is withdrawn at the request whatever the behavior:
 	// the response rewrite does not model a legacy function_call.
 	for _, set := range []struct {
@@ -258,7 +267,7 @@ func (p *Plugin) preRequest(
 				continue
 			}
 			behavior := effectiveBehavior(rule, cfg)
-			if !set.legacy && !p.enforcedAtRequest(behavior, canonical.Stream) {
+			if !set.legacy && !p.enforcedAtRequest(behavior, streaming) {
 				continue
 			}
 			ws := spent[tool]

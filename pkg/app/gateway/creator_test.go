@@ -241,8 +241,8 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 		TenantID: "acme",
 		Telemetry: &telemetry.Telemetry{
 			Exporters: []telemetry.ExporterConfig{
-				{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}},
-				{Name: "kafka", Settings: map[string]interface{}{"topic": "b"}},
+				{Name: "primary", Settings: map[string]interface{}{"topic": "a"}},
+				{Name: "primary", Settings: map[string]interface{}{"topic": "b"}},
 			},
 		},
 	})

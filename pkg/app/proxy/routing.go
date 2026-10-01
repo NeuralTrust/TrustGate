@@ -332,17 +332,59 @@ func nextChainRoute(
 	return nil
 }
 
-func noRegistryServesModelError(model string, chain []routingdomain.Route, last failoverState) error {
+const (
+	maxMissDetailRunes = 200
+	missWithoutDetail  = "no detail"
+)
+
+type modelMiss struct {
+	provider string
+	detail   string
+}
+
+func newModelMiss(bk *domain.Registry, resp *ProviderResponse) modelMiss {
+	return modelMiss{
+		provider: bk.Provider(),
+		detail:   truncateRunes(adapter.ProviderErrorMessage(resp.Body), maxMissDetailRunes),
+	}
+}
+
+// Every registry's answer is kept because after failover the last provider
+// is rarely the one the caller meant (ENG-1643).
+func noRegistryServesModelError(model, consumerSlug string, chain []routingdomain.Route, misses []modelMiss) error {
 	err := fmt.Errorf("%w: %q (tried %s)",
 		routingdomain.ErrNoRegistryServesModel, model, strings.Join(chainProviders(chain), ", "))
-	if last.resp == nil {
-		return err
+	if len(misses) > 0 {
+		err = fmt.Errorf("%w: provider responses: %s", err, formatMisses(misses))
 	}
-	detail := adapter.ProviderErrorMessage(last.resp.Body)
-	if detail == "" {
-		return err
+	return fmt.Errorf("%w. List the models this application can use with GET %s", err, modelsPath(consumerSlug))
+}
+
+func modelsPath(consumerSlug string) string {
+	if consumerSlug == "" {
+		return "/v1/models"
 	}
-	return fmt.Errorf("%w: last provider response: %s", err, detail)
+	return "/" + consumerSlug + "/v1/models"
+}
+
+func formatMisses(misses []modelMiss) string {
+	parts := make([]string, 0, len(misses))
+	for _, m := range misses {
+		detail := m.detail
+		if detail == "" {
+			detail = missWithoutDetail
+		}
+		parts = append(parts, "["+m.provider+": "+detail+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func chainProviders(chain []routingdomain.Route) []string {

@@ -38,8 +38,15 @@ func streamSettings(target string, rules ...map[string]any) map[string]any {
 	return set
 }
 
+// segment is a block whose whole accumulated text is new, as on a first block.
 func segment(seq int, accumulated string) appplugins.StreamSegment {
-	return appplugins.StreamSegment{StreamID: "s-1", Seq: seq, Accumulated: accumulated}
+	return appplugins.StreamSegment{StreamID: "s-1", Seq: seq, Text: accumulated, Accumulated: accumulated}
+}
+
+// fingerprintsOf names the rules that fire on text taken as all new.
+func fingerprintsOf(cfg Settings, text string) []string {
+	_, fired := applyRulesFrom(cfg.compiled, text, 0)
+	return ruleFingerprints(cfg, fired)
 }
 
 func streamInput(mode policy.Mode, set map[string]any, event *metrics.EventContext) appplugins.ExecInput {
@@ -211,10 +218,10 @@ func TestRuleFingerprintsNameTheMatchingRulesOnly(t *testing.T) {
 		t.Fatalf("parseConfig: %v", err)
 	}
 
-	onlyCard := ruleFingerprints(cfg, "the card is 4111111111111111")
-	onlyEmail := ruleFingerprints(cfg, "write to a@b.com")
-	both := ruleFingerprints(cfg, "4111111111111111 and a@b.com")
-	none := ruleFingerprints(cfg, "nothing here")
+	onlyCard := fingerprintsOf(cfg, "the card is 4111111111111111")
+	onlyEmail := fingerprintsOf(cfg, "write to a@b.com")
+	both := fingerprintsOf(cfg, "4111111111111111 and a@b.com")
+	none := fingerprintsOf(cfg, "nothing here")
 
 	if len(onlyCard) != 1 || len(onlyEmail) != 1 || len(both) != 2 {
 		t.Fatalf("counts = %d, %d, %d; want 1, 1, 2", len(onlyCard), len(onlyEmail), len(both))
@@ -239,9 +246,13 @@ func TestRuleFingerprintsSeparateRulesSharingAPattern(t *testing.T) {
 		t.Fatalf("parseConfig: %v", err)
 	}
 
-	got := ruleFingerprints(cfg, "4111111111111111")
-	if len(got) != 2 || got[0] == got[1] {
-		t.Errorf("ruleFingerprints() = %v, want two distinct keys", got)
+	first, second := ruleFingerprints(cfg, []int{0}), ruleFingerprints(cfg, []int{1})
+	if len(first) != 1 || len(second) != 1 || first[0] == second[0] {
+		t.Errorf("ruleFingerprints() = %v and %v, want two distinct keys", first, second)
+	}
+	// The first rule masks the number, so the second never fires on it.
+	if got := fingerprintsOf(cfg, "4111111111111111"); len(got) != 1 || got[0] != first[0] {
+		t.Errorf("fingerprintsOf() = %v, want only the rule that replaced the number", got)
 	}
 }
 
@@ -323,5 +334,42 @@ func TestClosingSegmentDecisionFollowsTheOutcome(t *testing.T) {
 				t.Errorf("Changed = %v, want %v", data.Changed, tc.changed)
 			}
 		})
+	}
+}
+
+// RUN-1745 F2: a rule whose replacement matches its own pattern used to rewrite
+// the placeholder it released on the previous block, which the guard refuses
+// and turns into a cut. The buffered path applies the rule once and is fine.
+func TestInspectSegmentLeavesAReleasedPlaceholderAlone(t *testing.T) {
+	t.Parallel()
+	p := New(nil, nil)
+	set := streamSettings(targetResponse, map[string]any{"pattern": `(?i)ssn`, "replacement": "[SSN]"})
+
+	got, err := p.InspectSegment(context.Background(), streamInput(policy.ModeEnforce, set, nil),
+		appplugins.StreamSegment{StreamID: "s-1", Seq: 2, Text: "234", Accumulated: "my [SSN] is 1234"})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	if got.HasTransform {
+		t.Errorf("verdict = %+v, want no transform over released text", got)
+	}
+}
+
+// RUN-1745 F4: past max_accumulated_bytes the block sees a tail window, and ^
+// matches wherever that window starts.
+func TestInspectSegmentIgnoresAnAnchorAtTheWindowStart(t *testing.T) {
+	t.Parallel()
+	p := New(nil, nil)
+	set := streamSettings(targetResponse, map[string]any{"pattern": `^\d{3}`, "replacement": "NNN"})
+
+	got, err := p.InspectSegment(context.Background(), streamInput(policy.ModeEnforce, set, nil),
+		appplugins.StreamSegment{StreamID: "s-1", Seq: 40, Truncated: true, Text: " and more", Accumulated: "123 of the tail and more"})
+
+	if err != nil {
+		t.Fatalf("InspectSegment: %v", err)
+	}
+	if got.HasTransform {
+		t.Errorf("verdict = %+v, want no transform at the window start", got)
 	}
 }

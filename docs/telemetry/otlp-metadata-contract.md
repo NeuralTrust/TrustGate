@@ -543,7 +543,6 @@ representative records, not a live capture:
 ## Out of scope
 
 - OTLP → ClickHouse ingestion (collector / data-plane)
-- Kafka `trustgate.requests` path (legacy, being retired)
 
 ## Topic classification event
 
@@ -559,7 +558,7 @@ records by trace id.
 | Prompt | **Never emitted**, nor anything derived from it: not the text, its hash, its length or the number of windows topic-guard split it into, nor the system prompt |
 | Namespace | Every attribute is under `trustgate.topic.*`, except the retention pair |
 | Tenant | Sent as `trustgate.topic.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the classification as one more request |
-| Exporters | Only `otlp`. Kafka and Postgres exporters never receive it: both key rows on the trace id |
+| Exporters | Only `otlp`. Postgres exporters never receive it: they key rows on the trace id |
 | Timestamp | When the request was classified. `trustgate.topic.requested_on` is when it arrived |
 
 | Attribute | Content |
