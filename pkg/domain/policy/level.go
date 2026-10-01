@@ -206,33 +206,33 @@ func (s *MCPScope) Occupancy(consumerIDs []ids.ConsumerID) OccupancySet {
 // The rule it serves keeps two policies of the same plugin from running at the
 // same level, so anything that does not run occupies nothing and is counted
 // against nothing: a disabled policy, a tombstone, and a draft — no consumers
-// and not global, which `loadPolicies` puts in neither bucket.
+// and neither global nor MCP-wide, which `loadPolicies` puts in no bucket.
 //
 // Excluding the draft is what keeps duplication working. A copy is born with
-// no consumers and no global flag, so if a draft occupied the wildcard level
-// then duplicating a global or consumer-less policy would always land on its
-// origin's level and always conflict. The trade is that two drafts coexist and
-// the conflict surfaces when the second one is promoted or attached, which is
-// the moment it starts to matter.
+// no consumers and no placement flag, so if a draft occupied the wildcard level
+// then duplicating a gateway-wide or consumer-less policy would always land on
+// its origin's level and always conflict. The trade is that two drafts coexist
+// and the conflict surfaces when the second one is promoted or attached, which
+// is the moment it starts to matter.
 //
-// A global policy runs for every consumer, so it occupies the wildcard
-// consumer whatever is attached to it.
+// A gateway-wide policy, global or MCP-wide, runs for every consumer of its
+// planes, so it occupies the wildcard consumer whatever is attached to it.
 func (p *Policy) Occupancy() OccupancySet {
 	if p == nil || !p.Enabled || p.Draft() {
 		return make(OccupancySet)
 	}
 	consumerIDs := p.ConsumerIDs
-	if p.Global {
+	if p.GatewayWide() {
 		consumerIDs = nil
 	}
 	return p.MCPScope.Occupancy(consumerIDs)
 }
 
 // Draft reports a policy that runs nowhere because nothing routes to it: it is
-// not global and no consumer is attached, so loadPolicies files it under
-// neither globals nor byConsumer.
+// neither global nor MCP-wide and no consumer is attached, so loadPolicies
+// files it in no bucket.
 func (p *Policy) Draft() bool {
-	return p != nil && !p.Global && len(p.ConsumerIDs) == 0
+	return p != nil && !p.Global && !p.MCPWide && len(p.ConsumerIDs) == 0
 }
 
 func (s *MCPScope) groupKeys() []string {

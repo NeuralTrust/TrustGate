@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -49,6 +50,8 @@ func TestMapDomainError(t *testing.T) {
 		{name: "already exists → 409", err: commonerrors.ErrAlreadyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists", wantMsgPart: "unique"},
 		{name: "has dependents → 409", err: commonerrors.ErrHasDependents, wantStatus: fiber.StatusConflict, wantCode: "has_dependents", wantMsgPart: "dependent"},
 		{name: "conflict → 409", err: commonerrors.ErrConflict, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "conflict"},
+		{name: "policy placement changed → 409", err: policydomain.ErrPlacementChanged, wantStatus: fiber.StatusConflict, wantCode: "conflict", wantMsgPart: "placement changed"},
+		{name: "invalid policy placement → 422", err: policydomain.ErrInvalidPlacement, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "invalid placement"},
 		{name: "validation → 422", err: commonerrors.ErrValidation, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "schema"},
 		{name: "validation with detail → 422 keeps detail", err: fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation), wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed", wantMsgPart: "tenant_id is required"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config", wantMsgPart: "configuration"},
