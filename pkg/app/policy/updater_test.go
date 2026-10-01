@@ -794,3 +794,19 @@ func TestUpdater_Update_EnablingAValidPolicyStillValidates(t *testing.T) {
 		t.Fatalf("Update error: %v", err)
 	}
 }
+
+// Only the enabled -> disabled transition skips the plugin checks. Editing a
+// policy that is already paused validates exactly as it always has, so junk
+// cannot be saved into a paused row.
+func TestUpdater_Update_EditingAnAlreadyPausedPolicyWithInvalidSettingsIsRejected(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.Enabled = false
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), brokenRegistry(t), newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), consoleWriteBody(existing, false)); err == nil {
+		t.Fatal("expected validation error when editing an already-paused policy")
+	}
+}

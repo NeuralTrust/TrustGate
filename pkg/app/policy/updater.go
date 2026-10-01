@@ -111,6 +111,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// rule started rejecting it) stays editable rather than becoming a hard
 	// rejection on every future save.
 	previousSettings := existing.Settings
+	wasEnabled := existing.Enabled
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -157,16 +158,15 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// Write-time rules apply only when the update carries settings or points
 	// the stored ones at another plugin, so a rename still succeeds.
 	//
-	// A write whose RESULT is disabled skips every plugin check, including
-	// ValidateSettingsWrite: the gateway never loads a disabled policy, and
-	// pausing is the remedy for a row it cannot load. The console resends the
-	// whole body on a pause (normalised settings, so not byte-equal to the
-	// stored ones), which is why this keys on the resulting state and not on
-	// the shape of the input. Running ValidateSettingsWrite here would block
-	// pausing a row whose stored settings are merely grandfathered. Nothing is
-	// lost: enabling goes through validatePlugin again, and the console
-	// resends settings on that write, so the write-only rules apply then.
-	if existing.Enabled {
+	// The enabled -> disabled transition skips every plugin check, including
+	// ValidateSettingsWrite: pausing is the remedy for a row the gateway
+	// cannot load, and it must not be blocked by stored settings that are
+	// merely grandfathered. The console resends the whole body on a pause
+	// (normalised settings, not byte-equal to the stored ones), which is why
+	// this keys on the transition and not on the shape of the input. Every
+	// other write validates as always: editing a policy that is already paused
+	// must not store junk, and enabling goes through validatePlugin again.
+	if !wasEnabled || existing.Enabled {
 		if err := validatePlugin(
 			u.registry,
 			existing.Slug,
