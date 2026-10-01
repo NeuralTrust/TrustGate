@@ -835,3 +835,89 @@ func TestHandle_WrongMethodIs405WithoutForwarding(t *testing.T) {
 		})
 	}
 }
+
+// authStubWithClaims authenticates the proxyPath consumer with a verified
+// token of the given method, carrying claims, the way the OAuth2 resolver does.
+func authStubWithClaims(gatewayID ids.GatewayID, slug string, method appauth.Method, subject string, claims map[string]any) fiber.Handler {
+	authID := ids.New[ids.AuthKind]()
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{authID}}},
+	})
+	return func(c *fiber.Ctx) error {
+		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: authID, Subject: subject, Claims: claims}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
+		ctx = appconsumer.WithAuthID(ctx, authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	}
+}
+
+// tracedProxyCall runs one proxy request behind auth and returns the trace the
+// handler stamped.
+func tracedProxyCall(t *testing.T, auth fiber.Handler) trace.Metadata {
+	t.Helper()
+	fwd := proxymocks.NewForwarder(t)
+	fwd.EXPECT().Forward(mock.Anything, mock.Anything).Return(nil, appproxy.ErrModelNotAllowed).Maybe()
+
+	rt := trace.New("trace-principal", trace.Metadata{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+		return c.Next()
+	})
+	app.Use(auth)
+	app.All("/*", proxyhttp.NewForwardedHandler(fwd).Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_ = resp.Body.Close()
+	return rt.Metadata()
+}
+
+// A chat front-end that forwards each person's IdP token (Open WebUI's OAuth
+// connection) is attributed to that person, verified, not to the consumer.
+func TestHandle_OAuth2TokenStampsTheVerifiedPrincipal(t *testing.T) {
+	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOAuth2,
+		"596a83e6", map[string]any{"sub": "596a83e6", "email": "ana@nobia.test"}))
+
+	if meta.PrincipalSubject != "596a83e6" || meta.PrincipalEmail != "ana@nobia.test" || meta.PrincipalMethod != "oauth2" {
+		t.Fatalf("principal = (%q, %q, %q), want (596a83e6, ana@nobia.test, oauth2)",
+			meta.PrincipalSubject, meta.PrincipalEmail, meta.PrincipalMethod)
+	}
+}
+
+// IdPs that carry no email claim (Entra access tokens, Keycloak without the
+// email scope) still name the person in another claim.
+func TestHandle_OAuth2TokenEmailFallsBackToOtherClaims(t *testing.T) {
+	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodOAuth2,
+		"user-1", map[string]any{"preferred_username": "ana@nobia.test"}))
+
+	if meta.PrincipalSubject != "user-1" || meta.PrincipalEmail != "ana@nobia.test" {
+		t.Fatalf("principal = (%q, %q), want (user-1, ana@nobia.test)", meta.PrincipalSubject, meta.PrincipalEmail)
+	}
+}
+
+func TestHandle_RoleBasedOIDCTokenStampsTheVerifiedPrincipal(t *testing.T) {
+	role := ids.New[ids.RoleKind]()
+	meta := tracedProxyCall(t, authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{role}, []ids.RoleID{role}))
+
+	if meta.PrincipalSubject != "user-1" || meta.PrincipalMethod != "oidc" {
+		t.Fatalf("principal = (%q, %q), want (user-1, oidc)", meta.PrincipalSubject, meta.PrincipalMethod)
+	}
+}
+
+// An API key identifies the application, not a person: it must not be
+// promoted to the principal (and so to TrustGuard's user attribute).
+func TestHandle_APIKeyStampsNoPrincipal(t *testing.T) {
+	meta := tracedProxyCall(t, authStubWithClaims(ids.New[ids.GatewayKind](), consumerSlug, appauth.MethodAPIKey,
+		"key-1", map[string]any{"email": "app@nobia.test"}))
+
+	if meta.PrincipalSubject != "" || meta.PrincipalEmail != "" || meta.PrincipalMethod != "" {
+		t.Fatalf("principal = (%q, %q, %q), want none for an API key",
+			meta.PrincipalSubject, meta.PrincipalEmail, meta.PrincipalMethod)
+	}
+}
