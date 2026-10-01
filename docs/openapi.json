@@ -2077,7 +2077,7 @@
                         }
                     },
                     {
-                        "description": "Filter by global flag",
+                        "description": "Filter by global flag; global=false also lists MCP-wide policies",
                         "name": "global",
                         "in": "query",
                         "schema": {
@@ -2364,7 +2364,7 @@
                 ]
             },
             "put": {
-                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.",
+                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. An update racing a promotion or demotion of the same policy is refused with 409: reload it and retry. Changing the slug of an MCP-wide policy to a plugin without MCP support is refused with 422. The response may carry non-blocking warnings.",
                 "tags": [
                     "policies"
                 ],
@@ -2444,7 +2444,17 @@
                         }
                     },
                     "409": {
-                        "description": "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take",
+                        "description": "A policy of this name already exists, the gateway already runs this plugin at one of the levels the update would take, or the policy's placement changed while it was being updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "The request fails validation, such as an MCP-wide policy moved to a plugin without MCP support",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2542,7 +2552,7 @@
         },
         "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
             "post": {
-                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
+                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is neither global nor MCP-wide.",
                 "tags": [
                     "policies"
                 ],
@@ -2630,7 +2640,7 @@
         },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
-                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
                 "tags": [
                     "policies"
                 ],
@@ -2699,7 +2709,7 @@
                         }
                     },
                     "409": {
-                        "description": "The gateway already runs this plugin at the all-traffic level",
+                        "description": "The gateway already runs this plugin at the all-traffic level, or the policy changed while it was being promoted",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2716,11 +2726,185 @@
                 ]
             },
             "delete": {
-                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers).",
+                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers). Clears only global: a policy that is not global is returned unchanged with 200, an MCP-wide one included.",
                 "tags": [
                     "policies"
                 ],
                 "summary": "Clear a policy's global scope",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/mcp-wide": {
+            "post": {
+                "description": "Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers, and consumer links are ignored while the flag is set. Promoting clears global in the same write. The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.",
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Mark a policy as MCP-wide",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at one of the levels the policy would take on every MCP consumer, or the policy changed while it was being promoted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "The plugin does not support MCP",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Demotes an MCP-wide policy back to consumer-scoped (applies only to linked consumers; with none it runs nowhere). Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.",
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Clear a policy's MCP-wide placement",
                 "parameters": [
                     {
                         "description": "Gateway id",
@@ -7135,6 +7319,10 @@
                                 "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.MCPScopeResponse"
                             }
                         ]
+                    },
+                    "mcp_wide": {
+                        "description": "MCPWide marks a policy that runs on every MCP consumer of the gateway and\non the MCP Store, narrowed by its mcp_scope. It is never true together\nwith Global.",
+                        "type": "boolean"
                     },
                     "mode": {
                         "type": "string"

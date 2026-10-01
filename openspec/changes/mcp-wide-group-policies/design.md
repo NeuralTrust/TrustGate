@@ -309,14 +309,21 @@ Into MCP-wide, the link target is `[]`, so the existing diff code removes leftov
 - **`updatePolicyAction`**
   - `previousGlobal: boolean` becomes `previousScope: PolicyScope`.
   - Promotion or demotion failure → `placementWriteFailureError(error, previousScope)`:
+    - a 422 on the `mcp-wide` promotion → `policyMcpUnsupported`, whatever the previous placement. On `POST .../mcp-wide` the only validation failure is a plugin that does not run on MCP, so the copy never offers a retry.
     - previous GW → `policyStillAllTraffic`
     - previous MCP → `policyStillMcpWide`
     - previous T → not-running for `error.placement`, or its conflict variant when the cause is a 409
   - Consumer links that fail on a 409 keep the plain conflict copy.
-- **`usePolicyDraft`:** passes `previousScope: policyScopeOfItem(rawItem)`.
+  - A failed promotion into MCP-wide from GW or T, after a PUT that wrote `mcp_scope`, reads the policy back first. A 5xx does not say whether the promotion committed, so there are three branches:
+    - **Not MCP-wide:** re-PUT the new scope with the previous `groups`/`except_groups` put back, so the new destinations stay; `null` when nothing is left. On success the copy is the rolled-back variant (`policyNotRunningMcpRolledBack` or `policyStillAllTrafficRolledBack`): the reload drops the group pick, so it asks for the groups again instead of a retry. If that PUT fails, the plain copy stands. If its response shows `mcp_wide: true`, the promotion committed after the read, so the new scope is re-PUT at once and the landed branch follows; if that re-PUT fails, `policyStillMcpWide`.
+    - **Landed (`mcp_wide: true`):** no rollback. Finish the move by detaching the previous links. The save is a success, audited as usual; a failed detach answers `consumerSyncFailed`.
+    - **GET failed:** no rollback. Global + groups is still gated, which is safer than an ungated MCP-wide policy.
+  - Every swallowed failure on this path is logged with `logger.warn` (team, gateway, policy, status, error).
+- **`usePolicyDraft`:** passes `previousScope: policyScopeOfItem(rawItem)` and `previousMcpScope: rawItem.mcp_scope ?? null`.
 - **`createPolicyAction`**
   - Returns `promoted ?? created`. That is the post-promotion item, because TrustGate's POST returns `PolicyResponse`.
   - If the delete that follows a refused promotion fails, it answers `policyNotRunningLevelConflictError(cause, error.placement)`.
+  - A 422 on the `mcp-wide` promotion deletes the new policy too. If the delete succeeds it answers `policyMcpRefused`, which is not a partial write; if not, `policyMcpUnsupported`.
   - A plain promotion failure answers `policyNotRunningError(error.placement)`.
 - **Auto-attach:** `policy.global` becomes `isPromotedPolicy(policy)` at `features/consumers/components/ConsumerAddPolicyModal.tsx:134` and `features/applications/components/ApplicationPoliciesTab.tsx:298`, and the comment at `:128-130` is updated. No other consumer or application code changes.
 - **`isPolicyNotRunningError`** stays keyed to `policyNotRunning*` only. After an MCP not-running failure, the modal's draft already matches what is stored (a group draft), so `CreatePolicyModal.tsx:185` must not reset it.
@@ -344,12 +351,12 @@ Into MCP-wide, the link target is `[]`, so the existing diff code removes leftov
 - **`PolicyDeleteModal.tsx:44-46`:** switch on `policyScopeOfItem`. MCP-wide uses `deleteDescriptionMcpWide` and requires typing DELETE, as global does.
 - **List:** `listPoliciesAction` sets the scope with `policyScopeOfItem` and coverage `mcp`. `policyCoverageLabel` handles `mcp`. In `policyScopeSummary.formatPrincipal`, links are listed only when the policy is targeted, and the empty principal reads `allMcpTraffic` for MCP-wide. The `policies.constants.ts` switch gets `case 'mcp-wide': return 'cyan'`.
 - **i18n (English only)**
-  - `v2Gateway.apiErrors`: `policyNotRunningMcp`, `policyNotRunningMcpLevelConflict(Named)`, `policyStillMcpWide`.
+  - `v2Gateway.apiErrors`: `policyNotRunningMcp`, `policyNotRunningMcpLevelConflict(Named)`, `policyStillMcpWide`, `policyMcpUnsupported`, `policyMcpRefused`, `policyNotRunningMcpRolledBack`, `policyStillAllTrafficRolledBack`.
   - `v2Policies`: `requestsFrom.{groupsRequired, groupsHelper}`, `groupsPlaceholder` changes from "All groups" to "Choose groups", plus `coverage.allMcp`, `scope.mcp-wide`, `detail.{securityBannerMcpWide, deleteDescriptionMcpWide}` and `scopeSummary.allMcpTraffic`.
-- **Error prefixes:** `POLICY_NOT_RUNNING_MCP:`, `POLICY_NOT_RUNNING_MCP_CONFLICT:`, `POLICY_STILL_MCP_WIDE:`.
+- **Error prefixes:** `POLICY_NOT_RUNNING_MCP:`, `POLICY_NOT_RUNNING_MCP_CONFLICT:`, `POLICY_STILL_MCP_WIDE:`, `POLICY_MCP_UNSUPPORTED:`, plus `POLICY_MCP_REFUSED:` for the create whose policy was removed again.
   - None of them is a prefix of an existing one, because the colon differs, so the order of the checks does not matter.
   - Resolution happens next to `agentGatewayErrorMessages.ts:639-650`; the named variants at `:842-853`.
-  - All three are added to `isPolicyPartialWriteError`.
+  - The first four are added to `isPolicyPartialWriteError`. `POLICY_MCP_REFUSED:` is not, because nothing was written.
 
 ### Testing (vitest)
 
@@ -390,3 +397,5 @@ PR 1 ships one visible fix on its own: *All traffic* created from a consumer or 
 - **GW→MCP after the PUT and before the promotion** briefly holds `global`+groups. If the promotion fails, it stays that way and runs on all LLM and A2A traffic for TrustGuard. The copy says "still all traffic, retry". The PUT-first order is the existing one.
 - **Saving any change on an existing group-only draft promotes it.** This is intended, and the rollout SQL still applies.
 - **The consumer and application tabs still offer MCP-wide policies for attach.** Those links are ignored at load, and the next save of the policy removes them. Listing them as applied is the follow-up.
+- **The rollback race is narrowed, not closed.** The promotion can still commit after the restore's own write, which the restore response would not show. Closing it needs a precondition on TrustGate's PUT (`If-Match` or a version). Cross-repo follow-up.
+- **The reverse direction is not covered.** A failed MCP→T demotion or MCP→GW promotion after the PUT leaves the policy MCP-wide with the PUT's group-less scope, so it runs for every MCP caller. The copy says "still MCP-wide, retry". The same read-back-and-restore pattern would fix it. Follow-up.

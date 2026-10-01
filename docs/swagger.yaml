@@ -1127,6 +1127,12 @@ definitions:
         description: |-
           MCPScope is echoed as stored: absent when the policy is consumer-wide,
           {} when a registry delete pruned every destination.
+      mcp_wide:
+        description: |-
+          MCPWide marks a policy that runs on every MCP consumer of the gateway and
+          on the MCP Store, narrowed by its mcp_scope. It is never true together
+          with Global.
+        type: boolean
       mode:
         type: string
       name:
@@ -4473,7 +4479,7 @@ paths:
         in: query
         name: enabled
         type: boolean
-      - description: Filter by global flag
+      - description: Filter by global flag; global=false also lists MCP-wide policies
         in: query
         name: global
         type: boolean
@@ -4672,7 +4678,10 @@ paths:
         the stored scope, null clears it and an object replaces it. An update that
         moves the policy onto a level another policy of the same plugin already holds
         is refused with 409, and so is turning enabled back on when that is what takes
-        the level. The response may carry non-blocking warnings.'
+        the level. An update racing a promotion or demotion of the same policy is
+        refused with 409: reload it and retry. Changing the slug of an MCP-wide policy
+        to a plugin without MCP support is refused with 422. The response may carry
+        non-blocking warnings.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4712,8 +4721,14 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: A policy of this name already exists, or the gateway already
-            runs this plugin at one of the levels the update would take
+          description: A policy of this name already exists, the gateway already runs
+            this plugin at one of the levels the update would take, or the policy's
+            placement changed while it was being updated
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: The request fails validation, such as an MCP-wide policy moved
+            to a plugin without MCP support
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4726,7 +4741,7 @@ paths:
       description: Creates a copy of an existing policy. The new policy reuses the
         plugin configuration (slug, settings, stages, enabled, priority, parallel)
         with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has
-        no consumer associations and is not global.
+        no consumer associations and is neither global nor MCP-wide.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4770,8 +4785,9 @@ paths:
       - policies
   /v1/gateways/{gateway_id}/policies/{id}/global:
     delete:
-      description: Demotes a global policy back to consumer-scoped (applies only to
-        linked consumers).
+      description: 'Demotes a global policy back to consumer-scoped (applies only
+        to linked consumers). Clears only global: a policy that is not global is returned
+        unchanged with 200, an MCP-wide one included.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4810,11 +4826,13 @@ paths:
       tags:
       - policies
     post:
-      description: Promotes a policy to gateway-wide scope (applies to every consumer).
-        Promoting moves the policy to the all-traffic level, so it answers 409 when
-        another policy of the same plugin already holds it. For a policy with mcp_scope
-        the response may carry non-blocking warnings about consumers that already
-        run the same plugin without scope.
+      description: 'Promotes a policy to gateway-wide scope (applies to every consumer).
+        Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting
+        moves the policy to the all-traffic level, so it answers 409 when another
+        policy of the same plugin already holds it; a policy that changed while it
+        was being promoted also answers 409: reload it and retry. For a policy with
+        mcp_scope the response may carry non-blocking warnings about consumers that
+        already run the same plugin without scope.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4848,12 +4866,114 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
-          description: The gateway already runs this plugin at the all-traffic level
+          description: The gateway already runs this plugin at the all-traffic level,
+            or the policy changed while it was being promoted
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Mark a policy as global
+      tags:
+      - policies
+  /v1/gateways/{gateway_id}/policies/{id}/mcp-wide:
+    delete:
+      description: 'Demotes an MCP-wide policy back to consumer-scoped (applies only
+        to linked consumers; with none it runs nowhere). Clears only mcp_wide: a policy
+        that is not MCP-wide is returned unchanged with 200, a global one included.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Clear a policy's MCP-wide placement
+      tags:
+      - policies
+    post:
+      description: 'Promotes a policy to run on every MCP consumer of the gateway
+        and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries,
+        tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A
+        consumers, and consumer links are ignored while the flag is set. Promoting
+        clears global in the same write. The policy takes the all-consumers levels
+        of its scope, the ones a global policy of that scope takes, so it answers
+        409 when another policy of the same plugin already holds one of them, global
+        ones included. A policy that changed while it was being promoted also answers
+        409: reload it and retry. A plugin without MCP support answers 422. Plugin
+        state such as rate-limit counters is shared gateway-wide, as for a global
+        policy. The response may carry non-blocking warnings.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "409":
+          description: The gateway already runs this plugin at one of the levels the
+            policy would take on every MCP consumer, or the policy changed while it
+            was being promoted
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: The plugin does not support MCP
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Mark a policy as MCP-wide
       tags:
       - policies
   /v1/gateways/{gateway_id}/registries:

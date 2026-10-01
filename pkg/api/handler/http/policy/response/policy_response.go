@@ -38,11 +38,15 @@ type PolicyResponse struct {
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
-	Priority    int              `json:"priority"`
-	Parallel    bool             `json:"parallel,omitempty"`
-	Settings    map[string]any   `json:"settings,omitempty"`
-	Stages      []string         `json:"stages,omitempty"`
-	Mode        string           `json:"mode"`
+	// MCPWide marks a policy that runs on every MCP consumer of the gateway and
+	// on the MCP Store, narrowed by its mcp_scope. It is never true together
+	// with Global.
+	MCPWide  bool           `json:"mcp_wide"`
+	Priority int            `json:"priority"`
+	Parallel bool           `json:"parallel,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
+	Stages   []string       `json:"stages,omitempty"`
+	Mode     string         `json:"mode"`
 	// Status is "active" (enabled and running), "paused" (disabled) or "error"
 	// (enabled but the gateway cannot run it; see status_message).
 	Status string `json:"status" enums:"active,paused,error"`
@@ -88,6 +92,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		Slug:        p.Slug,
 		Enabled:     p.Enabled,
 		Global:      p.Global,
+		MCPWide:     p.MCPWide,
 		Priority:    p.Priority,
 		Parallel:    p.Parallel,
 		Settings:    p.Settings,

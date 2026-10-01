@@ -220,6 +220,16 @@ func SetPolicyGlobal(t *testing.T, gatewayID, policyID string) {
 	require.Equal(t, http.StatusOK, status, "set policy global failed: %v", body)
 }
 
+// SetPolicyMCPWide promotes a policy to every MCP consumer of the gateway and
+// the MCP Store, asserting the 200 contract, and returns the echoed policy.
+func SetPolicyMCPWide(t *testing.T, gatewayID, policyID string) map[string]any {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s/mcp-wide", AdminURL, gatewayID, policyID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusOK, status, "set policy mcp-wide failed: %v", body)
+	return body
+}
+
 // UpdateConsumer issues a PUT /v1/gateways/:gateway_id/consumers/:id, asserting
 // the 200 contract. Registry-referencing config (nested registries policies,
 // fallback) must reference registries already attached to the consumer.
@@ -296,6 +306,19 @@ func validRegistryPayload(name string) map[string]any {
 			"api_key": map[string]any{"api_key": "sk-test"},
 		},
 	}
+}
+
+// responseWarnings returns the non-blocking warnings of an admin response, empty
+// when it carries none.
+func responseWarnings(body map[string]any) []string {
+	raw, _ := body["warnings"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if text, ok := w.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 // sendRequest performs an HTTP call, JSON-encoding `body` when
