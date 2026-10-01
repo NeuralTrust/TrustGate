@@ -408,9 +408,15 @@ as `regex_replace` never sends the unmasked text to its provider. Consequences:
 - If an enforcing entry fails after an earlier one masked the segment, the mask
   travels with the error: `on_error: fail_open` releases the masked text, never
   the raw text, and cuts the stream if the mask cannot be applied.
-- Masks can stack: a wide pattern in a later rewriter may match inside the
-  placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders change,
-  never raw data.
+- Masks can stack within a block: a wide pattern in a later rewriter may match
+  inside the placeholder an earlier one wrote (`[MASKED_*]`). Only placeholders
+  change, never raw data. Across blocks they do not: `regex_replace` replaces
+  only matches that reach into the block's new text, so a placeholder already
+  released, even one matching its own pattern (`[SSN]` under `(?i)ssn`), is
+  left alone instead of cutting the stream. The same rule keeps `^` and `\b`
+  from matching where a tail window starts once a response passes
+  `max_accumulated_bytes`. A match that starts in released text and ends in the
+  new block still cuts: its first part is already with the client.
 - The rule applies only within consecutive `parallel` entries of the same
   priority. A reader with `parallel: false`, or at another priority, is not
   moved; the console always writes `parallel: true`.
