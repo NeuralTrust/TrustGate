@@ -55,12 +55,12 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 		// tenant, so a small value would give the whole suite a budget that
 		// the next test to be added would exhaust. Tests that exercise the cap
 		// itself stamp their own entitlements.
-		payload["entitlements"] = map[string]any{
-			"tier":            "free",
-			"burst_per_min":   60,
-			"quota_per_month": 10000,
-			"max_instances":   1000,
-		}
+		//
+		// The plan counter is per tenant and every test here shares one tenant,
+		// so the burst is a budget for the whole suite, not for one gateway. The
+		// first stamped create also seeds the tenant's row, so every default
+		// stamp in this package has to be this generous.
+		payload["entitlements"] = functionalSuitePlan()
 	}
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, payload)
 	require.Equal(t, http.StatusCreated, status, "create gateway failed: %v", body)
@@ -351,4 +351,27 @@ func sendRequest(
 	}
 	assert.NotNil(t, out)
 	return resp.StatusCode, out
+}
+
+// functionalSuitePlan is the plan the shared functional tenant runs under: no
+// monthly cap and a burst the whole suite cannot reach in a minute.
+//
+// The first stamped create of a tenant seeds its tenant_entitlements row, and
+// the seed is ON CONFLICT DO NOTHING. A database reused from an older run
+// therefore keeps the functional-tenant row it already has, with whatever plan
+// that run stamped (60 requests a minute, for instance), and the suite starts
+// answering 429. The row has to be dropped before running against a reused
+// local database:
+//
+//	DELETE FROM tenant_entitlements WHERE tenant_id = 'functional-tenant';
+//
+// (or recreate the database). A test that needs a small plan of its own must use
+// its own tenant id, as TestPlanRateLimitE2E does.
+func functionalSuitePlan() map[string]any {
+	return map[string]any{
+		"tier":            "enterprise",
+		"burst_per_min":   1_000_000,
+		"quota_per_month": 0,
+		"max_instances":   1000,
+	}
 }
