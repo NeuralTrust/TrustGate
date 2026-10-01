@@ -25,6 +25,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
@@ -54,6 +55,9 @@ type Data struct {
 	StoreGrants         []storeaccessdomain.Grant
 	StorePolicies       []storeaccessdomain.Policy
 	PlaygroundTokenKeys []VerificationKey
+	// TenantCaps are the plan caps of the tenants the gateways above belong to.
+	// A scoped snapshot carries only its own tenant.
+	TenantCaps []ratelimitdomain.TenantCaps
 }
 
 type Snapshot struct {
@@ -90,6 +94,8 @@ type Snapshot struct {
 
 	storeGrantsByGateway   map[ids.GatewayID][]*storeaccessdomain.Grant
 	storePoliciesByGateway map[ids.GatewayID][]*storeaccessdomain.Policy
+
+	tenantCaps map[string]*ratelimitdomain.TenantCaps
 }
 
 func Build(data Data) *Snapshot {
@@ -118,6 +124,11 @@ func Build(data Data) *Snapshot {
 		catalogAll:             make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
 		storeGrantsByGateway:   make(map[ids.GatewayID][]*storeaccessdomain.Grant),
 		storePoliciesByGateway: make(map[ids.GatewayID][]*storeaccessdomain.Policy),
+		tenantCaps:             make(map[string]*ratelimitdomain.TenantCaps, len(data.TenantCaps)),
+	}
+	for i := range s.data.TenantCaps {
+		c := &s.data.TenantCaps[i]
+		s.tenantCaps[c.TenantID] = c
 	}
 
 	s.buildGateways()
@@ -328,6 +339,14 @@ func (s *Snapshot) Version() string { return s.data.Version }
 func (s *Snapshot) PlaygroundTokenKeys() []VerificationKey { return s.data.PlaygroundTokenKeys }
 
 func (s *Snapshot) Data() Data { return s.data }
+
+// TenantCapsByTenantID returns the plan caps stored for the tenant. The second
+// result is false when the snapshot has none, which is every tenant in a
+// snapshot compiled before caps were stored per tenant.
+func (s *Snapshot) TenantCapsByTenantID(tenantID string) (*ratelimitdomain.TenantCaps, bool) {
+	c, ok := s.tenantCaps[tenantID]
+	return c, ok
+}
 
 func (s *Snapshot) GatewayByID(id ids.GatewayID) (*gatewaydomain.Gateway, bool) {
 	g, ok := s.gatewaysByID[id]
