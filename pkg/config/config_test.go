@@ -470,7 +470,7 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	t.Setenv("SERVER_ADMIN_PORT", "9090")
 	t.Setenv("DB_MAX_CONNS", "50")
 	t.Setenv("LOG_LEVEL", "DEBUG")
-	t.Setenv("KAFKA_BROKERS", "k1:9092,k2:9092, k3:9092 ")
+	t.Setenv("MCP_EXTRA_BASE_DOMAINS", "a.example,b.example, c.example ")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -485,11 +485,11 @@ func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	if cfg.Logger.Level != slog.LevelDebug {
 		t.Errorf("Logger.Level = %v, want DEBUG", cfg.Logger.Level)
 	}
-	if got, want := len(cfg.Kafka.Brokers), 3; got != want {
-		t.Fatalf("Kafka.Brokers len = %d, want %d", got, want)
+	if got, want := len(cfg.Server.MCPExtraBaseDomains), 3; got != want {
+		t.Fatalf("Server.MCPExtraBaseDomains len = %d, want %d", got, want)
 	}
-	if cfg.Kafka.Brokers[2] != "k3:9092" {
-		t.Errorf("Kafka.Brokers[2] = %q, want trimmed %q", cfg.Kafka.Brokers[2], "k3:9092")
+	if cfg.Server.MCPExtraBaseDomains[2] != "c.example" {
+		t.Errorf("Server.MCPExtraBaseDomains[2] = %q, want trimmed %q", cfg.Server.MCPExtraBaseDomains[2], "c.example")
 	}
 }
 
@@ -568,8 +568,8 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if cfg.Redis.Username != "" {
 		t.Errorf("Redis.Username default = %q, want empty", cfg.Redis.Username)
 	}
-	if cfg.Telemetry.KafkaTopic != defaultTelemetryKafkaTopic {
-		t.Errorf("Telemetry.KafkaTopic = %q, want %q", cfg.Telemetry.KafkaTopic, defaultTelemetryKafkaTopic)
+	if cfg.Telemetry.ExportersFile != defaultTelemetryExportersFile {
+		t.Errorf("Telemetry.ExportersFile = %q, want %q", cfg.Telemetry.ExportersFile, defaultTelemetryExportersFile)
 	}
 	if cfg.Telemetry.OpsMetricsEnabled {
 		t.Errorf("Telemetry.OpsMetricsEnabled default = true, want false")
@@ -587,7 +587,7 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("REDIS_TLS_ENABLED", "true")
 	t.Setenv("REDIS_TLS_INSECURE_VERIFY", "true")
 	t.Setenv("REDIS_USERNAME", "cacheuser")
-	t.Setenv("TELEMETRY_KAFKA_TOPIC", "custom.requests")
+	t.Setenv("TELEMETRY_ENABLE_PLUGIN_TRACES", "false")
 	t.Setenv("METRICS_QUEUE_SIZE", "42")
 	t.Setenv("METRICS_WORKER_COUNT", "3")
 	t.Setenv("METRICS_FLUSH_INTERVAL", "250ms")
@@ -606,7 +606,7 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if cfg.Redis.Username != "cacheuser" {
 		t.Errorf("Redis.Username override = %q, want %q", cfg.Redis.Username, "cacheuser")
 	}
-	if cfg.Telemetry.KafkaTopic != "custom.requests" {
+	if cfg.Telemetry.EnablePluginTraces {
 		t.Errorf("Telemetry override not applied: %+v", cfg.Telemetry)
 	}
 	if cfg.Metrics.QueueSize != 42 || cfg.Metrics.WorkerCount != 3 || cfg.Metrics.FlushInterval != 250*time.Millisecond {
@@ -792,7 +792,6 @@ func postgresValid() *Config {
 		Server:   validServer(),
 		Database: DatabaseConfig{Host: "db", User: "u", Name: "n"},
 		Redis:    RedisConfig{Host: "r"},
-		Kafka:    KafkaConfig{Brokers: []string{"k:9092"}},
 	}
 }
 
@@ -804,7 +803,6 @@ func dbLessValid() *Config {
 	return &Config{
 		Server: validServer(),
 		Redis:  RedisConfig{Host: "r"},
-		Kafka:  KafkaConfig{Brokers: []string{"k:9092"}},
 		ConfigSync: ConfigSyncConfig{
 			DataPlaneEnabled: true,
 			Token:            "config-sync-token",

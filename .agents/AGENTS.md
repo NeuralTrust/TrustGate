@@ -146,8 +146,7 @@ Use cases consume **domain repository interfaces**, never concrete `pgx` / `fibe
 - Prefer behaviour assertions over unexported-field inspection.
 - Repository integration tests gate on `PG_TEST_URL` (`make test-repositories`);
   skip when unset. Functional tests live under `tests/functional/` behind the
-  `functional` build tag (`make test-functional`) and need Postgres + Redis
-  (+ Kafka).
+  `functional` build tag (`make test-functional`) and need Postgres + Redis.
 
 ## Go rules (binding)
 
@@ -292,7 +291,7 @@ to the identical version and publishes no new notice. Admin writes `Signal` a
 debounced recompile (`CONFIG_SYNC_RECOMPILE_DEBOUNCE`).
 
 **Env (flag ON):** proxy/mcp do **not** need `DB_*`. `Validate()` requires the
-`CONFIG_SYNC_*` set below; **`REDIS_HOST` and `KAFKA_BROKERS` stay required**.
+`CONFIG_SYNC_*` set below; **`REDIS_HOST` stays required**.
 Boot fails fast (`ErrInvalidConfig`) when token, gRPC endpoint, LKG path/key, or
 poll interval are missing/invalid.
 
@@ -334,7 +333,7 @@ make fmt            # gofmt + go vet
 make lint           # golangci-lint
 make test           # unit tests
 make test-race      # unit tests with the race detector
-make test-functional    # functional tests (Postgres + Redis + Kafka)
+make test-functional    # functional tests (Postgres + Redis)
 make test-repositories  # repository integration (PG_TEST_URL)
 make generate       # go generate (mocks etc.)
 make proto          # buf generate for snapshot proto

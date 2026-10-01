@@ -132,7 +132,7 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	factory := infratelemetry.NewExporterLocator(
-		infratelemetry.WithExporter("kafka", &memTemplate{name: "kafka", rec: rec}),
+		infratelemetry.WithExporter("primary", &memTemplate{name: "primary", rec: rec}),
 		infratelemetry.WithExporter("memory", &memTemplate{name: "memory", rec: rec}),
 		infratelemetry.WithExporter("broken", &memTemplate{name: "broken", rec: rec, fail: true}),
 	)
@@ -140,7 +140,7 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), zeroPricing{})
 	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger,
-		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": defaultTopic}})
+		telemetrydomain.ExporterConfig{Name: "primary", Settings: map[string]interface{}{"topic": defaultTopic}})
 	worker := appmetrics.NewWorker(logger, pipeline)
 	worker.StartWorkers(2)
 	t.Cleanup(worker.Shutdown)
@@ -185,10 +185,10 @@ func TestMetricsFunctional_DefaultPlusExtraAndTenantID(t *testing.T) {
 	postChat(t, app)
 
 	require.Eventually(t, func() bool {
-		return rec.count("kafka/"+defaultTopic) == 1 && rec.count("memory/team-metrics") == 1
+		return rec.count("primary/"+defaultTopic) == 1 && rec.count("memory/team-metrics") == 1
 	}, 2*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, "team-9", rec.first("kafka/"+defaultTopic).TenantID)
+	assert.Equal(t, "team-9", rec.first("primary/"+defaultTopic).TenantID)
 	assert.Equal(t, "team-9", rec.first("memory/team-metrics").TenantID)
 }
 
@@ -198,7 +198,7 @@ func TestMetricsFunctional_OverrideByNameRedirectsDefault(t *testing.T) {
 		ID: ids.New[ids.GatewayKind](),
 		Telemetry: &telemetrydomain.Telemetry{
 			Exporters: []telemetrydomain.ExporterConfig{
-				{Name: "kafka", Settings: map[string]interface{}{"topic": "custom-topic"}},
+				{Name: "primary", Settings: map[string]interface{}{"topic": "custom-topic"}},
 			},
 		},
 	}
@@ -206,10 +206,10 @@ func TestMetricsFunctional_OverrideByNameRedirectsDefault(t *testing.T) {
 	postChat(t, app)
 
 	require.Eventually(t, func() bool {
-		return rec.count("kafka/custom-topic") == 1
+		return rec.count("primary/custom-topic") == 1
 	}, 2*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, 0, rec.count("kafka/"+defaultTopic), "override by name must redirect the default away from its topic")
+	assert.Equal(t, 0, rec.count("primary/"+defaultTopic), "override by name must redirect the default away from its topic")
 }
 
 func TestMetricsFunctional_FailingExporterDoesNotBreakOthers(t *testing.T) {
@@ -226,6 +226,6 @@ func TestMetricsFunctional_FailingExporterDoesNotBreakOthers(t *testing.T) {
 	postChat(t, app)
 
 	require.Eventually(t, func() bool {
-		return rec.count("kafka/"+defaultTopic) == 1
+		return rec.count("primary/"+defaultTopic) == 1
 	}, 2*time.Second, 10*time.Millisecond)
 }
