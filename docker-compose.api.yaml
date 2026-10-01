@@ -9,9 +9,6 @@ name: agentgateway
 
 x-server-common: &server-common
   image: agentgateway:local
-  # confluent-kafka-go v1.9.2 vendors librdkafka_glibc_linux.a for amd64 only,
-  # so an arm64 build fails at link time and the image must run as linux/amd64.
-  platform: linux/amd64
   build:
     context: .
     args:

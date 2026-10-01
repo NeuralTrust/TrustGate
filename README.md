@@ -66,8 +66,7 @@ git clone https://github.com/NeuralTrust/TrustGate.git && cd TrustGate
 make up
 ```
 
-`make up` creates `.env` and generates `SERVER_SECRET_KEY` when needed. On Apple
-Silicon the first image build runs under `linux/amd64` emulation and takes longer.
+`make up` creates `.env` and generates `SERVER_SECRET_KEY` when needed.
 
 ### Verify it's running
 
