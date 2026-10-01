@@ -42,7 +42,7 @@ func mustID[K ids.Kind](t *testing.T, s string) ids.ID[K] {
 	return id
 }
 
-func twoTenantCompiler(t *testing.T, acme, globex ids.GatewayID, acmeConsumer, globexConsumer ids.ConsumerID) *appsnapshot.Compiler {
+func twoTenantCompiler(t *testing.T, acme, globex ids.GatewayID, acmeConsumer, globexConsumer ids.ConsumerID, opts ...appsnapshot.CompilerOption) *appsnapshot.Compiler {
 	t.Helper()
 	return appsnapshot.NewCompiler(
 		fakeGateways{items: []*gatewaydomain.Gateway{
@@ -58,6 +58,7 @@ func twoTenantCompiler(t *testing.T, acme, globex ids.GatewayID, acmeConsumer, g
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
 		fakeCatalog{providers: []catalogdomain.Provider{{Code: "openai"}}},
 		nil,
+		opts...,
 	)
 }
 

@@ -26,6 +26,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -121,6 +122,18 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	msg.TenantCaps = make([]*snapshotpb.TenantCaps, 0, len(data.TenantCaps))
+	for i := range data.TenantCaps {
+		c := &data.TenantCaps[i]
+		msg.TenantCaps = append(msg.TenantCaps, &snapshotpb.TenantCaps{
+			TenantId:      c.TenantID,
+			Tier:          c.Tier,
+			BurstPerMin:   int32(c.BurstPerMin),   // #nosec G115 -- validated to ratelimit.MaxCap (int32) where the plan is stamped
+			QuotaPerMonth: int32(c.QuotaPerMonth), // #nosec G115 -- validated to ratelimit.MaxCap (int32) where the plan is stamped
+			MaxInstances:  int32(c.MaxInstances),  // #nosec G115 -- validated to ratelimit.MaxCap (int32) where the plan is stamped
+		})
+	}
+
 	return msg, nil
 }
 
@@ -190,6 +203,20 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		data.PlaygroundTokenKeys = append(data.PlaygroundTokenKeys, readmodel.VerificationKey{
 			KID: m.GetKid(),
 			PEM: m.GetPem(),
+		})
+	}
+
+	data.TenantCaps = make([]ratelimitdomain.TenantCaps, 0, len(msg.GetTenantCaps()))
+	for _, c := range msg.GetTenantCaps() {
+		if c.GetTenantId() == "" {
+			continue
+		}
+		data.TenantCaps = append(data.TenantCaps, ratelimitdomain.TenantCaps{
+			TenantID:      c.GetTenantId(),
+			Tier:          c.GetTier(),
+			BurstPerMin:   int(c.GetBurstPerMin()),
+			QuotaPerMonth: int(c.GetQuotaPerMonth()),
+			MaxInstances:  int(c.GetMaxInstances()),
 		})
 	}
 
