@@ -614,7 +614,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "role",
 								Label:       "Role",
 								Type:        FieldTypeString,
-								Description: "Message role used when inserting the rendered content.",
+								Description: "Role used when inserting the rendered content. OpenAI-compatible and Cohere: any role is prepended as a message. Anthropic: system goes to the top-level system field; user and assistant are prepended; other roles are not applied. OpenAI Responses: system goes to instructions; user, assistant and developer are prepended as input items; other roles are not applied. Bedrock: system goes to the system blocks; user is prepended; other roles are not applied. Gemini: system goes to systemInstruction; user is prepended; other roles, including assistant, are not applied. Roles a format cannot carry (for example developer on Anthropic, assistant on Gemini or Bedrock) are forwarded without the injection and recorded as unapplied.",
 								Default:     "system",
 							},
 							{
@@ -628,7 +628,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "on_existing_system",
 								Label:       "On Existing System",
 								Type:        FieldTypeEnum,
-								Description: "How to combine with an existing system prompt.",
+								Description: "How to combine with an existing system prompt. Merge appends the rendered content to the existing system prompt (as a new text block or part on Anthropic block lists, Bedrock and Gemini, and after a blank line in strings such as Responses instructions); replace leaves only the rendered content. A Mode B template's system text is merged into the system prompt on Anthropic, Gemini, OpenAI Responses and Bedrock; if the request's own system field cannot be read, the request is rejected with 400 unsupported_request_shape. Bedrock replace drops existing guardContent and cachePoint system blocks, and on Bedrock a blank rendered injection is not applied. On OpenAI-compatible, Cohere and Mistral the rendered messages replace the whole conversation, including the client's system message. On Anthropic with no system prompt, one is created as a plain string.",
 								Enum:        enumOptions("merge", "replace"),
 								Default:     "merge",
 							},
@@ -720,7 +720,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "allow_untemplated_requests",
 					Label:       "Allow Untemplated Requests",
 					Type:        FieldTypeBoolean,
-					Description: "When false and named templates are configured, reject requests without a template reference.",
+					Description: "When false and named templates are configured, reject requests without a template reference. In enforce mode, requests in a non-chat format (embeddings, files, images, audio, rerank) are rejected too, since they cannot carry a reference it can read. Separately, whenever templates are configured, a chat request whose body the policy cannot edit (unreadable or ambiguous fields, or a system field it cannot merge into) is rejected with 400 unsupported_request_shape regardless of this setting. Observe mode never rejects.",
 					Default:     true,
 				},
 				{

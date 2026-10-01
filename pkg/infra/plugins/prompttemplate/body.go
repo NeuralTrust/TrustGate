@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const (
@@ -55,6 +57,35 @@ type requestBody struct {
 	hasMessages    bool
 	messagesOpaque bool
 	messagesDirty  bool
+
+	// shape selects the wire format the body is edited as. The zero value is
+	// the OpenAI-style shape (system string plus messages array), which is also
+	// what a request whose format cannot be resolved is treated as.
+	shape bodyShape
+	// systemBlocks holds an Anthropic system prompt sent as an array of content
+	// blocks. hasSystem stays false for it: only the Anthropic shape edits it.
+	systemBlocks    []json.RawMessage
+	hasSystemBlocks bool
+	// rawDirty marks edits written straight into fields (Anthropic blocks and
+	// Gemini), where the typed system and messages mirrors are not used.
+	rawDirty bool
+	// format is the wire format the body was recognised as; empty when it
+	// could not be resolved.
+	format adapter.Format
+}
+
+type bodyShape int
+
+const (
+	shapeMessages bodyShape = iota
+	shapeAnthropic
+	shapeGemini
+	shapeResponses
+	shapeBedrock
+)
+
+func (rb *requestBody) dirty() bool {
+	return rb.systemDirty || rb.messagesDirty || rb.rawDirty
 }
 
 func decodeBody(raw []byte) (*requestBody, error) {
@@ -71,6 +102,12 @@ func decodeBody(raw []byte) (*requestBody, error) {
 		if err := json.Unmarshal(rawSystem, &s); err == nil {
 			rb.system = s
 			rb.hasSystem = true
+		} else if bytes.HasPrefix(bytes.TrimSpace(rawSystem), []byte("[")) {
+			var blocks []json.RawMessage
+			if err := json.Unmarshal(rawSystem, &blocks); err == nil {
+				rb.systemBlocks = blocks
+				rb.hasSystemBlocks = true
+			}
 		}
 	}
 	if rawMessages, ok := fields["messages"]; ok {
@@ -85,43 +122,124 @@ func decodeBody(raw []byte) (*requestBody, error) {
 	return rb, nil
 }
 
-func (rb *requestBody) injectSystem(mode onExistingSystem, role, content string) {
+// injectSystem applies one injection and reports whether it reached the
+// request. When it did not, the second result names why, so the caller never
+// records an injection the model will not see.
+func (rb *requestBody) injectSystem(mode onExistingSystem, role, content string) (bool, string) {
+	switch rb.shape {
+	case shapeGemini:
+		return rb.injectGemini(mode, role, content)
+	case shapeResponses:
+		return rb.injectResponses(mode, role, content)
+	case shapeBedrock:
+		return rb.injectBedrock(mode, role, content)
+	}
+	if rb.shape == shapeAnthropic {
+		return rb.injectAnthropic(mode, role, content)
+	}
 	if role != roleSystem {
 		if rb.messagesOpaque {
-			return
+			return false, reasonMessagesNotArray
 		}
-		rb.prependMessage(role, content)
-		return
+		return rb.prependMessage(role, content), reasonEncodeFailed
 	}
 	if rb.hasSystem {
 		rb.system = mergeSystem(mode, rb.system, content)
 		rb.systemDirty = true
-		return
+		return true, ""
 	}
 	if rb.messagesOpaque {
-		return
+		return false, reasonMessagesNotArray
 	}
 	if idx := rb.firstSystemIndex(); idx >= 0 {
-		rb.mergeSystemMessage(idx, mode, content)
-		return
+		return rb.mergeSystemMessage(idx, mode, content), reasonSystemMessageUnreadable
 	}
-	rb.prependMessage(roleSystem, content)
+	return rb.prependMessage(roleSystem, content), reasonEncodeFailed
 }
 
-func (rb *requestBody) prependMessage(role, content string) {
+// injectAnthropic places one injection in an Anthropic Messages body. The
+// system prompt lives in the top-level system field, never in a system-role
+// turn, which the API rejects. Without a usable system (absent, null, or an
+// object) the field is created as a plain string.
+func (rb *requestBody) injectAnthropic(mode onExistingSystem, role, content string) (bool, string) {
+	switch role {
+	case roleSystem:
+		if rb.hasSystemBlocks {
+			return rb.injectSystemBlocks(mode, content)
+		}
+		if rb.hasSystem {
+			rb.system = mergeSystem(mode, rb.system, content)
+		} else if raw, present := rb.fields["system"]; present && !isJSONNull(raw) {
+			// An object, number or bool: not a prompt this plugin can read, and
+			// overwriting it would silently drop what the client sent.
+			return false, reasonSystemUnreadable
+		} else {
+			rb.system = content
+			rb.hasSystem = true
+		}
+		rb.systemDirty = true
+		return true, ""
+	case roleUser, "assistant":
+		// assistant is prepended as a message, as it always was for Anthropic
+		// configs; kept so existing policies do not change behaviour.
+		if rb.messagesOpaque {
+			return false, reasonMessagesNotArray
+		}
+		return rb.prependMessage(role, content), reasonEncodeFailed
+	default:
+		return false, reasonRoleUnsupportedAnthropic
+	}
+}
+
+// injectSystemBlocks edits an Anthropic system prompt sent as content blocks.
+// Merge appends a text block, so cache_control and any other field on the
+// existing blocks stay untouched; replace collapses the prompt to a string.
+func (rb *requestBody) injectSystemBlocks(mode onExistingSystem, content string) (bool, string) {
+	var encoded json.RawMessage
+	var err error
+	if mode == onExistingReplace {
+		encoded, err = json.Marshal(content)
+		if err != nil {
+			return false, reasonEncodeFailed
+		}
+		rb.systemBlocks = nil
+		rb.hasSystemBlocks = false
+		rb.hasSystem = true
+		rb.system = content
+	} else {
+		block, err := json.Marshal(map[string]string{"type": "text", "text": content})
+		if err != nil {
+			return false, reasonEncodeFailed
+		}
+		blocks := make([]json.RawMessage, 0, len(rb.systemBlocks)+1)
+		blocks = append(blocks, rb.systemBlocks...)
+		blocks = append(blocks, block)
+		rb.systemBlocks = blocks
+		encoded, err = json.Marshal(blocks)
+		if err != nil {
+			return false, reasonEncodeFailed
+		}
+	}
+	rb.fields["system"] = encoded
+	rb.rawDirty = true
+	return true, ""
+}
+
+func (rb *requestBody) prependMessage(role, content string) bool {
 	entry, err := json.Marshal(message{Role: role, Content: content})
 	if err != nil {
-		return
+		return false
 	}
 	rb.messages = append([]json.RawMessage{entry}, rb.messages...)
 	rb.hasMessages = true
 	rb.messagesDirty = true
+	return true
 }
 
-func (rb *requestBody) mergeSystemMessage(idx int, mode onExistingSystem, content string) {
+func (rb *requestBody) mergeSystemMessage(idx int, mode onExistingSystem, content string) bool {
 	entry := map[string]json.RawMessage{}
 	if err := json.Unmarshal(rb.messages[idx], &entry); err != nil {
-		return
+		return false
 	}
 	existing := ""
 	hasStringContent := false
@@ -131,8 +249,7 @@ func (rb *requestBody) mergeSystemMessage(idx int, mode onExistingSystem, conten
 		}
 	}
 	if !hasStringContent && mode == onExistingMerge {
-		rb.prependMessage(roleSystem, content)
-		return
+		return rb.prependMessage(roleSystem, content)
 	}
 	newContent := content
 	if hasStringContent {
@@ -140,15 +257,16 @@ func (rb *requestBody) mergeSystemMessage(idx int, mode onExistingSystem, conten
 	}
 	encoded, err := json.Marshal(newContent)
 	if err != nil {
-		return
+		return false
 	}
 	entry["content"] = encoded
 	reEncoded, err := json.Marshal(entry)
 	if err != nil {
-		return
+		return false
 	}
 	rb.messages[idx] = reEncoded
 	rb.messagesDirty = true
+	return true
 }
 
 func (rb *requestBody) firstSystemIndex() int {
@@ -210,6 +328,12 @@ func (rb *requestBody) clone() *requestBody {
 		hasMessages:    rb.hasMessages,
 		messagesOpaque: rb.messagesOpaque,
 		messagesDirty:  rb.messagesDirty,
+
+		shape:           rb.shape,
+		systemBlocks:    rb.systemBlocks,
+		hasSystemBlocks: rb.hasSystemBlocks,
+		rawDirty:        rb.rawDirty,
+		format:          rb.format,
 	}
 }
 
@@ -230,6 +354,14 @@ func (rb *requestBody) takeProperties() (map[string]any, bool) {
 }
 
 func (rb *requestBody) findReferences() []templateRef {
+	switch rb.shape {
+	case shapeGemini:
+		return rb.findGeminiReferences()
+	case shapeResponses:
+		return rb.findResponsesReferences()
+	case shapeBedrock:
+		return rb.findBedrockReferences()
+	}
 	var refs []templateRef
 	for i := range rb.messages {
 		var entry struct {
@@ -259,7 +391,33 @@ func scanReferences(s string) []templateRef {
 	return refs
 }
 
+// turnCount is the number of conversation turns the body carries, which a
+// rendered template replaces.
+func (rb *requestBody) turnCount() int {
+	switch rb.shape {
+	case shapeGemini:
+		return len(rb.geminiContents())
+	case shapeResponses:
+		return rb.responsesTurnCount()
+	}
+	return len(rb.messages)
+}
+
 func (rb *requestBody) replaceMessages(rendered string) error {
+	switch rb.shape {
+	case shapeGemini:
+		return rb.replaceGeminiContents(rendered)
+	case shapeResponses:
+		return rb.replaceResponsesInput(rendered)
+	case shapeBedrock:
+		return rb.replaceBedrockMessages(rendered)
+	case shapeAnthropic:
+		return rb.replaceAnthropicMessages(rendered)
+	}
+	return rb.replaceMessagesDefault(rendered)
+}
+
+func (rb *requestBody) replaceMessagesDefault(rendered string) error {
 	if strings.HasPrefix(strings.TrimSpace(rendered), "[") {
 		var msgs []json.RawMessage
 		if err := json.Unmarshal([]byte(rendered), &msgs); err != nil {
@@ -297,4 +455,46 @@ func mergeSystem(mode onExistingSystem, existing, content string) string {
 		}
 		return existing + "\n\n" + content
 	}
+}
+
+// replaceAnthropicMessages is replaceMessages for an Anthropic body. Messages
+// of the fragment are kept verbatim, except system ones: Anthropic has no
+// system role, so their text is merged into the top-level system field.
+func (rb *requestBody) replaceAnthropicMessages(rendered string) error {
+	if !strings.HasPrefix(strings.TrimSpace(rendered), "[") {
+		return rb.replaceMessagesDefault(rendered)
+	}
+	var msgs []json.RawMessage
+	if err := json.Unmarshal([]byte(rendered), &msgs); err != nil {
+		return fmt.Errorf("parse rendered messages fragment: %w", err)
+	}
+	kept := make([]json.RawMessage, 0, len(msgs))
+	var system []string
+	for _, raw := range msgs {
+		var m struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil || m.Role != roleSystem {
+			kept = append(kept, raw)
+			continue
+		}
+		texts, err := fragmentTexts(m.Content)
+		if err != nil {
+			return err
+		}
+		if text := strings.Join(texts, "\n\n"); text != "" {
+			system = append(system, text)
+		}
+	}
+	rb.messages = kept
+	rb.hasMessages = true
+	rb.messagesOpaque = false
+	rb.messagesDirty = true
+	if len(system) > 0 {
+		if applied, reason := rb.injectAnthropic(onExistingMerge, roleSystem, strings.Join(system, "\n\n")); !applied {
+			return foldError("system", reason)
+		}
+	}
+	return nil
 }
