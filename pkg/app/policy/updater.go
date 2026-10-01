@@ -111,6 +111,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// rule started rejecting it) stays editable rather than becoming a hard
 	// rejection on every future save.
 	previousSettings := existing.Settings
+	wasEnabled := existing.Enabled
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -155,17 +156,28 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		previousForWrite = nil
 	}
 	// Write-time rules apply only when the update carries settings or points
-	// the stored ones at another plugin, so a disable or rename still succeeds.
-	if err := validatePlugin(
-		u.registry,
-		existing.Slug,
-		existing.Stages,
-		existing.Mode,
-		existing.Settings,
-		previousForWrite,
-		in.Settings != nil || slugChanged,
-	); err != nil {
-		return nil, err
+	// the stored ones at another plugin, so a rename still succeeds.
+	//
+	// The enabled -> disabled transition skips every plugin check, including
+	// ValidateSettingsWrite: pausing is the remedy for a row the gateway
+	// cannot load, and it must not be blocked by stored settings that are
+	// merely grandfathered. The console resends the whole body on a pause
+	// (normalised settings, not byte-equal to the stored ones), which is why
+	// this keys on the transition and not on the shape of the input. Every
+	// other write validates as always: editing a policy that is already paused
+	// must not store junk, and enabling goes through validatePlugin again.
+	if !wasEnabled || existing.Enabled {
+		if err := validatePlugin(
+			u.registry,
+			existing.Slug,
+			existing.Stages,
+			existing.Mode,
+			existing.Settings,
+			previousForWrite,
+			in.Settings != nil || slugChanged,
+		); err != nil {
+			return nil, err
+		}
 	}
 	if err := u.validateScopeAfterPatch(ctx, in, existing); err != nil {
 		return nil, err

@@ -21,6 +21,14 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
+// Policy status values. They mirror app/policy.Status; the response package
+// stays free of app-layer imports.
+const (
+	StatusActive = "active"
+	StatusPaused = "paused"
+	StatusError  = "error"
+)
+
 type PolicyResponse struct {
 	ID          ids.PolicyID     `json:"id"`
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
@@ -35,6 +43,12 @@ type PolicyResponse struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []string         `json:"stages,omitempty"`
 	Mode        string           `json:"mode"`
+	// Status is "active" (enabled and running), "paused" (disabled) or "error"
+	// (enabled but the gateway cannot run it; see status_message).
+	Status string `json:"status" enums:"active,paused,error"`
+	// StatusMessage is the reason the gateway cannot run the policy. It is
+	// present only when status is "error".
+	StatusMessage string `json:"status_message,omitempty"`
 	// MCPScope is echoed as stored: absent when the policy is consumer-wide,
 	// {} when a registry delete pruned every destination.
 	MCPScope *MCPScopeResponse `json:"mcp_scope,omitempty"`
@@ -60,7 +74,12 @@ type MCPScopeResponse struct {
 }
 
 func FromPolicy(p *domain.Policy) PolicyResponse {
+	status := StatusActive
+	if !p.Enabled {
+		status = StatusPaused
+	}
 	return PolicyResponse{
+		Status:      status,
 		ID:          p.ID,
 		GatewayID:   p.GatewayID,
 		ConsumerIDs: p.ConsumerIDs,
@@ -78,6 +97,13 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// WithStatus overrides the status derived from Enabled with an evaluated one.
+func (r PolicyResponse) WithStatus(status, message string) PolicyResponse {
+	r.Status = status
+	r.StatusMessage = message
+	return r
 }
 
 // FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
