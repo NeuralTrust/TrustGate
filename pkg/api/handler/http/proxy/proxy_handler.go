@@ -123,7 +123,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 		return writeProxyError(c, err)
 	}
 
-	stampConsumerTrace(c, consumer)
+	stampConsumerTrace(c, consumer, authCtx)
 	if !route.AllowsMethod(c.Method()) {
 		c.Set(fiber.HeaderAllow, strings.Join(route.AllowedMethods(), ", "))
 		return writeProxyError(c, errMethodNotAllowed)
@@ -296,7 +296,7 @@ func (h *ForwardedHandler) handleModels(
 	return c.Status(fiber.StatusOK).JSON(card)
 }
 
-func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) {
 	if rc == nil || rc.Consumer == nil {
 		return
 	}
@@ -307,7 +307,21 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
+		return
 	}
+	// The proxy plane resolves a bearer token into an AuthContext, never a
+	// Principal. A token the gateway verified names a person, so it is the
+	// principal; an API key names the application and stays out of it.
+	if isVerifiedUserToken(authCtx) {
+		rt.SetPrincipalIdentity(authCtx.Subject, string(authCtx.Method), identity.EmailFromClaims(authCtx.Claims))
+	}
+}
+
+func isVerifiedUserToken(authCtx *appauth.AuthContext) bool {
+	if authCtx == nil {
+		return false
+	}
+	return authCtx.Method == appauth.MethodOAuth2 || authCtx.Method == appauth.MethodOIDC
 }
 
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
