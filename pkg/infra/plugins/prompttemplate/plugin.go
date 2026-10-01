@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const PluginName = "prompt_template"
@@ -34,6 +35,7 @@ const (
 	typeRequired           = "template_required"
 	typeAmbiguous          = "template_ambiguous"
 	typeRenderFailed       = "template_render_failed"
+	typeUnsupportedShape   = "unsupported_request_shape"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -89,26 +91,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	properties, hadProperties := rb.takeProperties()
 
 	if skip := rb.applyFormat(in.Request.Provider, in.Request.SourceFormat, in.Request.MCP, in.Request.Body); skip != nil {
-		data := PromptTemplateData{
-			Decision:                   skip.decision,
-			SkippedReason:              skip.reason,
-			UnscannedTemplateReference: len(cfg.NamedTemplates) > 0 && hasTemplateReference(in.Request.Body),
-		}
-		if appplugins.Blocks(in.Mode) && len(cfg.NamedTemplates) > 0 && !cfg.AllowUntemplatedRequests {
-			// The policy requires every request to reference a template, and this
-			// one cannot carry one the plugin can read. Letting it through would
-			// serve the model an untemplated prompt, so it is refused exactly as
-			// a request with no reference is. The decision is the one that
-			// rejection records (no_op); skipped_reason says why.
-			data.Decision = decisionNoOp
-			setExtras(in.Event, data)
-			return nil, reject(http.StatusBadRequest, typeRequired, "request does not reference a template")
-		}
-		setExtras(in.Event, data)
-		if !appplugins.Blocks(in.Mode) {
-			appplugins.SetDecision(in.Event, in.Mode)
-		}
-		return forwardOrNoOp(rb, hadProperties, false)
+		return skipRequest(in, cfg, skip, rb, hadProperties)
 	}
 
 	modeA := len(cfg.InjectTemplates) > 0
@@ -123,15 +106,89 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return forwardOrNoOp(rb, hadProperties, false)
 	}
 
+	pristine := rb.clone()
 	aOutcome, bOutcome, runErr := runModes(cfg, rb, properties, ctxVars, modeA, modeB)
 	bOutcome.markUnscanned(modeB, in.Request.Body)
 	if runErr != nil {
+		if bOutcome.shapeReason != "" {
+			setExtras(in.Event, PromptTemplateData{
+				Decision:                   decisionSkippedShape,
+				SkippedReason:              bOutcome.shapeReason,
+				UnscannedTemplateReference: bOutcome.unscannedRef,
+			})
+			return nil, runErr
+		}
 		setExtras(in.Event, rejectionData(aOutcome, bOutcome))
 		return nil, runErr
+	}
+	if reason, blocked := blockingUnapplied(aOutcome.unapplied); blocked {
+		// An injection that could not be placed because of the client's own body
+		// (an unreadable system field, say) is the client choosing to skip the
+		// operator's prompt, so the request is refused. Reasons that come from
+		// the operator's config are forwarded and reported.
+		// The request is not forwarded, so the event carries no injected ids and
+		// no Mode B fields: nothing was applied.
+		setExtras(in.Event, PromptTemplateData{
+			Decision:                   decisionSkippedShape,
+			SkippedReason:              reason,
+			Unapplied:                  aOutcome.unapplied,
+			UnscannedTemplateReference: bOutcome.unscannedRef,
+		})
+		return nil, rejectUnsupportedShape(reason)
+	}
+	if rb.dirty() && rb.format != "" {
+		// An edited body the adapter could read two ways, for example a key
+		// that folds to a field this plugin wrote, would let the client's copy
+		// win and drop the injection while the event reported it. Forward the
+		// original instead.
+		if edited, err := rb.marshal(); err == nil && adapter.HasAmbiguousKeys(rb.format, edited) {
+			return skipRequest(in, cfg, &passThrough{decision: decisionSkippedShape, reason: "ambiguous_after_edit"}, pristine, hadProperties)
+		}
 	}
 
 	setExtras(in.Event, enforceData(aOutcome, bOutcome))
 	return forwardOrNoOp(rb, hadProperties, rb.dirty())
+}
+
+// skipRequest handles a request the plugin leaves untouched. In enforce mode a
+// policy that requires a template reference rejects it, since it cannot carry
+// one the plugin can read; otherwise it is forwarded as received (properties
+// stripped), with the reason recorded.
+func skipRequest(in appplugins.ExecInput, cfg *config, skip *passThrough, rb *requestBody, hadProperties bool) (*appplugins.Result, error) {
+	data := PromptTemplateData{
+		Decision:                   skip.decision,
+		SkippedReason:              skip.reason,
+		UnscannedTemplateReference: len(cfg.NamedTemplates) > 0 && hasTemplateReference(in.Request.Body),
+	}
+	if appplugins.Blocks(in.Mode) && skip.decision == decisionSkippedShape && hasTemplates(cfg) {
+		// A chat request whose body the policy cannot edit would otherwise go to
+		// the model without the prompt the operator configured, and a client
+		// could choose that by shaping its body. The event keeps the skip
+		// decision and reason rather than no_op: the policy did not run.
+		setExtras(in.Event, data)
+		return nil, rejectUnsupportedShape(skip.reason)
+	}
+	if appplugins.Blocks(in.Mode) && len(cfg.NamedTemplates) > 0 && !cfg.AllowUntemplatedRequests {
+		// Refused exactly as a request with no reference is. The decision is the
+		// one that rejection records (no_op); skipped_reason says why.
+		data.Decision = decisionNoOp
+		setExtras(in.Event, data)
+		return nil, reject(http.StatusBadRequest, typeRequired, "request does not reference a template")
+	}
+	setExtras(in.Event, data)
+	if !appplugins.Blocks(in.Mode) {
+		appplugins.SetDecision(in.Event, in.Mode)
+	}
+	return forwardOrNoOp(rb, hadProperties, false)
+}
+
+func hasTemplates(cfg *config) bool {
+	return len(cfg.InjectTemplates) > 0 || len(cfg.NamedTemplates) > 0
+}
+
+func rejectUnsupportedShape(reason string) error {
+	return reject(http.StatusBadRequest, typeUnsupportedShape,
+		fmt.Sprintf("request body cannot be edited by the prompt template policy (%s)", reason))
 }
 
 func forwardOrNoOp(rb *requestBody, hadProperties, mutated bool) (*appplugins.Result, error) {
