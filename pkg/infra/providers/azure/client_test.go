@@ -34,8 +34,25 @@ func TestNewAzureClient(t *testing.T) {
 	assert.NotNil(t, NewAzureClient())
 }
 
-func TestAzureTokenScope(t *testing.T) {
-	assert.Equal(t, "https://ai.azure.com/.default", azureTokenScope)
+func TestAzureScope(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		api      string
+		want     string
+	}{
+		{name: "Foundry project", endpoint: "https://x.services.ai.azure.com/api/projects/p", api: providers.AzureAPIResponses, want: azureFoundryTokenScope},
+		{name: "Foundry resource", endpoint: "https://x.services.ai.azure.com", api: providers.AzureAPIOpenAIV1, want: azureFoundryTokenScope},
+		{name: "Anthropic", endpoint: "https://x.openai.azure.com", api: providers.AzureAPIAnthropic, want: azureFoundryTokenScope},
+		{name: "Azure OpenAI", endpoint: "https://x.openai.azure.com", api: providers.AzureAPIOpenAIV1, want: azureCognitiveTokenScope},
+		{name: "Cognitive Services", endpoint: "https://x.cognitiveservices.azure.com", api: providers.AzureAPIDeployments, want: azureCognitiveTokenScope},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: tt.endpoint}}}
+			assert.Equal(t, tt.want, azureScope(config, tt.api))
+		})
+	}
 }
 
 func TestCompletions_MissingAzureConfig(t *testing.T) {
@@ -51,26 +68,170 @@ func TestCompletions_MissingEndpoint(t *testing.T) {
 	assert.Contains(t, err.Error(), "azure endpoint is required")
 }
 
-func TestBuildURL(t *testing.T) {
+func TestCompletions_FoundrySurfaces(t *testing.T) {
+	tests := []struct {
+		name             string
+		api              string
+		body             string
+		stream           bool
+		wantPath         string
+		wantAPIKeyHeader string
+		wantVersion      string
+	}{
+		{
+			name:             "OpenAI v1 chat",
+			api:              providers.AzureAPIOpenAIV1,
+			body:             `{"model":"deepseek-deployment","messages":[]}`,
+			wantPath:         "/api/projects/project-a/openai/v1/chat/completions",
+			wantAPIKeyHeader: "api-key",
+		},
+		{
+			name:             "Responses",
+			api:              providers.AzureAPIResponses,
+			body:             `{"model":"codex-deployment","input":"hi"}`,
+			wantPath:         "/api/projects/project-a/openai/v1/responses",
+			wantAPIKeyHeader: "api-key",
+		},
+		{
+			name:             "Anthropic messages",
+			api:              providers.AzureAPIAnthropic,
+			body:             `{"model":"claude-deployment","max_tokens":10,"messages":[]}`,
+			wantPath:         "/anthropic/v1/messages",
+			wantAPIKeyHeader: "x-api-key",
+			wantVersion:      anthropicVersion,
+		},
+		{
+			name:             "Anthropic messages streaming",
+			api:              providers.AzureAPIAnthropic,
+			body:             `{"model":"claude-deployment","max_tokens":10,"messages":[],"stream":true}`,
+			stream:           true,
+			wantPath:         "/anthropic/v1/messages",
+			wantAPIKeyHeader: "x-api-key",
+			wantVersion:      anthropicVersion,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			var gotHeaders http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotHeaders = r.Header.Clone()
+				if tt.stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+					return
+				}
+				_, _ = w.Write([]byte(`{"id":"response-1"}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			client := NewAzureClient()
+			config := &providers.Config{
+				Options: map[string]any{"api": tt.api},
+				Credentials: providers.Credentials{
+					ApiKey: "foundry-key",
+					Azure: &providers.Azure{
+						Endpoint: srv.URL + "/api/projects/project-a",
+						AuthMode: providers.AzureAuthModeAPIKey,
+					},
+				},
+			}
+			if tt.stream {
+				seq, err := client.CompletionsStream(context.Background(), config, []byte(tt.body))
+				require.NoError(t, err)
+				for _, streamErr := range seq {
+					require.NoError(t, streamErr)
+				}
+			} else {
+				_, err := client.Completions(context.Background(), config, []byte(tt.body))
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantPath, gotPath)
+			assert.Equal(t, "foundry-key", gotHeaders.Get(tt.wantAPIKeyHeader))
+			assert.Equal(t, tt.wantVersion, gotHeaders.Get("anthropic-version"))
+		})
+	}
+}
+
+func TestResolveChatTarget(t *testing.T) {
 	c := &client{}
 
-	t.Run("default api version", func(t *testing.T) {
-		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.openai.azure.com"}}}
-		url := c.buildURL(cfg, "gpt-4o")
-		assert.Equal(t, "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", url)
-	})
+	tests := []struct {
+		name     string
+		endpoint string
+		version  string
+		api      string
+		model    string
+		wantURL  string
+	}{
+		{
+			name:     "default deployments API",
+			endpoint: "https://x.openai.azure.com",
+			model:    "gpt-4o",
+			wantURL:  "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21",
+		},
+		{
+			name:     "project endpoint deployments API",
+			endpoint: "https://x.services.ai.azure.com/api/projects/project-a",
+			model:    "gpt-4o",
+			wantURL:  "https://x.services.ai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21",
+		},
+		{
+			name:     "deployment is path escaped",
+			endpoint: "https://x.openai.azure.com",
+			model:    "azure/claude",
+			wantURL:  "https://x.openai.azure.com/openai/deployments/azure%2Fclaude/chat/completions?api-version=2024-10-21",
+		},
+		{
+			name:     "custom deployments API version",
+			endpoint: "https://x.openai.azure.com",
+			version:  "2025-01-01",
+			model:    "gpt-4o",
+			wantURL:  "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01",
+		},
+		{
+			name:     "Foundry OpenAI v1 chat",
+			endpoint: "https://x.services.ai.azure.com/api/projects/project-a",
+			api:      providers.AzureAPIOpenAIV1,
+			model:    "deepseek-deployment",
+			wantURL:  "https://x.services.ai.azure.com/api/projects/project-a/openai/v1/chat/completions",
+		},
+		{
+			name:     "Foundry Responses",
+			endpoint: "https://x.openai.azure.com",
+			api:      providers.AzureAPIResponses,
+			model:    "codex-deployment",
+			wantURL:  "https://x.openai.azure.com/openai/v1/responses",
+		},
+		{
+			name:     "Foundry Anthropic",
+			endpoint: "https://x.services.ai.azure.com",
+			api:      providers.AzureAPIAnthropic,
+			model:    "claude-deployment",
+			wantURL:  "https://x.services.ai.azure.com/anthropic/v1/messages",
+		},
+	}
 
-	t.Run("project endpoint default api version", func(t *testing.T) {
-		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.services.ai.azure.com/api/projects/project-a"}}}
-		url := c.buildURL(cfg, "gpt-4o")
-		assert.Equal(t, "https://x.services.ai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", url)
-	})
-
-	t.Run("custom api version", func(t *testing.T) {
-		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.openai.azure.com", ApiVersion: "2025-01-01"}}}
-		url := c.buildURL(cfg, "gpt-4o")
-		assert.Equal(t, "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01", url)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &providers.Config{
+				Options: map[string]any{"api": tt.api},
+				Credentials: providers.Credentials{Azure: &providers.Azure{
+					Endpoint:   tt.endpoint,
+					ApiVersion: tt.version,
+				}},
+			}
+			if tt.api == "" {
+				cfg.Options = nil
+			}
+			target, err := c.resolveChatTarget(cfg, tt.model)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantURL, target.url)
+		})
+	}
 }
 
 func TestBuildEmbeddingsURL(t *testing.T) {
@@ -400,9 +561,22 @@ func TestResolveAuth(t *testing.T) {
 		assert.Equal(t, authHeader{name: "api-key", value: "key"}, auth)
 	})
 
+	t.Run("anthropic API key mode uses x-api-key header", func(t *testing.T) {
+		c := &client{}
+		cfg := &providers.Config{Credentials: providers.Credentials{
+			ApiKey: "key",
+			Azure:  &providers.Azure{AuthMode: providers.AzureAuthModeAPIKey},
+		}}
+
+		auth, err := c.resolveAuthForAPI(context.Background(), cfg, providers.AzureAPIAnthropic)
+		require.NoError(t, err)
+		assert.Equal(t, authHeader{name: "x-api-key", value: "key"}, auth)
+	})
+
 	t.Run("service principal mode uses bearer token", func(t *testing.T) {
-		c := &client{tokenSource: func(_ context.Context, az *providers.Azure) (string, error) {
+		c := &client{tokenSource: func(_ context.Context, az *providers.Azure, scope string) (string, error) {
 			assert.Equal(t, providers.AzureAuthModeServicePrincipal, az.AuthMode)
+			assert.Equal(t, azureFoundryTokenScope, scope)
 			assert.Equal(t, "tenant", az.TenantID)
 			assert.Equal(t, "client", az.ClientID)
 			assert.Equal(t, "secret", az.ClientSecret)
@@ -421,8 +595,9 @@ func TestResolveAuth(t *testing.T) {
 	})
 
 	t.Run("default credential mode uses bearer token", func(t *testing.T) {
-		c := &client{tokenSource: func(_ context.Context, az *providers.Azure) (string, error) {
+		c := &client{tokenSource: func(_ context.Context, az *providers.Azure, scope string) (string, error) {
 			assert.Equal(t, providers.AzureAuthModeDefaultAzureCredential, azureAuthMode(az))
+			assert.Equal(t, azureFoundryTokenScope, scope)
 			return "dac-token", nil
 		}}
 		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
@@ -528,7 +703,7 @@ func TestCompletions_AppliesAuthMode(t *testing.T) {
 			tt.credentials.Azure.Endpoint = srv.URL
 			c := &client{
 				pool: providers.NewHTTPClientPool(),
-				tokenSource: func(_ context.Context, az *providers.Azure) (string, error) {
+				tokenSource: func(_ context.Context, az *providers.Azure, _ string) (string, error) {
 					return strings.ReplaceAll(string(azureAuthMode(az)), "_", "-") + "-token", nil
 				},
 			}
@@ -592,7 +767,7 @@ func TestTestConnection_AppliesAuthMode(t *testing.T) {
 			tt.credentials.Azure.Endpoint = srv.URL
 			c := &client{
 				pool: providers.NewHTTPClientPool(),
-				tokenSource: func(_ context.Context, az *providers.Azure) (string, error) {
+				tokenSource: func(_ context.Context, az *providers.Azure, _ string) (string, error) {
 					return strings.ReplaceAll(string(azureAuthMode(az)), "_", "-") + "-token", nil
 				},
 			}

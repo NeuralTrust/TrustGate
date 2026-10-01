@@ -150,6 +150,21 @@ func OverrideModel(body []byte, model string) []byte {
 	return out
 }
 
+// CarryModel copies the model named in src onto dst when dst names none.
+// Encoders for wire formats that carry the model out of band (Bedrock
+// Converse, Titan and Vertex embeddings) drop it, and without it EnforceModel
+// treats the request as model-less and applies the binding default.
+func CarryModel(src, dst []byte) []byte {
+	if model, err := ExtractModel(dst); err == nil && model != "" {
+		return dst
+	}
+	model, err := ExtractModel(src)
+	if err != nil || model == "" {
+		return dst
+	}
+	return OverrideModel(dst, model)
+}
+
 func StripModel(body []byte) []byte {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {

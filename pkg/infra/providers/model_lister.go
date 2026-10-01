@@ -28,8 +28,9 @@ import (
 // credentials — the ground truth the static catalog cannot see (org-restricted
 // API keys, Azure deployments, account-gated models).
 type LiveModel struct {
-	ID          string
-	DisplayName string
+	ID            string
+	DisplayName   string
+	ProviderModel string
 }
 
 // ModelLister lists the models a provider's API reports as available to the
