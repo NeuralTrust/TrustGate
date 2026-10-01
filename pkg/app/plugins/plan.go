@@ -90,6 +90,7 @@ func newStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger, 
 			mutatesResp:  plugin.MutatesResponseBody(),
 			mutatesMeta:  plugin.MutatesMetadata(),
 			readsContent: IsContentReader(plugin),
+			local:        RewritesLocally(plugin),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {
@@ -240,7 +241,7 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 		return lessEntry(sorted[i], sorted[j])
 	})
 
-	sorted = rewritersBeforeReaders(sorted, stage)
+	sorted = orderByContentFlow(sorted, stage)
 
 	batches := make([][]chainEntry, 0, len(sorted))
 	var current []chainEntry
@@ -298,22 +299,31 @@ func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger)
 }
 
 // OrderStreamEntries returns the pre_response entries in the order a streamed
-// segment walks them: the same rewriters-before-readers rule batches use, so a
-// content reader (openai_moderation) inspects a segment only after the
-// rewriters of its priority have masked it. Entries must already be in
-// lessEntry order. The result is a new slice, deterministic and stable;
-// priorities are never crossed.
+// segment walks them: the same content-flow rule batches use, so a reader
+// (openai_moderation) or a remote guard (bedrock_guardrail) inspects a segment
+// only after the local rewriters of its priority have masked it. Entries must
+// already be in lessEntry order. The result is a new slice, deterministic and
+// stable; priorities are never crossed.
 func OrderStreamEntries(entries []chainEntry) []chainEntry {
-	return rewritersBeforeReaders(entries, policy.StagePreResponse)
+	return orderByContentFlow(entries, policy.StagePreResponse)
 }
 
-// rewritersBeforeReaders reorders each run of consecutive parallel entries that
-// share a priority so that the pure content readers come after everything else.
+// orderByContentFlow reorders each run of consecutive parallel entries that
+// share a priority so that content reaches a third party only after every local
+// rewrite of that priority:
+//
+//   - the pure content readers move after everything else (RUN-1693);
+//   - among the rest, the slots the rewriters hold are refilled with the local
+//     rewriters (RewritesLocally) first and then the rewriters that may send the
+//     content off the box (RUN-1745). Entries that neither rewrite nor read keep
+//     their exact place.
+//
 // The sort is stable, so the tie-break (specificity, slug, id) still decides the
-// order inside each side. Entries that neither rewrite nor read keep their
-// place among the rewriters, and a run with no reader, or with no rewriter, is
-// left exactly as it was. Priorities are never crossed.
-func rewritersBeforeReaders(entries []chainEntry, stage policy.Stage) []chainEntry {
+// order inside each group. A run with no rewriter is left exactly as it was.
+// Two rewriters of one stage always claim the same body, so the batch planner
+// already runs them one after the other and the reorder adds no sequential
+// step. Priorities are never crossed.
+func orderByContentFlow(entries []chainEntry, stage policy.Stage) []chainEntry {
 	out := make([]chainEntry, 0, len(entries))
 	for i := 0; i < len(entries); {
 		j := i + 1
@@ -332,13 +342,24 @@ func rewritersBeforeReaders(entries []chainEntry, stage policy.Stage) []chainEnt
 			i = j
 			continue
 		}
-		var head, readers []chainEntry
+		var head, readers, local, offBox []chainEntry
+		var slots []int
 		for _, e := range run {
-			if e.onlyReadsAt(stage) {
+			switch {
+			case e.onlyReadsAt(stage):
 				readers = append(readers, e)
-			} else {
-				head = append(head, e)
+				continue
+			case e.rewritesOffBoxAt(stage):
+				offBox = append(offBox, e)
+				slots = append(slots, len(head))
+			case e.rewritesAt(stage):
+				local = append(local, e)
+				slots = append(slots, len(head))
 			}
+			head = append(head, e)
+		}
+		for k, e := range append(local, offBox...) {
+			head[slots[k]] = e
 		}
 		out = append(out, head...)
 		out = append(out, readers...)
