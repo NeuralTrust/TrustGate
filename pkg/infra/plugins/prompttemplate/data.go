@@ -20,7 +20,20 @@ const (
 	decisionObserved = "observed"
 	decisionNoOp     = "no_op"
 	decisionSkipped  = "skipped"
+	// decisionSkippedFormat marks a request whose wire format the plugin does
+	// not model, and decisionSkippedShape one whose body is shaped in a way it
+	// cannot edit safely. Both leave the body untouched.
+	decisionSkippedFormat = "skipped_unsupported_format"
+	decisionSkippedShape  = "skipped_unsupported_shape"
 )
+
+// unappliedInjection records a Mode A template that was rendered but never
+// reached the request, with the reason, so the event does not report a
+// success the model never saw.
+type unappliedInjection struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
 
 type PromptTemplateData struct {
 	Decision         string   `json:"decision"`
@@ -36,4 +49,14 @@ type PromptTemplateData struct {
 	// trusted header) and were dropped in its favour, which is otherwise
 	// invisible to the caller and to the operator.
 	DroppedClientVariables []string `json:"dropped_client_variables,omitempty"`
+	// Unapplied lists Mode A templates that could not be placed in the
+	// request. skipped_ids is a different thing: a missing context variable.
+	Unapplied []unappliedInjection `json:"unapplied,omitempty"`
+	// SkippedReason names why the whole request was passed through untouched:
+	// the wire format or the body shape.
+	SkippedReason string `json:"skipped_reason,omitempty"`
+	// UnscannedTemplateReference is true when a request passed through
+	// untouched still carries a {template://...} token the plugin never
+	// scanned, so the literal reaches the model.
+	UnscannedTemplateReference bool `json:"unscanned_template_reference,omitempty"`
 }
