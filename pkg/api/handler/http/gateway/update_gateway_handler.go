@@ -80,18 +80,19 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	g, err := h.updater.Update(c.UserContext(), appgateway.UpdateInput{
-		ID:              id,
-		Slug:            req.Slug,
-		Status:          req.Status,
-		Domain:          req.Domain,
-		TenantID:        caller,
-		PlatformAdmin:   caller == "",
-		Metadata:        req.Metadata,
-		Telemetry:       req.Telemetry,
-		ClientTLSConfig: req.ClientTLSConfig,
-		SessionConfig:   req.SessionConfig,
-		Entitlements:    req.Entitlements,
-		StoreMode:       req.StoreMode,
+		ID:                  id,
+		Slug:                req.Slug,
+		Status:              req.Status,
+		Domain:              req.Domain,
+		TenantID:            caller,
+		PlatformAdmin:       caller == "",
+		Metadata:            req.Metadata,
+		Telemetry:           req.Telemetry,
+		ClientTLSConfig:     req.ClientTLSConfig,
+		SessionConfig:       req.SessionConfig,
+		TopicClassification: req.TopicClassification,
+		Entitlements:        req.Entitlements,
+		StoreMode:           req.StoreMode,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

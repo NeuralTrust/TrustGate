@@ -19,6 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
@@ -132,6 +133,68 @@ func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
 	}
 	if got.ClientTLSConfig != nil {
 		t.Fatalf("ClientTLSConfig should be nil for NULL column, got %+v", got.ClientTLSConfig)
+	}
+	if got.TopicClassification != nil {
+		t.Fatalf("TopicClassification should be nil for NULL column, got %+v", got.TopicClassification)
+	}
+}
+
+func TestRepository_TopicClassification_RoundTrip(t *testing.T) {
+	r, conn := setupRepo(t)
+	ctx := context.Background()
+
+	isNull := func(id ids.GatewayID) bool {
+		t.Helper()
+		var null bool
+		if err := conn.Pool.QueryRow(ctx, `SELECT topic_classification IS NULL FROM gateways WHERE id = $1`, id).Scan(&null); err != nil {
+			t.Fatalf("read topic_classification: %v", err)
+		}
+		return null
+	}
+
+	unset, _ := domain.New("unset")
+	if err := r.Save(ctx, unset); err != nil {
+		t.Fatalf("Save unset: %v", err)
+	}
+	if !isNull(unset.ID) {
+		t.Fatal("a gateway without topic classification must store SQL NULL, not JSON null")
+	}
+
+	threshold := 0.7
+	g, _ := domain.New("classified")
+	g.TopicClassification = &topic.Config{
+		Enabled:       true,
+		Topics:        []topic.Topic{{Name: "billing", Definition: "refunds and invoices"}},
+		Threshold:     &threshold,
+		MessageWindow: 5,
+	}
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := r.FindByID(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	tc := got.TopicClassification
+	if tc == nil || !tc.Enabled || len(tc.Topics) != 1 || tc.Topics[0].Name != "billing" ||
+		tc.Threshold == nil || *tc.Threshold != 0.7 || tc.MessageWindow != 5 {
+		t.Fatalf("TopicClassification round-trip lost data: %+v", tc)
+	}
+
+	got.TopicClassification = &topic.Config{Enabled: false, Topics: tc.Topics}
+	got.UpdatedAt = time.Now().UTC()
+	if err := r.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	updated, err := r.FindByID(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
+	if updated.TopicClassification == nil || updated.TopicClassification.Enabled {
+		t.Fatalf("Update did not persist the disabled config: %+v", updated.TopicClassification)
+	}
+	if len(updated.TopicClassification.Topics) != 1 {
+		t.Fatalf("Update dropped the catalog: %+v", updated.TopicClassification)
 	}
 }
 

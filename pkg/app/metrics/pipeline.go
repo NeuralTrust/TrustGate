@@ -33,6 +33,10 @@ type Exporter interface {
 	Close()
 }
 
+type TopicExporter interface {
+	PublishTopic(ctx context.Context, evt *events.TopicClassification) error
+}
+
 // PlaygroundTraceStore persists the metrics Event of playground requests so the
 // dashboard can fetch it by TraceID. It runs after the exporters as a
 // best-effort side channel and must never block or fail the pipeline.
@@ -100,6 +104,24 @@ func (p *Pipeline) publishContext(
 	}
 	if p.playgroundStore != nil {
 		p.playgroundStore.Save(ctx, req, evt)
+	}
+}
+
+func (p *Pipeline) PublishTopic(ctx context.Context, evt *events.TopicClassification, explicit []telemetrydomain.ExporterConfig) {
+	if p == nil || evt == nil {
+		return
+	}
+	for _, exporter := range p.resolveTargets(explicit) {
+		topical, ok := exporter.(TopicExporter)
+		if !ok {
+			continue
+		}
+		if err := topical.PublishTopic(ctx, evt); err != nil {
+			p.logger.Error("failed to publish topic classification event",
+				slog.String("gateway_id", evt.GatewayID),
+				slog.String("exporter", exporter.Name()),
+				slog.String("error", err.Error()))
+		}
 	}
 }
 

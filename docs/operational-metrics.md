@@ -17,6 +17,28 @@ Planes are `admin`, `proxy`, and `mcp`. Routes are `health`, `version`,
 `denied_auth`, `denied_forbidden`, `denied_throttled`, `denied_policy`,
 `client_error`, `server_error`, and `probe`.
 
+The async topic classifier (see [topic classification](topic-classification.md))
+adds its own instruments. `outcome` is their only label, so they stay bounded
+whatever the number of gateways; per-gateway detail lives in the
+`topic_classification` events.
+
+- `agentgateway.topic_classifier.intake_total` (`{request}`): what the request
+  path offered. `accepted`, `sampled_out`, `body_too_large`, `buffer_full`
+  (out of slots or bytes), `shutting_down`.
+- `agentgateway.topic_classifier.enqueue_total` (`{request}`): what reached the
+  queue. `queued`, `no_text`, `quota_exceeded`, `queue_error`.
+- `agentgateway.topic_classifier.result_total` (`{request}`): how each queued
+  request ended. `classified`, `cache_hit`, `failed`, `poison`, `unconfigured`,
+  `invalid`, `unpublishable` (its gateway is gone), `publish_retry` (left
+  pending to be published again).
+- `agentgateway.topic_classifier.call.duration` (seconds) and
+  `agentgateway.topic_classifier.call.texts` (`{text}`): each topic-guard call.
+  `ok`, `backpressure`, `error`.
+- `agentgateway.topic_classifier.stream.length` and
+  `agentgateway.topic_classifier.stream.pending` (`{entry}`): gauges read on
+  every collection, so a backlog is visible without traffic. A growing length
+  means requests arrive faster than they are classified.
+
 Collector/exporter setup is deployment-owned; enabling this flag does not
 change product telemetry exporters.
 
