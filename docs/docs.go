@@ -774,9 +774,78 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
+            "post": {
+                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Rotate an api key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry for the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers": {
             "get": {
-                "description": "Returns a paginated list of consumers in a gateway.",
+                "description": "Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.",
                 "produces": [
                     "application/json"
                 ],
@@ -822,6 +891,12 @@ const docTemplate = `{
                         "format": "uuid",
                         "description": "Filter consumers linked to this auth id",
                         "name": "auth_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also list the consumers the gateway serves without storing (the MCP Store). They carry synthetic=true, appear on the first page only, and cannot be edited, deleted or given a key",
+                        "name": "include_synthetic",
                         "in": "query"
                     },
                     {
@@ -2711,6 +2786,183 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account": {
+            "get": {
+                "description": "Reports whether the account this MCP instance holds for every caller is connected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Read an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Forgets the stored account. Nothing is revoked upstream, but calls through this instance stop until it is connected again.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Drop an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account/connect-link": {
+            "post": {
+                "description": "Mints the connect page an administrator walks to authorize the account every caller of this instance uses. The body is optional: resume_url is where the page sends the administrator back to once the account is connected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Start connecting an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Where to come back to",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/registries/{id}/tools": {
             "get": {
                 "description": "Introspects the MCP server behind the registry and returns its advertised tools under their native upstream names. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 409 when the registry cannot be introspected from the admin plane (per-principal auth or URL variables), and 502 when the upstream MCP server is unreachable or its tools/list call fails.",
@@ -4191,6 +4443,10 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt retires an api key on its own, as an RFC 3339 instant. Omitted\nor empty is no expiry, which is what every key was before the field\nexisted.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4322,6 +4578,14 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -4331,7 +4595,28 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt is left alone when absent, cleared by an empty string, and set\nby an RFC 3339 instant.",
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
                     "type": "string"
                 },
                 "type": {
@@ -4349,11 +4634,22 @@ const docTemplate = `{
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
                 },
+                "consumers": {
+                    "description": "Consumers are the consumers this auth reaches, which is what a caller\nneeds before revoking one: a key can be attached to several, so\ndisabling it stops more than the endpoint the reader was looking at.\nEmpty means it reaches none, which is an answer rather than a gap.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "expires_at": {
+                    "description": "When the key retires itself. Absent means it never does.",
+                    "type": "string"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -4790,15 +5086,12 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "acts_for_users": {
-                    "description": "ActsForUsers turns on per-user behaviour on an MCP consumer.",
                     "type": "boolean"
                 },
                 "end_user_header": {
-                    "description": "EndUserHeader lets an LLM consumer forward an end-user id for attribution.",
                     "type": "boolean"
                 },
                 "source": {
-                    "description": "Source is how end users are known: platform (they sign in) or app (the\napplication names them through the X-NeuralTrust-End-User header).\nDefaults to platform.",
                     "type": "string"
                 }
             }
@@ -5114,6 +5407,10 @@ const docTemplate = `{
                 "slug": {
                     "type": "string"
                 },
+                "synthetic": {
+                    "description": "Synthetic marks a consumer the gateway serves without storing: today the\nMCP Store. It has no row, so it cannot be edited, deleted or given a key,\nand it is only listed when a caller asks for it.",
+                    "type": "boolean"
+                },
                 "toolkit": {
                     "type": "array",
                     "items": {
@@ -5201,18 +5498,7 @@ const docTemplate = `{
             }
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse": {
-            "type": "object",
-            "properties": {
-                "acts_for_users": {
-                    "type": "boolean"
-                },
-                "end_user_header": {
-                    "type": "boolean"
-                },
-                "source": {
-                    "type": "string"
-                }
-            }
+            "type": "object"
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse": {
             "type": "object",
@@ -5390,6 +5676,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                     "type": "string"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 }
             }
         },
@@ -5431,6 +5720,9 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 }
             }
         },
@@ -5487,6 +5779,9 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 },
                 "updated_at": {
                     "type": "string"
@@ -5936,6 +6231,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is: the caller's own\n(empty, or \"user\") or the one the instance holds for everyone (\"shared\").",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -6066,6 +6365,15 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink": {
+            "type": "object",
+            "properties": {
+                "resume_url": {
+                    "description": "ResumeURL is where the connect page sends the admin once the account is\nconnected: the console screen they started from. An absolute https URL;\nempty leaves them on the page.",
+                    "type": "string"
                 }
             }
         },
@@ -6337,6 +6645,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is; empty means the\ncaller's own.",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -6539,6 +6851,43 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse": {
+            "type": "object",
+            "properties": {
+                "consumer_path": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse": {
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "needs_reconnect": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -7525,10 +7874,6 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
-                "multi_instance": {
-                    "description": "MultiInstance reports whether more than one registry of this server is\nmeaningful on one gateway: two of them can only differ in what an operator\nconfigures — a templated URL, a credential of its own, an OAuth client they\nregister — so a server that is one URL behind per-user OAuth holds exactly\none, and a second would be a copy of the first.\n\nDeclared per entry in the catalog seed as multi_instance, like\nSelfService, and nothing moves it after load. The zero value is the\nconservative answer.",
-                    "type": "boolean"
-                },
                 "oauth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },
@@ -7641,7 +7986,8 @@ const docTemplate = `{
             "additionalProperties": {
                 "type": "array",
                 "items": {
-                    "type": "integer"
+                    "type": "integer",
+                    "format": "int32"
                 }
             }
         },
@@ -7765,6 +8111,40 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "message_window": {
+                    "type": "integer"
+                },
+                "sampling_rate": {
+                    "type": "number"
+                },
+                "threshold": {
+                    "type": "number"
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic": {
+            "type": "object",
+            "properties": {
+                "definition": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt": {
             "type": "object",
             "properties": {
@@ -7832,6 +8212,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
@@ -7851,7 +8251,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "end_user": {
-                    "type": "string"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -7954,6 +8354,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "catalog_code": {
+                    "type": "string"
+                },
+                "decision": {
+                    "description": "Decision is the tools/call-level outcome PluginRunner recorded directly\non the MCP span — currently only \"failed_open\", when a plugin stage\nfailed on a non-block error and the call proceeded uninspected. Empty\nwhen nothing at that level failed; a per-plugin decision still lives on\nits own PolicyChain entry.",
                     "type": "string"
                 },
                 "host": {
