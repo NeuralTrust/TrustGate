@@ -37,6 +37,7 @@ func TestResolveAndDialEnforcesPublicDNSAnswers(t *testing.T) {
 		{"loopback_dns", []string{"127.0.0.1"}, true, false},
 		{"cgnat_dns", []string{"100.64.0.1"}, true, false},
 		{"ula_dns", []string{"fd00::1"}, true, false},
+		{"nat64_public", []string{"64:ff9b::808:808"}, true, true},
 		{"nat64_private", []string{"64:ff9b::a00:1"}, true, false},
 		{"admin_private_dns", []string{"10.1.2.3"}, false, true},
 		{"admin_cgnat_dns", []string{"100.64.0.1"}, false, true},
