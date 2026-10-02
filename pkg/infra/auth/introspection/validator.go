@@ -29,6 +29,7 @@ import (
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -66,7 +67,7 @@ type Validator struct {
 
 func NewValidator(client *http.Client) *Validator {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = netguard.NewHTTPClient(10 * time.Second)
 	}
 	return &Validator{client: client, cache: map[string]cacheEntry{}}
 }

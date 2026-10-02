@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appsts.IdPTokenClient = (*TokenClient)(nil)
@@ -46,7 +47,7 @@ const endpointTTL = time.Hour
 
 func NewTokenClient(client *http.Client) *TokenClient {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	return &TokenClient{client: client, endpoints: map[string]endpointEntry{}}
 }

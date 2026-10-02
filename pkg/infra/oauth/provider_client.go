@@ -28,6 +28,7 @@ import (
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)
@@ -38,7 +39,7 @@ type providerClient struct {
 
 func NewProviderClient(client *http.Client) appoauth.ProviderClient {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	return &providerClient{client: client}
 }

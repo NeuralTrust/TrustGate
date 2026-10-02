@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 const (
@@ -54,7 +56,7 @@ type jwksFetch struct {
 
 func NewJWKSCache(client *http.Client, ttl time.Duration) *JWKSCache {
 	if client == nil {
-		client = &http.Client{Timeout: defaultFetchTimeout}
+		client = netguard.NewHTTPClient(defaultFetchTimeout)
 	} else if client.Timeout <= 0 {
 		clone := *client
 		clone.Timeout = defaultFetchTimeout

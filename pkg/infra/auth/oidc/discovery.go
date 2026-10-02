@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 const discoveryTTL = time.Hour
@@ -43,7 +45,7 @@ type discoveryEntry struct {
 
 func newDiscovery(client *http.Client) *discovery {
 	if client == nil {
-		client = &http.Client{Timeout: defaultFetchTimeout}
+		client = netguard.NewHTTPClient(defaultFetchTimeout)
 	}
 	return &discovery{client: client, entries: map[string]discoveryEntry{}}
 }

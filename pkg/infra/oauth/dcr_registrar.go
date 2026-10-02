@@ -28,6 +28,7 @@ import (
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var _ appoauth.UpstreamRegistrar = (*upstreamRegistrar)(nil)
@@ -92,7 +93,7 @@ const discoveryTTL = time.Hour
 
 func NewUpstreamRegistrar(clients appoauth.ClientStore, client *http.Client, opts ...RegistrarOption) appoauth.UpstreamRegistrar {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	r := &upstreamRegistrar{
 		clients:    clients,
