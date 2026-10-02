@@ -219,6 +219,9 @@ func TestPolicyOpenAPIDocumentsTheMCPWidePlacement(t *testing.T) {
 	assert.Contains(t, placement.Post.Responses["409"].Description, "changed while it was being promoted")
 	assert.Contains(t, placement.Post.Responses["422"].Description, "does not support MCP")
 	assert.Contains(t, placement.Post.Description, "never runs on LLM or A2A consumers")
+	assert.Contains(t, placement.Post.Description, "removes the policy's consumer links in the same write")
+	assert.Contains(t, placement.Post.Description, "already MCP-wide answers 200")
+	assert.Contains(t, placement.Delete.Description, "holds no consumer links")
 
 	for _, status := range []string{"200", "404"} {
 		_, ok := placement.Delete.Responses[status]
@@ -240,6 +243,7 @@ func TestPolicyOpenAPIDocumentsTheMCPWidePlacement(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, global.Post.Description, "clears mcp_wide")
 	assert.Contains(t, global.Post.Responses["409"].Description, "changed while it was being promoted")
+	assert.Contains(t, global.Post.Description, "already global by then, which answers 200")
 	assert.Contains(t, global.Delete.Description, "Clears only global")
 
 	item, ok := document.Paths["/v1/gateways/{gateway_id}/policies/{id}"]
@@ -254,7 +258,8 @@ func TestPolicyOpenAPIDocumentsTheMCPWidePlacement(t *testing.T) {
 }
 
 // Rule 2 opened the attach of a group-only scope to a non-MCP consumer, so the
-// description may no longer promise that a scoped policy is MCP-only.
+// description may no longer promise that a scoped policy is MCP-only. An
+// MCP-wide policy holds no links, so the attach also documents refusing it.
 func TestAttachPolicyOpenAPIDescribesTheGroupOnlyScopeAsAttachable(t *testing.T) {
 	document := loadOpenAPIDocument(t)
 
@@ -265,6 +270,8 @@ func TestAttachPolicyOpenAPIDescribesTheGroupOnlyScopeAsAttachable(t *testing.T)
 		"rule 2 made that sentence false: a group-only scope attaches to a non-MCP consumer")
 	assert.Contains(t, description, "names a registry or a tool")
 	assert.Contains(t, description, "narrowing by group alone also attaches to a non-MCP consumer")
+	assert.Contains(t, description, "attaching one answers 422")
+	assert.Contains(t, attach.Post.Responses["422"].Description, "The policy is MCP-wide")
 }
 
 // refOf extracts the $ref of a property, whether inline or wrapped in allOf

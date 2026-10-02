@@ -145,6 +145,65 @@ func TestMCPWidePolicy_OverlappingGroupsConflict(t *testing.T) {
 	}
 }
 
+func createLinkableMCPConsumer(t *testing.T, gatewayID, registryID string) string {
+	t.Helper()
+	return CreateConsumer(t, gatewayID, map[string]any{
+		"name":       uniqueName("mcp-wide-links-co"),
+		"type":       "mcp",
+		"registries": []map[string]any{{"id": registryID}},
+	})
+}
+
+func attachPolicyURL(gatewayID, consumerID, policyID string) string {
+	return fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s", AdminURL, gatewayID, consumerID, policyID)
+}
+
+// An MCP-wide policy runs on every MCP consumer without links. The promotion
+// removes the links it had, an attach is refused while it is MCP-wide,
+// promoting again is a no-op, and the demotion revives nothing.
+func TestMCPWidePolicy_HoldsNoConsumerLinks(t *testing.T) {
+	defer Track(t, "MCPWidePolicy")()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-wide-links-gw")})
+	registryID := createMCPRegistry(t, gatewayID)
+	first := createLinkableMCPConsumer(t, gatewayID, registryID)
+	second := createLinkableMCPConsumer(t, gatewayID, registryID)
+	policyID := CreatePolicy(t, gatewayID, groupDenyAllPolicyPayload("Finanzas"))
+	attachPolicyWarnings(t, gatewayID, first, policyID)
+	attachPolicyWarnings(t, gatewayID, second, policyID)
+	require.Len(t, idSet(t, getPolicy(t, gatewayID, policyID), "consumer_ids"), 2)
+
+	t.Run("promoting removes the links", func(t *testing.T) {
+		body := SetPolicyMCPWide(t, gatewayID, policyID)
+		requirePlacement(t, body, false, true)
+		assert.Empty(t, idSet(t, body, "consumer_ids"), "the promotion answers the policy without links")
+		assert.Empty(t, idSet(t, getPolicy(t, gatewayID, policyID), "consumer_ids"), "the links are gone from the store")
+	})
+
+	t.Run("attaching a consumer is refused", func(t *testing.T) {
+		status, body := sendRequest(t, http.MethodPost, attachPolicyURL(gatewayID, first, policyID), nil, nil)
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+		assert.Contains(t, body["message"], "policy is MCP-wide")
+		assert.Empty(t, idSet(t, getPolicy(t, gatewayID, policyID), "consumer_ids"), "a refused attach leaves no link")
+	})
+
+	t.Run("promoting again is a no-op", func(t *testing.T) {
+		body := SetPolicyMCPWide(t, gatewayID, policyID)
+		requirePlacement(t, body, false, true)
+		assert.Empty(t, idSet(t, body, "consumer_ids"))
+	})
+
+	t.Run("demoting revives no link and attaching works again", func(t *testing.T) {
+		status, body := sendRequest(t, http.MethodDelete, placementURL(gatewayID, policyID, "mcp-wide"), nil, nil)
+		require.Equal(t, http.StatusOK, status, "body=%v", body)
+		requirePlacement(t, body, false, false)
+		assert.Empty(t, idSet(t, body, "consumer_ids"), "the demoted policy is a draft")
+
+		attachPolicyWarnings(t, gatewayID, first, policyID)
+		assert.Equal(t, map[string]struct{}{first: {}}, idSet(t, getPolicy(t, gatewayID, policyID), "consumer_ids"))
+	})
+}
+
 func TestMCPWidePolicy_PluginWithoutMCPIsRefused(t *testing.T) {
 	defer Track(t, "MCPWidePolicy")()
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-wide-llm-gw")})

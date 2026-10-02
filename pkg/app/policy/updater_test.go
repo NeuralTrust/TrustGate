@@ -883,54 +883,42 @@ func TestUpdater_Update_SlugChangeOfAnMCPWidePolicy(t *testing.T) {
 	}
 }
 
-// The links of a gateway-wide policy are ignored at load, but demoting it
-// brings them back and the demotion checks nothing. So a scope that does not
-// reach a linked LLM consumer is refused here too, as on a targeted policy.
-func TestUpdater_Update_GatewayWideScopeIsCheckedAgainstItsLinks(t *testing.T) {
+// The links of a global policy are ignored at load, but demoting it brings them
+// back and the demotion checks nothing. So a scope that does not reach a linked
+// LLM consumer is refused here too, as on a targeted policy.
+func TestUpdater_Update_GlobalScopeIsCheckedAgainstItsLinks(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		place func(p *domain.Policy)
-	}{
-		{name: "mcp-wide", place: func(p *domain.Policy) { p.SetMCPWide(true) }},
-		{name: "global", place: func(p *domain.Policy) { p.SetGlobal(true) }},
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	consumerID := ids.New[ids.ConsumerKind]()
+	existing.ConsumerIDs = []ids.ConsumerID{consumerID}
+	existing.SetGlobal(true)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	jira := ids.New[ids.RegistryKind]()
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, existing.GatewayID, sameRegistryIDs(jira)).
+		Return([]*registrydomain.Registry{mcpRegistry(existing.GatewayID, jira)}, nil).
+		Once()
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().
+		FindByID(mock.Anything, consumerID).
+		Return(&consumerdomain.Consumer{ID: consumerID, Type: consumerdomain.TypeLLM}, nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(
+		repo, consumers, freeLevels(t), registryRepo,
+		newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP),
+		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
+	)
+	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:       existing.ID,
+		MCPScope: apppolicy.MCPScopePatch{Set: true, Value: &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}}},
+	})
+	if !errors.Is(err, consumerdomain.ErrPolicyScopeDoesNotCross) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross wrapping ErrValidation", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			repo := repomocks.NewRepository(t)
-			existing := existingPolicy(t)
-			consumerID := ids.New[ids.ConsumerKind]()
-			existing.ConsumerIDs = []ids.ConsumerID{consumerID}
-			tt.place(existing)
-			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-
-			jira := ids.New[ids.RegistryKind]()
-			registryRepo := registrymocks.NewRepository(t)
-			registryRepo.EXPECT().
-				FindByIDs(mock.Anything, existing.GatewayID, sameRegistryIDs(jira)).
-				Return([]*registrydomain.Registry{mcpRegistry(existing.GatewayID, jira)}, nil).
-				Once()
-
-			consumers := consumermocks.NewRepository(t)
-			consumers.EXPECT().
-				FindByID(mock.Anything, consumerID).
-				Return(&consumerdomain.Consumer{ID: consumerID, Type: consumerdomain.TypeLLM}, nil).
-				Once()
-
-			updater := apppolicy.NewUpdater(
-				repo, consumers, freeLevels(t), registryRepo,
-				newScopedRegistryMock(t, appplugins.ProtocolLLM, appplugins.ProtocolMCP),
-				newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil,
-			)
-			_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
-				ID:       existing.ID,
-				MCPScope: apppolicy.MCPScopePatch{Set: true, Value: &domain.MCPScope{RegistryIDs: []ids.RegistryID{jira}}},
-			})
-			if !errors.Is(err, consumerdomain.ErrPolicyScopeDoesNotCross) || !errors.Is(err, commonerrors.ErrValidation) {
-				t.Fatalf("err = %v, want ErrPolicyScopeDoesNotCross wrapping ErrValidation", err)
-			}
-			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
-		})
-	}
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 }

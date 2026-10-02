@@ -234,8 +234,9 @@ func (u *updater) validateScopeAfterPatch(ctx context.Context, in UpdateInput, e
 // not — the same end state, and a policy that runs nowhere on that consumer
 // while its screen says otherwise.
 //
-// It also runs for a gateway-wide policy, whose links loadPolicies ignores:
-// demoting it brings them back into play, and the demotion checks nothing.
+// It also runs for a global policy, whose links loadPolicies ignores: demoting
+// it brings them back into play, and the demotion checks nothing. An MCP-wide
+// policy holds no links, since its promotion removed them.
 func (u *updater) validateScopeReachesConsumers(ctx context.Context, p *domain.Policy) error {
 	if p.MCPScope == nil || len(p.ConsumerIDs) == 0 || u.consumers == nil {
 		return nil

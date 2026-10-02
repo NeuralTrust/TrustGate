@@ -35,7 +35,7 @@ func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, st
 
 // SetGlobal godoc
 // @Summary      Mark a policy as global
-// @Description  Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.
+// @Description  Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry, unless it is already global by then, which answers 200 with the policy as stored. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
