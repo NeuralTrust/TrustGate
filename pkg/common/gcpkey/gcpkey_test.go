@@ -50,6 +50,7 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "google token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://oauth2.googleapis.com/token"})},
 		{name: "legacy token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://accounts.google.com/o/oauth2/token"})},
+		{name: "v4 token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://www.googleapis.com/oauth2/v4/token"})},
 		{name: "absent token_uri", raw: keyJSON(t, nil)},
 		{name: "default universe", raw: keyJSON(t, map[string]string{"universe_domain": "googleapis.com"})},
 		{name: "cluster service token_uri", raw: keyJSON(t, map[string]string{"token_uri": "http://trustgate.svc.cluster.local:8080/x"}), wantErr: "token_uri"},
@@ -57,6 +58,18 @@ func TestValidate(t *testing.T) {
 		{name: "lookalike host token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://oauth2.googleapis.com.evil.example/token"}), wantErr: "token_uri"},
 		{name: "userinfo token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://oauth2.googleapis.com@evil.example/token"}), wantErr: "token_uri"},
 		{name: "http token_uri", raw: keyJSON(t, map[string]string{"token_uri": "http://oauth2.googleapis.com/token"}), wantErr: "token_uri"},
+		{name: "trailing slash token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://oauth2.googleapis.com/token/"}), wantErr: "token_uri"},
+		{name: "uppercase host token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://OAUTH2.googleapis.com/token"}), wantErr: "token_uri"},
+		{
+			name:    "duplicate token_uri hostile last",
+			raw:     `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","token_uri":"http://evil.example/x"}`,
+			wantErr: "token_uri",
+		},
+		{
+			name:    "case-variant key hostile",
+			raw:     `{"type":"service_account","Token_URI":"http://evil.example/x"}`,
+			wantErr: "token_uri",
+		},
 		{name: "custom universe", raw: keyJSON(t, map[string]string{"universe_domain": "evil.example"}), wantErr: "universe_domain"},
 		{name: "external_account", raw: keyJSON(t, map[string]string{"type": "external_account"}), wantErr: "type"},
 		{name: "impersonated_service_account", raw: keyJSON(t, map[string]string{"type": "impersonated_service_account"}), wantErr: "type"},
