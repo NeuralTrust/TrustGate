@@ -414,3 +414,61 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 		t.Fatalf("expected wrapped boom error, got: %v", err)
 	}
 }
+
+// skippingPolicies mimics the policy repository after RUN-1663: a page is built
+// from the rows the query matched, unreadable rows are dropped from it, and the
+// total still counts them. A full page therefore comes back one row short.
+type skippingPolicies struct {
+	rows       []*policydomain.Policy
+	unreadable map[int]bool
+}
+
+func (f skippingPolicies) ListByGateway(context.Context, ids.GatewayID) ([]*policydomain.Policy, error) {
+	return nil, nil
+}
+
+func (f skippingPolicies) List(_ context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error) {
+	number, size := filter.Page.Number, filter.Page.Size
+	start := (number - 1) * size
+	if start >= len(f.rows) {
+		return nil, len(f.rows), nil
+	}
+	end := min(start+size, len(f.rows))
+	out := make([]*policydomain.Policy, 0, end-start)
+	for i := start; i < end; i++ {
+		if f.unreadable[i] {
+			continue
+		}
+		out = append(out, f.rows[i])
+	}
+	return out, len(f.rows), nil
+}
+
+func TestCompilerKeepsPagingWhenARepositorySkipsUnreadableRows(t *testing.T) {
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	rows := make([]*policydomain.Policy, 0, 501)
+	for range 501 {
+		rows = append(rows, &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw})
+	}
+	// Row 3 sits on the first, full page: the page comes back with 499 rows, and
+	// the 501st row lives on the second page.
+	policies := skippingPolicies{rows: rows, unreadable: map[int]bool{3: true}}
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		policies,
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeCatalog{},
+		nil,
+	)
+
+	snapshot, err := compiler.Compile(context.Background())
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if got := len(snapshot.Data().Policies); got != 500 {
+		t.Fatalf("expected the 500 readable policies, got %d (a short page ended the walk early)", got)
+	}
+}
