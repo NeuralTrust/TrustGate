@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -92,19 +91,27 @@ func (s Settings) validateTenant() error {
 
 // parseTenantDSN parses a tenant DSN and strips what pgx merges in from the
 // gateway pod: the password from PGPASSWORD or ~/.pgpass when the DSN carries
-// none, and TLS material loaded from PGSSL* files. Hosts must be network hosts.
+// none, and TLS material loaded from PGSSL* files. Hosts must be written in the
+// DSN and be network hosts.
 func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 	// Validate with pgx's own parser first: a key outside the allow-list is
-	// rejected before any file is touched.
+	// rejected before the parser reads any file the DSN itself names. Files named
+	// by the pod environment (PGSSLROOTCERT...) are still read by pgx at parse;
+	// that environment is the operator's, and the result is discarded below.
 	if _, err := pgconn.ParseConfigWithOptions(dsn, pgconn.ParseConfigOptions{ConnStringAllowedKeys: tenantDSNKeys}); err != nil {
 		return nil, err
+	}
+	// A host the DSN does not write would come from PGHOST: the operator's
+	// environment must not decide where a tenant connection goes.
+	if dsnOmitsKey(dsn, "host") {
+		return nil, errTenantDSN
 	}
 	conf, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
 	cc := conf.ConnConfig
-	if !passwordIsInDSN(dsn, cc.Password) {
+	if dsnOmitsKey(dsn, "password") {
 		cc.Password = ""
 	}
 	hosts := []string{cc.Host}
@@ -116,9 +123,14 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 			return nil, errTenantDSN
 		}
 	}
-	cc.TLSConfig = withoutFileTLS(cc.TLSConfig)
+	var tlsErr error
+	if cc.TLSConfig, tlsErr = withoutFileTLS(cc.TLSConfig); tlsErr != nil {
+		return nil, tlsErr
+	}
 	for _, fb := range cc.Fallbacks {
-		fb.TLSConfig = withoutFileTLS(fb.TLSConfig)
+		if fb.TLSConfig, tlsErr = withoutFileTLS(fb.TLSConfig); tlsErr != nil {
+			return nil, tlsErr
+		}
 	}
 	if conf.MaxConns > telemetryMaxConns {
 		conf.MaxConns = telemetryMaxConns
@@ -126,49 +138,58 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 	return conf, nil
 }
 
-// passwordIsInDSN reports whether the password pgx resolved was written in the
-// DSN rather than inherited from PGPASSWORD or a passfile. It errs towards
-// "inherited", which only costs a tenant with an unusual password a failed login.
-func passwordIsInDSN(dsn, password string) bool {
-	if password == "" {
-		return false
-	}
-	if u, err := url.Parse(dsn); err == nil && u.User != nil {
-		if pw, ok := u.User.Password(); ok && pw == password {
-			return true
+// dsnOmitsKey reports whether the DSN itself does not write key. It asks pgx's
+// own parser, with the key removed from the allow-list, rather than searching
+// the text: a substring search can be steered by the value of another parameter.
+func dsnOmitsKey(dsn, key string) bool {
+	allowed := make([]string, 0, len(tenantDSNKeys))
+	for _, k := range tenantDSNKeys {
+		if k != key {
+			allowed = append(allowed, k)
 		}
 	}
-	candidates := []string{
-		password,
-		strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(password),
-		url.QueryEscape(password),
-	}
-	for _, c := range candidates {
-		if strings.Contains(dsn, c) {
-			return true
-		}
-	}
-	return false
+	_, err := pgconn.ParseConfigWithOptions(dsn, pgconn.ParseConfigOptions{ConnStringAllowedKeys: allowed})
+	return err == nil
 }
 
 // withoutFileTLS drops client certificates and root CAs that pgx loaded from
-// files named by PGSSLCERT, PGSSLKEY or PGSSLROOTCERT in the pod environment.
-func withoutFileTLS(c *tls.Config) *tls.Config {
+// files named by PGSSLCERT, PGSSLKEY or PGSSLROOTCERT in the pod environment, so
+// verification uses the system pool. sslmode=verify-ca is refused: pgx verifies
+// it with a closure that captured the original root CAs, which cannot be
+// replaced after the fact. verify-full, require and the rest are unaffected.
+func withoutFileTLS(c *tls.Config) (*tls.Config, error) {
 	if c == nil {
-		return nil
+		return nil, nil
+	}
+	if c.VerifyPeerCertificate != nil {
+		return nil, errTenantDSN
 	}
 	c = c.Clone()
 	c.Certificates = nil
 	c.RootCAs = nil
 	c.GetClientCertificate = nil
-	return c
+	return c, nil
 }
 
 // openGuardedPool opens a pool whose every connection, fallback hosts included,
 // is dialled through the shared netguard dialer.
 func openGuardedPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	conf, err := parseTenantDSN(dsn)
+	var (
+		conf *pgxpool.Config
+		err  error
+	)
+	if netguard.AllowPrivate() {
+		// Self-hosted: the tenant is the operator, so the DSN keeps every pgx
+		// feature (sslrootcert, options, PG* defaults). Only the dial is guarded,
+		// and the guard itself lets private addresses through in this mode.
+		conf, err = pgxpool.ParseConfig(dsn)
+	} else {
+		conf, err = parseTenantDSN(dsn)
+	}
 	if err != nil {
+		if netguard.AllowPrivate() {
+			return nil, fmt.Errorf("postgres: open pool: %w", err)
+		}
 		return nil, errTenantDSN
 	}
 	conf.ConnConfig.DialFunc = netguard.Shared().DialContext
