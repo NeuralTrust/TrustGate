@@ -63,7 +63,6 @@ func TestServiceAccountCachePinsTokenEndpoint(t *testing.T) {
 		mutate func(map[string]string)
 	}{
 		{name: "hostile token_uri", mutate: func(m map[string]string) { m["token_uri"] = attacker.URL }},
-		{name: "hostile audience", mutate: func(m map[string]string) { m["audience"] = attacker.URL }},
 		{name: "absent token_uri", mutate: func(m map[string]string) { delete(m, "token_uri") }},
 	}
 	for _, tt := range tests {
@@ -77,8 +76,7 @@ func TestServiceAccountCachePinsTokenEndpoint(t *testing.T) {
 			require.NoError(t, err)
 
 			rec := &recordingTransport{google: google}
-			cache := NewServiceAccountCache()
-			cache.httpClient = &http.Client{Transport: rec}
+			cache := NewServiceAccountCache(WithHTTPClient(&http.Client{Transport: rec}))
 
 			token, err := cache.Token(context.Background(), string(raw), CloudPlatformScope)
 
@@ -109,8 +107,7 @@ func TestServiceAccountCacheDoesNotLeakAttackerAudienceIntoAssertion(t *testing.
 	raw, err := json.Marshal(m)
 	require.NoError(t, err)
 
-	cache := NewServiceAccountCache()
-	cache.httpClient = &http.Client{Transport: &recordingTransport{google: google}}
+	cache := NewServiceAccountCache(WithHTTPClient(&http.Client{Transport: &recordingTransport{google: google}}))
 	_, err = cache.Token(context.Background(), string(raw), CloudPlatformScope)
 	require.NoError(t, err)
 

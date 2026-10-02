@@ -259,11 +259,9 @@ func redirectTo(server *httptest.Server) *http.Client {
 
 type redirectTransport struct {
 	target string
-	hosts  sync.Map
 }
 
 func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	r.hosts.Store(req.URL.String(), struct{}{})
 	clone := req.Clone(req.Context())
 	clone.URL.Scheme = "http"
 	clone.URL.Host = r.target
