@@ -166,7 +166,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// this keys on the transition and not on the shape of the input. Every
 	// other write validates as always: editing a policy that is already paused
 	// must not store junk, and enabling goes through validatePlugin again.
-	if !wasEnabled || existing.Enabled {
+	// A pause that also changes the slug validates too: the new slug is input,
+	// not a row the gateway already holds.
+	if !wasEnabled || existing.Enabled || slugChanged {
 		if err := validatePlugin(
 			u.registry,
 			existing.Slug,
