@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"testing"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
@@ -421,13 +422,21 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 type skippingPolicies struct {
 	rows       []*policydomain.Policy
 	unreadable map[int]bool
+	// cancelFirstCall makes the first List call block until its context is done
+	// and fail with ctx.Err(), so the bulk policies scan is always the one an
+	// errgroup cancellation kills.
+	cancelFirstCall *atomic.Bool
 }
 
 func (f skippingPolicies) ListByGateway(context.Context, ids.GatewayID) ([]*policydomain.Policy, error) {
 	return nil, nil
 }
 
-func (f skippingPolicies) List(_ context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error) {
+func (f skippingPolicies) List(ctx context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error) {
+	if f.cancelFirstCall != nil && f.cancelFirstCall.CompareAndSwap(false, true) {
+		<-ctx.Done()
+		return nil, 0, ctx.Err()
+	}
 	number, size := filter.Page.Number, filter.Page.Size
 	start := (number - 1) * size
 	if start >= len(f.rows) {
@@ -475,10 +484,10 @@ func TestCompilerKeepsPagingWhenARepositorySkipsUnreadableRows(t *testing.T) {
 
 func compileWithSkippedPolicies(t *testing.T, total int, unreadable ...int) (int, error) {
 	t.Helper()
-	return compileWithSkippedPoliciesAndRegistries(t, fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}}, total, unreadable...)
+	return compileWithSkippedPoliciesAndRegistries(t, fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}}, false, total, unreadable...)
 }
 
-func compileWithSkippedPoliciesAndRegistries(t *testing.T, registries appsnapshot.RegistryReader, total int, unreadable ...int) (int, error) {
+func compileWithSkippedPoliciesAndRegistries(t *testing.T, registries appsnapshot.RegistryReader, cancelFirstPoliciesCall bool, total int, unreadable ...int) (int, error) {
 	t.Helper()
 	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
 	rows := make([]*policydomain.Policy, 0, total)
@@ -489,11 +498,15 @@ func compileWithSkippedPoliciesAndRegistries(t *testing.T, registries appsnapsho
 	for _, i := range unreadable {
 		skip[i] = true
 	}
+	policies := skippingPolicies{rows: rows, unreadable: skip}
+	if cancelFirstPoliciesCall {
+		policies.cancelFirstCall = &atomic.Bool{}
+	}
 	compiler := appsnapshot.NewCompiler(
 		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
 		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
 		registries,
-		skippingPolicies{rows: rows, unreadable: skip},
+		policies,
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
 		fakeCatalog{},
 		nil,
@@ -516,6 +529,12 @@ func TestCompilerMassUnreadablePoliciesFailTheCompile(t *testing.T) {
 		wantErr    bool
 		wantCount  int
 	}{
+		{name: "1 of 1 unreadable fails", total: 1, unreadable: []int{0}, wantErr: true},
+		{name: "1 of 10 unreadable keeps the other 9", total: 10, unreadable: []int{4}, wantCount: 9},
+		{name: "2 of 10 unreadable fails", total: 10, unreadable: []int{1, 2}, wantErr: true},
+		{name: "2 of 19 unreadable fails", total: 19, unreadable: []int{1, 2}, wantErr: true},
+		{name: "2 of 21 unreadable keeps the other 19", total: 21, unreadable: []int{1, 2}, wantCount: 19},
+		{name: "3 of 21 unreadable fails", total: 21, unreadable: []int{1, 2, 3}, wantErr: true},
 		{name: "1 of 5 unreadable keeps the other 4", total: 5, unreadable: []int{2}, wantCount: 4},
 		{name: "2 of 5 unreadable fails", total: 5, unreadable: []int{1, 2}, wantErr: true},
 		{name: "5 of 5 unreadable fails", total: 5, unreadable: []int{0, 1, 2, 3, 4}, wantErr: true},
@@ -545,14 +564,16 @@ func TestCompilerMassUnreadablePoliciesFailTheCompile(t *testing.T) {
 
 // A corrupt registries row makes the bulk collect fail with ErrCorruptData and
 // cancels the other scans, so the compile falls back to per-gateway collection.
-// The mass-skip breaker must still hold on that path.
+// The mass-skip breaker must still hold on that path. The first policies List is
+// blocked until the registries error cancels it, so the bulk policies scan never
+// reaches its own check and only the fallback's re-check can trip.
 func TestCompilerMassUnreadablePoliciesFailEvenWhenRegistriesAreCorrupt(t *testing.T) {
 	// Only the bulk scan trips on the corrupt row; the compiled gateway's own
 	// registries read fine, so the fallback would otherwise succeed.
 	registries := fakeRegistries{errByGateway: map[string]error{
 		"99999999-9999-9999-9999-999999999999": fmt.Errorf("scan auth: %w", commonerrors.ErrCorruptData),
 	}}
-	_, err := compileWithSkippedPoliciesAndRegistries(t, registries, 20, 1, 2, 3)
+	_, err := compileWithSkippedPoliciesAndRegistries(t, registries, true, 20, 1, 2, 3)
 	if !errors.Is(err, appsnapshot.ErrUnreadablePolicies) {
 		t.Fatalf("expected ErrUnreadablePolicies, got %v", err)
 	}
