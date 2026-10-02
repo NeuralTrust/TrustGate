@@ -23,6 +23,7 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
@@ -120,6 +121,27 @@ func (p *Plugin) MandatoryStages() []policy.Stage {
 
 func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+}
+
+var _ appplugins.SettingsWriteValidator = (*Plugin)(nil)
+
+// ValidateSettingsWrite rejects a service_account_json that names a non-Google
+// token endpoint, a custom universe or a non-service_account type. This cannot
+// live in parseConfig, which runs on every request: a policy stored before the
+// rule existed would turn into a run-time config_invalid failure. The runtime
+// instead pins the token endpoint (gcpauth.ServiceAccountCache), so an
+// already-stored key keeps working and can never redirect the assertion.
+func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	if sa := strings.TrimSpace(cfg.Credentials.ServiceAccountJSON); sa != "" {
+		if err := gcpkey.Validate(sa); err != nil {
+			return fmt.Errorf("google_model_armor: credentials.service_account_json: %s", err.Error())
+		}
+	}
+	return nil
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {

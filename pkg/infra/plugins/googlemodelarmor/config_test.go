@@ -15,8 +15,18 @@
 package googlemodelarmor
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"net/http"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gcpauth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -154,3 +164,75 @@ func TestParseConfigRejectsBothCredentialPaths(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "set only one of")
 }
+
+func TestValidateSettingsWriteRejectsHostileServiceAccountJSON(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		json    string
+		wantErr string
+	}{
+		{name: "hostile token_uri", json: `{"type":"service_account","token_uri":"http://169.254.169.254/token"}`, wantErr: "token_uri"},
+		{name: "custom universe", json: `{"type":"service_account","universe_domain":"evil.example"}`, wantErr: "universe_domain"},
+		{name: "external account", json: `{"type":"external_account"}`, wantErr: "type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			settings := validSettings()
+			settings["credentials"] = map[string]any{"service_account_json": tt.json}
+			err := (&Plugin{}).ValidateSettingsWrite(settings, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "credentials.service_account_json")
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.NotContains(t, err.Error(), "169.254")
+			assert.NotContains(t, err.Error(), "evil.example")
+		})
+	}
+}
+
+func TestValidateSettingsWriteAcceptsGoogleTokenURI(t *testing.T) {
+	t.Parallel()
+	settings := validSettings()
+	settings["credentials"] = map[string]any{
+		"service_account_json": `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token"}`,
+	}
+	require.NoError(t, (&Plugin{}).ValidateSettingsWrite(settings, nil))
+}
+
+// A policy stored before the write-time rule must keep loading; the runtime
+// pin, not parseConfig, is what keeps its key from redirecting the assertion.
+func TestStoredHostileServiceAccountStillParsesAndIsPinned(t *testing.T) {
+	t.Parallel()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	rawStored, err := json.Marshal(map[string]string{
+		"type":         "service_account",
+		"token_uri":    "http://169.254.169.254/token",
+		"client_email": "sa@p.iam.gserviceaccount.com",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{
+			Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
+		})),
+	})
+	require.NoError(t, err)
+	stored := string(rawStored)
+	settings := validSettings()
+	settings["credentials"] = map[string]any{"service_account_json": stored}
+
+	cfg, err := parseConfig(settings)
+	require.NoError(t, err)
+	require.Error(t, (&Plugin{}).ValidateSettingsWrite(settings, nil))
+
+	var seen []string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r.URL.String())
+		return nil, errors.New("blocked in test")
+	})}
+	_, _ = gcpauth.NewServiceAccountCache(gcpauth.WithHTTPClient(client)).
+		Token(context.Background(), cfg.Credentials.ServiceAccountJSON, gcpauth.CloudPlatformScope)
+	assert.Equal(t, []string{gcpkey.TokenURL}, seen)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
