@@ -474,3 +474,59 @@ func TestExchanger_PinnedIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestExchanger_SignsWithTheExchangeClient(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	exchangeOnly := &authdomain.Auth{
+		ID: ids.New[ids.AuthKind](), GatewayID: gatewayID,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: issuer, ExchangeClientID: "obo-client", ExchangeClientSecret: "obo-secret",
+		}},
+	}
+	both := idpAuth(gatewayID, issuer, "login-client", "login-secret")
+	both.ID = ids.New[ids.AuthKind]()
+	both.Config.OAuth2.ExchangeClientID = "obo-client"
+	both.Config.OAuth2.ExchangeClientSecret = "obo-secret"
+
+	for name, auth := range map[string]*authdomain.Auth{"exchange client only": exchangeOnly, "both clients": both} {
+		for _, pinned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pinned=%v", name, pinned), func(t *testing.T) {
+				t.Parallel()
+				idp := &fakeIdP{token: &Token{AccessToken: "obo", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: []*authdomain.Auth{auth}}, idp)
+				cfg := &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://t/.default"}
+				if pinned {
+					cfg.IdentityID = auth.ID.String()
+				}
+				if _, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, cfg, "k"); err != nil {
+					t.Fatalf("Exchange: %v", err)
+				}
+				if idp.gotForm.Get("client_id") != "obo-client" || idp.gotForm.Get("client_secret") != "obo-secret" {
+					t.Fatalf("form = %v, want the exchange client", idp.gotForm)
+				}
+			})
+		}
+	}
+}
+
+func TestExchanger_SkipsAnIssuerMatchWithoutAnExchangeClient(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	validateOnly := idpAuth(gatewayID, issuer, "", "")
+	signer := &authdomain.Auth{GatewayID: gatewayID, Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+		Issuer: issuer, ExchangeClientID: "obo-client", ExchangeClientSecret: "obo-secret",
+	}}}
+	idp := &fakeIdP{token: &Token{AccessToken: "obo", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour)}}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: []*authdomain.Auth{validateOnly, signer}}, idp)
+	cfg := &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://t/.default"}
+
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, cfg, "k"); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if idp.gotForm.Get("client_id") != "obo-client" {
+		t.Fatalf("client_id = %q, want the identity that has an exchange client", idp.gotForm.Get("client_id"))
+	}
+}

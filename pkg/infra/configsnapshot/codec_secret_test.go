@@ -136,3 +136,35 @@ func TestCodecRoundTripsCatalogProviderCode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "GPT-4", m.DisplayName)
 }
+
+// The STS on the data plane signs OBO from the snapshot, so the exchange
+// client must cross it intact, secret unmasked.
+func TestCodecPreservesAuthExchangeClient(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+
+	auth := authdomain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Type:      authdomain.TypeOAuth2,
+		Enabled:   true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:               "https://login.microsoftonline.com/tid/v2.0",
+			Audiences:            []string{"api://gateway"},
+			ExchangeClientID:     "gw-app",
+			ExchangeClientSecret: "exchange-secret",
+		}},
+		CreatedAt: time.Unix(0, 0).UTC(),
+	}
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{auth}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got, ok := snap.AuthByID(auth.ID)
+	require.True(t, ok)
+	require.NotNil(t, got.Config.OAuth2)
+	assert.Equal(t, "gw-app", got.Config.OAuth2.ExchangeClientID)
+	assert.Equal(t, "exchange-secret", got.Config.OAuth2.ExchangeClientSecret)
+}

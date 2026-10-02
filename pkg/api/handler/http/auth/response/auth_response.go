@@ -73,6 +73,10 @@ type OAuth2ConfigResponse struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+	// exchanges; the secret is masked.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- masked before serialization
 }
 
 type MTLSConfigResponse struct {
@@ -147,6 +151,9 @@ func fromConfig(c domain.Config) ConfigResponse {
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
+
+			ExchangeClientID:     c.OAuth2.ExchangeClientID,
+			ExchangeClientSecret: secret.Mask(c.OAuth2.ExchangeClientSecret),
 		}
 	}
 	if c.MTLS != nil {
