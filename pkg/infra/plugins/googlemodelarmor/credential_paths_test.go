@@ -28,10 +28,10 @@ func TestCredentialPaths(t *testing.T) {
 	assert.Equal(t, []string{"credentials.service_account_json"}, (&Plugin{}).CredentialPaths())
 
 	s := validSettings()
-	s["credentials"] = map[string]any{"service_account_json": "canary"}
+	s["credentials"] = map[string]any{"service_account_json": `{"type":"service_account","private_key":"canary"}`}
 	cfg, err := parseConfig(s)
 	require.NoError(t, err)
-	assert.Equal(t, "canary", cfg.Credentials.ServiceAccountJSON)
+	assert.Contains(t, cfg.Credentials.ServiceAccountJSON, "canary")
 }
 
 // location builds the host and project the path of the credentialed request.
