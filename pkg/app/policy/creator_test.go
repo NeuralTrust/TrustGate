@@ -51,6 +51,21 @@ func newCacheManager() *cache.TTLMapManager {
 // it unset here would make one side of the suite fail on an unmet call.
 func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	t.Helper()
+	reg := newValidatingRegistryMock(t, stagesErr)
+	allowUnknownSlugLookup(reg)
+	return reg
+}
+
+// allowUnknownSlugLookup lets a registry mock be asked which settings paths a
+// plugin declares as credentials (Registry.Get), answering "unknown slug" so no
+// credential rule applies. Tests that care register their own Get instead.
+func allowUnknownSlugLookup(reg *pluginmocks.Registry) {
+	reg.EXPECT().Get(mock.Anything).Return(nil, false).Maybe()
+}
+
+// newValidatingRegistryMock is newRegistryMock without any Get expectation.
+func newValidatingRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
+	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -71,7 +86,7 @@ func newRegistryRepo(t *testing.T) *registrymocks.Repository {
 // to a plugin declaring the given protocols, which validateMCPScope consults.
 func newScopedRegistryMock(t *testing.T, protocols ...appplugins.Protocol) *pluginmocks.Registry {
 	t.Helper()
-	reg := newRegistryMock(t, nil)
+	reg := newValidatingRegistryMock(t, nil)
 	plugin := pluginmocks.NewPlugin(t)
 	plugin.EXPECT().SupportedProtocols().Return(protocols).Maybe()
 	reg.EXPECT().Get(mock.Anything).Return(plugin, true).Maybe()
@@ -163,6 +178,7 @@ func TestCreator_Create_RejectsInertSettingsWrite(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	sentinel := errors.New("policy could never block or report a violation")
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -196,6 +212,7 @@ func TestCreator_Create_RejectsUnsupportedMode(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	sentinel := errors.New("mode not supported")
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(sentinel).Once()
 	creator := apppolicy.NewCreator(repo, freeLevels(t), newRegistryRepo(t), reg, newCacheManager(), newTestLogger(), nil)

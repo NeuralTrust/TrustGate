@@ -16,10 +16,13 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -81,6 +84,14 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode, in.MCPScope)
 	if err != nil {
 		return nil, err
+	}
+	// A create has nothing stored to resolve a masked value against, so a masked
+	// literal at a credential path is a client echoing a response it read
+	// elsewhere, not a credential; a non-string there is rejected too.
+	if paths, known := appplugins.PluginCredentialPaths(c.registry, in.Slug); known && len(paths) > 0 {
+		if err := secret.ValidateCredentialSettings(p.Settings, paths); err != nil {
+			return nil, errors.Join(commonerrors.ErrValidation, err)
+		}
 	}
 	// A create has no previous version of these settings.
 	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings, nil, true); err != nil {

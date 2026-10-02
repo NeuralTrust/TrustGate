@@ -17,6 +17,8 @@ package response
 import (
 	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
@@ -77,7 +79,14 @@ type MCPScopeResponse struct {
 	ExceptGroups []string             `json:"except_groups,omitempty"`
 }
 
-func FromPolicy(p *domain.Policy) PolicyResponse {
+// FromPolicy renders p for the API. Settings never leave in the clear: the
+// credential paths the plugin declared (see appplugins.CredentialSettings) are
+// masked, and when the plugin is unknown, or registry is nil, every scalar in
+// the settings is withheld because nothing says which of them is a secret.
+//
+// Masking never mutates p.Settings: that same map is handed to plugin
+// execution, which needs the real credential.
+func FromPolicy(p *domain.Policy, registry appplugins.Registry) PolicyResponse {
 	status := StatusActive
 	if !p.Enabled {
 		status = StatusPaused
@@ -95,7 +104,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		MCPWide:     p.MCPWide,
 		Priority:    p.Priority,
 		Parallel:    p.Parallel,
-		Settings:    p.Settings,
+		Settings:    maskSettings(p, registry),
 		Stages:      fromStages(p.Stages),
 		Mode:        string(p.Mode.Normalize()),
 		MCPScope:    fromMCPScope(p.MCPScope),
@@ -113,10 +122,18 @@ func (r PolicyResponse) WithStatus(status, message string) PolicyResponse {
 
 // FromPolicyWithWarnings is FromPolicy plus the non-blocking warnings of the
 // write that produced p.
-func FromPolicyWithWarnings(p *domain.Policy, warnings []string) PolicyResponse {
-	out := FromPolicy(p)
+func FromPolicyWithWarnings(p *domain.Policy, warnings []string, registry appplugins.Registry) PolicyResponse {
+	out := FromPolicy(p, registry)
 	out.Warnings = warnings
 	return out
+}
+
+func maskSettings(p *domain.Policy, registry appplugins.Registry) map[string]any {
+	paths, known := appplugins.PluginCredentialPaths(registry, p.Slug)
+	if !known {
+		return secret.WithholdSettings(p.Settings)
+	}
+	return secret.MaskSettings(p.Settings, paths)
 }
 
 func fromMCPScope(scope *domain.MCPScope) *MCPScopeResponse {
