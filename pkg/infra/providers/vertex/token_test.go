@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
@@ -75,8 +76,8 @@ func TestTokenCacheMintsAccessToken(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
 
-	token, err := newTokenCache().token(context.Background(), &providers.GCP{
-		ServiceAccountJSON: serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com"),
+	token, err := newTestTokenCache(server).token(context.Background(), &providers.GCP{
+		ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com"),
 	})
 
 	require.NoError(t, err)
@@ -87,8 +88,8 @@ func TestTokenCacheMintsAccessToken(t *testing.T) {
 func TestTokenCacheReusesValidToken(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := newTokenCache()
-	gcp := &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")}
+	cache := newTestTokenCache(server)
+	gcp := &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")}
 
 	for range 5 {
 		token, err := cache.token(context.Background(), gcp)
@@ -103,11 +104,11 @@ func TestTokenCacheReusesValidToken(t *testing.T) {
 func TestTokenCacheIsolatesServiceAccounts(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := newTokenCache()
+	cache := newTestTokenCache(server)
 
 	for _, email := range []string{"one@careplus-poc.iam.gserviceaccount.com", "two@careplus-poc.iam.gserviceaccount.com"} {
 		_, err := cache.token(context.Background(), &providers.GCP{
-			ServiceAccountJSON: serviceAccountJSON(t, server.URL, email),
+			ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, email),
 		})
 		require.NoError(t, err)
 	}
@@ -118,8 +119,8 @@ func TestTokenCacheIsolatesServiceAccounts(t *testing.T) {
 func TestTokenCacheConcurrentCallers(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := newTokenCache()
-	gcp := &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")}
+	cache := newTestTokenCache(server)
+	gcp := &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")}
 
 	var wg sync.WaitGroup
 	for range 20 {
@@ -151,6 +152,7 @@ func TestTokenCacheErrors(t *testing.T) {
 		gcp         *providers.GCP
 		cancel      bool
 		errContains string
+		endpoint    *httptest.Server
 	}{
 		{name: "nil credentials", gcp: nil, errContains: "required"},
 		{name: "empty json", gcp: &providers.GCP{}, errContains: "required"},
@@ -167,12 +169,13 @@ func TestTokenCacheErrors(t *testing.T) {
 		},
 		{
 			name:        "google rejects the assertion",
-			gcp:         &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, rejecting.URL, "sa@careplus-poc.iam.gserviceaccount.com")},
+			gcp:         &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")},
 			errContains: "exchanging gcp service account for an access token",
+			endpoint:    rejecting,
 		},
 		{
 			name:        "cancelled context",
-			gcp:         &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")},
+			gcp:         &providers.GCP{ServiceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")},
 			cancel:      true,
 			errContains: "context canceled",
 		},
@@ -186,7 +189,11 @@ func TestTokenCacheErrors(t *testing.T) {
 				cancel()
 			}
 
-			_, err := newTokenCache().token(ctx, tt.gcp)
+			endpoint := server
+			if tt.endpoint != nil {
+				endpoint = tt.endpoint
+			}
+			_, err := newTestTokenCache(endpoint).token(ctx, tt.gcp)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
@@ -244,4 +251,11 @@ func TestBearerTokenSources(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, registry.ErrCredentialAcquisition)
 	})
+}
+
+// newTestTokenCache routes the pinned Google token endpoint to server.
+func newTestTokenCache(server *httptest.Server) *tokenCache {
+	cache := newTokenCache()
+	cache.httpClient = &http.Client{Transport: &recordingTransport{google: server}}
+	return cache
 }
