@@ -78,16 +78,15 @@ func lockGatewayRoutingReferences(
 	tx pgx.Tx,
 	gatewayID ids.GatewayID,
 ) ([]*domain.Consumer, error) {
-	// RUN-1501: no ORDER BY. Postgres does not guarantee lock acquisition order
-	// from one (a seq-scan-plus-sort plan locks in heap order), so it would only
-	// read as if it did. Determinism is not needed here either: every other site
-	// locks exactly one consumer row, and both this prune and the consumer update
-	// take consumers before registries, so no lock inversion exists to order
-	// around.
+	// Locked in ascending id, the order WithSlugLocked documents (RUN-1746): a
+	// guarded attach holds one of these rows FOR KEY SHARE and the policy prune
+	// after this one locks policies. Postgres sorts before LockRows, so ORDER BY
+	// id is the acquisition order.
 	const query = `
 		SELECT id, gateway_id, fallback, model_policies, lb_config, toolkit
 		  FROM consumers
 		 WHERE gateway_id = $1
+		 ORDER BY id
 		 FOR UPDATE`
 	rows, err := tx.Query(ctx, query, gatewayID)
 	if err != nil {

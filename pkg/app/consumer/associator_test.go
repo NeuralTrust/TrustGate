@@ -70,14 +70,16 @@ func newAssociatorWithGuard(
 }
 
 // stubLevelGuard answers with err, and lets the write through when there is
-// none, recording the policy it was asked about.
+// none, recording the policy it was asked about and the consumers it links.
 type stubLevelGuard struct {
 	err     error
 	checked *policydomain.Policy
+	linking []ids.ConsumerID
 }
 
-func (g *stubLevelGuard) Check(ctx context.Context, p *policydomain.Policy, write func(context.Context) error) error {
+func (g *stubLevelGuard) Check(ctx context.Context, p *policydomain.Policy, write func(context.Context) error, linking ...ids.ConsumerID) error {
 	g.checked = p
+	g.linking = linking
 	if g.err != nil {
 		return g.err
 	}
@@ -706,6 +708,9 @@ func TestAssociator_AttachPolicy_RefusesAnOccupiedLevel(t *testing.T) {
 	repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
 	if len(levels.checked.ConsumerIDs) != 1 || levels.checked.ConsumerIDs[0] != consumerID {
 		t.Fatalf("guard saw consumers %v, want only %s", levels.checked.ConsumerIDs, consumerID)
+	}
+	if len(levels.linking) != 1 || levels.linking[0] != consumerID {
+		t.Fatalf("guard links consumers %v, want only %s", levels.linking, consumerID)
 	}
 }
 
