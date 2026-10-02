@@ -28,6 +28,14 @@ type ExporterTemplate interface {
 	WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error)
 }
 
+// TenantExporterTemplate is implemented by templates that must treat
+// tenant-written settings with less trust than operator-written ones. A
+// template without it applies the same rules to both.
+type TenantExporterTemplate interface {
+	ValidateTenantConfig(settings map[string]interface{}) error
+	WithTenantSettings(settings map[string]interface{}) (appmetrics.Exporter, error)
+}
+
 type dataClassAware interface {
 	SetDataClass(metricsschema.DataClass)
 }
@@ -53,14 +61,27 @@ func NewExporterLocator(opts ...ExporterLocatorOption) *ExporterLocator {
 }
 
 func (l *ExporterLocator) Build(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
+	return l.build(cfg, false)
+}
+
+// BuildTenant builds an exporter from settings a tenant wrote.
+func (l *ExporterLocator) BuildTenant(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
+	return l.build(cfg, true)
+}
+
+func (l *ExporterLocator) build(cfg telemetrydomain.ExporterConfig, tenant bool) (appmetrics.Exporter, error) {
 	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
 		return nil, fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
-	if err := template.ValidateConfig(cfg.Settings); err != nil {
+	validate, with := template.ValidateConfig, template.WithSettings
+	if tt, isTenantAware := template.(TenantExporterTemplate); tenant && isTenantAware {
+		validate, with = tt.ValidateTenantConfig, tt.WithTenantSettings
+	}
+	if err := validate(cfg.Settings); err != nil {
 		return nil, fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
-	exporter, err := template.WithSettings(cfg.Settings)
+	exporter, err := with(cfg.Settings)
 	if err != nil {
 		return nil, err
 	}
@@ -73,11 +94,24 @@ func (l *ExporterLocator) Build(cfg telemetrydomain.ExporterConfig) (appmetrics.
 }
 
 func (l *ExporterLocator) Validate(cfg telemetrydomain.ExporterConfig) error {
+	return l.validate(cfg, false)
+}
+
+// ValidateTenant validates settings a tenant wrote.
+func (l *ExporterLocator) ValidateTenant(cfg telemetrydomain.ExporterConfig) error {
+	return l.validate(cfg, true)
+}
+
+func (l *ExporterLocator) validate(cfg telemetrydomain.ExporterConfig, tenant bool) error {
 	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
 		return fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
-	if err := template.ValidateConfig(cfg.Settings); err != nil {
+	validate := template.ValidateConfig
+	if tt, isTenantAware := template.(TenantExporterTemplate); tenant && isTenantAware {
+		validate = tt.ValidateTenantConfig
+	}
+	if err := validate(cfg.Settings); err != nil {
 		return fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
 	return nil

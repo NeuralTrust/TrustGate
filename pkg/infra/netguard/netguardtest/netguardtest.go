@@ -58,6 +58,15 @@ func Deny(t *testing.T) {
 	t.Cleanup(func() { netguard.SetAllowPrivate(prev) })
 }
 
+// Allow switches the escape hatch on for one test and restores the previous
+// state afterwards. Never combine it with t.Parallel.
+func Allow(t *testing.T) {
+	t.Helper()
+	prev := netguard.AllowPrivate()
+	netguard.SetAllowPrivate(true)
+	t.Cleanup(func() { netguard.SetAllowPrivate(prev) })
+}
+
 // Hostile starts a loopback server that counts hits, standing in for an
 // internal service a tenant points an outbound URL at.
 func Hostile(t *testing.T, h http.HandlerFunc) (*httptest.Server, *atomic.Int32) {
