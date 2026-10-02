@@ -215,4 +215,31 @@ func TestTenantSettings_Policy(t *testing.T) {
 		require.Equal(t, "none", s.Compression)
 		require.Equal(t, 3*time.Second, s.Timeout)
 	})
+
+	t.Run("a tenant collector never receives the operator's credentials or transport flags", func(t *testing.T) {
+		netguardtest.Deny(t)
+		op := NewTemplate(testLogger(), config.OTLPConfig{
+			Endpoint: "http://collector.svc:4318/v1/logs", Protocol: "grpc", Insecure: true,
+			Headers: map[string]string{"authorization": "Bearer operator"},
+		})
+		s, err := op.tenantSettings(map[string]interface{}{"endpoint": "https://otel.attacker.example:4318"})
+		require.NoError(t, err)
+		require.True(t, s.guarded)
+		require.Empty(t, s.Headers)
+		require.False(t, s.Insecure)
+		require.Equal(t, ProtocolHTTP, s.Protocol, "protocol follows the tenant's endpoint, not the operator's env")
+		require.Nil(t, s.TLS)
+	})
+
+	t.Run("an explicit insecure false is honoured whatever the key case", func(t *testing.T) {
+		env := config.OTLPConfig{Endpoint: "https://c.svc:4318", Insecure: true}
+		for _, key := range []string{"insecure", "Insecure", "INSECURE"} {
+			s, err := parseSettings(map[string]interface{}{key: false}, env)
+			require.NoError(t, err)
+			require.False(t, s.Insecure, key)
+		}
+		s, err := parseSettings(nil, env)
+		require.NoError(t, err)
+		require.True(t, s.Insecure, "absent key still inherits the operator value")
+	})
 }

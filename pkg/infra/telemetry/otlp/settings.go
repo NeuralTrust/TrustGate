@@ -90,6 +90,9 @@ type Settings struct {
 	// inherited from OTEL_EXPORTER_OTLP_ENDPOINT is the operator's choice (the
 	// in-cluster collector) and stays unguarded.
 	guarded bool
+	// insecureSet records that the decoded settings carried an insecure key, so
+	// an explicit false is told apart from an absent key whatever its case.
+	insecureSet bool
 }
 
 // parseSettings decodes raw gateway settings, applies the env fallback
@@ -112,7 +115,7 @@ func parseSettings(raw map[string]interface{}, env config.OTLPConfig) (Settings,
 	if s.Timeout == 0 {
 		s.Timeout = env.Timeout
 	}
-	if _, ok := raw["insecure"]; !ok {
+	if !s.insecureSet {
 		s.Insecure = env.Insecure
 	}
 	if s.Compression == "" && env.Compression != "" {
@@ -145,15 +148,22 @@ func decodeSettings(raw map[string]interface{}) (Settings, error) {
 	if len(raw) == 0 {
 		return s, nil
 	}
+	var meta mapstructure.Metadata
 	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
 		Result:     &s,
+		Metadata:   &meta,
 	})
 	if err != nil {
 		return Settings{}, fmt.Errorf("otlp: %w", err)
 	}
 	if err := decoder.Decode(raw); err != nil {
 		return Settings{}, fmt.Errorf("otlp: invalid settings: %w", err)
+	}
+	for _, k := range meta.Keys {
+		if k == "insecure" {
+			s.insecureSet = true
+		}
 	}
 	return s, nil
 }
