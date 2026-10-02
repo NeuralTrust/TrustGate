@@ -47,7 +47,7 @@ type client struct {
 
 func newClient(timeout time.Duration) *client {
 	return &client{
-		http:    providers.NewHTTPClientPool().Get(PluginName, timeout),
+		http:    providers.NewTrustedHTTPClientPool().Get(PluginName, timeout),
 		timeout: timeout,
 	}
 }
