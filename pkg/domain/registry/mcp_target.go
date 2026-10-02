@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type Type string
@@ -107,6 +108,10 @@ type MCPAuth struct {
 	Audience         string             `json:"audience,omitempty"`
 	Scope            string             `json:"scope,omitempty"`
 	Actor            string             `json:"actor,omitempty"`
+	// IdentityID pins the gateway oauth2 auth whose client credentials sign an
+	// obo or token_exchange call. Empty keeps the legacy lookup by the caller
+	// token's issuer; set, a token from any other issuer is refused.
+	IdentityID string `json:"identity_id,omitempty"`
 
 	Provider string `json:"provider,omitempty"`
 	// Account is whose account the forwarded credential is. Empty means the
@@ -362,6 +367,9 @@ func (a *MCPAuth) Validate() error {
 	if a.Account != "" && a.Mode != MCPAuthModeForwarded {
 		return fmt.Errorf("%w: auth mode %q has no account of its own", ErrInvalidMCPTarget, a.Mode)
 	}
+	if err := a.validateIdentityID(); err != nil {
+		return err
+	}
 	switch a.Mode {
 	case MCPAuthModeNone, "":
 		if a.Header != "" || a.Value != "" {
@@ -449,6 +457,27 @@ func (a *MCPAuth) Validate() error {
 		}
 	default:
 		return fmt.Errorf("%w: unknown auth mode %q", ErrInvalidMCPTarget, a.Mode)
+	}
+	return nil
+}
+
+// UsesIdPClient reports whether the exchange is performed by the caller's
+// identity provider with a gateway oauth2 client, rather than minted by the
+// gateway itself. Only these patterns can be pinned to an identity.
+func (a *MCPAuth) UsesIdPClient() bool {
+	return a != nil && a.Mode == MCPAuthModeExchange &&
+		(a.Pattern == ExchangeOBO || a.Pattern == ExchangeTokenExchange)
+}
+
+func (a *MCPAuth) validateIdentityID() error {
+	if a.IdentityID == "" {
+		return nil
+	}
+	if !a.UsesIdPClient() {
+		return fmt.Errorf("%w: identity_id is only valid for exchange/obo and exchange/token_exchange", ErrInvalidMCPTarget)
+	}
+	if _, err := ids.Parse[ids.AuthKind](a.IdentityID); err != nil {
+		return fmt.Errorf("%w: identity_id must be an auth id (uuid)", ErrInvalidMCPTarget)
 	}
 	return nil
 }

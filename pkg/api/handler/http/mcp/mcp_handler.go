@@ -457,6 +457,16 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		errors.Is(err, appmcp.ErrAudienceMismatch),
 		errors.Is(err, sts.ErrNoUserIdentity):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
+	case errors.Is(err, sts.ErrIdentityIssuerMismatch):
+		// The wrapped detail names the pinned identity and its issuer, which
+		// is operator configuration, not something the caller needs.
+		slog.Default().Warn("mcp handler: exchange identity issuer mismatch", "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInvalidRequest, sts.ErrIdentityIssuerMismatch.Error())
+	case errors.Is(err, sts.ErrExchangeIdentityUnavailable):
+		// Operator misconfiguration, not a server fault: keep it out of the
+		// internal-error outcome while still failing the call.
+		slog.Default().Warn("mcp handler: exchange identity unavailable", "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInvalidRequest, sts.ErrExchangeIdentityUnavailable.Error())
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound):
 		return writeRPCError(c, id, codeInvalidParams, err.Error())
 	case errors.Is(err, appmcp.ErrResourceNotFound):

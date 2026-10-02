@@ -126,6 +126,9 @@ type MCPAuthResponse struct {
 	Audience string `json:"audience,omitempty"`
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
+	// IdentityID is the gateway oauth2 auth that signs an obo or
+	// token_exchange call.
+	IdentityID string `json:"identity_id,omitempty"`
 
 	Provider string `json:"provider,omitempty"`
 	// Account is whose account a forwarded credential is; empty means the
@@ -288,6 +291,7 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 			Audience:                t.Auth.Audience,
 			Scope:                   t.Auth.Scope,
 			Actor:                   t.Auth.Actor,
+			IdentityID:              t.Auth.IdentityID,
 			Provider:                t.Auth.Provider,
 			Account:                 string(t.Auth.Account),
 			Registration:            string(t.Auth.Registration),
