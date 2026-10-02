@@ -180,6 +180,7 @@ type Config struct {
 	Playground          PlaygroundConfig
 	Upstream            UpstreamConfig
 	Provider            ProviderConfig
+	Outbound            OutboundConfig
 	Catalog             CatalogConfig
 	CORS                CORSConfig
 	Logger              LoggerConfig
@@ -445,9 +446,15 @@ type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
-	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
-	// link-local and other non-public addresses. Registry base_url is tenant
-	// input, so this is off by default; see PROVIDER_ALLOW_PRIVATE_NETWORKS.
+}
+
+// OutboundConfig governs every outbound client whose destination a tenant can
+// steer: provider base_url, OAuth/OIDC/STS/introspection endpoints, telemetry
+// exporters.
+type OutboundConfig struct {
+	// AllowPrivateNetworks lets those clients dial loopback, RFC1918,
+	// link-local and other non-public addresses. The destinations are tenant
+	// input, so this is off by default; see OUTBOUND_ALLOW_PRIVATE_NETWORKS.
 	AllowPrivateNetworks bool
 }
 
@@ -555,6 +562,7 @@ func LoadConfig() (*Config, error) {
 		Playground:          getPlaygroundConfig(),
 		Upstream:            getUpstreamConfig(),
 		Provider:            getProviderConfig(),
+		Outbound:            getOutboundConfig(),
 		Catalog:             getCatalogConfig(),
 		CORS:                getCORSConfig(),
 		Logger:              getLoggerConfig(),
@@ -826,7 +834,12 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
-		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", false),
+	}
+}
+
+func getOutboundConfig() OutboundConfig {
+	return OutboundConfig{
+		AllowPrivateNetworks: getEnvBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS", false),
 	}
 }
 

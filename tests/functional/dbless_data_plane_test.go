@@ -59,7 +59,7 @@ func dblessOverrides(lkgPath, token, instanceID string, port int) []string {
 		"CONFIG_SYNC_INSTANCE_ID=" + instanceID,
 		"SERVER_PROXY_PORT=" + strconv.Itoa(port),
 		// Upstream stubs listen on loopback.
-		"PROVIDER_ALLOW_PRIVATE_NETWORKS=true",
+		"OUTBOUND_ALLOW_PRIVATE_NETWORKS=true",
 	}
 }
 

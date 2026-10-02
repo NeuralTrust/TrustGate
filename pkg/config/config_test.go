@@ -1277,7 +1277,7 @@ func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
 	}
 }
 
-func TestProviderAllowPrivateNetworks(t *testing.T) {
+func TestOutboundAllowPrivateNetworks(t *testing.T) {
 	tests := []struct {
 		name string
 		env  string
@@ -1289,8 +1289,8 @@ func TestProviderAllowPrivateNetworks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.env)
-			if got := getProviderConfig().AllowPrivateNetworks; got != tc.want {
+			t.Setenv("OUTBOUND_ALLOW_PRIVATE_NETWORKS", tc.env)
+			if got := getOutboundConfig().AllowPrivateNetworks; got != tc.want {
 				t.Fatalf("AllowPrivateNetworks = %v, want %v", got, tc.want)
 			}
 		})
