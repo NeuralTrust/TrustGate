@@ -26,6 +26,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
@@ -87,6 +88,10 @@ func (c *tokenCache) source(serviceAccountJSON string) (oauth2.TokenSource, erro
 	if err != nil {
 		return nil, fmt.Errorf("parsing gcp service account credentials: %w", err)
 	}
+
+	// token_uri (and audience, which replaces the JWT aud claim) come from tenant JSON and would redirect the signed assertion anywhere.
+	config.TokenURL = gcpkey.TokenURL
+	config.Audience = ""
 
 	// A cached source outlives the request that created it, so a request context here would break every later refresh.
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, c.httpClient)
