@@ -15,14 +15,16 @@ This design implements S1 + A1 + L1 from the exploration, with the proposal's de
 - **Endpoint**: `POST|DELETE /v1/gateways/{gw}/policies/{id}/mcp-wide`, which mirrors `/global`.
 - **Level**: MCP-wide takes the same wildcard consumer cell as global.
 
-The change is mostly reads that learn a second flag. There are four write-side changes:
+The change is mostly reads that learn a second flag. There are six write-side changes, the last two added in Phase F:
 
 1. A relative-update repository setter per flag, so a promotion clears the other flag in one row write.
 2. `Repository.Update` stops writing `global` and lands only while the stored flags still match the ones it read (an optimistic placement check, 409 otherwise).
 3. `Scoper` gains the MCP-wide pair, guarded by the existing `LevelGuard`.
 4. A protocol check: 422 when the plugin has no MCP support.
+5. An MCP-wide policy holds no consumer links. The promotion deletes its `consumer_policy` rows in the same transaction, and attaching a consumer to it answers 422 (`consumer.ErrPolicyMCPWide`), decided on the policy row read `FOR SHARE` at the insert.
+6. A promotion refused as stale re-reads the row and answers 200 with it when the row already holds the requested placement, so a retried promotion stays idempotent.
 
-Nothing new is needed for cache invalidation, events or the proto. The flag rides in the snapshot's domain JSON. A reader that is not updated places the policy by its links alone: with none, which is what the console leaves after a promotion, it is a draft and runs nowhere.
+Nothing new is needed for cache invalidation, events or the proto. The flag rides in the snapshot's domain JSON. A reader that is not updated places the policy by its links alone, and an MCP-wide policy has none, so there it is a draft and runs nowhere.
 
 ### Architecture Decisions
 
@@ -50,7 +52,8 @@ Nothing new is needed for cache invalidation, events or the proto. The flag ride
 | `level.go:235` `Draft` | `!Global && no links` | `!Global && !MCPWide && no links` |
 | `app/plugins/plan.go:90`, `chain.go:119` | `global: pol.IsGlobal()` | `pol.GatewayWide()`: plugin state is partitioned gateway-wide (decision TG3) |
 | `app/consumer/data_finder.go:318` | `IsGlobal()` → globals, links skipped | `GatewayWide()` → links skipped. `IsGlobal()` → `everywhere`; both flags → `onMCP` |
-| `app/consumer/associator.go:190` | Skip protocol check if global | `GatewayWide()` (decision TG2) |
+| `app/consumer/associator.go` `AttachPolicy` | Skip protocol check if global | MCP-wide is refused with 422 before any other check (Phase F, revised TG2); the protocol skip stays `IsGlobal()` |
+| `infra/repository/consumer` `AttachPolicy` | Plain insert | Locks the consumer row `FOR KEY SHARE`, then reads the policy row `FOR SHARE` and refuses `mcp_wide` with `ErrPolicyMCPWide`, so an attach racing a promotion cannot leave a link |
 | `app/policy/warnings.go:179` `inertUnsafeGlobalWarning` | `p.Global` | Unchanged: MCP-wide never reaches LLM |
 | `warnings.go:182` orphan warning | Own predicate | `p.Draft()`, same text |
 | `warnings.go:205` `reach` | `!p.Global` → attached only | `!p.GatewayWide()`, and `crosses := CrossesPlanes() && !p.MCPWide`, so MCP-wide drops non-MCP consumers |
@@ -74,8 +77,13 @@ POST /policies/{id}/mcp-wide ─→ MCPWidePolicyHandler.SetMCPWide ─→ Scope
    ─→ validateMCPWidePlugin (422) ─→ copy.SetMCPWide(true)        (copy.Global=false)
    ─→ LevelGuard.Check(copy) ─ advisory lock(gw,slug) + occupants (read mcp_wide)
         └─ conflict ─→ LevelConflict (409, wording unchanged)
-        └─ free ─→ repo.SetMCPWide(true) in withMarkedTx            (outbox marker)
-   ─→ existing.SetMCPWide(true) ─→ PolicyTTL cache Set ─→ GatewayData invalidation ─→ Signal
+        └─ free ─→ repo.SetMCPWide(true, readAt = existing.UpdatedAt) in withMarkedTx (outbox marker)
+                     UPDATE … WHERE updated_at = readAt RETURNING global, mcp_wide, updated_at
+                     DELETE FROM consumer_policy WHERE policy_id = id          (same transaction)
+              └─ no row matched ─→ ErrPlacementChanged ─→ FindByID again
+                     └─ already MCP-wide ─→ 200 with that row (no cache write, no event, no Signal)
+                     └─ anything else, or the re-read fails ─→ 409
+   ─→ existing ← written placement, ConsumerIDs = nil ─→ PolicyTTL cache Set ─→ GatewayData invalidation ─→ Signal
    ─→ 200 FromPolicyWithWarnings(p, warner.Overlaps(p))
 ```
 
@@ -117,7 +125,7 @@ Estimates count added plus deleted lines.
 | `pkg/app/policy/updater.go` | Modify | Slug-change guard for MCP-wide | 6 | | | |
 | `pkg/app/policy/warnings.go` | Modify | Orphan → `Draft()`, `reach`, `sameSlugRuns` | 20 | | | |
 | `pkg/app/consumer/data_finder.go` | Modify | `loadPolicies` returns `{everywhere, onMCP, byConsumer}`; per-type pick; Store on `onMCP` | 30 | | | |
-| `pkg/app/consumer/associator.go`, `pkg/app/plugins/{plan,chain,plugin}.go` | Modify | `GatewayWide()` + doc | 5 | | | |
+| `pkg/app/consumer/associator.go`, `pkg/app/plugins/{plan,chain,plugin}.go` | Modify | `GatewayWide()` + doc in plan, chain and plugin. The associator refuses MCP-wide with 422, and its protocol skip stays `IsGlobal()` (Phase F) | 5 | | | |
 | `pkg/api/handler/http/policy/mcp_wide_policy_handler.go` | Create | POST/DELETE + swagger annotations | 85 | | | |
 | `pkg/api/handler/http/policy/{global,duplicate}_policy_handler.go` | Modify | Swagger text: swap, "neither global nor MCP-wide" | 5 | | | |
 | `pkg/api/handler/http/policy/response/policy_response.go` | Modify | `MCPWide` + field doc | 4 | | | |
@@ -127,7 +135,7 @@ Estimates count added plus deleted lines.
 | `pkg/app/policy/level_guard_test.go` | Modify | MCP-wide × MCP-wide, × global, disjoint, swap, unset not guarded | | 75 | | |
 | `pkg/app/policy/{warnings,updater}_test.go` | Modify | No orphan warning, MCP-only reach, same-slug MCP-wide; slug 422 | | 95 | | |
 | `pkg/app/consumer/data_finder_inert_test.go`, `data_finder_test.go` | Modify | LLM/A2A skip, MCP consumers, Store + clone with principal, links ignored, override | | 120 | | |
-| `pkg/app/consumer/associator_test.go`, `pkg/app/plugins/executor_test.go` | Modify | Skip protocol check; gateway-wide `RuntimeScope` | | 35 | | |
+| `pkg/app/consumer/associator_test.go`, `pkg/app/plugins/executor_test.go` | Modify | MCP-wide attach refused (Phase F, replaces the protocol-skip case); gateway-wide `RuntimeScope` | | 35 | | |
 | `pkg/infra/configsnapshot/codec_test.go`, `adapters_test.go` | Modify | `mcp_wide` round-trip; read-only | | 16 | | |
 | `tests/functional/repositories/policy/{repository,level_lock}_test.go` | Modify | Swap SQL, CHECK, Update keeps placement, locked occupant reads the flag | | 90 | | |
 | `tests/functional/mcp_wide_policy_test.go` | Create | Admin API + MCP runtime (OAuth stub) | | 170 | | |
@@ -156,9 +164,12 @@ MCPWide bool `json:"mcp_wide,omitempty"`
 func (p *Policy) GatewayWide() bool  { return p != nil && (p.Global || p.MCPWide) }
 func (p *Policy) SetGlobal(on bool)  { p.Global = on; if on { p.MCPWide = false } }
 func (p *Policy) SetMCPWide(on bool) { p.MCPWide = on; if on { p.Global = false } }
-// Repository
-SetGlobal(ctx, gatewayID, id, global bool) error   // promoting also clears mcp_wide
-SetMCPWide(ctx, gatewayID, id, mcpWide bool) error // promoting also clears global
+// Repository: a non-zero readAt makes the write land only while updated_at == readAt
+SetGlobal(ctx, gatewayID, id, global bool, readAt time.Time) (Placement, error)   // promoting also clears mcp_wide
+SetMCPWide(ctx, gatewayID, id, mcpWide bool, readAt time.Time) (Placement, error) // promoting also clears global and deletes the links
+type Placement struct { Global, MCPWide bool; UpdatedAt time.Time }               // the row as written
+// consumer domain
+ErrPolicyMCPWide // wraps ErrValidation (422); returned by the associator and by the repository's AttachPolicy
 // app/policy
 type Scoper interface { SetGlobal; UnsetGlobal; SetMCPWide; UnsetMCPWide } // same signature
 func NewScoper(repo, levels LevelGuard, plugins appplugins.Registry, manager, publisher, logger, signaler) Scoper
@@ -169,9 +180,17 @@ func NewScoper(repo, levels LevelGuard, plugins appplugins.Registry, manager, pu
 ALTER TABLE policies ADD COLUMN IF NOT EXISTS mcp_wide BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE policies DROP CONSTRAINT IF EXISTS policies_global_mcp_wide_check;
 ALTER TABLE policies ADD CONSTRAINT policies_global_mcp_wide_check CHECK (NOT (global AND mcp_wide));
--- setters (the right-hand side reads the old row)
-UPDATE policies SET global   = $2::boolean, mcp_wide = mcp_wide AND NOT $2::boolean, updated_at = now() WHERE id = $1 AND gateway_id = $3;
-UPDATE policies SET mcp_wide = $2::boolean, global   = global   AND NOT $2::boolean, updated_at = now() WHERE id = $1 AND gateway_id = $3;
+-- setters (the right-hand side reads the old row; updated_at always moves forward)
+UPDATE policies SET global   = $2::boolean, mcp_wide = mcp_wide AND NOT $2::boolean,
+                    updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
+ WHERE id = $1 AND gateway_id = $3 AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
+RETURNING global, mcp_wide, updated_at;
+UPDATE policies SET mcp_wide = $2::boolean, global   = global   AND NOT $2::boolean, updated_at = … -- same match
+RETURNING global, mcp_wide, updated_at;
+DELETE FROM consumer_policy WHERE policy_id = $1;  -- only after an mcp_wide promotion, same transaction
+-- attach (consumer repository), same transaction as the insert; consumer before policy, as a registry delete locks them
+SELECT 1 FROM consumers WHERE id = $1 FOR KEY SHARE;    -- the lock the foreign key takes anyway
+SELECT mcp_wide FROM policies WHERE id = $2 FOR SHARE;  -- true → ErrPolicyMCPWide, no insert
 ```
 
 Scoper semantics:
@@ -179,6 +198,9 @@ Scoper semantics:
 - `SetX` is a no-op when the flag is already set.
 - Promotion is guarded once, with a copy carrying `SetX(true)`. The policy's own row is excluded from the occupants, so a global → MCP-wide swap never conflicts with itself.
 - `UnsetX` is unguarded and a no-op when the flag is not set. So `DELETE /global` on an MCP-wide policy returns 200 with the policy unchanged.
+- A promotion refused with `ErrPlacementChanged` re-reads the row. If promoting it would change nothing, another write already placed it there, usually the same request sent twice, and that write cached, invalidated and signalled it. So the scoper answers the re-read row with 200 the way the no-op does, and writes nothing. Any other row, or a failed re-read (logged), keeps the 409.
+- After an MCP-wide write the cached and returned copy carries no `ConsumerIDs`, matching the row.
+- Demoting only releases levels, with one pre-existing exception: a global policy keeps its links, and `DELETE /global` puts them back on their consumers' levels unchecked. It does not apply to MCP-wide, which holds no links.
 - Every POST and DELETE on `/global` and `/mcp-wide` returns `PolicyResponse`, including `mcp_wide`. POST responses also carry `warnings`.
 - The 409 error message stays `policy … already runs plugin … at level …`.
 
@@ -188,7 +210,7 @@ Swagger on the new POST documents:
 - 409: "already runs this plugin at one of the levels the policy would take on every MCP consumer";
 - 422: "the plugin does not support MCP".
 
-The DELETE documents 200, 400, 401 and 404.
+The DELETE documents 200, 400, 401 and 404. Phase F adds to the text: the promotion removes the links, a retry that finds the policy already placed answers 200 (on `/global` too), and the demotion leaves a draft. The consumer attach documents its 422 for an MCP-wide policy.
 
 ### Docs & specs
 
@@ -196,7 +218,7 @@ The DELETE documents 200, 400, 401 and 404.
   - Consumer-dimension table (:106): placement now comes from `global`, `mcp_wide` and the consumer links.
   - "What reaches an LLM or A2A chain" (:120-135): add a row "MCP-wide, any scope → **No**", and the draft row gains "not MCP-wide".
   - :256: rewrite the `global` + scope row. The Store takes global and MCP-wide policies, and MCP-wide is the way to reach MCP (Store included) by group.
-  - Add an `mcp_wide: true` row: a null scope means every MCP caller; links are ignored; plugin state is gateway-wide; api-key callers bypass `groups`; the same-plugin attachment double-run is a documented gap.
+  - Add an `mcp_wide: true` row: a null scope means every MCP caller; it holds no links and an attach is 422 (Phase F); plugin state is gateway-wide; api-key callers bypass `groups`; the same-plugin attachment double-run is a documented gap.
   - :259 orphan row: "not global and not MCP-wide".
   - Level table (:231): checked on promotion to either flag, not checked on unsetting either. MCP-wide against global with overlapping groups is a 409.
   - Admin API (:514): add the `/mcp-wide` rows and the swap note on `/global`.
@@ -222,11 +244,11 @@ The DELETE documents 200, 400, 401 and 404.
 | Layer | What | Approach |
 |---|---|---|
 | Unit: domain | MCP-wide takes `(all, G, d)` and ignores its links; `Draft` is false for it; both flags set → `ErrInvalidPlacement`; mutators clear the other flag | Table tests in `level_test.go` and `policy_test.go` |
-| Unit: use case | Set, swap from global, no-op, foreign gateway → 404, non-MCP plugin → 422 with no write, unset, `UnsetGlobal` on MCP-wide is a no-op; level 409s and an unguarded unset; PUT slug change → 422 | Repository mocks, `freeLevels`/`occupiedLevels`, `newScopedRegistryMock(t, ProtocolLLM)` |
+| Unit: use case | Set, swap from global, no-op, foreign gateway → 404, non-MCP plugin → 422 with no write, unset, `UnsetGlobal` on MCP-wide is a no-op; level 409s and an unguarded unset; PUT slug change → 422. Phase F: an MCP-wide write answers and caches no `ConsumerIDs`, other placements keep theirs; a stale promotion whose re-read row already holds the placement answers 200 with it and touches neither cache nor events, and one whose row moved elsewhere, or whose re-read fails, stays 409 | Repository mocks, `freeLevels`/`occupiedLevels`, `newScopedRegistryMock(t, ProtocolLLM)` |
 | Unit: load | An inert-safe group-only MCP-wide policy is in the MCP consumer's `ScopedPolicies` and the Store's `MCPPlans`, and absent from LLM/A2A `Policies` and `PolicyPlan`; its links are ignored; an attached unscoped policy of the same slug overrides it; a Store clone (`InstanceOf`) with a member principal matches and a non-member does not | `loadInert` harness; `PlanFor(reg, tool, &identity.Principal{…groups})` |
-| Unit: other | No "runs nowhere" warning; api-key warning only on MCP consumers; same-slug MCP-wide reaches MCP consumers only; associator skips the protocol check; `Scope.Global` is true for MCP-wide; codec round-trips `mcp_wide` | Existing harnesses |
-| Integration (`PG_TEST_URL`) | Swap SQL in both directions; demotion keeps the other flag; raw `SET global=true, mcp_wide=true` → 23514, and `Save` with both flags → `ErrInvalidPlacement`; `Update` with stale flags → `ErrPlacementChanged` and nothing written, with matching flags it lands; the locked occupant reads `MCPWide` and its occupancy is non-empty | `tests/functional/repositories/policy` (migrations imported) |
-| Functional (`functional` tag) | Admin API: set, unset, swap, idempotent DELETE, GET read-back, no orphan warning, 409 overlapping MCP-wide, 409 against global, disjoint groups coexist, 422 for `model_allowlist`. Runtime: `setupScopedOAuthConsumer` + a `tool_allowlist` deny-all policy for group Finanzas, **created and not promoted** → a Finanzas call is echoed (the draft contract); promoted → Finanzas blocked, Marketing echoed; a second MCP consumer created later is also blocked | New file `tests/functional/mcp_wide_policy_test.go`, reusing the helpers in `mcp_policy_scope_test.go` |
+| Unit: other | No "runs nowhere" warning; api-key warning only on MCP consumers; same-slug MCP-wide reaches MCP consumers only; the associator refuses an MCP-wide policy on every consumer type before the guard, and a global one still attaches (Phase F); `Scope.Global` is true for MCP-wide; codec round-trips `mcp_wide`; `httpio` maps `ErrPolicyMCPWide` to 422 `validation_failed` | Existing harnesses |
+| Integration (`PG_TEST_URL`) | Swap SQL in both directions; demotion keeps the other flag; raw `SET global=true, mcp_wide=true` → 23514, and `Save` with both flags → `ErrInvalidPlacement`; `Update` with stale flags → `ErrPlacementChanged` and nothing written, with matching flags it lands; the locked occupant reads `MCPWide` and its occupancy is non-empty. Phase F: the MCP-wide promotion deletes the links, a stale one deletes none, `SetGlobal` keeps them, the demotion revives none, and the consumer repository refuses the attach; an attach and a promotion racing in either order leave no link | `tests/functional/repositories/policy` (migrations imported) |
+| Functional (`functional` tag) | Admin API: set, unset, swap, idempotent DELETE, GET read-back, no orphan warning, 409 overlapping MCP-wide and against global, 422 for `model_allowlist` (disjoint groups stay at unit level). Phase F: promoting a linked policy answers and stores no `consumer_ids`, attaching a consumer is a 422 that leaves no link, a retried promotion is 200, and after the demotion attaching works again. Runtime: `setupScopedOAuthConsumer` + a `tool_allowlist` deny-all policy for group Finanzas, **created and not promoted** → a Finanzas call is echoed (the draft contract); promoted → Finanzas blocked, Marketing echoed; a second MCP consumer created later is also blocked | New file `tests/functional/mcp_wide_policy_test.go`, reusing the helpers in `mcp_policy_scope_test.go` |
 | Store | Same as the unit load row | `/store/mcp` has no functional harness (no test drives it with policies, and it needs platform-login tokens and a shelf install). The cheapest meaningful coverage is the unit test on `StoreConsumer.MCPPlans`, which is exactly what `resolveMCPConsumer` serves |
 | OpenAPI | Path exists; POST has 409 and 422; DELETE exists; `PolicyResponse` has `mcp_wide` | `docs/openapi_test.go`, after `make docs` |
 
@@ -235,23 +257,31 @@ Before pushing, run `make test`, `go vet -tags functional ./...` and `make test-
 ### Migration / Rollout
 
 - The migration is additive. Adding the column is metadata-only, and the CHECK scans a small table. No backfill.
-- Ship TrustGate before the console.
-- Rolling deploy with an old data plane: an old binary does not decode `mcp_wide` and places the policy by its links alone.
-  - With no links, an MCP-wide policy is a draft there and runs nowhere (fail-closed).
-  - With links, it runs on those consumers, as it did before the promotion. The console detaches every link on promotion, so this only happens to a policy promoted through the API with its links kept.
-- Rollback: the down migration drops the column. A former MCP-wide policy is then placed by its links, as above.
-  - Migrations only run up on boot. If the old admin binary runs on the migrated schema, its `POST /global` on a row that is still MCP-wide fails the CHECK and returns a 500.
-  - To avoid that, run the down migration, or `DELETE /mcp-wide` those rows, before rolling back.
-- The proposal's rollout SQL, which also covers `except_groups`, goes into the doc's Rollout section.
+- Ship TrustGate before the console, on every plane: admin, proxy and MCP (which also serves the Store) all run the new version before the console that promotes to MCP-wide ships.
+- Rolling deploy with an old data plane: an old binary does not decode `mcp_wide` and places the policy by its links alone. An MCP-wide policy holds none, so there it is a draft and runs nowhere (fail-closed).
+- Rollback: there is no down-migration runner, since migrations only run up on boot, so a binary rollback keeps the column, the CHECK and the flags.
+  - Before rolling back, list the rows (`SELECT id, gateway_id, slug, name FROM policies WHERE mcp_wide ORDER BY gateway_id, id`) and demote each through `DELETE /v1/gateways/{gw}/policies/{id}/mcp-wide`, keeping the list to promote them again.
+  - Without that, the old admin answers 500 to `POST /global` on a row that is still MCP-wide (the CHECK refuses it), and it does not refuse an attach to one.
+  - On roll-forward a row left MCP-wide runs MCP-wide again at once, with whatever scope the old binary left.
+  - "Runs nowhere" during the rollback means the policy never widens, not that it protects its groups: it enforces nothing until it is MCP-wide again on the new version.
+  - After the roll-forward, links the old admin attached break the no-links invariant. List them (`SELECT p.gateway_id, p.id, cp.consumer_id FROM policies p JOIN consumer_policy cp ON cp.policy_id = p.id WHERE p.mcp_wide`) and detach each, or run `DELETE` then `POST /mcp-wide` on the policy, whose promotion removes them (it is level-checked again, so it can answer 409). Then promote again the rows demoted before the rollback.
+- The proposal's rollout SQL, which also covers `except_groups`, goes into the doc's Rollout section. It has no `enabled` filter: the console promotes a group-only draft the next time it is saved, enabled or not.
 
 ### Deviations and additions
 
-No binding decision is reversed. These are additions the code requires:
+Items 1-4 reverse no binding decision; they are additions the code requires. Phase F (items 5-8) revises decision TG2.
 
 1. **D5: `Repository.Update` stops writing `global` and checks the placement optimistically.** With the new CHECK, the current `global = $5` would turn a PUT racing `POST /mcp-wide` into a 500, and today the same race silently undoes a promotion. Not writing the flags is not enough: the guard decided on the placement the caller read, so `Update` compares both flags and answers `ErrPlacementChanged` (409) when they moved.
 2. **D7: the 422 also applies on PUT.** A slug change on an MCP-wide policy to a plugin without MCP support is refused.
 3. **D7 mechanism.** The proposal names `resolver.SupportedProtocols`, which is the consumer associator's port. `apppolicy` uses `appplugins.Registry.Get(slug).SupportedProtocols()`, the same source that `validateMCPScopePlugin` reads.
 4. **Domain `Validate` rejects both flags set (`ErrInvalidPlacement`).** This backs the CHECK in memory.
+
+Phase F, from the feature-wide review, revises TG2 and adds:
+
+5. **The attach refuses an MCP-wide policy (422).** Links on an MCP-wide policy are ignored at load, so accepting one would show a consumer as covered where nothing changes. The sentinel lives in `domain/consumer` with the other attach refusals.
+6. **The promotion to MCP-wide deletes the links in its own transaction.** An MCP-wide policy therefore never holds links: a demotion has nothing to revive, and an older binary reads it as a draft. `SetGlobal` keeps links, as before.
+7. **The attach reads the policy row `FOR SHARE` before inserting.** The associator's check alone is check-then-act: a promotion committing between the read and the insert would leave a link. `FOR SHARE` conflicts with the promotion's row update, so whichever commits first, no link outlives the flag. The consumer row is locked first (`FOR KEY SHARE`, what the foreign key takes anyway), because a registry delete locks the consumers and then the policies; the other order deadlocked with it (40P01). This goes beyond the task text, which only named the associator.
+8. **A retried promotion answers 200.** A stale promotion whose re-read row already holds the requested placement answers that row as the no-op does. It writes nothing and publishes nothing, because the write that placed the row already cached, invalidated and signalled it.
 
 ### Open Questions
 
@@ -265,6 +295,8 @@ Worktree `/Users/edu/Neuraltrust/app-run1746`. `$P` = `app/[locale]/v2/features/
 ### Technical approach
 
 A third placement, `'mcp-wide'`, goes through the same channel as `global`. It needs one item field (`mcp_wide`), one more `PolicyScope` member and a flag writer that takes the placement as a parameter. *Groups* maps to `'mcp-wide'`. The sync reconciles all 3×3 transitions, failures are tagged with the placement the failed call wrote, and the actions turn the tag into copy that says what the gateway kept. The rest is read-back, the level mirror, validation and copy.
+
+Phase F (review fixes) moves two transitions ahead of the PUT: into MCP-wide, the links come off first; from MCP-wide to targeted, the demotion comes first. `$P/lib/policyPlacementMoves.ts` (`savePolicyPlacement`) runs those two from the blocks `syncPolicyAssociations.ts` exports (`syncPolicyLinks`, `detachPolicyLinks`, the Result-style `tryPlacementFlag`, `isTransientStatus`); every other move keeps the PUT-first path below. `updatePolicyAction` only builds the body, dispatches and audits.
 
 ```
 draft.requestsFrom ─policyScopeOf→ nextScope ┐
@@ -285,24 +317,29 @@ rawItem ─policyScopeOfItem→ previousScope ───┼→ PUT body (mcp_scop
 | Placement for the level check | `PolicyPlacement.mcpWide`. Wildcard consumer `*`, the same cell as `global`. | Matches TrustGate's L1. Never stricter than the gateway. |
 | Validation | `isRequestsFromIncomplete(draft)` is true when `scopeShape==='supported'`, the choice is `group` and `groupKeys` is empty. `except_groups` alone counts as empty. | The screen can neither show nor edit `except_groups`. An unsupported scope is read-only, so the user could not fix it. |
 | Coverage | `{kind:'mcp'}` → "All MCP applications and the MCP Store". No group list. | The card's scope line just above already names the groups. |
+| Attach pickers and "applied" lists (Phase F) | The consumer and application pickers drop every `isPromotedPolicy` policy: `attachablePoliciesForConsumer`, `policiesForPlanes`, `consumersMissingPolicy`, `policiesToCloneFromConsumer`. The applied lists and labels ignore the links of an `mcp_wide` policy: `policiesForConsumer`, `canDetachPolicyFromConsumer`, `policiesOnApplication`, `consumersCarryingPolicy`. Global policies are listed as before. | TrustGate refuses a link on an MCP-wide policy (422) and ignores any at load, so offering one is offering a 422, and listing one says the application is covered when nothing runs there. |
+| Placement changed (Phase F) | Key `policyPlacementChanged`, matched on the sentinel `POLICY_PLACEMENT_CHANGED:` or on the full `placement changed while the policy was being updated` in a relayed message, ahead of the 409 families and the generic fallback. `isPolicyPlacementChanged` tells a level conflict first. The update maps to it a refused PUT, a refused promotion (after the detach and PUT of a move into MCP-wide), the PUT after an MCP→T demotion, and the GW→MCP restore or re-apply PUT, with no rollback. It **is** a partial write, so the panel refetches. A demotion never answers it (TrustGate demotes with a zero read time), so there is no demotion branch. | `ErrPlacementChanged` means another write moved the placement first. Whatever this save wrote, the stored placement is not the one on screen, and retrying from it would reconcile from a placement the policy no longer holds. |
+| Dirty on a placement mismatch (Phase F) | `usePolicyDraft.isDirty` is also true when `policyScopeOf(draft.requestsFrom) !== policyScopeOfItem(rawItem)`. The only stored shape that reads that way is a group-only policy that is not MCP-wide: it reads as *Groups* and runs nowhere. The draft hook clears its error only when `selectedPolicyId` changes, not on every `rawItem`, so a partial-write copy survives the refetch. | A failed T→MCP promotion leaves exactly that draft, and its copy asks for another save, which an unedited form could not make. The R.1 drafts become promotable from the console with one click. |
+| Create whose MCP-wide promotion failed (Phase F) | Key `policyCreatedNotRunningMcp` ("created but isn't enforced on MCP yet; open it in Policies and save it"). `CreatePolicyModal` and `PolicyCreateSidePanel` close on it, refetch, and show the copy in a warning toast titled "Policy created". The modal checks it first, closes before the refetch, and stays busy, so neither a slow nor a failed refetch can let a second submit through. | The policy exists as a draft. A create surface kept open would turn the retry into a second POST and a duplicate policy. |
+| Attach refusal (Phase F) | TrustGate's 422 `consumer: policy is MCP-wide: …` resolves to `policyIsMcpWide`, ahead of `validation failed`. `ApplicationDetailSidePanel.applyToCreated` skips any picked policy that is promoted by the time the application is created. | Only a stale screen can still offer the attach; the copy says the policy already runs on MCP traffic for its groups and to reload. |
 
 ### `syncPolicyAssociations` transition matrix
 
-Order: the PUT runs first. Then the flag write, sequential and retried. Then the links, in parallel and not retried. `prev` and `next` are the consumer id lists. In the "Copy" column, a slash separates the generic message from its level-conflict variant (the one used when the cause is a 409).
+Order (Phase F): T→MCP and GW→MCP detach every previous link, then PUT, then `POST /mcp-wide`. MCP→T runs `DELETE /mcp-wide`, then PUT, then the links. Every other move keeps the PUT first, then the flag write, then the links. Flag writes are sequential and retried; links run in parallel and are not retried. `prev` and `next` are the consumer id lists. In the "Copy" column, a slash separates the generic message from its level-conflict variant (the one used when the cause is a 409). A 409 `placement changed` on any write of an update answers `policyPlacementChanged` instead, a partial write with no rollback. The read-back after a failed promotion runs only on an ambiguous failure (no status, 5xx, 408, 429); a definitive 4xx goes straight to the copy or the restore.
 
 | prev → next | Calls | On failure the gateway holds | Copy |
 |---|---|---|---|
-| T→T | attach(next−prev) ∥ detach(prev−next) | partial links | `consumerSyncFailed` / `consumerAttachFailed` |
-| T→GW | POST /global; links kept | targeted, old links (a draft on create) | `policyNotRunning` / `…LevelConflict` |
-| T→MCP | POST /mcp-wide, then detach(prev) ∥ | promotion failed: targeted with the new scope. Detach failed: MCP-wide with leftover links, which are ignored at load. | `policyNotRunningMcp` / `…McpLevelConflict`; `consumerSyncFailed` |
-| GW→T | DELETE /global, then attach ∥ detach | GW with the new scope; or partial links | `policyStillAllTraffic`; `consumerSyncFailed` |
-| GW→GW | none | — | — |
-| GW→MCP | POST /mcp-wide (clears `global`), then detach(prev) ∥ | promotion failed: GW with groups, which is the forbidden shape. Detach failed: MCP-wide with leftover links. | `policyStillAllTraffic`; `consumerSyncFailed` |
-| MCP→T | DELETE /mcp-wide, then attach ∥ detach | MCP-wide with the PUT's group-less scope, so every MCP caller; or partial links | `policyStillMcpWide`; `consumerSyncFailed` |
-| MCP→GW | POST /global (clears `mcp_wide`); links kept | MCP-wide with null scope, so every MCP caller | `policyStillMcpWide` |
-| MCP→MCP | detach(prev) only | MCP-wide with leftover links | `consumerSyncFailed` |
+| T→T | PUT; attach(next−prev) ∥ detach(prev−next) | partial links | `consumerSyncFailed` / `consumerAttachFailed` |
+| T→GW | PUT; POST /global; links kept | targeted, old links (a draft on create) | `policyNotRunning` / `…LevelConflict` |
+| T→MCP | detach(prev) ∥; PUT; POST /mcp-wide | Detach failed: the links it took off are put back, nothing else written. PUT failed: the links are put back, nothing else written. Either restore failed: targeted, old scope, fewer links. Promotion failed: a draft with the new groups and no links (fail-closed, editable as *Groups*, savable unedited); no group restore. The read-back only detects a promotion that landed, which is a success; a retried promotion that landed answers 200 (F.T3) with no read-back at all. | `updateFailed`; the PUT's own copy; `policyLinksNotRestored`; `policyNotRunningMcp` / `…McpLevelConflict`, `policyMcpUnsupported` on a 422, `policyPlacementChanged` on a 409 `placement changed` |
+| GW→T | PUT; DELETE /global, then attach ∥ detach | GW with the new scope; or partial links | `policyStillAllTraffic`; `consumerSyncFailed` / `policyLinksLevelConflict` (partial, the policy is already off all traffic) |
+| GW→GW | PUT only | — | — |
+| GW→MCP | detach(prev) ∥; PUT; POST /mcp-wide (clears `global`) | Detach or PUT failed: as T→MCP, except that a failed link restore is only logged, because links on a global policy are ignored at load. Promotion failed: read back on an ambiguous failure; landed → success; otherwise the previous groups go back on (global + previous groups, no kept links). | `updateFailed`; the PUT's own copy; `policyStillAllTrafficRolledBack` (or `policyMcpUnsupported`), `policyStillAllTraffic` when the read or the restore fails, `policyStillMcpWide` when the late-landed re-apply fails, `policyPlacementChanged` when the promotion, restore or re-apply hits a 409 `placement changed` |
+| MCP→T | DELETE /mcp-wide; PUT; attach ∥ detach | Demotion failed: nothing changed, MCP-wide with its groups. PUT failed: a draft with the old groups and no links, so it runs nowhere. Links failed: no longer MCP-wide, partial links. | `policyStillMcpWideUnchanged`; `policyOffMcpNotRunning`, or `policyPlacementChanged` on a 409 `placement changed`; `consumerSyncFailed` / `policyLinksLevelConflict` (named, partial) |
+| MCP→GW | PUT; POST /global (clears `mcp_wide`); links kept | MCP-wide with null scope, so every MCP caller | `policyStillMcpWide` |
+| MCP→MCP | PUT; detach(prev) only | MCP-wide with leftover links (none once TrustGate drops them on promotion) | `consumerSyncFailed` |
 
-Into MCP-wide, the link target is `[]`, so the existing diff code removes leftover links on the next save. The sync returns the flag response, or `null` when no flag was written. The previous scope is checked with `=== 'gateway-wide' | 'mcp-wide'`, so an unexpected client value behaves as `targeted`, the way a falsy `previousGlobal` did. A real level conflict on GW↔MCP is refused by the **PUT**, since both placements occupy `(*, G, d)`. On those transitions a 409 from the flag write can only come from a race.
+`POST /mcp-wide` drops the policy's links in the same transaction, so the sync no longer detaches after a promotion. The links come off before the PUT because the PUT checks its scope against the consumers still linked: a plugin that has not opted into running where the scope is inert (a rate limiter linked to an LLM consumer) was refused with 422 for links it was about to lose. Restoring after a failed detach or PUT re-attaches only the links that may be off (`detachPolicyLinks` reports them): those it took off, and those whose detach failed transiently (no status, 5xx, 408, 429) and may have committed. Attach is idempotent; a definitive 4xx left its link in place. MCP→T demotes first because the PUT drops the groups: written while the policy was still MCP-wide, a failed demotion left it on every MCP caller. The sync returns the flag response, or `null` when no flag was written. The previous scope is checked with `=== 'gateway-wide' | 'mcp-wide'`, so an unexpected client value behaves as `targeted`, the way a falsy `previousGlobal` did. A real level conflict on GW↔MCP is refused by the **PUT**, since both placements occupy `(*, G, d)`. On those transitions a 409 from the flag write can only come from a race. On T→MCP the PUT holds no level (a targeted policy whose links are gone), so the conflict surfaces on the promotion.
 
 ### Actions and hooks
 
@@ -314,19 +351,25 @@ Into MCP-wide, the link target is `[]`, so the existing diff code removes leftov
     - previous MCP → `policyStillMcpWide`
     - previous T → not-running for `error.placement`, or its conflict variant when the cause is a 409
   - Consumer links that fail on a 409 keep the plain conflict copy.
-  - A failed promotion into MCP-wide from GW or T, after a PUT that wrote `mcp_scope`, reads the policy back first. A 5xx does not say whether the promotion committed, so there are three branches:
-    - **Not MCP-wide:** re-PUT the new scope with the previous `groups`/`except_groups` put back, so the new destinations stay; `null` when nothing is left. On success the copy is the rolled-back variant (`policyNotRunningMcpRolledBack` or `policyStillAllTrafficRolledBack`): the reload drops the group pick, so it asks for the groups again instead of a retry. If that PUT fails, the plain copy stands. If its response shows `mcp_wide: true`, the promotion committed after the read, so the new scope is re-PUT at once and the landed branch follows; if that re-PUT fails, `policyStillMcpWide`.
-    - **Landed (`mcp_wide: true`):** no rollback. Finish the move by detaching the previous links. The save is a success, audited as usual; a failed detach answers `consumerSyncFailed`.
-    - **GET failed:** no rollback. Global + groups is still gated, which is safer than an ungated MCP-wide policy.
-  - Every swallowed failure on this path is logged with `logger.warn` (team, gateway, policy, status, error).
-- **`usePolicyDraft`:** passes `previousScope: policyScopeOfItem(rawItem)` and `previousMcpScope: rawItem.mcp_scope ?? null`.
+  - Phase F: `savePolicyPlacement` (`$P/lib/policyPlacementMoves.ts`) picks one of three paths. `moveIntoMcpWide` (T→MCP, GW→MCP) and `moveOffMcpWide` (MCP→T) run the orders in the matrix; `putThenSync` runs every other move through `syncPolicyAssociations`. A 409 `placement changed` on the PUT or on a promotion answers `policyPlacementChanged` (partial, refetched) on every path. Flag writes go through `tryPlacementFlag`, which returns its `PolicyAssociationError` instead of throwing, so the moves need no type guard.
+  - Into MCP-wide, a failed detach or a failed PUT re-attaches the links the detach took off (`restoreLinks`). A detach failure then answers `updateFailed`, a PUT failure its own copy; when the restore fails too, `policyLinksNotRestored`, a partial write, and the PUT error is logged. From GW a failed restore is only logged and the PUT's copy stands, because links on a global policy are ignored at load.
+  - Link failures after the save moved the policy off a flag (GW→T, MCP→T) that the level guard refused answer `policyLinksLevelConflict` with the occupant: a partial write, unlike T→T's plain conflict copy.
+  - A failed promotion into MCP-wide reads the policy back on an ambiguous failure (no status, 5xx, 408, 429), and never on a `placement changed` 409 or another definitive 4xx. A 5xx does not say whether the promotion committed, so there are three branches:
+    - **Landed (`mcp_wide: true`):** no rollback and nothing left to finish, because the links came off before the PUT and the promotion drops any left. The save is a success, audited as usual.
+    - **From T, not MCP-wide or GET failed:** no restore. The policy is a draft with the new groups and runs nowhere. The copy is `placementWriteFailureError(error, 'targeted')`: `policyNotRunningMcp` ("runs nowhere yet, save it again"), its level-conflict variant, or `policyMcpUnsupported` on a 422.
+    - **From GW, not MCP-wide:** re-PUT the new scope with the previous `groups`/`except_groups` put back, so the new destinations stay; `null` when nothing is left. On success the copy is `policyStillAllTrafficRolledBack`: the reload drops the group pick, so it asks for the groups again instead of a retry. If that PUT fails, `policyStillAllTraffic` stands, or `policyPlacementChanged` when it is a 409 `placement changed`. If its response shows `mcp_wide: true`, the promotion committed after the read, so the new scope is re-PUT at once and the landed branch follows; if that re-PUT fails, `policyStillMcpWide` (or `policyPlacementChanged`). A definitive 4xx skips the read and goes straight to this restore.
+    - **From GW, GET failed:** no rollback, `policyStillAllTraffic`. Global + groups is still gated, which is safer than an ungated MCP-wide policy.
+  - MCP→T: a failed `DELETE /mcp-wide` writes nothing else and answers `policyStillMcpWideUnchanged`, which is not a partial write, so the draft stays for the retry. A PUT failure after the demotion answers `policyOffMcpNotRunning` (taken off MCP, runs nowhere, choose the applications again and save), a partial write, or `policyPlacementChanged` on a 409 `placement changed`. A failed attach answers `consumerSyncFailed`, or `policyLinksLevelConflict` on a level conflict; both are partial. The success returns the PUT's item, which is newer than the demotion's.
+  - Every swallowed failure on these paths is logged with `logger.warn` (team, gateway, policy, status, error), including the demotion error, the PUT error behind `policyLinksNotRestored` and the placement-changed promotion.
+- **`usePolicyDraft`:** passes `previousScope: policyScopeOfItem(rawItem)` and `previousMcpScope: rawItem.mcp_scope ?? null`. Phase F: `isDirty` is also true on a placement mismatch (see Decisions), and the error clears only when `selectedPolicyId` changes, so a partial-write copy, `policyPlacementChanged` included, survives the refetch it triggers.
 - **`createPolicyAction`**
   - Returns `promoted ?? created`. That is the post-promotion item, because TrustGate's POST returns `PolicyResponse`.
   - If the delete that follows a refused promotion fails, it answers `policyNotRunningLevelConflictError(cause, error.placement)`.
   - A 422 on the `mcp-wide` promotion deletes the new policy too. If the delete succeeds it answers `policyMcpRefused`, which is not a partial write; if not, `policyMcpUnsupported`.
   - A plain promotion failure answers `policyNotRunningError(error.placement)`.
-- **Auto-attach:** `policy.global` becomes `isPromotedPolicy(policy)` at `features/consumers/components/ConsumerAddPolicyModal.tsx:134` and `features/applications/components/ApplicationPoliciesTab.tsx:298`, and the comment at `:128-130` is updated. No other consumer or application code changes.
-- **`isPolicyNotRunningError`** stays keyed to `policyNotRunning*` only. After an MCP not-running failure, the modal's draft already matches what is stored (a group draft), so `CreatePolicyModal.tsx:185` must not reset it.
+  - Phase F: the order is unchanged. A new policy has no links, so its T→MCP is the PUT-first `syncPolicyAssociations` path with nothing to detach. A plain MCP-wide promotion failure now answers `policyCreatedNotRunningMcp`, and both create surfaces close on it (see Decisions).
+- **Auto-attach:** `policy.global` becomes `isPromotedPolicy(policy)` at `features/consumers/components/ConsumerAddPolicyModal.tsx:134` and `features/applications/components/ApplicationPoliciesTab.tsx:298`, and the comment at `:128-130` is updated. Phase F extends the same rule to the attach pickers and the "applied" lists (see Decisions).
+- **`isPolicyNotRunningError`** stays keyed to `policyNotRunning*` only. Phase F: after an MCP create failure the modal no longer keeps its draft at all; it closes on `isPolicyCreatedNotRunningMcpError`.
 
 ### Read-back and level check
 
@@ -351,12 +394,14 @@ Into MCP-wide, the link target is `[]`, so the existing diff code removes leftov
 - **`PolicyDeleteModal.tsx:44-46`:** switch on `policyScopeOfItem`. MCP-wide uses `deleteDescriptionMcpWide` and requires typing DELETE, as global does.
 - **List:** `listPoliciesAction` sets the scope with `policyScopeOfItem` and coverage `mcp`. `policyCoverageLabel` handles `mcp`. In `policyScopeSummary.formatPrincipal`, links are listed only when the policy is targeted, and the empty principal reads `allMcpTraffic` for MCP-wide. The `policies.constants.ts` switch gets `case 'mcp-wide': return 'cyan'`.
 - **i18n (English only)**
-  - `v2Gateway.apiErrors`: `policyNotRunningMcp`, `policyNotRunningMcpLevelConflict(Named)`, `policyStillMcpWide`, `policyMcpUnsupported`, `policyMcpRefused`, `policyNotRunningMcpRolledBack`, `policyStillAllTrafficRolledBack`.
+  - `v2Gateway.apiErrors`: `policyNotRunningMcp`, `policyNotRunningMcpLevelConflict(Named)`, `policyStillMcpWide`, `policyMcpUnsupported`, `policyMcpRefused`, `policyStillAllTrafficRolledBack`.
+  - Phase F: `policyNotRunningMcp` and `policyNotRunningMcpLevelConflict(Named)` now say the policy runs nowhere (and to save again, for the first). `policyMcpRefused` says "Nothing was saved" instead of "Nothing was created", since an update reaches it too. New: `policyStillMcpWideUnchanged`, `policyOffMcpNotRunning`, `policyLinksNotRestored` and `policyPlacementChanged` ("The policy changed while it was being saved. Reload it and try again."). `policyNotRunningMcpRolledBack` is gone: a failed T→MCP promotion no longer restores groups. After the review: `policyLinksLevelConflict(Named)` (saved, moved off a flag, a link refused by the level guard), `policyCreatedNotRunningMcp` (created but not enforced on MCP yet; open it from the list and save it) and `policyIsMcpWide` (already runs on MCP traffic for its groups; reload).
   - `v2Policies`: `requestsFrom.{groupsRequired, groupsHelper}`, `groupsPlaceholder` changes from "All groups" to "Choose groups", plus `coverage.allMcp`, `scope.mcp-wide`, `detail.{securityBannerMcpWide, deleteDescriptionMcpWide}` and `scopeSummary.allMcpTraffic`.
-- **Error prefixes:** `POLICY_NOT_RUNNING_MCP:`, `POLICY_NOT_RUNNING_MCP_CONFLICT:`, `POLICY_STILL_MCP_WIDE:`, `POLICY_MCP_UNSUPPORTED:`, plus `POLICY_MCP_REFUSED:` for the create whose policy was removed again.
+- **Error prefixes:** `POLICY_NOT_RUNNING_MCP:`, `POLICY_NOT_RUNNING_MCP_CONFLICT:`, `POLICY_STILL_MCP_WIDE:`, `POLICY_MCP_UNSUPPORTED:`, plus `POLICY_MCP_REFUSED:` for the create whose policy was removed again. Phase F adds `POLICY_STILL_MCP_WIDE_UNCHANGED:`, `POLICY_OFF_MCP_NOT_RUNNING:`, `POLICY_LINKS_NOT_RESTORED:`, `POLICY_PLACEMENT_CHANGED:`, `POLICY_LINKS_CONFLICT:` (occupant name follows) and `POLICY_CREATED_NOT_RUNNING_MCP:`, and drops `POLICY_NOT_RUNNING_MCP_ROLLED_BACK:`. `policyIsMcpWide` has no prefix: it matches TrustGate's own `policy is MCP-wide`.
   - None of them is a prefix of an existing one, because the colon differs, so the order of the checks does not matter.
   - Resolution happens next to `agentGatewayErrorMessages.ts:639-650`; the named variants at `:842-853`.
-  - The first four are added to `isPolicyPartialWriteError`. `POLICY_MCP_REFUSED:` is not, because nothing was written.
+  - Partial writes (`isPolicyPartialWriteError`): the first four, plus `POLICY_OFF_MCP_NOT_RUNNING:`, `POLICY_LINKS_NOT_RESTORED:`, `POLICY_LINKS_CONFLICT:`, `POLICY_CREATED_NOT_RUNNING_MCP:` and `POLICY_PLACEMENT_CHANGED:` (the stored placement is not the one on screen, whatever this save wrote). Not partial: `POLICY_MCP_REFUSED:` and `POLICY_STILL_MCP_WIDE_UNCHANGED:`, because nothing was written.
+- **Basics routing (Phase F):** the PUT's 422 `invalid mcp_scope … does not support protocol MCP` resolves to `policyMcpRefused`, ahead of the generic `validation failed`, so `isPolicyTargetingError` holds and the create panel, the create modal and now `PolicyDetailSidePanel` open Basics instead of Configuration.
 
 ### Testing (vitest)
 
@@ -371,8 +416,12 @@ Into MCP-wide, the link target is `[]`, so the existing diff code removes leftov
 | `__tests__/v2/lib/agentGatewayErrorMessages.test.ts` | The three prefixes resolve. Named formatting. Partial-write is true for all three. `isPolicyNotRunningError` is false for the MCP ones. |
 | `PolicyRequestsFromSection`, `PolicyCreateSidePanel`, `PolicyDetailSidePanel`, `CreatePolicyModal` | *Groups* with nothing picked: the create or update action is not called and the error is shown. |
 | `__tests__/v2/features/policies/{PolicyInstanceCard,policyScopeSummary}.test.*` | `mcp` coverage label. Principal for MCP-wide. |
+| Phase F: `__tests__/v2/policies/updatePolicyAction.transitions.test.ts` (new) | The real sync against a stateful fake admin API with TrustGate's rules: `POST /mcp-wide` drops links and is a no-op on a row already MCP-wide, a link on an MCP-wide policy is refused, a non-inert-safe plugin cannot hold groups while linked to an LLM consumer (on the PUT and on an attach), and a `placement changed` fault on the demotion is rejected. Every test asserts the exact call sequence. T→MCP: success; a rate limiter linked to an LLM consumer saves (and the fake refuses the old PUT-first order); detach failure restores only what it took off; PUT failure (validation, level conflict, `invalid mcp_scope` → `policyMcpRefused` and Basics); restore failures; promotion 5xx (draft, no restore), F.T3 retry that answers 200 with no read-back, landed via read-back, GET failure, 409 level conflict (no read-back), 409 placement changed (state and partial flag). GW→MCP: success, detach and PUT failures with link restore, a failed restore that keeps the PUT copy, rollback, cleared scope, 422, landed, late-landed re-apply and its failure, placement changed on the restore, GET and restore failures, unsupported scope shape. MCP→T: success, demotion 5xx/422, PUT failure, placement changed on the PUT, attach failure, attach level conflict (named, partial). PUT-first: MCP→GW, MCP→MCP, and GW→T with an attach level conflict (partial). |
+| Phase F: `syncPolicyAssociations.test.ts`, `updatePolicyAction.test.ts`, `createPolicyAction.test.ts` | T→MCP and GW→MCP promote with the flag write alone (no post-promotion detach). The syncMock file keeps the PUT-first moves; its MCP rows moved to the transitions file. Placement changed on the PUT and on a flag write → `policyPlacementChanged`. A create whose MCP-wide promotion failed → `policyCreatedNotRunningMcp`, partial. |
+| Phase F: `agentGatewayErrorMessages.test.ts`, `PolicyDetailSidePanel.test.tsx`, `CreatePolicyModal.test.tsx`, `PolicyCreateSidePanel.test.tsx` | The new keys resolve, partial-write membership, named formatting, English copy, no rolled-back MCP key; the raw placement-changed 409 is not the instance limit and needs the whole sentence; `policy is MCP-wide` and the `invalid mcp_scope` 422 are not validation failures. The detail panel opens Basics on the scope refusal, lets an unedited group-only draft be saved, keeps an unedited MCP-wide policy saved, and keeps a partial-write copy across the refetch. Both create surfaces close, refetch and toast on `policyCreatedNotRunningMcp`. |
+| Phase F: `__tests__/v2/{consumers,applications}/*` | `attachablePoliciesForConsumer`, `policiesForPlanes`, `attachablePoliciesForApplication`, `policiesToCloneFromConsumer` drop MCP-wide policies; `policiesForConsumer`, `policiesOnApplication`, `canDetachPolicyFromConsumer`, `consumersMissingPolicy`, `consumersCarryingPolicy` ignore its links. |
 
-Run: `npx vitest run __tests__/v2/policies __tests__/v2/features/policies __tests__/v2/lib/agentGatewayErrorMessages.test.ts`, then `npm run lint`, `npm run typecheck` and `npm run test:unit`.
+Run: `npx vitest run __tests__/v2/policies __tests__/v2/features/policies __tests__/v2/lib/agentGatewayErrorMessages.test.ts __tests__/v2/consumers __tests__/v2/applications`, then `npm run lint`, `npm run typecheck` and `npm run test:unit`.
 
 ### Delivery: two PRs (estimates in changed lines)
 
@@ -391,11 +440,18 @@ PR 1 ships one visible fix on its own: *All traffic* created from a consumer or 
 2. **"Four assertions flip" (exploration §9).** Only two do: `policyScopeOf.test.ts:20-22` and `policyLevelConflict.test.ts:91-92`.
    - `policyScopeOf.test.ts:30-33` stays, because the proposal keeps `policyConsumerIdsOf` returning `[]`.
    - `policyLevelConflict.test.ts:30` stays, because the draft contract is unchanged.
+3. **Phase F: a failed MCP→T demotion has its own key.** The task asked for `policyStillMcpWide`, but that copy says "The policy was saved" and "all MCP traffic", which stay true for MCP→GW and the late-landed GW→MCP re-apply. After the reorder the demotion failure saves nothing and the policy keeps its groups, so it answers `policyStillMcpWideUnchanged`, which is not a partial write and keeps the draft for the retry.
+4. **Phase F: the links are put back when the move into MCP-wide stops before the promotion.** The task fixed the promotion failure only. Without the restore, a PUT refused for an ordinary validation error would leave a targeted policy stripped of its links. `policyLinksNotRestored` covers the double failure.
+5. **Phase F: the PUT's `invalid mcp_scope` 422 reuses `policyMcpRefused`,** whose copy now says "Nothing was saved" so it fits an update as well as a create.
+6. **Phase F review: one placement-changed key, always partial.** The review offered a partial variant next to a non-partial `policyPlacementChanged`. Every place the update can meet the 409 leaves the stored placement different from the screen, and the copy asks for a reload, so the single key is a partial write and the panel refetches on it.
+7. **Phase F review: only the new MCP create failure closes the create surface.** The other partial-write creates keep their existing handling (the modal resets *All traffic* to *Applications*, the panel stays open), so a second submit there can still create a second policy. Follow-up.
 
 ### Risks
 
-- **GW→MCP after the PUT and before the promotion** briefly holds `global`+groups. If the promotion fails, it stays that way and runs on all LLM and A2A traffic for TrustGuard. The copy says "still all traffic, retry". The PUT-first order is the existing one.
+- **GW→MCP after the PUT and before the promotion** briefly holds `global`+groups. If the promotion fails, the previous groups go back on; only when the read-back or that restore fails too does it stay `global`+groups, which runs on all LLM and A2A traffic for TrustGuard. The copy then says "still all traffic, retry". The rollback does not re-attach the kept links detached before the PUT; links on a global policy are ignored at load.
 - **Saving any change on an existing group-only draft promotes it.** This is intended, and the rollout SQL still applies.
-- **The consumer and application tabs still offer MCP-wide policies for attach.** Those links are ignored at load, and the next save of the policy removes them. Listing them as applied is the follow-up.
-- **The rollback race is narrowed, not closed.** The promotion can still commit after the restore's own write, which the restore response would not show. Closing it needs a precondition on TrustGate's PUT (`If-Match` or a version). Cross-repo follow-up.
-- **The reverse direction is not covered.** A failed MCP→T demotion or MCP→GW promotion after the PUT leaves the policy MCP-wide with the PUT's group-less scope, so it runs for every MCP caller. The copy says "still MCP-wide, retry". The same read-back-and-restore pattern would fix it. Follow-up.
+- ~~**The consumer and application tabs still offer MCP-wide policies for attach.**~~ Resolved in Phase F (F.A1): the pickers drop promoted policies, the applied lists ignore MCP-wide links, and TrustGate refuses such a link with 422 (F.T1).
+- ~~**The rollback race is narrowed, not closed.**~~ Resolved in Phase F: T→MCP no longer restores anything, and on GW→MCP TrustGate's PUT compares both flags (D5) while the promotion is conditional on the row it read (T3), so whichever write lands second gets 409 `placement changed` instead of undoing the other. When that 409 hits the restore PUT, the copy is `policyPlacementChanged` and the panel refetches the policy, which is MCP-wide with the new groups (gated).
+- **The reverse direction is covered for MCP→T only.** ~~A failed MCP→T demotion after the PUT left the policy MCP-wide with the PUT's group-less scope.~~ Resolved in Phase F: MCP→T demotes before the PUT, so a failed demotion changes nothing and a failed PUT leaves a draft that runs nowhere. MCP→GW keeps the PUT first: a failed `POST /global` after it leaves the policy MCP-wide with a null scope, so it runs for every MCP caller, and the copy says "still MCP-wide, retry". Follow-up.
+- ~~**"Save it again" needs an edit.**~~ Resolved in the Phase F review: a placement mismatch makes the draft dirty, so the group draft a failed T→MCP promotion leaves is savable unedited, and the R.1 drafts are promotable in one click. The create path no longer offers "save again" in a create surface: it closes and points to the list.
+- **Opening a pre-existing group-only draft now shows *Save changes* and the MCP-wide banner unedited.** Intended (saving promotes it), and the R.1 query lists those drafts per environment.

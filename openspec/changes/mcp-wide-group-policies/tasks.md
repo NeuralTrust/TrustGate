@@ -89,7 +89,7 @@ PR rules:
 ## Phase T2: Runtime (TrustGate, base T1)
 
 - [x] T2.1 `pkg/app/consumer/data_finder.go`: `loadPolicies` returns `{everywhere, onMCP, byConsumer}` and skips links for `GatewayWide()`. MCP consumers and `StoreConsumer` read `onMCP`; LLM and A2A read `everywhere`.
-- [x] T2.2 `pkg/app/plugins/plan.go:90` and `chain.go:119` use `pol.GatewayWide()`. Update the `plugin.go:176` doc. `pkg/app/consumer/associator.go:190` uses `GatewayWide()`. Doc lines that name the global flag as the source of gateway-wide state say "gateway-wide placement (global or MCP-wide)": `pkg/app/plugins/catalog_metadata.go` (~:540 and ~:836, the informational `scope` field) and `pkg/infra/plugins/ratelimit/config.go:30`.
+- [x] T2.2 `pkg/app/plugins/plan.go:90` and `chain.go:119` use `pol.GatewayWide()`. Update the `plugin.go:176` doc. `pkg/app/consumer/associator.go:190` uses `GatewayWide()` (superseded by F.T1: the associator refuses MCP-wide and the skip stays `IsGlobal()`). Doc lines that name the global flag as the source of gateway-wide state say "gateway-wide placement (global or MCP-wide)": `pkg/app/plugins/catalog_metadata.go` (~:540 and ~:836, the informational `scope` field) and `pkg/infra/plugins/ratelimit/config.go:30`.
 - [x] T2.3 `pkg/app/policy/warnings.go`:
   - The orphan warning uses `p.Draft()`.
   - `reach` drops non-MCP consumers for MCP-wide.
@@ -104,7 +104,7 @@ PR rules:
   - No "runs nowhere" warning for MCP-wide; a draft still gets it.
   - The api-key warning names MCP consumers only.
   - A same-slug MCP-wide policy collides on MCP consumers only.
-- [x] T2.7 Test `pkg/app/consumer/associator_test.go`: the protocol check is skipped. Test `pkg/app/plugins/executor_test.go`: `Scope.Global` is true for MCP-wide.
+- [x] T2.7 Test `pkg/app/consumer/associator_test.go`: the protocol check is skipped (superseded by F.T1: the attach is refused instead). Test `pkg/app/plugins/executor_test.go`: `Scope.Global` is true for MCP-wide.
 - [x] T2.8 Spec deltas:
   - `specs/policy-inert-scope/spec.md`: a draft requires `mcp_wide=false`; ADD "MCP-wide nunca entra en una cadena LLM/A2A".
   - `specs/mcp-policy-plan-selection/spec.md`: the Store takes MCP-wide policies.
@@ -208,7 +208,7 @@ PR rules:
 
 ## Phase R: Rollout (manual, per environment)
 
-- [ ] R.1 After T1's migration is deployed and before A2 is deployed, run the proposal's query read-only on dev, prod and prod-us. Record the drafts and the promote decision on RUN-1746.
+- [ ] R.1 After T1's migration is deployed and before A2 is deployed, run the proposal's query read-only on dev, prod and prod-us. The query has no `AND p.enabled`: a disabled group-only draft is promoted the next time it is saved, so it needs a decision too. Record the drafts and the promote decision on RUN-1746.
 - [ ] R.2 Once T4 and A2 are on dev, check QA 1, 2 and 6 in the console:
   - an OAuth member and a non-member on an MCP consumer
   - the same on `/store/mcp`, with a shelf instance
@@ -225,3 +225,38 @@ PR rules:
 | 6 Reopening shows *Groups* with its groups | T4.7, A2.2, A2.7 | R.2 |
 | 7 A policy never promoted still runs nowhere | T1.8, T2.6, T4.8, A2.7 | — |
 | 8 Rollout query run and decision recorded | — | R.1 only |
+
+## Phase F: Feature-wide review fixes (both repos)
+
+Found by the cross-repo review after every slice was committed. The contract decisions below are binding for both sides.
+
+**Contract changes**
+- Attaching a consumer to an MCP-wide policy is refused with 422 (new sentinel). Links on an MCP-wide policy would be ignored at load, so the console would show an application as covered when nothing runs there.
+- `POST /mcp-wide` removes the policy's consumer links in the same transaction. An MCP-wide policy therefore never holds links: a demotion has nothing to revive, and an older binary reads it as a draft (fail-closed).
+- A retried promotion stays idempotent. When the conditional write fails with `ErrPlacementChanged`, re-read the row: if the flag already holds the requested value, answer 200 with that row; otherwise answer the 409.
+
+**TrustGate**
+- [x] F.T1 The associator refuses to attach a consumer to an MCP-wide policy (422). Tests at unit level and in the functional suite.
+- [x] F.T2 The promotion to MCP-wide deletes the policy's `consumer_policy` rows in the same transaction, and the cached copy carries no `ConsumerIDs`. Repository integration test and scoper test.
+- [x] F.T3 Idempotent retried promotion in `scoper.place`. Test: a stale read whose row already holds the flag returns 200.
+- [x] F.T4 Docs and specs:
+  - The rollback procedure: demote every `mcp_wide` row through the API before a binary rollback. Say there is no down-migration runner, and describe the revival on roll-forward.
+  - R.1 query: drop `AND p.enabled`.
+  - Rollout: every plane (admin, proxy, MCP and Store) must run the new version before the app ships.
+  - "Demotion only releases levels": a global policy's kept links come back unchecked. This is pre-existing and does not apply to MCP-wide, which holds no links.
+  - Stale design/proposal/spec text flagged by the review: design.md :77-78, :160-174, :229, :305, :400; proposal.md :43, :84, :89; the api-key note in the `policy-inert-scope` delta.
+  - The attach refusal and the link removal, in the docs, specs and swagger.
+
+**app**
+- [x] F.A1 The consumer and application attach pickers drop promoted policies (`isPromotedPolicy`). The "applied" listings and labels ignore links on an `mcp_wide` policy.
+- [x] F.A2 Reorder the transitions that touch MCP-wide:
+  - T→MCP: detach every link, then PUT, then `POST /mcp-wide`. If the promotion fails it leaves a draft carrying the new groups (fail-closed). No restore; the copy says to save again.
+  - GW→MCP: detach the kept links, then PUT, then `POST /mcp-wide`, keeping the existing read-back and restore of the groups.
+  - MCP→T: `DELETE /mcp-wide`, then PUT, then attach.
+  - Failure copy follows the new intermediate states.
+- [x] F.A3 A `policyPlacementChanged` copy key for the 409 `placement changed`. The 422 "invalid mcp_scope … does not support protocol MCP" routes to the Basics tab.
+- [x] F.A4 The `## app (console)` matrix in design.md matches the new order.
+
+**Added on the PR branch after the develop rebase**
+- [x] F.T5 The `/mcp-wide` endpoints report `status`/`status_message` through develop's `StatusEvaluator`, like `/global` (`96ea2f0c`).
+- [x] F.T6 A pause that also changes the slug runs the plugin checks, so an MCP-wide policy cannot be pointed at an unknown plugin (`59dc0046`).
