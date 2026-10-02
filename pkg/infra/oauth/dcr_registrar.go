@@ -28,6 +28,7 @@ import (
 	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
@@ -244,7 +245,16 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("oauth dcr: read registration response: %w", err)
 	}
 	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w (status %d): %s", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode, truncate(raw, 200))
+		// The body is the upstream's, and the upstream is tenant-chosen: echoing
+		// it would hand the caller a read channel onto whatever the registration
+		// URL points at. It goes to the log; the caller gets the status and, when
+		// the provider answered with a registered RFC 7591 code, that code.
+		slog.Warn("oauth dcr: registration rejected by upstream",
+			"status", res.StatusCode, "response", strutil.SanitizeUpstream(truncate(raw, 200), 200))
+		if code := registrationErrorCode(raw); code != "" {
+			return nil, fmt.Errorf("%w (status %d, %s)", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode, code)
+		}
+		return nil, fmt.Errorf("%w (status %d)", appoauth.ErrUpstreamRegistrationRejected, res.StatusCode)
 	}
 	var doc struct {
 		ClientID     string `json:"client_id"`
@@ -304,6 +314,22 @@ func (r *upstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any)
 		return err
 	}
 	return json.Unmarshal(raw, out)
+}
+
+// registrationErrorCode returns the RFC 7591 section 3.2.2 error code of a
+// rejection body, or "" for anything that is not exactly one of those codes.
+func registrationErrorCode(raw []byte) string {
+	var doc struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(raw, &doc) != nil {
+		return ""
+	}
+	switch doc.Error {
+	case "invalid_redirect_uri", "invalid_client_metadata", "invalid_software_statement", "unapproved_software_statement":
+		return doc.Error
+	}
+	return ""
 }
 
 func truncate(b []byte, n int) string {

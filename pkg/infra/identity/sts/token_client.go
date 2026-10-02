@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
@@ -44,6 +45,13 @@ type endpointEntry struct {
 }
 
 const endpointTTL = time.Hour
+
+// The error code is kept; the free-text description is attacker controlled when
+// the IdP is tenant-chosen, so it is capped and stripped of control characters.
+const (
+	maxErrorCodeLen = 64
+	maxErrorDescLen = 200
+)
 
 func NewTokenClient(client *http.Client) *TokenClient {
 	if client == nil {
@@ -140,9 +148,10 @@ func (c *TokenClient) tokenCall(ctx context.Context, endpoint string, form url.V
 	}
 	if res.StatusCode != http.StatusOK {
 		if doc.Error == "interaction_required" || doc.Error == "invalid_grant" {
-			return nil, fmt.Errorf("%w: %s", appsts.ErrInteractionRequired, doc.ErrorDesc)
+			return nil, fmt.Errorf("%w: %s", appsts.ErrInteractionRequired, strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 		}
-		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
+		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s",
+			strutil.SanitizeUpstream(doc.Error, maxErrorCodeLen), strutil.SanitizeUpstream(doc.ErrorDesc, maxErrorDescLen))
 	}
 	if doc.AccessToken == "" {
 		return nil, fmt.Errorf("sts: IdP returned 200 with no access_token")
