@@ -33,3 +33,14 @@ func TestCredentialPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "canary", cfg.Credentials.ServiceAccountJSON)
 }
+
+// location builds the host and project the path of the credentialed request.
+func TestCredentialDestinations(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"location", "project"}, (&Plugin{}).CredentialDestinations())
+
+	cfg, err := parseConfig(validSettings())
+	require.NoError(t, err)
+	assert.Equal(t, "us-central1", cfg.Location)
+	assert.Equal(t, "proj", cfg.Project)
+}

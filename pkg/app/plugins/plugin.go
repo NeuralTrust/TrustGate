@@ -158,6 +158,38 @@ type CredentialSettings interface {
 	CredentialPaths() []string
 }
 
+// CredentialDestinations is the optional companion of CredentialSettings for a
+// plugin whose credential is sent to a destination named in the same settings
+// (an endpoint, a project or a region that ends up in the URL). A masked
+// credential echoed back on update stands for the stored one only while every
+// declared destination is unchanged: otherwise a caller who can edit the policy
+// but never read the secret could keep it and aim it at a host they control.
+// Changing a destination therefore requires re-entering the credential.
+//
+// A plugin whose credential only ever travels to a fixed, non-settings
+// destination (a hard-coded vendor URL, or SigV4-signed requests to AWS hosts
+// where the secret is never sent) declares none.
+type CredentialDestinations interface {
+	CredentialDestinations() []string
+}
+
+// PluginCredentialDestinations returns the destination paths bound to slug's
+// credentials, or nil when the plugin declares none or is unknown.
+func PluginCredentialDestinations(reg Registry, slug string) []string {
+	if reg == nil {
+		return nil
+	}
+	p, ok := reg.Get(slug)
+	if !ok {
+		return nil
+	}
+	d, ok := p.(CredentialDestinations)
+	if !ok {
+		return nil
+	}
+	return d.CredentialDestinations()
+}
+
 // PluginCredentialPaths returns the settings paths slug declared as
 // credential-bearing, and whether the slug is known at all.
 //

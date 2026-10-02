@@ -16,12 +16,14 @@ package policy_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
@@ -48,6 +50,14 @@ type credPlugin struct {
 
 func (p credPlugin) CredentialPaths() []string { return p.paths }
 
+// credDestPlugin also declares destinations bound to its credentials.
+type credDestPlugin struct {
+	credPlugin
+	dests []string
+}
+
+func (p credDestPlugin) CredentialDestinations() []string { return p.dests }
+
 // credentialRegistryMock registers the three plugins whose paths the tests
 // exercise. Validation always passes: the credential rules under test run
 // before it, and a rejected write must not depend on it.
@@ -64,8 +74,13 @@ func credentialRegistryMock(t *testing.T) *pluginmocks.Registry {
 			"credentials.session_token",
 		},
 	}
+	dests := map[string][]string{azureSlug: {"endpoint"}, armorSlug: {"location", "project"}}
 	for slug, paths := range decl {
-		reg.EXPECT().Get(slug).Return(credPlugin{Plugin: pluginmocks.NewPlugin(t), paths: paths}, true).Maybe()
+		var plugin appplugins.Plugin = credPlugin{Plugin: pluginmocks.NewPlugin(t), paths: paths}
+		if d, ok := dests[slug]; ok {
+			plugin = credDestPlugin{credPlugin: credPlugin{Plugin: pluginmocks.NewPlugin(t), paths: paths}, dests: d}
+		}
+		reg.EXPECT().Get(slug).Return(plugin, true).Maybe()
 	}
 	return reg
 }
@@ -113,12 +128,12 @@ func TestUpdater_Update_MaskedCredentialKeepsTheStoredOne(t *testing.T) {
 	existing := storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a"})
 
 	saved, err := updateWith(t, existing, apppolicy.UpdateInput{
-		Settings: &map[string]any{"api_key": "***6789", "endpoint": "https://b"},
+		Settings: &map[string]any{"api_key": "***6789", "endpoint": "https://a", "model": "m2"},
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, realKey, saved["api_key"], "a masked echo must not overwrite the real credential")
-	assert.Equal(t, "https://b", saved["endpoint"], "non-credential fields still update")
+	assert.Equal(t, "m2", saved["model"], "non-credential fields still update")
 }
 
 func TestUpdater_Update_OmittedAndEmptyCredentialClearTheStoredOne(t *testing.T) {
@@ -374,4 +389,73 @@ func TestUpdater_Update_RejectsACaseVariantCredentialKey(t *testing.T) {
 			assert.Nil(t, saved)
 		})
 	}
+}
+
+// A caller who can edit a policy but never read its secret must not be able to
+// keep the secret and aim it elsewhere by echoing the mask with a new destination.
+func TestUpdater_Update_MaskedCredentialWithAChangedDestinationIsRejected(t *testing.T) {
+	t.Parallel()
+	armorStored := func() *domain.Policy {
+		return storedPolicy(t, armorSlug, map[string]any{
+			"project": "p", "location": "us-central1", "template": "t",
+			"credentials": map[string]any{"service_account_json": `{"k":"REAL-0123456789"}`},
+		})
+	}
+	armorBody := func(field, value string) map[string]any {
+		m := map[string]any{
+			"project": "p", "location": "us-central1", "template": "t",
+			"credentials": map[string]any{"service_account_json": secret.Mask(`{"k":"REAL-0123456789"}`)},
+		}
+		if field != "" {
+			m[field] = value
+		}
+		return m
+	}
+	tests := []struct {
+		name     string
+		existing *domain.Policy
+		body     map[string]any
+		wantErr  bool
+		wantKept string
+	}{
+		{"azure changed endpoint", storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a.example"}),
+			map[string]any{"api_key": "***6789", "endpoint": "https://attacker.example"}, true, ""},
+		{"azure unchanged endpoint", storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a.example"}),
+			map[string]any{"api_key": "***6789", "endpoint": "https://a.example"}, false, realKey},
+		{"azure endpoint case variant", storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a.example"}),
+			map[string]any{"api_key": "***6789", "endpoint": "https://a.example", "Endpoint": "https://attacker.example"}, true, ""},
+		{"model armor changed location", armorStored(), armorBody("location", "europe-west4"), true, ""},
+		{"model armor changed project", armorStored(), armorBody("project", "other"), true, ""},
+		{"model armor unchanged", armorStored(), armorBody("", ""), false, `{"k":"REAL-0123456789"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			saved, err := updateWith(t, tt.existing, apppolicy.UpdateInput{Settings: &tt.body})
+			if tt.wantErr {
+				require.ErrorIs(t, err, commonerrors.ErrValidation)
+				if !strings.Contains(tt.name, "case variant") {
+					assert.Contains(t, err.Error(), "re-enter the credential")
+				}
+				assert.Nil(t, saved)
+				return
+			}
+			require.NoError(t, err)
+			if v, ok := saved["api_key"]; ok {
+				assert.Equal(t, tt.wantKept, v)
+			} else {
+				assert.Equal(t, tt.wantKept, saved["credentials"].(map[string]any)["service_account_json"])
+			}
+		})
+	}
+}
+
+func TestUpdater_Update_ANewCredentialMayMoveTheDestination(t *testing.T) {
+	t.Parallel()
+	existing := storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a.example"})
+	saved, err := updateWith(t, existing, apppolicy.UpdateInput{
+		Settings: &map[string]any{"api_key": "new-key", "endpoint": "https://b.example"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "https://b.example", saved["endpoint"])
 }

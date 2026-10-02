@@ -219,8 +219,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 //     so an omitted, empty or null credential is cleared (the plugin's own
 //     validation rejects it if required). The one exception is a value that is
 //     exactly the mask of the stored credential, i.e. a read echoed back: that
-//     keeps the stored one. Any other masked-looking value is rejected with a
-//     400; a real new value replaces.
+//     keeps the stored one, but only while the plugin's bound destination fields
+//     (CredentialDestinations: an endpoint, a location) are unchanged; moving
+//     one requires re-entering the credential, else the stored secret could be
+//     redirected to a host the caller chose. Any other masked-looking value is
+//     rejected with a 400; a real new value replaces.
 //   - Settings carried, plugin changed: nothing is resolved against the stored
 //     settings, which belong to the previous plugin. A masked credential has
 //     nothing to stand for and is rejected, as on create; an omitted one fails
@@ -247,7 +250,13 @@ func (u *updater) guardCredentials(in UpdateInput, previous map[string]any, load
 		return nil
 	}
 	if !slugChanged {
-		secret.ResolveSettings(*in.Settings, previous, paths)
+		dests := appplugins.PluginCredentialDestinations(u.registry, newSlug)
+		if err := secret.RejectCaseVariants(*in.Settings, dests); err != nil {
+			return errors.Join(commonerrors.ErrValidation, err)
+		}
+		if err := secret.ResolveSettings(*in.Settings, previous, paths, dests); err != nil {
+			return errors.Join(commonerrors.ErrValidation, err)
+		}
 	}
 	if err := secret.ValidateCredentialSettings(*in.Settings, paths); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
