@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,8 +84,8 @@ func TestServiceAccountCacheMintsAccessToken(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
 
-	token, err := NewServiceAccountCache().Token(context.Background(),
-		serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com"), CloudPlatformScope)
+	token, err := NewServiceAccountCache(WithHTTPClient(redirectTo(server))).Token(context.Background(),
+		serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com"), CloudPlatformScope)
 
 	require.NoError(t, err)
 	assert.Equal(t, "ya29.minted", token)
@@ -94,8 +95,8 @@ func TestServiceAccountCacheMintsAccessToken(t *testing.T) {
 func TestServiceAccountCacheReusesValidToken(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := NewServiceAccountCache()
-	sa := serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")
+	cache := NewServiceAccountCache(WithHTTPClient(redirectTo(server)))
+	sa := serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")
 
 	for range 5 {
 		token, err := cache.Token(context.Background(), sa, CloudPlatformScope)
@@ -110,10 +111,10 @@ func TestServiceAccountCacheReusesValidToken(t *testing.T) {
 func TestServiceAccountCacheIsolatesServiceAccounts(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := NewServiceAccountCache()
+	cache := NewServiceAccountCache(WithHTTPClient(redirectTo(server)))
 
 	for _, email := range []string{"one@careplus-poc.iam.gserviceaccount.com", "two@careplus-poc.iam.gserviceaccount.com"} {
-		_, err := cache.Token(context.Background(), serviceAccountJSON(t, server.URL, email), CloudPlatformScope)
+		_, err := cache.Token(context.Background(), serviceAccountJSON(t, gcpkey.TokenURL, email), CloudPlatformScope)
 		require.NoError(t, err)
 	}
 
@@ -123,8 +124,8 @@ func TestServiceAccountCacheIsolatesServiceAccounts(t *testing.T) {
 func TestServiceAccountCacheIsolatesScopes(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := NewServiceAccountCache()
-	sa := serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")
+	cache := NewServiceAccountCache(WithHTTPClient(redirectTo(server)))
+	sa := serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")
 
 	for _, scope := range []string{CloudPlatformScope, "https://www.googleapis.com/auth/other"} {
 		_, err := cache.Token(context.Background(), sa, scope)
@@ -137,8 +138,8 @@ func TestServiceAccountCacheIsolatesScopes(t *testing.T) {
 func TestServiceAccountCacheConcurrentCallers(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := NewServiceAccountCache()
-	sa := serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")
+	cache := NewServiceAccountCache(WithHTTPClient(redirectTo(server)))
+	sa := serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")
 
 	var wg sync.WaitGroup
 	for range 20 {
@@ -158,9 +159,9 @@ func TestServiceAccountCacheConcurrentCallers(t *testing.T) {
 func TestServiceAccountCacheDefaultsToCloudPlatformScope(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	sa := serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com")
+	sa := serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com")
 
-	token, err := NewServiceAccountCache().Token(context.Background(), sa, "")
+	token, err := NewServiceAccountCache(WithHTTPClient(redirectTo(server))).Token(context.Background(), sa, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "ya29.minted", token)
@@ -169,14 +170,14 @@ func TestServiceAccountCacheDefaultsToCloudPlatformScope(t *testing.T) {
 func TestServiceAccountCacheEvictsPastCapacity(t *testing.T) {
 	var calls atomic.Int64
 	server := tokenEndpoint(t, &calls)
-	cache := NewServiceAccountCache()
+	cache := NewServiceAccountCache(WithHTTPClient(redirectTo(server)))
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
 	for i := range maxCachedTokenSources + 1 {
 		email := fmt.Sprintf("sa-%d@careplus-poc.iam.gserviceaccount.com", i)
-		_, err := cache.Token(context.Background(), serviceAccountJSONWithKey(t, key, server.URL, email), CloudPlatformScope)
+		_, err := cache.Token(context.Background(), serviceAccountJSONWithKey(t, key, gcpkey.TokenURL, email), CloudPlatformScope)
 		require.NoError(t, err)
 	}
 
@@ -201,6 +202,7 @@ func TestServiceAccountCacheErrors(t *testing.T) {
 		serviceAccountJSON string
 		cancel             bool
 		errContains        string
+		endpoint           *httptest.Server
 	}{
 		{name: "empty json", errContains: "required"},
 		{
@@ -216,12 +218,13 @@ func TestServiceAccountCacheErrors(t *testing.T) {
 		},
 		{
 			name:               "google rejects the assertion",
-			serviceAccountJSON: serviceAccountJSON(t, rejecting.URL, "sa@careplus-poc.iam.gserviceaccount.com"),
+			serviceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com"),
 			errContains:        "exchanging gcp service account for an access token",
+			endpoint:           rejecting,
 		},
 		{
 			name:               "cancelled context",
-			serviceAccountJSON: serviceAccountJSON(t, server.URL, "sa@careplus-poc.iam.gserviceaccount.com"),
+			serviceAccountJSON: serviceAccountJSON(t, gcpkey.TokenURL, "sa@careplus-poc.iam.gserviceaccount.com"),
 			cancel:             true,
 			errContains:        "context canceled",
 		},
@@ -235,10 +238,34 @@ func TestServiceAccountCacheErrors(t *testing.T) {
 				cancel()
 			}
 
-			_, err := NewServiceAccountCache().Token(ctx, tt.serviceAccountJSON, CloudPlatformScope)
+			endpoint := server
+			if tt.endpoint != nil {
+				endpoint = tt.endpoint
+			}
+			_, err := NewServiceAccountCache(WithHTTPClient(redirectTo(endpoint))).Token(ctx, tt.serviceAccountJSON, CloudPlatformScope)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
+}
+
+// redirectTo returns a client that sends every request to server, whatever
+// host it names. The cache pins the real Google endpoint, so this is how a
+// test observes the token exchange without reaching the internet.
+func redirectTo(server *httptest.Server) *http.Client {
+	return &http.Client{Transport: &redirectTransport{target: server.Listener.Addr().String()}}
+}
+
+type redirectTransport struct {
+	target string
+	hosts  sync.Map
+}
+
+func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.hosts.Store(req.URL.String(), struct{}{})
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = "http"
+	clone.URL.Host = r.target
+	return http.DefaultTransport.RoundTrip(clone)
 }
