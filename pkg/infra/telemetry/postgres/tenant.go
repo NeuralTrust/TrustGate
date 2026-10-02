@@ -20,7 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
@@ -61,16 +63,56 @@ var tenantDSNKeys = []string{
 
 var errTenantVerifyCA = errors.New("postgres: sslmode=verify-ca (or require with a root CA configured on the gateway) is not supported in gateway settings; use verify-full")
 
+// pgx reads a pg_service entry whenever the service key is present, even when
+// empty, and fails if it cannot find it. To keep PGSERVICE/PGSERVICEFILE from
+// choosing the host, the DSN is pinned to a service of our own that defines
+// nothing, in a file we wrote.
+const pinnedServiceName = "trustgate-none"
+
+var (
+	pinnedServiceOnce sync.Once
+	pinnedServicePath string
+	pinnedServiceErr  error
+)
+
+func pinnedServiceFile() (string, error) {
+	pinnedServiceOnce.Do(func() {
+		f, err := os.CreateTemp("", "trustgate-pg-service-*.conf")
+		if err != nil {
+			pinnedServiceErr = err
+			return
+		}
+		defer func() { _ = f.Close() }()
+		_, pinnedServiceErr = f.WriteString("[" + pinnedServiceName + "]\n")
+		pinnedServicePath = f.Name()
+	})
+	return pinnedServicePath, pinnedServiceErr
+}
+
 // noPassfile is a path nothing exists at, so pgx finds no stored password.
 const noPassfile = "/nonexistent/trustgate-no-passfile"
 
-// sslmodeIfOmitted is the libpq default, applied only when the DSN has no
-// sslmode of its own, so PGSSLMODE in the pod environment never picks it.
-func sslmodeIfOmitted(dsn string) string {
-	if dsnOmitsKey(dsn, "sslmode") {
-		return "prefer"
+const defaultPort = 5432
+
+// pinnedDSN returns dsn with the parameters that would otherwise be taken from
+// the pod environment set to values of this package's choosing: no passfile, no
+// pg_service entry (PGSERVICE/PGSERVICEFILE), and, when the DSN says nothing,
+// sslmode=require. require is encrypted but unverified, which is the strongest
+// default that works against a database with a self-signed certificate; a tenant
+// that wants verification writes sslmode=verify-full. PGSSLMODE never picks it.
+func pinnedDSN(dsn string) (string, error) {
+	serviceFile, err := pinnedServiceFile()
+	if err != nil {
+		return "", err
 	}
-	return ""
+	omitsSSLMode := dsnOmitsKey(dsn, "sslmode") // ask before adding keys outside the allow-list
+	dsn = withParam(dsn, "passfile", noPassfile)
+	dsn = withParam(dsn, "servicefile", serviceFile)
+	dsn = withParam(dsn, "service", pinnedServiceName)
+	if omitsSSLMode {
+		dsn = withParam(dsn, "sslmode", "require")
+	}
+	return dsn, nil
 }
 
 // withParam adds key=value to a DSN that has already passed the allow-list (so
@@ -150,7 +192,11 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 	// ~/.pgpass, looked up even for an explicitly empty password) and, when the
 	// DSN says nothing, sslmode (PGSSLMODE). The values come from this package,
 	// never from the environment or the tenant.
-	conf, err := pgxpool.ParseConfig(withParam(withParam(dsn, "passfile", noPassfile), "sslmode", sslmodeIfOmitted(dsn)))
+	pinned, err := pinnedDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	conf, err := pgxpool.ParseConfig(pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -166,9 +212,20 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 	if dsnOmitsKey(dsn, "dbname") {
 		cc.Database = ""
 	}
-	delete(cc.RuntimeParams, "options")
-	if dsnOmitsKey(dsn, "application_name") {
-		delete(cc.RuntimeParams, "application_name")
+	// Runtime parameters (options, PGTZ's timezone, PGCLIENTENCODING...) come
+	// from the environment unless the DSN wrote them; the allow-list admits only
+	// application_name.
+	written := dsnOmitsKey(dsn, "application_name")
+	for k := range cc.RuntimeParams {
+		if k != "application_name" || written {
+			delete(cc.RuntimeParams, k)
+		}
+	}
+	if dsnOmitsKey(dsn, "port") {
+		cc.Port = defaultPort
+		for _, fb := range cc.Fallbacks {
+			fb.Port = defaultPort
+		}
 	}
 	hosts := []string{cc.Host}
 	for _, fb := range cc.Fallbacks {
