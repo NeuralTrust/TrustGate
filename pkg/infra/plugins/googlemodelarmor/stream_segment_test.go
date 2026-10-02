@@ -64,7 +64,7 @@ func newStreamEvent() (*metrics.EventContext, *trace.Span) {
 
 func TestStreamSettingsOptIn(t *testing.T) {
 	t.Parallel()
-	p := New(adapter.NewRegistry(), "", 0, nil)
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	cases := []struct {
 		name     string
 		settings map[string]any
@@ -92,7 +92,7 @@ func TestStreamSettingsOptIn(t *testing.T) {
 
 func TestStreamSettingsDefaultsToFailClosed(t *testing.T) {
 	t.Parallel()
-	p := New(adapter.NewRegistry(), "", 0, nil)
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	on, opts := p.StreamSettings(streamSettings(nil))
 	if !on {
 		t.Fatal("expected the opt-in")
