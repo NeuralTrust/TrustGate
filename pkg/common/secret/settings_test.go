@@ -206,3 +206,12 @@ func TestValidateCredentialSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestHasCredentials(t *testing.T) {
+	t.Parallel()
+	assert.True(t, secret.HasCredentials(map[string]any{"credentials": map[string]any{"access_key_id": "AKIA"}}, bedrockPaths))
+	assert.True(t, secret.HasCredentials(map[string]any{"credentials": map[string]any{"access_key_id": float64(1)}}, bedrockPaths))
+	assert.False(t, secret.HasCredentials(map[string]any{"credentials": map[string]any{"access_key_id": "", "session_token": nil}}, bedrockPaths))
+	assert.False(t, secret.HasCredentials(map[string]any{"guardrail_id": "x"}, bedrockPaths))
+	assert.False(t, secret.HasCredentials(nil, bedrockPaths))
+}

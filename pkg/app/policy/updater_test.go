@@ -182,6 +182,7 @@ func TestUpdater_Update_RejectsInertSettingsWriteWhenSettingsCarried(t *testing.
 
 	sentinel := errors.New("policy could never block or report a violation")
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -214,6 +215,7 @@ func TestUpdater_Update_SettingsWriteForwardsThePriorSettings(t *testing.T) {
 	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
 
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -257,6 +259,7 @@ func TestUpdater_Update_DisableOnlyDoesNotTriggerSettingsWriteValidation(t *test
 	}), false).Return(nil).Once()
 
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -287,6 +290,7 @@ func TestUpdater_Update_SlugChangeTriggersSettingsWriteValidation(t *testing.T) 
 
 	sentinel := errors.New("policy could never block or report a violation")
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -318,6 +322,7 @@ func TestUpdater_Update_SlugChangeTreatsPreviousSettingsAsNil(t *testing.T) {
 	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
 
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -353,6 +358,7 @@ func TestUpdater_Update_UnchangedSlugDoesNotTriggerSettingsWriteValidation(t *te
 	repo.EXPECT().Update(mock.Anything, mock.Anything, false).Return(nil).Once()
 
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -728,6 +734,7 @@ func consoleWriteBody(existing *domain.Policy, enabled bool) apppolicy.UpdateInp
 func brokenRegistry(t *testing.T) *pluginmocks.Registry {
 	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(appplugins.ErrUnknownPlugin).Maybe()
@@ -803,6 +810,7 @@ func TestUpdater_Update_EnablingAValidPolicyStillValidates(t *testing.T) {
 		Return(nil).Once()
 
 	reg := pluginmocks.NewRegistry(t)
+	allowUnknownSlugLookup(reg)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Once()
 	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Once()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Once()

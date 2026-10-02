@@ -16,12 +16,15 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -118,6 +121,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if in.Description != nil {
 		existing.Description = *in.Description
 	}
+	loadedSlug := existing.Slug
 	slugChanged := in.Slug != nil && *in.Slug != existing.Slug
 	if in.Slug != nil {
 		existing.Slug = *in.Slug
@@ -130,6 +134,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	}
 	if in.Parallel != nil {
 		existing.Parallel = *in.Parallel
+	}
+	if err := u.guardCredentials(in, previousSettings, loadedSlug, existing.Slug, slugChanged); err != nil {
+		return nil, err
 	}
 	if in.Settings != nil {
 		existing.Settings = *in.Settings
@@ -203,6 +210,47 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		u.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+// guardCredentials applies the credential rules of an update, for the plugin
+// the settings will be validated against (newSlug):
+//
+//   - Settings carried, same plugin: a credential that is omitted, empty or a
+//     masked value echoed from a response keeps the stored one (merge-on-omit),
+//     so saving a policy exactly as read does not wipe its secrets. An explicit
+//     null clears one.
+//   - Settings carried, plugin changed: nothing is resolved against the stored
+//     settings, which belong to the previous plugin. A masked credential has
+//     nothing to stand for and is rejected, as on create; an omitted one fails
+//     the plugin's own required-field validation.
+//   - No settings carried but the plugin changed: the stored settings would be
+//     repointed at the new plugin as they are, so a credential saved for the
+//     old plugin (an Azure key at a path the OpenAI plugin also reads) would be
+//     sent to a different vendor. The caller must provide the new settings.
+//
+// A non-string value at a declared credential path is rejected in every case.
+func (u *updater) guardCredentials(in UpdateInput, previous map[string]any, loadedSlug, newSlug string, slugChanged bool) error {
+	if in.Settings == nil {
+		if !slugChanged {
+			return nil
+		}
+		if oldPaths, known := appplugins.PluginCredentialPaths(u.registry, loadedSlug); known && secret.HasCredentials(previous, oldPaths) {
+			return errors.Join(commonerrors.ErrValidation,
+				errors.New("settings must be provided when changing the plugin of a policy that stores credentials"))
+		}
+		return nil
+	}
+	paths, known := appplugins.PluginCredentialPaths(u.registry, newSlug)
+	if !known || len(paths) == 0 {
+		return nil
+	}
+	if !slugChanged {
+		secret.ResolveSettings(*in.Settings, previous, paths)
+	}
+	if err := secret.ValidateCredentialSettings(*in.Settings, paths); err != nil {
+		return errors.Join(commonerrors.ErrValidation, err)
+	}
+	return nil
 }
 
 // validateScopeAfterPatch revalidates the stored scope when the update can
