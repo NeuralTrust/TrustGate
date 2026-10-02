@@ -43,6 +43,22 @@ message Snapshot {
   reserved 11;
   repeated StoreGrant store_grants = 12;
   repeated StorePolicy store_policies = 13;
+  // Plan caps per tenant. Plan counters are per tenant, so the cap they are
+  // compared against has to be the tenant's, not whichever gateway took the
+  // request. A snapshot from before this field carries none, and the data plane
+  // then falls back to the caps stamped on the gateway. A scoped snapshot carries
+  // only its own tenant's row.
+  repeated TenantCaps tenant_caps = 14;
+}
+
+// TenantCaps are one tenant's plan caps. quota_per_month 0 means unlimited, the
+// same sentinel the gateway stamp uses.
+message TenantCaps {
+  string tenant_id = 1;
+  string tier = 2;
+  int32 burst_per_min = 3;
+  int32 quota_per_month = 4;
+  int32 max_instances = 5;
 }
 
 message VerificationKey {

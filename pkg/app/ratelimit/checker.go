@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -36,7 +37,9 @@ const (
 // callers that still return this error map it to 503.
 var ErrUnavailable = errors.New("rate limit entitlements unavailable")
 
-// ErrUnmetered means the gateway has no stamped plan caps. Hot-path Check skips commercial rate limiting (OSS / self-hosted).
+// ErrUnmetered means the gateway is not metered: it has no tenant, or neither
+// tenant caps nor a stamp. Hot-path Check skips plan rate limiting (OSS /
+// self-hosted) and leaves no counter behind.
 var ErrUnmetered = errors.New("rate limit entitlements unmetered")
 
 // Exceeded is returned when a plan limit is hit (HTTP 429 / JSON-RPC -32004).
@@ -87,19 +90,35 @@ func rateLimitClientMessage(reason string, retryAfterSeconds int) string {
 	}
 }
 
-//go:generate mockery --name=Counter --dir=. --output=./mocks --filename=counter_mock.go --case=underscore --with-expecter
-type Counter interface {
-	IncrBurst(ctx context.Context, gatewayID ids.GatewayID) (count int64, ttl time.Duration, err error)
-	IncrQuota(ctx context.Context, gatewayID ids.GatewayID, month string) (count int64, err error)
+// Resolved is what a gateway's plan resolves to: the subject its requests are
+// counted under and the caps they are compared against.
+//
+// The subject is the tenant, so every gateway of a tenant adds to one counter
+// and the plan cannot be multiplied by creating instances.
+type Resolved struct {
+	Subject string
+	Limits  domain.Limits
+}
+
+// SyncBackend applies batched counter deltas to the shared store and returns the
+// new totals. It is called only from the background sync loop, never from a
+// request.
+type SyncBackend interface {
+	Sync(ctx context.Context, items []domain.SyncItem) ([]domain.SyncResult, error)
 }
 
 //go:generate mockery --name=GatewayTierLoader --dir=. --output=./mocks --filename=gateway_tier_loader_mock.go --case=underscore --with-expecter
 type GatewayTierLoader interface {
-	Limits(ctx context.Context, gatewayID ids.GatewayID) (domain.Limits, error)
+	// Resolve maps a gateway to its counting subject and caps. It returns
+	// ErrUnmetered for a gateway that has no tenant, or neither tenant caps nor
+	// a stamp: that is OSS / self-hosted traffic, which is not metered.
+	Resolve(ctx context.Context, gatewayID ids.GatewayID) (Resolved, error)
 }
 
 //go:generate mockery --name=Checker --dir=. --output=./mocks --filename=checker_mock.go --case=underscore --with-expecter
 type Checker interface {
+	// Check charges one request against the gateway's plan, in memory: it never
+	// waits on Redis.
 	Check(ctx context.Context, gatewayID ids.GatewayID) error
 }
 
@@ -108,3 +127,10 @@ type noopChecker struct{}
 func (noopChecker) Check(context.Context, ids.GatewayID) error { return nil }
 
 func NewNoopChecker() Checker { return noopChecker{} }
+
+func loggerOrDefault(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
+}

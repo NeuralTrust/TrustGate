@@ -1195,3 +1195,76 @@ func TestParseAdminM2MPublicKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_RateLimitSyncDefaults(t *testing.T) {
+	minimumEnv(t)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	rl := cfg.RateLimit
+	if !rl.Enabled || rl.SyncInterval != time.Second || rl.SyncTimeout != 200*time.Millisecond ||
+		rl.FailedRetention != 30*time.Second {
+		t.Fatalf("rate limit defaults = %+v", rl)
+	}
+}
+
+func TestLoadConfig_RateLimitSyncConfigured(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "2s")
+	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "500ms")
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "45s")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	rl := cfg.RateLimit
+	if rl.SyncInterval != 2*time.Second || rl.SyncTimeout != 500*time.Millisecond ||
+		rl.FailedRetention != 45*time.Second {
+		t.Fatalf("rate limit = %+v", rl)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidRateLimitSync(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "malformed interval", key: "RATE_LIMIT_SYNC_INTERVAL", value: "fast"},
+		{name: "zero timeout", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "0s"},
+		{name: "timeout over the cap", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "6s"},
+		{name: "retention over the cap", key: "RATE_LIMIT_FAILED_RETENTION", value: "11m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(tt.key, tt.value)
+			_, err := LoadConfig()
+			if !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Fatalf("error = %v, want ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+// A token that expires before the last resend of a retained round would count
+// that round twice, so the whole combination is checked, not each value alone.
+func TestLoadConfig_RejectsARetentionTheTokenCannotOutlive(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "30s")
+	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "20s")
+	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "5s")
+	if _, err := LoadConfig(); !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("RATE_LIMIT_ENABLED", "false")
+	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "11m")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("a disabled limiter must not be validated: %v", err)
+	}
+}

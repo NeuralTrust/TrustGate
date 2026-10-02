@@ -14,13 +14,11 @@ import (
 // accepts. max_instances is deliberately far above what the suite creates: it
 // caps gateways per tenant and every test shares one tenant, so a small value
 // would fail whichever test happens to run last.
+//
+// The first stamped create of a tenant seeds its plan row, and the plan counter
+// is per tenant, so this stamp must not cap the shared functional tenant.
 func stampedFreeEntitlements() map[string]any {
-	return map[string]any{
-		"tier":            "free",
-		"burst_per_min":   60,
-		"quota_per_month": 10000,
-		"max_instances":   1000,
-	}
+	return functionalSuitePlan()
 }
 
 func TestCreateGateway_Success(t *testing.T) {

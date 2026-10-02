@@ -130,6 +130,12 @@ func insertGatewayTx(ctx context.Context, tx pgx.Tx, g *domain.Gateway) error {
 	); err != nil {
 		return mapPgError(err)
 	}
+	// A stamped create fills the tenant's plan row when it has none yet; it never
+	// overwrites one, since the row is kept current by restamps and this stamp is
+	// written once.
+	if limits, ok := g.Entitlements.ResolveLimits(); ok && g.TenantID() != "" {
+		return seedTenantCaps(ctx, tx, g.TenantID(), g.Entitlements.Tier, limits)
+	}
 	return nil
 }
 
@@ -212,6 +218,7 @@ func (r *Repository) RestampEntitlementsByTenantID(
 		       updated_at   = NOW()
 		 WHERE metadata->>'tenant_id' = $1
 		RETURNING id, slug`
+	limits, hasLimits := e.ResolveLimits()
 	var stamped []domain.RestampedGateway
 	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, query, tenantID, entitlementsBytes)
@@ -229,6 +236,12 @@ func (r *Repository) RestampEntitlementsByTenantID(
 		}
 		if err := rows.Err(); err != nil {
 			return mapPgError(err)
+		}
+		// The tenant's plan row is written in the same transaction, whether or not
+		// the tenant has a gateway to stamp: the counters follow the row.
+		rows.Close()
+		if hasLimits {
+			return upsertTenantCaps(ctx, tx, tenantID, e.Tier, limits)
 		}
 		return nil
 	})

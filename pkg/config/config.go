@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 const (
@@ -139,6 +140,10 @@ const (
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
 	defaultRateLimitEnabled = true
+
+	defaultRateLimitSyncInterval = time.Second
+	defaultRateLimitSyncTimeout  = 200 * time.Millisecond
+	defaultRateLimitRetention    = 30 * time.Second
 
 	defaultMCPConnectRateLimitEnabled  = true
 	defaultMCPConnectRateLimitSource   = 10
@@ -491,6 +496,16 @@ type ModelArmorConfig struct {
 
 type RateLimitConfig struct {
 	Enabled bool
+	// SyncInterval is how often the in-memory plan counters are reconciled with
+	// Redis. Overshoot past a cap is bounded by the tenant's request rate times
+	// this interval.
+	SyncInterval time.Duration
+	// SyncTimeout bounds one round trip to Redis from the sync loop. It never
+	// applies to a request: requests do not call Redis.
+	SyncTimeout time.Duration
+	// FailedRetention is how long usage that could not be synced is kept for
+	// resending, from its first failure, before it is dropped and counted.
+	FailedRetention time.Duration
 }
 
 type MCPConnectRateLimitConfig struct {
@@ -507,6 +522,10 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
+	if err != nil {
+		return nil, err
+	}
+	rateLimit, err := getRateLimitConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +552,7 @@ func LoadConfig() (*Config, error) {
 		OpenAIModeration:    getOpenAIModerationConfig(),
 		ModelArmor:          getModelArmorConfig(),
 		ConfigSync:          getConfigSyncConfig(),
-		RateLimit:           getRateLimitConfig(),
+		RateLimit:           rateLimit,
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 	}
@@ -902,10 +921,37 @@ func getConfigSyncConfig() ConfigSyncConfig {
 	}
 }
 
-func getRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{
-		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
+func getRateLimitConfig() (RateLimitConfig, error) {
+	syncInterval, err := parsePositiveDurationEnv("RATE_LIMIT_SYNC_INTERVAL", defaultRateLimitSyncInterval)
+	if err != nil {
+		return RateLimitConfig{}, err
 	}
+	syncTimeout, err := parsePositiveDurationEnv("RATE_LIMIT_SYNC_TIMEOUT", defaultRateLimitSyncTimeout)
+	if err != nil {
+		return RateLimitConfig{}, err
+	}
+	retention, err := parsePositiveDurationEnv("RATE_LIMIT_FAILED_RETENTION", defaultRateLimitRetention)
+	if err != nil {
+		return RateLimitConfig{}, err
+	}
+	return RateLimitConfig{
+		Enabled:         getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
+		SyncInterval:    syncInterval,
+		SyncTimeout:     syncTimeout,
+		FailedRetention: retention,
+	}, nil
+}
+
+// Validate rejects a rate-limit configuration the sync loop cannot honour. With
+// the limiter off nothing runs, so nothing is checked.
+func (c RateLimitConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if err := ratelimitdomain.ValidateRetention(c.FailedRetention, c.SyncInterval, c.SyncTimeout); err != nil {
+		return fmt.Errorf("%w: RATE_LIMIT_FAILED_RETENTION: %v", errors.ErrInvalidConfig, err)
+	}
+	return nil
 }
 
 func getAdminM2MConfig() AdminM2MConfig {
@@ -1148,6 +1194,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
+		return err
+	}
+	if err := c.RateLimit.Validate(); err != nil {
 		return err
 	}
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {

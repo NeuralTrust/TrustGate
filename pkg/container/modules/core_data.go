@@ -47,6 +47,13 @@ func provideNilConnection(c *container.Container) error {
 }
 
 func provideSnapshotRepositories(c *container.Container) error {
+	// The tenant caps ride the snapshot, so the rate limiter reads them from
+	// memory on a DB-less plane.
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) *adapters.TenantCapsSource {
+		return adapters.NewTenantCapsSource(store)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) gatewaydomain.Repository {
 		return adapters.NewGatewayRepository(store)
 	}); err != nil {

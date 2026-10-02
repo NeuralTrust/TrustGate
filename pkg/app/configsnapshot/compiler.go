@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -29,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	ratelimitdomain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -64,6 +66,12 @@ type Compiler struct {
 	// playgroundTokenKeys are stamped into every compiled snapshot so data
 	// planes can verify RS256 playground tokens without any local key config.
 	playgroundTokenKeys []readmodel.VerificationKey
+
+	tenantCaps ratelimitdomain.TenantCapsLister
+	// lastCaps is the last caps listing that succeeded. It is replaced whole and
+	// never mutated, so readers can use it without holding the lock.
+	capsMu   sync.Mutex
+	lastCaps map[string]ratelimitdomain.TenantCaps
 }
 
 // StoreGrantReader is the read side the compiler needs for MCP Store grants.
@@ -100,6 +108,12 @@ func WithPlaygroundTokenKeys(keys []readmodel.VerificationKey) CompilerOption {
 	return func(c *Compiler) {
 		c.playgroundTokenKeys = keys
 	}
+}
+
+// WithTenantCaps stamps each snapshot with the plan caps of the tenants whose
+// gateways it carries.
+func WithTenantCaps(r ratelimitdomain.TenantCapsLister) CompilerOption {
+	return func(c *Compiler) { c.tenantCaps = r }
 }
 
 func NewCompiler(
@@ -181,6 +195,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	}
 	mergeCatalog(&data, cat)
 	data.PlaygroundTokenKeys = c.playgroundTokenKeys
+	stampTenantCaps(&data, c.listTenantCaps(ctx))
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -238,6 +253,14 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		bucket.PlaygroundTokenKeys = c.playgroundTokenKeys
 	}
 
+	// Plan caps follow the gateways in each flavor: the global snapshot carries
+	// the tenants of the gateways it carries, and a scoped one only its own.
+	caps := c.listTenantCaps(ctx)
+	stampTenantCaps(&global, caps)
+	for _, bucket := range buckets {
+		stampTenantCaps(bucket, caps)
+	}
+
 	cat, err := c.collectCatalogData(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -254,6 +277,60 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		scoped[scope] = readmodel.Build(*bucket)
 	}
 	return readmodel.Build(global), scoped, readmodel.Build(catData), nil
+}
+
+// listTenantCaps reads the plan caps of every tenant. A failure does not fail the
+// compile: caps are an enrichment, and a snapshot that cannot be published would
+// freeze every gateway, key and policy change behind a plan-table outage. The
+// failure is logged and counted, and the snapshot goes out with the last listing
+// that succeeded: dropping the caps instead would send every data plane back to
+// the stamp on each gateway, which can disagree with the table. Only a compiler
+// that has never listed them publishes without caps, which sends the data planes
+// to the stamp (the same fallback as before the table existed).
+func (c *Compiler) listTenantCaps(ctx context.Context) map[string]ratelimitdomain.TenantCaps {
+	if c.tenantCaps == nil {
+		return nil
+	}
+	list, err := c.tenantCaps.ListTenantCaps(ctx)
+	if err != nil {
+		c.capsMu.Lock()
+		last := c.lastCaps
+		c.capsMu.Unlock()
+		c.logger.Warn("configsnapshot: failed to list tenant caps; reusing the last listing, or the gateway stamp if there is none",
+			slog.String("component", component),
+			slog.Bool("reusing_last", last != nil),
+			slog.Any("error", err))
+		recordTenantCapsError(ctx)
+		return last
+	}
+	byTenant := make(map[string]ratelimitdomain.TenantCaps, len(list))
+	for _, caps := range list {
+		byTenant[caps.TenantID] = caps
+	}
+	c.capsMu.Lock()
+	c.lastCaps = byTenant
+	c.capsMu.Unlock()
+	return byTenant
+}
+
+// stampTenantCaps attaches the caps of exactly the tenants that own a gateway in
+// data. A scoped snapshot is handed to a data plane that serves one gateway, and
+// it must not learn the plan of any other tenant.
+func stampTenantCaps(data *readmodel.Data, caps map[string]ratelimitdomain.TenantCaps) {
+	seen := make(map[string]struct{}, len(data.Gateways))
+	for i := range data.Gateways {
+		tenantID := data.Gateways[i].TenantID()
+		if tenantID == "" {
+			continue
+		}
+		if _, dup := seen[tenantID]; dup {
+			continue
+		}
+		seen[tenantID] = struct{}{}
+		if c, ok := caps[tenantID]; ok {
+			data.TenantCaps = append(data.TenantCaps, c)
+		}
+	}
 }
 
 // withoutHybridGateways drops gateways whose entitlements bind them to a
@@ -630,6 +707,7 @@ func (c *Compiler) collectCatalog(ctx context.Context, data *readmodel.Data) err
 }
 
 func sortData(data *readmodel.Data) {
+	sort.SliceStable(data.TenantCaps, func(i, j int) bool { return data.TenantCaps[i].TenantID < data.TenantCaps[j].TenantID })
 	sort.SliceStable(data.Gateways, func(i, j int) bool { return data.Gateways[i].ID.String() < data.Gateways[j].ID.String() })
 	sort.SliceStable(data.Consumers, func(i, j int) bool { return data.Consumers[i].ID.String() < data.Consumers[j].ID.String() })
 	sort.SliceStable(data.Registries, func(i, j int) bool { return data.Registries[i].ID.String() < data.Registries[j].ID.String() })
