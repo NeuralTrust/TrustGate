@@ -154,3 +154,39 @@ func TestParseConfigRejectsBothCredentialPaths(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "set only one of")
 }
+
+func TestParseConfigRejectsHostileServiceAccountJSON(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		json    string
+		wantErr string
+	}{
+		{name: "hostile token_uri", json: `{"type":"service_account","token_uri":"http://169.254.169.254/token"}`, wantErr: "token_uri"},
+		{name: "custom universe", json: `{"type":"service_account","universe_domain":"evil.example"}`, wantErr: "universe_domain"},
+		{name: "external account", json: `{"type":"external_account"}`, wantErr: "type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			settings := validSettings()
+			settings["credentials"] = map[string]any{"service_account_json": tt.json}
+			_, err := parseConfig(settings)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "credentials.service_account_json")
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.NotContains(t, err.Error(), "169.254")
+			assert.NotContains(t, err.Error(), "evil.example")
+		})
+	}
+}
+
+func TestParseConfigAcceptsGoogleTokenURI(t *testing.T) {
+	t.Parallel()
+	settings := validSettings()
+	settings["credentials"] = map[string]any{
+		"service_account_json": `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token"}`,
+	}
+	_, err := parseConfig(settings)
+	require.NoError(t, err)
+}
