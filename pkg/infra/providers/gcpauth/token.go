@@ -42,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -65,12 +66,25 @@ type ServiceAccountCache struct {
 	sources    map[string]oauth2.TokenSource
 }
 
+// ServiceAccountOption customises a ServiceAccountCache.
+type ServiceAccountOption func(*ServiceAccountCache)
+
+// WithHTTPClient replaces the client used for token requests. Tests use it to
+// intercept the (pinned) Google token endpoint with a custom transport.
+func WithHTTPClient(client *http.Client) ServiceAccountOption {
+	return func(c *ServiceAccountCache) { c.httpClient = client }
+}
+
 // NewServiceAccountCache builds an empty ServiceAccountCache.
-func NewServiceAccountCache() *ServiceAccountCache {
-	return &ServiceAccountCache{
+func NewServiceAccountCache(opts ...ServiceAccountOption) *ServiceAccountCache {
+	c := &ServiceAccountCache{
 		httpClient: &http.Client{Timeout: tokenRequestTimeout},
 		sources:    make(map[string]oauth2.TokenSource),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Token mints (or reuses a still-valid) OAuth2 access token for
@@ -113,6 +127,10 @@ func (c *ServiceAccountCache) source(serviceAccountJSON, scope string) (oauth2.T
 	if err != nil {
 		return nil, fmt.Errorf("parsing gcp service account credentials: %w", err)
 	}
+
+	// Both come from tenant JSON: token_uri would redirect the signed assertion; audience would let it be replayed against another audience.
+	config.TokenURL = gcpkey.TokenURL
+	config.Audience = ""
 
 	// A cached source outlives the request that created it, so a request context here would break every later refresh.
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, c.httpClient)

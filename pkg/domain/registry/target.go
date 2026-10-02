@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
 
@@ -298,6 +299,9 @@ func (a *TargetAuth) Validate() error {
 	case AuthTypeGCPServiceAccount:
 		if a.GCPServiceAccount == nil || *a.GCPServiceAccount == "" {
 			return fmt.Errorf("%w: gcp_service_account payload required", ErrInvalidRegistry)
+		}
+		if err := gcpkey.Validate(*a.GCPServiceAccount); err != nil {
+			return fmt.Errorf("%w: %s", ErrInvalidRegistry, err.Error())
 		}
 	case AuthTypePassthrough:
 		// No stored credential. The proxy copies the incoming Authorization header.
