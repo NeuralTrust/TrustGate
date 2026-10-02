@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common/gcpkey"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -171,11 +170,6 @@ func (s *Settings) validate() error {
 		return fmt.Errorf(
 			"google_model_armor: credentials: set only one of impersonate_service_account or service_account_json",
 		)
-	}
-	if sa := strings.TrimSpace(s.Credentials.ServiceAccountJSON); sa != "" {
-		if err := gcpkey.Validate(sa); err != nil {
-			return fmt.Errorf("google_model_armor: credentials.service_account_json: %s", err.Error())
-		}
 	}
 	return s.Streaming.Validate(PluginName)
 }
