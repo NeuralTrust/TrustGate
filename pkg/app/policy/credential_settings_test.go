@@ -349,3 +349,29 @@ func TestCreator_Create_AcceptsARealCredential(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, realKey, saved["api_key"])
 }
+
+func TestCreator_Create_RejectsACaseVariantCredentialKey(t *testing.T) {
+	t.Parallel()
+	saved, err := createWith(t, azureSlug, map[string]any{"API_KEY": realKey})
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	assert.Nil(t, saved, "a case-variant key must not be stored: it would be returned in the clear")
+
+	saved, err = createWith(t, bedrockSlug, map[string]any{"Credentials": map[string]any{"secret_access_key": "x"}})
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	assert.Nil(t, saved)
+}
+
+func TestUpdater_Update_RejectsACaseVariantCredentialKey(t *testing.T) {
+	t.Parallel()
+	for name, settings := range map[string]map[string]any{
+		"mask":     {"API_KEY": "***6789"},
+		"newvalue": {"Api_Key": "sk-new"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			saved, err := updateWith(t, storedPolicy(t, azureSlug, map[string]any{"api_key": realKey}), apppolicy.UpdateInput{Settings: &settings})
+			require.ErrorIs(t, err, commonerrors.ErrValidation)
+			assert.Nil(t, saved)
+		})
+	}
+}
