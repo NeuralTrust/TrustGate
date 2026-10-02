@@ -299,6 +299,9 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
+			if reportUnreadable(ctx, "find_by_ids", err) {
+				continue
+			}
 			return nil, fmt.Errorf("policy repository: scan: %w", err)
 		}
 		out = append(out, p)
@@ -324,6 +327,9 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
+			if reportUnreadable(ctx, "list_by_gateway", err) {
+				continue
+			}
 			return nil, fmt.Errorf("policy repository: scan: %w", err)
 		}
 		out = append(out, p)
@@ -407,6 +413,9 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
+			if reportUnreadable(ctx, "list", err) {
+				continue
+			}
 			return nil, 0, fmt.Errorf("policy repository: scan: %w", err)
 		}
 		items = append(items, p)
@@ -421,6 +430,12 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// scanPolicy decodes one policies row. A row that cannot be decoded (a column
+// the Go type rejects, or a settings, stages or mcp_scope blob that is not the
+// JSON we expect) comes back as an *UnreadablePolicyError that carries the
+// policy id, so a caller iterating many rows can skip it and still say which
+// policy it skipped. pgx assigns columns in order and id is the first, so the id
+// is known for every failure except one on the id column itself.
 func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
 	var settingsRaw []byte
@@ -434,24 +449,27 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 		&p.CreatedAt, &p.UpdatedAt, &p.Description, &mode, &scopeRaw,
 		&consumerIDs,
 	); err != nil {
-		return nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		return nil, &UnreadablePolicyError{ID: p.ID, Err: err}
 	}
 	p.Mode = domain.Mode(mode).Normalize()
 	p.ConsumerIDs = ids.FromUUIDs[ids.ConsumerKind](consumerIDs)
 
 	if len(settingsRaw) > 0 {
 		if err := json.Unmarshal(settingsRaw, &p.Settings); err != nil {
-			return nil, fmt.Errorf("scan settings: %w", err)
+			return nil, &UnreadablePolicyError{ID: p.ID, Err: fmt.Errorf("scan settings: %w", err)}
 		}
 	}
 	if len(stagesRaw) > 0 {
 		if err := json.Unmarshal(stagesRaw, &p.Stages); err != nil {
-			return nil, fmt.Errorf("scan stages: %w", err)
+			return nil, &UnreadablePolicyError{ID: p.ID, Err: fmt.Errorf("scan stages: %w", err)}
 		}
 	}
 	scope, err := unmarshalMCPScope(scopeRaw)
 	if err != nil {
-		return nil, err
+		return nil, &UnreadablePolicyError{ID: p.ID, Err: err}
 	}
 	p.MCPScope = scope
 	return p, nil
