@@ -410,7 +410,10 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 		}
 		return out, nil
 	}
-	if !errors.Is(err, commonerrors.ErrCorruptData) {
+	if !errors.Is(err, commonerrors.ErrCorruptData) || errors.Is(err, errUnreadablePolicies) {
+		// A mass of unreadable policies is systemic, not one tenant's problem:
+		// the per-gateway fallback would skip them silently and publish a
+		// snapshot without their guardrails.
 		return nil, err
 	}
 	c.logger.Warn("bulk snapshot collect hit corrupt persisted config; falling back to per-gateway collect",
@@ -445,10 +448,14 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		return err
 	})
 	g.Go(func() (err error) {
-		policies, err = listAll(gctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
+		var total int
+		policies, total, err = listAllCounted(gctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
 			return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return checkUnreadablePolicies(len(policies), total)
 	})
 	g.Go(func() (err error) {
 		auths, err = listAll(gctx, "auths", func(ctx context.Context, page int) ([]*authdomain.Auth, int, error) {
@@ -508,22 +515,57 @@ func groupByGateway[T any](
 	}
 }
 
-// listAll pages one entity table to exhaustion via fetch(page). A short page
-// does not end the walk while the reported total says rows remain: a repository
-// may skip rows it cannot read, so a full page can come back short (RUN-1663).
+// maxUnreadablePolicyPercent is how much of the policies table may be
+// unreadable before the compile fails. A few corrupt rows are skipped so the rest
+// keep enforcing; a larger share (or every row) is a systemic bug, for instance a
+// deploy that changed how settings, stages or mcp_scope decode, and publishing a
+// snapshot without those policies would drop their guardrails on every data
+// plane. Failing the compile instead leaves running pods on their last known
+// good snapshot.
+const maxUnreadablePolicyPercent = 10
+
+// errUnreadablePolicies marks the mass-skip failure. It always travels wrapped
+// together with commonerrors.ErrCorruptData.
+var errUnreadablePolicies = errors.New("too many unreadable policies")
+
+// checkUnreadablePolicies fails when the repository skipped too many of the
+// total rows it matched. Skipped rows are the ones counted by total but missing
+// from the pages.
+func checkUnreadablePolicies(readable, total int) error {
+	skipped := total - readable
+	if skipped <= 0 {
+		return nil
+	}
+	if readable == 0 || skipped*100 > total*maxUnreadablePolicyPercent {
+		return fmt.Errorf("configsnapshot: %d of %d policies are unreadable (limit %d%%); refusing to publish a snapshot without their guardrails: %w: %w",
+			skipped, total, maxUnreadablePolicyPercent, errUnreadablePolicies, commonerrors.ErrCorruptData)
+	}
+	return nil
+}
+
+// listAll pages one entity table to exhaustion via fetch(page).
 func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, error) {
+	out, _, err := listAllCounted(ctx, entity, fetch)
+	return out, err
+}
+
+// listAllCounted is listAll that also returns the total the last page reported.
+// A short page does not end the walk while the total says rows remain: a
+// repository may skip rows it cannot read, so a full page can come back short
+// (RUN-1663).
+func listAllCounted[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, int, error) {
 	out := make([]T, 0)
 	for page := 1; ; page++ {
 		items, total, err := fetch(ctx, page)
 		if err != nil {
 			if errors.Is(err, commonerrors.ErrNotFound) {
-				return out, nil
+				return out, 0, nil
 			}
-			return nil, fmt.Errorf("configsnapshot: list %s: %w", entity, err)
+			return nil, 0, fmt.Errorf("configsnapshot: list %s: %w", entity, err)
 		}
 		out = append(out, items...)
 		if len(items) < compilerBulkPageSize && page*compilerBulkPageSize >= total {
-			return out, nil
+			return out, total, nil
 		}
 	}
 }

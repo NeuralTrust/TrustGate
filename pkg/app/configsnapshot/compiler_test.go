@@ -472,3 +472,65 @@ func TestCompilerKeepsPagingWhenARepositorySkipsUnreadableRows(t *testing.T) {
 		t.Fatalf("expected the 500 readable policies, got %d (a short page ended the walk early)", got)
 	}
 }
+
+func compileWithSkippedPolicies(t *testing.T, total int, unreadable ...int) (int, error) {
+	t.Helper()
+	gw := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	rows := make([]*policydomain.Policy, 0, total)
+	for range total {
+		rows = append(rows, &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gw})
+	}
+	skip := map[int]bool{}
+	for _, i := range unreadable {
+		skip[i] = true
+	}
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{{ID: gw}}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		skippingPolicies{rows: rows, unreadable: skip},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeCatalog{},
+		nil,
+	)
+	snapshot, err := compiler.Compile(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	return len(snapshot.Data().Policies), nil
+}
+
+// A few corrupt rows are skipped so the rest keep enforcing; a mass failure is a
+// systemic bug and must fail the compile so running pods keep their last known
+// good snapshot instead of swapping in one without the guardrails.
+func TestCompilerMassUnreadablePoliciesFailTheCompile(t *testing.T) {
+	tests := []struct {
+		name       string
+		total      int
+		unreadable []int
+		wantErr    bool
+		wantCount  int
+	}{
+		{name: "1 of 20 unreadable keeps the other 19", total: 20, unreadable: []int{4}, wantCount: 19},
+		{name: "exactly 10 percent is still skipped", total: 20, unreadable: []int{4, 9}, wantCount: 18},
+		{name: "more than 10 percent fails", total: 20, unreadable: []int{1, 2, 3}, wantErr: true},
+		{name: "every row unreadable fails", total: 3, unreadable: []int{0, 1, 2}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compileWithSkippedPolicies(t, tt.total, tt.unreadable...)
+			if tt.wantErr {
+				if !errors.Is(err, commonerrors.ErrCorruptData) {
+					t.Fatalf("expected an error wrapping ErrCorruptData, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got != tt.wantCount {
+				t.Fatalf("expected %d policies, got %d", tt.wantCount, got)
+			}
+		})
+	}
+}
