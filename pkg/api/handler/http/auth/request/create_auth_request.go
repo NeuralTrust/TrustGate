@@ -55,11 +55,17 @@ type OAuth2ConfigRequest struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+	// exchanges without enabling brokered login. Omit the secret on update to
+	// keep the stored one.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117
 }
 
 // OIDCConfigRequest is the deprecated alias of OAuth2ConfigRequest. It is
 // accepted on create and update and mapped onto the oauth2 payload;
-// responses always carry the oauth2 shape.
+// responses always carry the oauth2 shape. It cannot carry client or
+// exchange credentials, so an update sent through it clears them.
 type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`
@@ -128,6 +134,9 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
+
+			ExchangeClientID:     strings.TrimSpace(c.OAuth2.ExchangeClientID),
+			ExchangeClientSecret: c.OAuth2.ExchangeClientSecret,
 		}
 	}
 	// The deprecated oidc payload maps onto oauth2. An explicit oauth2 payload

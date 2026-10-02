@@ -53,6 +53,14 @@ definitions:
         type: string
       client_secret:
         type: string
+      exchange_client_id:
+        description: |-
+          ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+          exchanges without enabling brokered login. Omit the secret on update to
+          keep the stored one.
+        type: string
+      exchange_client_secret:
+        type: string
       introspection_url:
         type: string
       issuer:
@@ -192,6 +200,13 @@ definitions:
       client_id:
         type: string
       client_secret:
+        type: string
+      exchange_client_id:
+        description: |-
+          ExchangeClientID and ExchangeClientSecret sign on-behalf-of and token
+          exchanges; the secret is masked.
+        type: string
+      exchange_client_secret:
         type: string
       introspection_url:
         type: string

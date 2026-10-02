@@ -79,3 +79,29 @@ func TestAuthResponseSurvivesRenameOnlyEdit(t *testing.T) {
 	require.NotNil(t, edit.Config.OAuth2)
 	require.Nil(t, edit.Config.OIDC)
 }
+
+// TestAuthResponseMasksTheExchangeClientSecret covers the OBO signing client:
+// the response must never carry its secret, and posting the read back, masked
+// secret included, must keep the stored one.
+func TestAuthResponseMasksTheExchangeClientSecret(t *testing.T) {
+	t.Parallel()
+	input := []byte(`{"name":"entra","type":"oauth2","config":{"oauth2":{
+		"issuer":"https://login.microsoftonline.com/tid/v2.0","audiences":["api://gateway"],
+		"exchange_client_id":"gw-app","exchange_client_secret":"super-secret-value"}}}`)
+	var create request.CreateAuthRequest
+	require.NoError(t, json.Unmarshal(input, &create))
+	original, err := domain.NewAuth(ids.New[ids.GatewayKind](), create.Name, domain.TypeOAuth2, true, create.Config.ToDomain())
+	require.NoError(t, err)
+	require.Equal(t, "super-secret-value", original.Config.OAuth2.ExchangeClientSecret)
+
+	wire, err := json.Marshal(response.FromAuth(original))
+	require.NoError(t, err)
+	require.NotContains(t, string(wire), "super-secret-value")
+	require.Contains(t, string(wire), `"exchange_client_id":"gw-app"`)
+
+	var edit request.CreateAuthRequest
+	require.NoError(t, json.Unmarshal(wire, &edit))
+	echoed := edit.Config.ToDomain()
+	echoed.ResolveSecretsFrom(original.Config)
+	require.Equal(t, original.Config, echoed)
+}

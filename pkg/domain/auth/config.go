@@ -71,6 +71,28 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
+	// ExchangeClientID and ExchangeClientSecret are the client the gateway
+	// presents when it exchanges a caller's token (on-behalf-of, token
+	// exchange). Unlike ClientID they never make the provider interactive,
+	// so setting them does not turn on brokered login.
+	ExchangeClientID     string `json:"exchange_client_id,omitempty"`
+	ExchangeClientSecret string `json:"exchange_client_secret,omitempty"` // #nosec G117 -- stored credential, masked in responses
+}
+
+// ExchangeCredentials returns the client token exchanges are signed with: the
+// dedicated exchange client, or the login client of a provider configured
+// before the exchange client existed.
+func (c *OAuth2Config) ExchangeCredentials() (clientID, clientSecret string, ok bool) {
+	if c == nil {
+		return "", "", false
+	}
+	if c.ExchangeClientID != "" && c.ExchangeClientSecret != "" {
+		return c.ExchangeClientID, c.ExchangeClientSecret, true
+	}
+	if c.ClientID != "" && c.ClientSecret != "" {
+		return c.ClientID, c.ClientSecret, true
+	}
+	return "", "", false
 }
 
 type MTLSConfig struct {
@@ -83,6 +105,16 @@ type MTLSConfig struct {
 func (c *Config) ResolveSecretsFrom(prev Config) {
 	if c.OAuth2 != nil && prev.OAuth2 != nil {
 		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)
+		// The stored secret belongs to the stored client: it is carried over only
+		// while the client stays the same, so a new client needs its own secret
+		// and clearing the client clears the secret, even one echoed masked.
+		id := strings.TrimSpace(c.OAuth2.ExchangeClientID)
+		switch {
+		case id != "" && id == strings.TrimSpace(prev.OAuth2.ExchangeClientID):
+			c.OAuth2.ExchangeClientSecret = secret.Resolve(c.OAuth2.ExchangeClientSecret, prev.OAuth2.ExchangeClientSecret)
+		case id == "" && secret.IsMasked(c.OAuth2.ExchangeClientSecret):
+			c.OAuth2.ExchangeClientSecret = ""
+		}
 	}
 }
 
@@ -121,6 +153,9 @@ func (c Config) populatedCount() int {
 func (c *OAuth2Config) validate() error {
 	if secret.IsMasked(c.ClientSecret) {
 		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
+	}
+	if err := c.validateExchangeClient(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
@@ -169,6 +204,16 @@ func (c *OAuth2Config) validate() error {
 		if !isHTTPURL(c.Issuer) {
 			return fmt.Errorf("%w: oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
+	}
+	return nil
+}
+
+func (c *OAuth2Config) validateExchangeClient() error {
+	if secret.IsMasked(c.ExchangeClientSecret) {
+		return fmt.Errorf("%w: oauth2.exchange_client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
+	}
+	if (strings.TrimSpace(c.ExchangeClientID) == "") != (strings.TrimSpace(c.ExchangeClientSecret) == "") {
+		return fmt.Errorf("%w: oauth2.exchange_client_id and oauth2.exchange_client_secret must be set together", ErrInvalidConfig)
 	}
 	return nil
 }

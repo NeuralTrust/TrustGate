@@ -184,8 +184,8 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	form.Set("requested_token_use", "on_behalf_of")
 	form.Set("assertion", principal.RawToken)
 	form.Set("scope", cfg.Scope)
-	form.Set("client_id", idp.ClientID)
-	form.Set("client_secret", idp.ClientSecret)
+	form.Set("client_id", idp.id)
+	form.Set("client_secret", idp.secret)
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
@@ -206,12 +206,17 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	if cfg.Scope != "" {
 		form.Set("scope", cfg.Scope)
 	}
-	form.Set("client_id", idp.ClientID)
-	form.Set("client_secret", idp.ClientSecret)
+	form.Set("client_id", idp.id)
+	form.Set("client_secret", idp.secret)
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer, identityID string) (*authdomain.OAuth2Config, error) {
+type exchangeClient struct {
+	id     string
+	secret string
+}
+
+func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer, identityID string) (*exchangeClient, error) {
 	auths, err := e.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("sts: load oauth2 auths: %w", err)
@@ -219,20 +224,27 @@ func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer,
 	if identityID != "" {
 		return pinnedIdP(auths, issuer, identityID)
 	}
+	// Several auths may share an issuer (one per audience); only some of them
+	// carry an exchange client, so the first match is not necessarily usable.
+	matched := false
 	for _, a := range auths {
-		if a.Config.OAuth2 != nil && a.Config.OAuth2.Issuer == issuer {
-			if a.Config.OAuth2.ClientID == "" || a.Config.OAuth2.ClientSecret == "" {
-				return nil, fmt.Errorf("sts: oauth2 auth for %s lacks client_id/client_secret needed for exchange", issuer)
-			}
-			return a.Config.OAuth2, nil
+		if a.Config.OAuth2 == nil || a.Config.OAuth2.Issuer != issuer {
+			continue
 		}
+		matched = true
+		if id, clientSecret, ok := a.Config.OAuth2.ExchangeCredentials(); ok {
+			return &exchangeClient{id: id, secret: clientSecret}, nil
+		}
+	}
+	if matched {
+		return nil, fmt.Errorf("sts: no oauth2 auth for %s has exchange client credentials", issuer)
 	}
 	return nil, fmt.Errorf("sts: no oauth2 auth configured for issuer %s", issuer)
 }
 
 // pinnedIdP never falls back to the issuer lookup: a pinned identity that is
 // gone, disabled or for another issuer fails the call.
-func pinnedIdP(auths []*authdomain.Auth, issuer, identityID string) (*authdomain.OAuth2Config, error) {
+func pinnedIdP(auths []*authdomain.Auth, issuer, identityID string) (*exchangeClient, error) {
 	pinned, err := ids.Parse[ids.AuthKind](identityID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid identity id %q", ErrExchangeIdentityUnavailable, identityID)
@@ -248,10 +260,11 @@ func pinnedIdP(auths []*authdomain.Auth, issuer, identityID string) (*authdomain
 		if cfg.Issuer != issuer {
 			return nil, fmt.Errorf("%w: got %s, identity %s expects %s", ErrIdentityIssuerMismatch, issuer, pinned, cfg.Issuer)
 		}
-		if cfg.ClientID == "" || cfg.ClientSecret == "" {
-			return nil, fmt.Errorf("%w: identity %s lacks client_id/client_secret", ErrExchangeIdentityUnavailable, pinned)
+		id, clientSecret, ok := cfg.ExchangeCredentials()
+		if !ok {
+			return nil, fmt.Errorf("%w: identity %s lacks exchange client credentials", ErrExchangeIdentityUnavailable, pinned)
 		}
-		return cfg, nil
+		return &exchangeClient{id: id, secret: clientSecret}, nil
 	}
 	return nil, fmt.Errorf("%w: identity %s is not an enabled oauth2 auth of this gateway", ErrExchangeIdentityUnavailable, pinned)
 }
