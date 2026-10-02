@@ -60,7 +60,8 @@ func TestMCPWidePolicyHandler_ReportsLoadStatus(t *testing.T) {
 				scoper.EXPECT().UnsetMCPWide(mock.Anything, gatewayID, tt.policy.ID).Return(tt.policy, nil).Once()
 			}
 
-			handler := policyhttp.NewMCPWidePolicyHandler(scoper, warner, apppolicy.NewStatusEvaluator(statusRegistry(t)))
+			reg := statusRegistry(t)
+			handler := policyhttp.NewMCPWidePolicyHandler(scoper, warner, apppolicy.NewStatusEvaluator(reg), reg)
 			app := fiber.New()
 			app.Post("/v1/gateways/:gateway_id/policies/:id/mcp-wide", handler.SetMCPWide)
 			app.Delete("/v1/gateways/:gateway_id/policies/:id/mcp-wide", handler.UnsetMCPWide)

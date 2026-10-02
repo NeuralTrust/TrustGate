@@ -47,7 +47,7 @@ func TestListPolicyHandler_ReportsLoadStatus(t *testing.T) {
 		Return([]*domain.Policy{good, paused, broken}, 3, nil).Once()
 
 	reg := statusRegistry(t)
-	handler := policyhttp.NewListPolicyHandler(finder, apppolicy.NewStatusEvaluator(reg))
+	handler := policyhttp.NewListPolicyHandler(finder, apppolicy.NewStatusEvaluator(reg), reg)
 	app := fiber.New()
 	app.Get("/v1/gateways/:gateway_id/policies", handler.Handle)
 
