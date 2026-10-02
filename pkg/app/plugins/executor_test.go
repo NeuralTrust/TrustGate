@@ -90,6 +90,7 @@ type polSpec struct {
 	priority int
 	parallel bool
 	global   bool
+	mcpWide  bool
 	stages   []policy.Stage
 	mode     policy.Mode
 }
@@ -106,6 +107,7 @@ func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
 			Priority: s.priority,
 			Parallel: s.parallel,
 			Global:   s.global,
+			MCPWide:  s.mcpWide,
 			Stages:   s.stages,
 			Mode:     s.mode,
 		})
@@ -453,6 +455,44 @@ func TestExecutor_RunStage_PropagatesGlobalScopeFromPlan(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "global", dimension)
 	assert.Equal(t, "gw-1", id)
+}
+
+func TestExecutor_RunStage_MCPWidePolicyRunsWithGatewayWideScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		viaPlan bool
+	}{
+		{name: "precomputed plan", viaPlan: true},
+		{name: "chain rebuilt from policies"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &scopeCapturePlugin{name: "rate", seen: make(chan ExecInput, 1)}
+			reg := newRegistry(t, p)
+			pols := policies(t, polSpec{slug: "rate", enabled: true, mcpWide: true})
+			in := StageInput{
+				Stage:    policy.StagePreRequest,
+				Request:  &infracontext.RequestContext{GatewayID: "gw-1", ConsumerID: "c-1"},
+				Response: &infracontext.ResponseContext{},
+			}
+			if tc.viaPlan {
+				in.Plan = NewStagePlan(reg, pols, nil)
+			} else {
+				in.Policies = pols
+			}
+
+			_, err := NewExecutor(reg, nil).RunStage(context.Background(), in)
+			require.NoError(t, err)
+
+			got := <-p.seen
+			assert.True(t, got.Scope.Global, "an MCP-wide policy keeps one budget for the gateway, like a global one")
+			dimension, id, err := got.Scope.Subject()
+			require.NoError(t, err)
+			assert.Equal(t, "global", dimension)
+			assert.Equal(t, "gw-1", id)
+		})
+	}
 }
 
 func TestExecutor_RunStage_RecordsPluginSpanOnTrace(t *testing.T) {

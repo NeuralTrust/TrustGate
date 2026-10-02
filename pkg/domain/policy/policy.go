@@ -30,6 +30,7 @@ type Policy struct {
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
+	MCPWide     bool             `json:"mcp_wide,omitempty"`
 	Priority    int              `json:"priority"`
 	Parallel    bool             `json:"parallel"`
 	Settings    map[string]any   `json:"settings,omitempty"`
@@ -42,6 +43,31 @@ type Policy struct {
 
 func (p *Policy) IsGlobal() bool {
 	return p.Global
+}
+
+// GatewayWide reports whether the policy runs for every consumer it can reach
+// regardless of its links: a global policy on every plane, an MCP-wide policy
+// on every MCP consumer and the Store.
+func (p *Policy) GatewayWide() bool {
+	return p != nil && (p.Global || p.MCPWide)
+}
+
+// SetGlobal sets the global flag. Promoting clears MCPWide, because a policy
+// has one placement; demoting leaves MCPWide as it is.
+func (p *Policy) SetGlobal(on bool) {
+	p.Global = on
+	if on {
+		p.MCPWide = false
+	}
+}
+
+// SetMCPWide sets the MCP-wide flag. Promoting clears Global, because a policy
+// has one placement; demoting leaves Global as it is.
+func (p *Policy) SetMCPWide(on bool) {
+	p.MCPWide = on
+	if on {
+		p.Global = false
+	}
 }
 
 // Dormant reports whether the policy carries a tombstone scope and therefore
@@ -140,6 +166,9 @@ func (p *Policy) Validate() error {
 	}
 	if p.Priority < 0 {
 		return fmt.Errorf("%w: priority cannot be negative", ErrInvalidPriority)
+	}
+	if p.Global && p.MCPWide {
+		return fmt.Errorf("%w: global and mcp_wide are exclusive", ErrInvalidPlacement)
 	}
 	seen := make(map[ids.ConsumerID]struct{}, len(p.ConsumerIDs))
 	for _, cid := range p.ConsumerIDs {

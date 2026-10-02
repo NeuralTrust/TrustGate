@@ -59,9 +59,9 @@ type LevelGuard interface {
 	// Check runs write when the levels p would take are free, and returns
 	// ErrPolicyLevelConflict naming the policy that holds one of them
 	// otherwise. p is the policy as it would be stored, so a caller that is
-	// about to attach a consumer or promote to global passes a copy carrying
-	// that change. linking are the consumers the write links, which the lock
-	// takes before any policy: an attach passes the one it adds.
+	// about to attach a consumer or promote to global or MCP-wide passes a
+	// copy carrying that change. linking are the consumers the write links,
+	// which the lock takes before any policy: an attach passes the one it adds.
 	Check(ctx context.Context, p *domain.Policy, write func(ctx context.Context) error, linking ...ids.ConsumerID) error
 }
 

@@ -60,6 +60,10 @@ type Associator interface {
 	DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*Consumer, error)
 	AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
 	DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
+	// AttachPolicy links a policy to the consumer. It refuses an MCP-wide
+	// policy with ErrPolicyMCPWide, judged on the row as it stands when the
+	// link is written, so a promotion racing the attach cannot leave a link
+	// on an MCP-wide policy.
 	AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 	DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 }

@@ -45,7 +45,7 @@ func NewListPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvalua
 // @Param        search      query     string  false  "Substring match on name or slug (alias: name)"
 // @Param        name        query     string  false  "Alias of search"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
-// @Param        global      query     bool    false  "Filter by global flag"
+// @Param        global      query     bool    false  "Filter by global flag; global=false also lists MCP-wide policies"
 // @Param        mode        query     string  false  "Filter by mode (enforce, throttle, observe)"
 // @Param        category    query     string  false  "Catalog category (group type); comma-separated multi"
 // @Param        type        query     string  false  "Plugin slug (FE type filter); comma-separated multi"

@@ -508,6 +508,20 @@ func TestWarner_OverlapsOnAttach(t *testing.T) {
 			others:       []*domain.Policy{unscopedPolicy(gwID, "trustguard", consumerID)},
 		},
 		{
+			name:         "MCP-wide policy linked to an llm consumer that runs the slug unscoped",
+			gatewayID:    gwID,
+			consumerType: consumerdomain.TypeLLM,
+			policy:       mcpWidePolicy(scopedPolicy(gwID, "trustguard", consumerID)),
+			others:       []*domain.Policy{unscopedPolicy(gwID, "trustguard", consumerID)},
+		},
+		{
+			name:         "MCP-wide policy linked to an llm consumer that runs the slug under another group scope",
+			gatewayID:    gwID,
+			consumerType: consumerdomain.TypeLLM,
+			policy:       mcpWidePolicy(groupScopedPolicy(gwID, "trustguard", "engineering", consumerID)),
+			others:       []*domain.Policy{groupScopedPolicy(gwID, "trustguard", "finance", consumerID)},
+		},
+		{
 			name:         "policy from another gateway",
 			gatewayID:    ids.New[ids.GatewayKind](),
 			consumerType: consumerdomain.TypeMCP,
@@ -766,4 +780,96 @@ func TestWarner_Overlaps_AuthRepositoryErrorSurfaces(t *testing.T) {
 	w := apppolicy.NewWarner(repomocks.NewRepository(t), consumerRepo, auths, inertSafeRegistry(t, true))
 	_, err := w.Overlaps(context.Background(), p)
 	assert.ErrorIs(t, err, boom)
+}
+
+func mcpWidePolicy(p *domain.Policy) *domain.Policy {
+	p.SetMCPWide(true)
+	return p
+}
+
+func TestWarner_Overlaps_OrphanWarningIsForDraftsOnly(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	tests := []struct {
+		name   string
+		policy *domain.Policy
+		want   []string
+	}{
+		{"draft", unscopedPolicy(gwID, "trustguard"), []string{orphanWarning}},
+		{"MCP-wide with no consumers", mcpWidePolicy(unscopedPolicy(gwID, "trustguard")), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := apppolicy.NewWarner(repomocks.NewRepository(t), consumermocks.NewRepository(t), noAPIKeyAuths(t), inertSafeRegistry(t, true))
+			warnings, err := w.Overlaps(context.Background(), tt.policy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, warnings)
+		})
+	}
+}
+
+func TestWarner_Overlaps_MCPWideAPIKeyWarningNamesEveryMCPConsumerOnly(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	linked, unlinked, llm := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+	keyID := ids.New[ids.AuthKind]()
+	p := mcpWidePolicy(groupScopedPolicy(gwID, "trustguard", "Finanzas", linked, llm))
+
+	w := warnerOverAuths(t, gwID,
+		[]*consumerdomain.Consumer{
+			mcpConsumerWithAuths(gwID, linked, keyID),
+			mcpConsumerWithAuths(gwID, unlinked, keyID),
+			llmConsumerWithAuths(gwID, llm, keyID),
+		},
+		[]*domain.Policy{p},
+		apiKeyAuths(t, gwID, keyID),
+	)
+
+	warnings, err := w.Overlaps(context.Background(), p)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{apiKeyIgnoresGroupsWarning(linked), apiKeyIgnoresGroupsWarning(unlinked)}, warnings,
+		"an MCP-wide policy reaches every MCP consumer whatever its links, and no other")
+}
+
+func TestWarner_Overlaps_SameSlugMCPWideCollidesOnMCPConsumersOnly(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an MCP-wide policy already runs the slug", func(t *testing.T) {
+		t.Parallel()
+		gwID := ids.New[ids.GatewayKind]()
+		mcpID, llmID := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+		p := groupScopedPolicy(gwID, "trustguard", "Finanzas", mcpID, llmID)
+
+		w := warnerOver(t, gwID,
+			[]*consumerdomain.Consumer{mcpConsumer(gwID, mcpID), llmConsumer(gwID, llmID)},
+			[]*domain.Policy{
+				p,
+				mcpWidePolicy(unscopedPolicy(gwID, "trustguard")),
+				mcpWidePolicy(groupScopedPolicy(gwID, "trustguard", "engineering", llmID)),
+			})
+
+		warnings, err := w.Overlaps(context.Background(), p)
+		require.NoError(t, err)
+		assert.Equal(t, []string{overlapWarning(mcpID, "trustguard")}, warnings)
+	})
+
+	t.Run("the policy written is MCP-wide", func(t *testing.T) {
+		t.Parallel()
+		gwID := ids.New[ids.GatewayKind]()
+		mcpID, llmID := ids.New[ids.ConsumerKind](), ids.New[ids.ConsumerKind]()
+		p := mcpWidePolicy(groupScopedPolicy(gwID, "trustguard", "Finanzas"))
+
+		w := warnerOver(t, gwID,
+			[]*consumerdomain.Consumer{mcpConsumer(gwID, mcpID), llmConsumer(gwID, llmID)},
+			[]*domain.Policy{
+				p,
+				unscopedPolicy(gwID, "trustguard", mcpID, llmID),
+				groupScopedPolicy(gwID, "trustguard", "engineering", llmID),
+			})
+
+		warnings, err := w.Overlaps(context.Background(), p)
+		require.NoError(t, err)
+		assert.Equal(t, []string{overlapWarning(mcpID, "trustguard")}, warnings)
+	})
 }

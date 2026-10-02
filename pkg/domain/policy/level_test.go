@@ -373,6 +373,50 @@ func TestPolicy_Occupancy_GlobalTakesTheAllTrafficLevel(t *testing.T) {
 	}
 }
 
+func TestPolicy_Occupancy_MCPWideTakesTheGlobalCell(t *testing.T) {
+	t.Parallel()
+	finanzas := &MCPScope{Groups: []string{"Finanzas"}, RegistryIDs: []ids.RegistryID{snowflake}}
+	mcpWide := &Policy{Enabled: true, MCPWide: true, ConsumerIDs: []ids.ConsumerID{consumerX}, MCPScope: finanzas}
+	want := AllTraffic().WithGroup("Finanzas").WithRegistry(snowflake)
+	if got := mcpWide.Occupancy(); got.Len() != 1 || !got.Has(want) {
+		t.Fatalf("Occupancy() = %v, want only %s whatever is attached", got.Levels(), want)
+	}
+	tests := []struct {
+		name  string
+		other *Policy
+		want  bool
+	}{
+		{
+			name:  "a global policy of the same groups",
+			other: &Policy{Enabled: true, Global: true, MCPScope: finanzas},
+			want:  true,
+		},
+		{
+			name:  "an mcp-wide policy of overlapping groups",
+			other: &Policy{Enabled: true, MCPWide: true, MCPScope: &MCPScope{Groups: []string{"Marketing", "Finanzas"}, RegistryIDs: []ids.RegistryID{snowflake}}},
+			want:  true,
+		},
+		{
+			name:  "an mcp-wide policy of disjoint groups",
+			other: &Policy{Enabled: true, MCPWide: true, MCPScope: &MCPScope{Groups: []string{"Marketing"}, RegistryIDs: []ids.RegistryID{snowflake}}},
+			want:  false,
+		},
+		{
+			name:  "the same scope attached to one consumer",
+			other: &Policy{Enabled: true, ConsumerIDs: []ids.ConsumerID{consumerX}, MCPScope: finanzas},
+			want:  false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Overlaps(mcpWide.Occupancy(), tc.other.Occupancy()); got != tc.want {
+				t.Fatalf("Overlaps() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLevel_WildcardIsNotTheZeroUUID(t *testing.T) {
 	t.Parallel()
 	var nilConsumer ids.ConsumerID
