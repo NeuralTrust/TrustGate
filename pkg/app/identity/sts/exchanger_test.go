@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -375,6 +376,99 @@ func TestExchanger_ExchangeRequiresAnExternalIdPAssertion(t *testing.T) {
 				}
 				if idp.gotForm != nil {
 					t.Fatalf("%s must never reach the identity provider, got form %v", name, idp.gotForm)
+				}
+			})
+		}
+	}
+}
+
+func TestExchanger_PinnedIdentity(t *testing.T) {
+	t.Parallel()
+	const issuer = "https://idp.example.com"
+	gatewayID := ids.New[ids.GatewayKind]()
+	pinned := idpAuth(gatewayID, issuer, "pinned-client", "pinned-secret")
+	pinned.ID = ids.New[ids.AuthKind]()
+	shadow := idpAuth(gatewayID, issuer, "", "")
+	shadow.ID = ids.New[ids.AuthKind]()
+	other := idpAuth(gatewayID, issuer, "other-client", "other-secret")
+	other.ID = ids.New[ids.AuthKind]()
+	noCreds := idpAuth(gatewayID, issuer, "", "")
+	noCreds.ID = ids.New[ids.AuthKind]()
+	foreign := idpAuth(gatewayID, "https://other-idp.example.com", "foreign-client", "foreign-secret")
+	foreign.ID = ids.New[ids.AuthKind]()
+	notOAuth2 := &authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gatewayID}
+
+	tests := []struct {
+		name       string
+		auths      []*authdomain.Auth
+		identityID string
+		wantClient string
+		wantErr    error
+	}{
+		{
+			name:       "uses the pinned identity over an earlier issuer match",
+			auths:      []*authdomain.Auth{shadow, other, pinned},
+			identityID: pinned.ID.String(),
+			wantClient: "pinned-client",
+		},
+		{
+			name:       "matches a pinned id stored in another uuid spelling",
+			auths:      []*authdomain.Auth{pinned},
+			identityID: strings.ToUpper(pinned.ID.String()),
+			wantClient: "pinned-client",
+		},
+		{
+			name:       "refuses a caller token from another issuer",
+			auths:      []*authdomain.Auth{foreign},
+			identityID: foreign.ID.String(),
+			wantErr:    ErrIdentityIssuerMismatch,
+		},
+		{
+			name:       "does not fall back when the pinned identity is gone or disabled",
+			auths:      []*authdomain.Auth{other},
+			identityID: pinned.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+		{
+			name:       "refuses a pinned identity without client credentials",
+			auths:      []*authdomain.Auth{noCreds},
+			identityID: noCreds.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+		{
+			name:       "refuses a pinned auth that is not oauth2",
+			auths:      []*authdomain.Auth{notOAuth2},
+			identityID: notOAuth2.ID.String(),
+			wantErr:    ErrExchangeIdentityUnavailable,
+		},
+	}
+	patterns := []*registrydomain.MCPAuth{
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "api://target/.default"},
+		{Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange, Audience: "api://target"},
+	}
+	for _, base := range patterns {
+		for _, tc := range tests {
+			t.Run(string(base.Pattern)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				idp := &fakeIdP{token: &Token{AccessToken: "exchanged", TokenType: "Bearer", ExpiresAt: time.Now().Add(10 * time.Minute)}}
+				ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: tc.auths}, idp)
+				cfg := *base
+				cfg.IdentityID = tc.identityID
+				_, err := ex.Exchange(context.Background(), userPrincipal(), gatewayID, &cfg, "k")
+				if tc.wantErr == nil {
+					if err != nil {
+						t.Fatalf("Exchange: %v", err)
+					}
+					if idp.gotForm.Get("client_id") != tc.wantClient {
+						t.Fatalf("client_id = %q, want %q", idp.gotForm.Get("client_id"), tc.wantClient)
+					}
+					return
+				}
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				if idp.gotForm != nil {
+					t.Fatalf("IdP was called with %v despite the error", idp.gotForm)
 				}
 			})
 		}

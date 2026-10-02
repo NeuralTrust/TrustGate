@@ -220,13 +220,25 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 	if cfg.NeedsCallerToken() && principal.RawToken == "" {
 		return ErrUpstreamNeedsCallerToken
 	}
-	cacheKey := fmt.Sprintf("%s|%s|%s", principal.Subject, reg.ID, rc.Consumer.GatewayID)
+	cacheKey := exchangeCacheKey(principal, reg.ID, rc.Consumer.GatewayID, cfg)
 	token, err := r.exchanger.Exchange(ctx, principal, rc.Consumer.GatewayID, cfg, cacheKey)
 	if err != nil {
 		return err
 	}
 	setAuthorization(target, token.TokenType+" "+token.AccessToken)
 	return nil
+}
+
+// exchangeCacheKey covers everything the exchanged token depends on. A cached
+// token is served before the exchanger checks the pinned identity, so leaving
+// out the issuer would hand one IdP's user another's token when subjects
+// collide, and leaving out the config would keep serving a token minted for a
+// scope or identity the registry no longer has.
+func exchangeCacheKey(principal *identity.Principal, registryID ids.RegistryID, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) string {
+	return strings.Join([]string{
+		principal.Issuer, principal.Subject, registryID.String(), gatewayID.String(),
+		string(cfg.Pattern), cfg.IdentityID, cfg.Audience, cfg.Actor, cfg.Scope,
+	}, "\x00")
 }
 
 func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {

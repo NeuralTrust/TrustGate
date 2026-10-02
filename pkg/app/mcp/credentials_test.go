@@ -285,9 +285,42 @@ func TestCredentialResolver_Exchange_InjectsAndIsolatesCacheKey(t *testing.T) {
 	if target.Headers["Authorization"] != "Bearer minted" {
 		t.Fatalf("Authorization = %q", target.Headers["Authorization"])
 	}
-	want := "alice|" + reg.ID.String() + "|" + gw.String()
-	if ex.key != want {
-		t.Fatalf("cache key = %q, want %q (principal+target+gateway isolation)", ex.key, want)
+	keyFor := func(p *identity.Principal, auth *registrydomain.MCPAuth) string {
+		t.Helper()
+		ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
+		r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
+		pinned := *reg
+		target := *reg.MCPTarget
+		target.Auth = auth
+		pinned.MCPTarget = &target
+		if err := r.Apply(principalCtx(p), rc, &pinned, &Target{}); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		return ex.key
+	}
+	obo := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO,
+		Scope: "api://up/.default", IdentityID: ids.New[ids.AuthKind]().String(),
+	}
+	user := &identity.Principal{Subject: "alice", Issuer: "https://login.microsoftonline.com/a/v2.0", RawToken: "t"}
+	base := keyFor(user, obo)
+	if base != keyFor(user, obo) {
+		t.Fatal("the same caller and config must share a cache entry")
+	}
+	sameSubOtherIssuer := *user
+	sameSubOtherIssuer.Issuer = "https://login.microsoftonline.com/b/v2.0"
+	if keyFor(&sameSubOtherIssuer, obo) == base {
+		t.Fatal("a subject from another issuer must not reuse the cached token")
+	}
+	for name, change := range map[string]func(*registrydomain.MCPAuth){
+		"scope":    func(a *registrydomain.MCPAuth) { a.Scope = "api://other/.default" },
+		"identity": func(a *registrydomain.MCPAuth) { a.IdentityID = ids.New[ids.AuthKind]().String() },
+	} {
+		changed := *obo
+		change(&changed)
+		if keyFor(user, &changed) == base {
+			t.Fatalf("changing the %s must not reuse a token minted for the old one", name)
+		}
 	}
 }
 
