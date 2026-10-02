@@ -534,7 +534,9 @@ var ErrUnreadablePolicies = errors.New("too many unreadable policies")
 // checkUnreadablePolicies fails when the repository skipped too many of the
 // total rows it matched. Skipped rows are the ones counted by total but missing
 // from the pages. The repository counts and selects in separate statements, so a
-// concurrent write can skew skipped slightly; that is accepted. It trips when no
+// concurrent write can skew skipped slightly; that is accepted. An OFFSET shift
+// from concurrent deletes can false-trip, in the safe direction (the last known
+// good snapshot is kept and the compile is retried). It trips when no
 // row is readable, or when skipped exceeds max(1, total*percent/100): the floor
 // keeps a small install from failing on a single bad row (1 of 5 is skipped, 2 of
 // 5 trips).
