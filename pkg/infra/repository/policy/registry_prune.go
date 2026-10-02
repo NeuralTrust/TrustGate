@@ -62,12 +62,16 @@ func lockScopedPolicies(
 	gatewayID ids.GatewayID,
 	registryID ids.RegistryID,
 ) ([]*domain.Policy, error) {
+	// Locked in ascending id, the order WithSlugLocked documents (RUN-1746): a
+	// guarded write holds several policies of one slug, any of which may name
+	// registryID.
 	query := `
 		SELECT id, mcp_scope
 		  FROM policies
 		 WHERE gateway_id = $1
 		   AND mcp_scope IS NOT NULL
 		   AND ` + fmt.Sprintf(mcpScopeReferencesRegistry, 2) + `
+		 ORDER BY id
 		 FOR UPDATE`
 	rows, err := tx.Query(ctx, query, gatewayID, registryID.String())
 	if err != nil {

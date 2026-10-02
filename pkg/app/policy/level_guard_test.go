@@ -45,6 +45,7 @@ type fakeLevelLock struct {
 	slug     sync.Mutex
 	data     sync.Mutex
 	policies []*domain.Policy
+	linking  []ids.ConsumerID
 	calls    int
 	locked   bool
 	barrier  *barrier
@@ -59,12 +60,14 @@ func (l *fakeLevelLock) WithSlugLocked(
 	gatewayID ids.GatewayID,
 	slug string,
 	exclude ids.PolicyID,
+	linking []ids.ConsumerID,
 	fn func(ctx context.Context, occupants []*domain.Policy) error,
 ) error {
 	if l.locked {
 		l.slug.Lock()
 		defer l.slug.Unlock()
 	}
+	l.recordLinking(linking)
 	occupants := l.candidates(gatewayID, slug, exclude)
 	if l.barrier != nil {
 		l.barrier.wait()
@@ -105,6 +108,18 @@ func (l *fakeLevelLock) callCount() int {
 	l.data.Lock()
 	defer l.data.Unlock()
 	return l.calls
+}
+
+func (l *fakeLevelLock) recordLinking(linking []ids.ConsumerID) {
+	l.data.Lock()
+	defer l.data.Unlock()
+	l.linking = linking
+}
+
+func (l *fakeLevelLock) lockedLinking() []ids.ConsumerID {
+	l.data.Lock()
+	defer l.data.Unlock()
+	return l.linking
 }
 
 type barrier struct {
@@ -151,6 +166,35 @@ func TestLevelGuard_Check_WritesOnAFreeLevel(t *testing.T) {
 	p := unscopedPolicy(gwID, "trustguard", consumerID)
 	require.NoError(t, guard.Check(context.Background(), p, lock.save(p)))
 	assert.Equal(t, 2, lock.stored())
+}
+
+// The store locks the consumers a write links before any policy, the order a
+// registry delete takes them in. Only those reach it: the consumers a policy is
+// already attached to are not written, so an update or a promotion locks none.
+func TestLevelGuard_Check_LocksOnlyTheConsumersTheWriteLinks(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	attached := ids.New[ids.ConsumerKind]()
+	linked := ids.New[ids.ConsumerKind]()
+
+	cases := []struct {
+		name    string
+		linking []ids.ConsumerID
+	}{
+		{name: "attach", linking: []ids.ConsumerID{linked}},
+		{name: "update or promotion"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lock := newFakeLevelLock()
+			guard := apppolicy.NewLevelGuard(lock)
+
+			p := unscopedPolicy(gwID, "trustguard", attached, linked)
+			require.NoError(t, guard.Check(context.Background(), p, lock.save(p), tc.linking...))
+			assert.Equal(t, tc.linking, lock.lockedLinking())
+		})
+	}
 }
 
 func TestLevelGuard_Check_RefusesAnOccupiedLevel(t *testing.T) {
@@ -487,10 +531,10 @@ func TestScoper_UnsetGlobal_IsNotGuarded(t *testing.T) {
 // and no second one: a copy of a policy that runs everywhere would land on the
 // level its source already holds.
 // TestDuplicator_Duplicate_OfAnOccupyingPolicySucceeds is the reason a draft
-// occupies nothing. The copy is born with no consumers and no global flag, so
-// if a draft took the wildcard level then duplicating a global or
-// consumer-less policy would land on its origin's level and always answer 409 —
-// the button would be broken for exactly the policies people duplicate most.
+// occupies nothing. The copy is born with no consumers and no global flag, so if
+// a draft took the wildcard level then duplicating a global or consumer-less
+// policy would land on its origin's level and always answer 409 — the button
+// would be broken for exactly the policies people duplicate most.
 func TestDuplicator_Duplicate_OfAnOccupyingPolicySucceeds(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
