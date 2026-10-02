@@ -89,7 +89,7 @@ func (c *tokenCache) source(serviceAccountJSON string) (oauth2.TokenSource, erro
 		return nil, fmt.Errorf("parsing gcp service account credentials: %w", err)
 	}
 
-	// token_uri (and audience, which replaces the JWT aud claim) come from tenant JSON and would redirect the signed assertion anywhere.
+	// Both come from tenant JSON: token_uri would redirect the signed assertion; audience would let it be replayed against another audience.
 	config.TokenURL = gcpkey.TokenURL
 	config.Audience = ""
 
