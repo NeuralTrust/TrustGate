@@ -176,4 +176,43 @@ func TestTenantSettings_Policy(t *testing.T) {
 		netguardtest.Deny(t)
 		require.NoError(t, tpl.ValidateConfig(map[string]interface{}{"endpoint": "http://10.0.0.5:4318/v1/logs"}))
 	})
+
+	t.Run("key case does not hide a tenant endpoint", func(t *testing.T) {
+		netguardtest.Deny(t)
+		for _, key := range []string{"endpoint", "Endpoint", "ENDPOINT"} {
+			require.Error(t, tpl.ValidateTenantConfig(map[string]interface{}{key: "http://10.0.0.5:4318"}), key)
+			s, err := tpl.tenantSettings(map[string]interface{}{key: "https://otel.example.com:4318"})
+			require.NoError(t, err, key)
+			require.True(t, s.guarded, key)
+		}
+	})
+
+	t.Run("key case does not hide tls file paths", func(t *testing.T) {
+		netguardtest.Deny(t)
+		err := tpl.ValidateTenantConfig(map[string]interface{}{
+			"Endpoint": "https://otel.example.com:4318", "TLS": map[string]interface{}{"Ca_File": file},
+		})
+		require.ErrorIs(t, err, errTenantTLSFiles)
+	})
+
+	t.Run("an inherited endpoint keeps the operator's transport settings", func(t *testing.T) {
+		netguardtest.Deny(t)
+		op := NewTemplate(testLogger(), config.OTLPConfig{
+			Endpoint: "https://collector.svc:4318/v1/logs", Protocol: "http/protobuf",
+			Headers: map[string]string{"authorization": "operator"},
+		})
+		s, err := op.tenantSettings(map[string]interface{}{
+			"headers": map[string]interface{}{"x-evil": "1"}, "insecure": true,
+			"protocol": "grpc", "compression": "none", "timeout": "3s",
+			"tls": map[string]interface{}{"skip_verify": true},
+		})
+		require.NoError(t, err)
+		require.False(t, s.guarded)
+		require.Equal(t, map[string]string{"authorization": "operator"}, s.Headers)
+		require.False(t, s.Insecure)
+		require.Nil(t, s.TLS)
+		require.Equal(t, ProtocolHTTP, s.Protocol)
+		require.Equal(t, "none", s.Compression)
+		require.Equal(t, 3*time.Second, s.Timeout)
+	})
 }

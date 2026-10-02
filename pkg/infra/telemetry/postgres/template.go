@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -107,7 +108,10 @@ func (t *Template) withSettings(settings map[string]interface{}, tenant bool) (a
 func (t *Template) openPool(ctx context.Context, s Settings, tenant bool) (*pgxpool.Pool, error) {
 	dsn, err := s.resolveDSN()
 	if err == nil {
-		if tenant {
+		// Only a DSN the tenant wrote is a tenant-chosen destination. A tenant
+		// exporter with no dsn of its own resolves to the operator's
+		// SENSIBLE_PG_DSN (existing behaviour) and stays on the operator path.
+		if tenant && strings.TrimSpace(s.DSN) != "" {
 			return openGuardedPool(ctx, dsn)
 		}
 		pool, err := pgxpool.New(ctx, dsn)
