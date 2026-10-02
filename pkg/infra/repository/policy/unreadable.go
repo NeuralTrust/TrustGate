@@ -27,10 +27,11 @@ import (
 )
 
 // UnreadablePolicyError reports a policies row whose content cannot be decoded.
-// ID is the zero value when the failure hit the id column itself.
+// It only covers content that fails to decode as JSON; the ids are always set.
 type UnreadablePolicyError struct {
-	ID  ids.PolicyID
-	Err error
+	ID        ids.PolicyID
+	GatewayID ids.GatewayID
+	Err       error
 }
 
 func (e *UnreadablePolicyError) Error() string {
@@ -45,6 +46,14 @@ func (e *UnreadablePolicyError) Unwrap() error { return e.Err }
 // fail the query. One corrupt row must not discard the other policies of the
 // query (a snapshot compiled without them leaves a gateway serving none), but it
 // must never be silent either.
+//
+// Trade-off: a skipped policy is a guardrail no longer enforced, including on
+// running pods that still had it in their last known good snapshot. Only List
+// and ListByGateway skip (FindByIDs and FindByID stay fail-hard: a missing id
+// would read as "deleted"). ListByGateway callers (warnings.go,
+// consumer/data_finder.go loadPolicies) inherit the skip. The configsnapshot
+// compiler bounds it: when too many rows are skipped it fails the compile
+// instead of publishing a snapshot without them.
 func reportUnreadable(ctx context.Context, operation string, err error) bool {
 	var u *UnreadablePolicyError
 	if !errors.As(err, &u) {
@@ -54,6 +63,7 @@ func reportUnreadable(ctx context.Context, operation string, err error) bool {
 		slog.String("component", "policy_repository"),
 		slog.String("operation", operation),
 		slog.String("policy_id", u.ID.String()),
+		slog.String("gateway_id", u.GatewayID.String()),
 		slog.String("error", u.Err.Error()))
 	recordUnreadable(ctx, operation)
 	return true

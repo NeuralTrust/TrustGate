@@ -26,6 +26,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // rowFunc adapts a function to rowScanner.
@@ -57,14 +60,6 @@ func TestScanPolicy_UnreadableRowCarriesTheID(t *testing.T) {
 		{name: "settings is not an object", row: fakeRow(id, `[1,2]`, `[]`, ``), wantU: true},
 		{name: "stages is not a list", row: fakeRow(id, `{}`, `{"a":1}`, ``), wantU: true},
 		{name: "mcp_scope is not an object", row: fakeRow(id, `{}`, `[]`, `"x"`), wantU: true},
-		{
-			name: "column the Go type rejects",
-			row: rowFunc(func(dest ...any) error {
-				*dest[0].(*ids.PolicyID) = id
-				return errors.New("cannot scan NULL into *string")
-			}),
-			wantU: true,
-		},
 		{name: "readable row", row: fakeRow(id, `{"a":1}`, `["pre_request"]`, `{}`)},
 	}
 	for _, tt := range tests {
@@ -87,6 +82,24 @@ func TestScanPolicy_UnreadableRowCarriesTheID(t *testing.T) {
 	}
 }
 
+// A failure inside Scan itself is returned raw: pgx makes it fatal for the whole
+// result set (and a single-row Scan does I/O), so it is never a skippable row.
+func TestScanPolicy_ScanErrorsStayFatal(t *testing.T) {
+	for _, scanErr := range []error{errors.New("cannot scan NULL into *string"), context.Canceled} {
+		_, err := scanPolicy(rowFunc(func(...any) error { return scanErr }))
+		if !errors.Is(err, scanErr) {
+			t.Fatalf("expected the raw scan error, got %v", err)
+		}
+		var u *UnreadablePolicyError
+		if errors.As(err, &u) {
+			t.Fatalf("a Scan failure must not be reported as an unreadable row: %v", err)
+		}
+		if reportUnreadable(context.Background(), "list", err) {
+			t.Fatalf("a Scan failure must still fail the query: %v", err)
+		}
+	}
+}
+
 func TestScanPolicy_NoRowsStaysNoRows(t *testing.T) {
 	_, err := scanPolicy(rowFunc(func(...any) error { return pgx.ErrNoRows }))
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -105,13 +118,42 @@ func TestReportUnreadable(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	id := ids.New[ids.PolicyKind]()
-	skipped := reportUnreadable(context.Background(), "list", &UnreadablePolicyError{ID: id, Err: errors.New("boom")})
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prevMP := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prevMP); _ = mp.Shutdown(context.Background()) })
+
+	gw := ids.New[ids.GatewayKind]()
+	skipped := reportUnreadable(context.Background(), "list", &UnreadablePolicyError{ID: id, GatewayID: gw, Err: errors.New("boom")})
 	if !skipped {
 		t.Fatal("an unreadable row must be skipped")
 	}
 	out := buf.String()
 	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "policy_id="+id.String()) {
 		t.Fatalf("expected an ERROR log naming the policy id, got %q", out)
+	}
+
+	if !strings.Contains(out, "gateway_id="+gw.String()) {
+		t.Fatalf("expected the gateway id in the log, got %q", out)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var count int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok && m.Name == "trustgate.policy.unreadable_rows" {
+				for _, dp := range sum.DataPoints {
+					count += dp.Value
+				}
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected the unreadable_rows counter at 1, got %d", count)
 	}
 
 	for _, err := range []error{errors.New("connection reset"), context.Canceled, pgx.ErrTxClosed} {
