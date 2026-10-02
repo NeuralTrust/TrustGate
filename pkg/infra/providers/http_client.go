@@ -19,9 +19,12 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 // DefaultHTTPTimeout is the timeout used by all provider HTTP clients.
@@ -44,6 +47,27 @@ func SetDefaultHTTPTimeout(d time.Duration) {
 	}
 }
 
+// allowPrivateNetworks is the operator escape hatch (PROVIDER_ALLOW_PRIVATE_NETWORKS).
+// It is read on every dial, so a change applies to pooled connections too.
+var allowPrivateNetworks atomic.Bool
+
+// providerGuard dials every provider connection. base_url comes from the tenant,
+// so the resolved address is checked at dial time: a private, loopback or
+// link-local destination (cloud metadata included) is refused unless the
+// operator opted in.
+var providerGuard = netguard.New(
+	&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+	allowPrivateNetworks.Load,
+)
+
+// SetAllowPrivateNetworks lets provider clients reach private, loopback and
+// link-local addresses. Leave it off on multi-tenant gateways; enable it for a
+// single-tenant or self-hosted deployment whose providers live on a private
+// network. Call it during initialization.
+func SetAllowPrivateNetworks(allow bool) {
+	allowPrivateNetworks.Store(allow)
+}
+
 func SetDefaultResponseHeaderTimeout(d time.Duration) {
 	if d > 0 {
 		DefaultResponseHeaderTimeout = d
@@ -62,12 +86,29 @@ func SetDefaultResponseHeaderTimeout(d time.Duration) {
 type HTTPClientPool struct {
 	pool *sync.Map
 	sf   singleflight.Group
+	// trusted pools dial operator-configured destinations and skip the
+	// private-network guard. Never use one for a URL a tenant can set.
+	trusted bool
 }
 
-// NewHTTPClientPool returns a ready-to-use pool.
+// NewHTTPClientPool returns a ready-to-use pool whose connections refuse
+// private, loopback and link-local destinations (see SetAllowPrivateNetworks).
+// Use it for any URL a tenant can influence, provider base_url included.
 func NewHTTPClientPool() *HTTPClientPool {
 	return &HTTPClientPool{
 		pool: &sync.Map{},
+	}
+}
+
+// NewTrustedHTTPClientPool returns a pool for destinations the operator fixed
+// through gateway configuration (for example OPENAI_MODERATION_BASE_URL), which
+// may legitimately be in-cluster. It applies the same transport tuning as
+// NewHTTPClientPool without the private-network guard. Never use it for a URL a
+// tenant can set.
+func NewTrustedHTTPClientPool() *HTTPClientPool {
+	return &HTTPClientPool{
+		pool:    &sync.Map{},
+		trusted: true,
 	}
 }
 
@@ -86,18 +127,18 @@ func (p *HTTPClientPool) Get(key string, timeout time.Duration) *http.Client {
 		}
 		cl := &http.Client{
 			Timeout:   timeout,
-			Transport: newTransport(),
+			Transport: newTransport(p.trusted),
 		}
 		p.pool.Store(key, cl)
 		return cl, nil
 	})
 	if err != nil {
-		return &http.Client{Timeout: timeout, Transport: newTransport()}
+		return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
 	}
 	if cl, ok := v.(*http.Client); ok {
 		return cl
 	}
-	return &http.Client{Timeout: timeout, Transport: newTransport()}
+	return &http.Client{Timeout: timeout, Transport: newTransport(p.trusted)}
 }
 
 // GetStream returns an *http.Client suitable for SSE streaming. Unlike Get, it
@@ -122,12 +163,13 @@ func DrainBody(r io.ReadCloser) {
 // newTransport returns an *http.Transport with explicit settings tuned for
 // high-concurrency provider calls. Each provider key gets its own Transport
 // so connection pools are isolated between providers.
-func newTransport() *http.Transport {
+func newTransport(trusted bool) *http.Transport {
+	dial := providerGuard.DialContext
+	if trusted {
+		dial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
 	return &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext: dial,
 
 		TLSHandshakeTimeout: 10 * time.Second,
 

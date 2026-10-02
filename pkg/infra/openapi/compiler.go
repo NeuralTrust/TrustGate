@@ -31,6 +31,7 @@ import (
 	"time"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
@@ -714,27 +715,7 @@ func resolveAndDial(
 }
 
 func publicDestination(ip net.IP) bool {
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnatIP(ip) || ipAlwaysBlocked(ip) {
-		return false
-	}
-	address, ok := netip.AddrFromSlice(ip)
-	if !ok {
-		return false
-	}
-	address = address.Unmap()
-	for _, prefix := range publicBlockedPrefixes {
-		if prefix.Contains(address) {
-			return false
-		}
-	}
-	return true
-}
-
-var publicBlockedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),
+	return netguard.IsPublicUnicast(ip)
 }
 
 func blockedDestination(host string, ip net.IP) bool {

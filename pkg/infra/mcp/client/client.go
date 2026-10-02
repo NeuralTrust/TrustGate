@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -136,54 +137,9 @@ func resolveHost(ctx context.Context, host string) ([]net.IP, error) {
 	return ips, nil
 }
 
-// Address ranges the standard library does not classify but that never denote a
-// public upstream: carrier-grade NAT, "this" network, IETF protocol assignments,
-// the reserved class-E block (which includes the broadcast address), NAT64 and
-// the IPv6 discard prefix.
-var (
-	cgnatV4    = mustCIDR("100.64.0.0/10")
-	thisNetV4  = mustCIDR("0.0.0.0/8")
-	ietfV4     = mustCIDR("192.0.0.0/24")
-	reservedV4 = mustCIDR("240.0.0.0/4")
-	nat64V6    = mustCIDR("64:ff9b::/96")
-	discardV6  = mustCIDR("100::/64")
-)
-
-func mustCIDR(cidr string) *net.IPNet {
-	_, n, err := net.ParseCIDR(cidr)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
 // isPublicUnicast reports whether ip is an address a per-user upstream may
 // legitimately live at: globally routable unicast, nothing else.
-func isPublicUnicast(ip net.IP) bool {
-	if ip == nil ||
-		ip.IsUnspecified() ||
-		ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() ||
-		ip.IsMulticast() {
-		return false
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		for _, blocked := range []*net.IPNet{cgnatV4, thisNetV4, ietfV4, reservedV4} {
-			if blocked.Contains(ip4) {
-				return false
-			}
-		}
-		return true
-	}
-	if len(ip) == net.IPv6len && nat64V6.Contains(ip) {
-		// NAT64 embeds the IPv4 target in the low 32 bits; judge that.
-		return isPublicUnicast(net.IP(ip[12:16]))
-	}
-	return !discardV6.Contains(ip)
-}
+func isPublicUnicast(ip net.IP) bool { return netguard.IsPublicUnicast(ip) }
 
 type Client struct{}
 
