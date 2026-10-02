@@ -112,6 +112,19 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 	return nil
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"api_key"}
+}
+
+// CredentialDestinations binds api_key to the endpoint it is sent to
+// (Ocp-Apim-Subscription-Key on a request to cfg.Endpoint): changing the
+// endpoint requires re-entering the key.
+func (p *Plugin) CredentialDestinations() []string {
+	return []string{"endpoint"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

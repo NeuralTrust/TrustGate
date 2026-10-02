@@ -20,18 +20,20 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
 )
 
 type CreatePolicyHandler struct {
-	creator apppolicy.Creator
-	warner  apppolicy.Warner
+	creator  apppolicy.Creator
+	warner   apppolicy.Warner
+	registry appplugins.Registry
 }
 
-func NewCreatePolicyHandler(creator apppolicy.Creator, warner apppolicy.Warner) *CreatePolicyHandler {
-	return &CreatePolicyHandler{creator: creator, warner: warner}
+func NewCreatePolicyHandler(creator apppolicy.Creator, warner apppolicy.Warner, registry appplugins.Registry) *CreatePolicyHandler {
+	return &CreatePolicyHandler{creator: creator, warner: warner, registry: registry}
 }
 
 // Handle godoc
@@ -83,5 +85,5 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteCreated(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
+	return httpio.WriteCreated(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p), h.registry))
 }
