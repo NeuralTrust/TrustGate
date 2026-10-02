@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"testing"
 
@@ -23,6 +24,12 @@ import (
 // database can answer for it.
 func TestPlanRateLimitE2E(t *testing.T) {
 	defer Track(t, "PlanRateLimit")()
+	// The harness boots once from .env.functional, which keeps the plan limiter
+	// off so suite volume does not trip it. The request path is covered by the
+	// container tests in pkg/container; this runs only when the limiter is on.
+	if v := os.Getenv("RATE_LIMIT_ENABLED"); v == "" || v == "false" {
+		t.Skip("plan rate limiter is disabled in this functional environment")
+	}
 
 	const burst = 2
 	tenant := uniqueName("plan-tenant")
