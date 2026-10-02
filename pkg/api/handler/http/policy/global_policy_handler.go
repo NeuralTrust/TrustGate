@@ -17,6 +17,7 @@ package policy
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -24,13 +25,14 @@ import (
 )
 
 type GlobalPolicyHandler struct {
-	scoper apppolicy.Scoper
-	warner apppolicy.Warner
-	status apppolicy.StatusEvaluator
+	scoper   apppolicy.Scoper
+	warner   apppolicy.Warner
+	status   apppolicy.StatusEvaluator
+	registry appplugins.Registry
 }
 
-func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, status apppolicy.StatusEvaluator) *GlobalPolicyHandler {
-	return &GlobalPolicyHandler{scoper: scoper, warner: warner, status: status}
+func NewGlobalPolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, status apppolicy.StatusEvaluator, registry appplugins.Registry) *GlobalPolicyHandler {
+	return &GlobalPolicyHandler{scoper: scoper, warner: warner, status: status, registry: registry}
 }
 
 // SetGlobal godoc
@@ -56,7 +58,7 @@ func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)).WithStatus(h.evaluate(p)))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p), h.registry).WithStatus(h.evaluate(p)))
 }
 
 // UnsetGlobal godoc
@@ -81,7 +83,7 @@ func (h *GlobalPolicyHandler) UnsetGlobal(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p).WithStatus(h.evaluate(p)))
+	return httpio.WriteOK(c, response.FromPolicy(p, h.registry).WithStatus(h.evaluate(p)))
 }
 
 func (h *GlobalPolicyHandler) evaluate(p *domain.Policy) (string, string) {
