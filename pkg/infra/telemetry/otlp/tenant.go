@@ -132,7 +132,9 @@ func (t *Template) tenantSettings(raw map[string]interface{}) (Settings, error) 
 	// var) decides whether the connection is encrypted. A bare host is https
 	// unless the tenant asked for insecure.
 	own.Endpoint = tenantEndpointURL(own.Endpoint, own.Insecure)
-	own.Insecure = strings.HasPrefix(own.Endpoint, "http://")
+	if u, err := url.Parse(own.Endpoint); err == nil {
+		own.Insecure = strings.EqualFold(u.Scheme, "http")
+	}
 	own.guarded = true
 	return own, nil
 }
