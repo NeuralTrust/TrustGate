@@ -30,6 +30,7 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
@@ -645,5 +646,32 @@ func TestCreator_Create_InheritsHighestSiblingTier(t *testing.T) {
 	}
 	if g.Entitlements.Tier != "enterprise" {
 		t.Fatalf("Entitlements.Tier = %q, want enterprise", g.Entitlements.Tier)
+	}
+}
+
+func TestCreator_Create_StoresTopicClassificationTrimmed(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	expectNoSiblingGateways(repo, "acme")
+	repo.EXPECT().
+		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			tc := g.TopicClassification
+			return tc != nil && len(tc.Topics) == 1 &&
+				tc.Topics[0].Name == "billing" && tc.Topics[0].Definition == "refunds"
+		}), "acme", 0).
+		Return(nil).
+		Once()
+
+	in := &topic.Config{Enabled: true, Topics: []topic.Topic{{Name: " billing ", Definition: "  refunds "}}}
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
+	if _, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:                "prod",
+		TenantID:            "acme",
+		TopicClassification: in,
+	}); err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if in.Topics[0].Name != " billing " {
+		t.Fatalf("Create mutated the caller's config: %+v", in.Topics[0])
 	}
 }

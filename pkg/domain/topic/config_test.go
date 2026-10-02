@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -91,14 +92,54 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-func TestConfigValidateTrimsTopics(t *testing.T) {
+func TestConfigValidateDoesNotMutate(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Enabled: true, Topics: []Topic{{Name: " billing ", Definition: "  refunds and invoices "}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := cfg.Topics[0]; got.Name != "billing" || got.Definition != "refunds and invoices" {
-		t.Fatalf("topic not trimmed: %+v", got)
+	if got := cfg.Topics[0]; got.Name != " billing " || got.Definition != "  refunds and invoices " {
+		t.Fatalf("Validate mutated the config: %+v", got)
+	}
+}
+
+func TestConfigValidateConcurrentOnSharedConfig(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Enabled: true, Topics: []Topic{{Name: " billing ", Definition: "  refunds "}}}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestConfigNormalized(t *testing.T) {
+	t.Parallel()
+
+	var nilCfg *Config
+	if nilCfg.Normalized() != nil {
+		t.Fatal("nil config must normalise to nil")
+	}
+
+	src := &Config{Enabled: true, MessageWindow: 4, Topics: []Topic{{Name: " billing ", Definition: "  refunds and invoices "}}}
+	got := src.Normalized()
+	if tp := got.Topics[0]; tp.Name != "billing" || tp.Definition != "refunds and invoices" {
+		t.Fatalf("topic not trimmed: %+v", tp)
+	}
+	if !got.Enabled || got.MessageWindow != 4 {
+		t.Fatalf("other fields lost: %+v", got)
+	}
+	if src.Topics[0].Name != " billing " {
+		t.Fatalf("Normalized mutated its receiver: %+v", src.Topics[0])
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("normalised config must validate: %v", err)
 	}
 }
 
