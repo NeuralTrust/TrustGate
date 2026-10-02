@@ -333,9 +333,23 @@ var cascadeDeleteStatements = []string{
 	`DELETE FROM registries WHERE gateway_id = $1`,
 }
 
+// cascadeLockStatements lock the consumers and then the policies of the gateway
+// in ascending id before the cascade deletes them, the order WithSlugLocked in
+// the policy repository documents (RUN-1746). A DELETE alone locks rows in scan
+// order, and an update that moves a tuple makes that disagree with id order.
+var cascadeLockStatements = []string{
+	`SELECT 1 FROM consumers WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
+	`SELECT 1 FROM policies  WHERE gateway_id = $1 ORDER BY id FOR UPDATE`,
+}
+
 func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 	const deleteGateway = `DELETE FROM gateways WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		for _, stmt := range cascadeLockStatements {
+			if _, err := tx.Exec(ctx, stmt, id); err != nil {
+				return fmt.Errorf("gateway repository: lock dependents: %w", err)
+			}
+		}
 		for _, stmt := range cascadeDeleteStatements {
 			if _, err := tx.Exec(ctx, stmt, id); err != nil {
 				return mapPgError(err)

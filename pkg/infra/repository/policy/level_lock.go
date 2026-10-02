@@ -37,25 +37,45 @@ const lockedPolicyColumns = `
 // same transaction: the context it hands fn carries the transaction, so the
 // write fn makes commits with the decision that allowed it or not at all.
 //
-// The lock is an advisory one and not only the FOR UPDATE of the rows it
-// returns, because the writes this guards are mostly inserts: two creates of
-// the first two policies of a slug find no row to lock, so row locks alone let
-// both through and both take the level (RUN-1621, rule 3.3). The row locks are
-// still taken, so a policy cannot be edited out from under a decision that
-// read it by a write that does not pass through here. exclude is left out of
-// them because the caller is about to rewrite that row itself.
+// The lock is an advisory one and not only row locks, because the writes this
+// guards are mostly inserts: two creates of the first two policies of a slug
+// find no row to lock, so row locks alone let both through and both take the
+// level (RUN-1621, rule 3.3).
+//
+// The row locks follow one order (RUN-1746): the consumers in linking in
+// ascending id FOR KEY SHARE, then the enabled policies of the pair and exclude
+// in ascending id FOR UPDATE. A registry delete and a gateway delete lock the
+// gateway's consumers and then its policies in that same order, so none of them
+// can hold a row another is waiting for, which Postgres would abort with 40P01.
+// fn locks no consumer or policy row the transaction does not already hold:
+// linking a consumer locks it and exclude, and the only policy row fn writes
+// is exclude, matched by id because an update that changes the slug still
+// stores the old one. Disabled siblings stay unlocked, since a row fn never
+// touches cannot close a cycle.
+//
+// The occupants are read after the locks, without one. Every occupant that
+// existed when they were taken is held, so a write that skips the guard cannot
+// change it under the decision. A row committed after that came from such a
+// write and occupies no level, and locking it would take it out of id order.
 func (r *Repository) WithSlugLocked(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	slug string,
 	exclude ids.PolicyID,
+	linking []ids.ConsumerID,
 	fn func(ctx context.Context, occupants []*domain.Policy) error,
 ) error {
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, slugLockKey(gatewayID, slug)); err != nil {
 			return fmt.Errorf("policy repository: lock slug: %w", err)
 		}
-		occupants, err := lockSameSlugPolicies(ctx, tx, gatewayID, slug, exclude)
+		if err := lockLinkedConsumers(ctx, tx, linking); err != nil {
+			return err
+		}
+		if err := lockSlugPolicies(ctx, tx, gatewayID, slug, exclude); err != nil {
+			return err
+		}
+		occupants, err := sameSlugOccupants(ctx, tx, gatewayID, slug, exclude)
 		if err != nil {
 			return err
 		}
@@ -63,7 +83,38 @@ func (r *Repository) WithSlugLocked(
 	})
 }
 
-func lockSameSlugPolicies(
+func lockLinkedConsumers(ctx context.Context, tx pgx.Tx, linking []ids.ConsumerID) error {
+	if len(linking) == 0 {
+		return nil
+	}
+	const query = `SELECT 1 FROM consumers WHERE id = ANY($1) ORDER BY id FOR KEY SHARE`
+	if _, err := tx.Exec(ctx, query, ids.ToUUIDs(linking)); err != nil {
+		return fmt.Errorf("policy repository: lock linked consumers: %w", err)
+	}
+	return nil
+}
+
+func lockSlugPolicies(
+	ctx context.Context,
+	tx pgx.Tx,
+	gatewayID ids.GatewayID,
+	slug string,
+	exclude ids.PolicyID,
+) error {
+	const query = `
+		SELECT 1
+		  FROM policies
+		 WHERE gateway_id = $1
+		   AND ((slug = $2 AND enabled) OR id = $3)
+		 ORDER BY id
+		 FOR UPDATE`
+	if _, err := tx.Exec(ctx, query, gatewayID.UUID(), slug, exclude.UUID()); err != nil {
+		return fmt.Errorf("policy repository: lock same slug policies: %w", err)
+	}
+	return nil
+}
+
+func sameSlugOccupants(
 	ctx context.Context,
 	tx pgx.Tx,
 	gatewayID ids.GatewayID,
@@ -76,11 +127,10 @@ func lockSameSlugPolicies(
 		   AND p.slug = $2
 		   AND p.id <> $3
 		   AND p.enabled
-		 ORDER BY p.created_at, p.id
-		 FOR UPDATE OF p`
+		 ORDER BY p.created_at, p.id`
 	rows, err := tx.Query(ctx, query, gatewayID.UUID(), slug, exclude.UUID())
 	if err != nil {
-		return nil, fmt.Errorf("policy repository: lock same slug policies: %w", err)
+		return nil, fmt.Errorf("policy repository: read same slug policies: %w", err)
 	}
 	defer rows.Close()
 

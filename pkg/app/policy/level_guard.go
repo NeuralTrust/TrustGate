@@ -27,8 +27,13 @@ import (
 // pair other than exclude, and holds the lock until fn returns, so the check
 // and the write it authorises decide on the same state.
 //
-// exclude is the policy being written: an update and a promotion rewrite their
-// own row, and a lock held on it would be a lock the write then waits for.
+// exclude is the policy being written. It is locked with the occupants but
+// never handed back as one: an update and a promotion rewrite their own row,
+// and a policy cannot conflict with itself.
+//
+// linking are the consumers the write links. They are locked before any policy:
+// linking a consumer locks it, and a lock taken only then would come after the
+// policies', the reverse of the order a registry delete takes them in.
 //
 //go:generate mockery --name=LevelLock --dir=. --output=./mocks --filename=policy_level_lock_mock.go --case=underscore --with-expecter
 type LevelLock interface {
@@ -37,6 +42,7 @@ type LevelLock interface {
 		gatewayID ids.GatewayID,
 		slug string,
 		exclude ids.PolicyID,
+		linking []ids.ConsumerID,
 		fn func(ctx context.Context, occupants []*domain.Policy) error,
 	) error
 }
@@ -54,8 +60,9 @@ type LevelGuard interface {
 	// ErrPolicyLevelConflict naming the policy that holds one of them
 	// otherwise. p is the policy as it would be stored, so a caller that is
 	// about to attach a consumer or promote to global or MCP-wide passes a
-	// copy carrying that change.
-	Check(ctx context.Context, p *domain.Policy, write func(ctx context.Context) error) error
+	// copy carrying that change. linking are the consumers the write links,
+	// which the lock takes before any policy: an attach passes the one it adds.
+	Check(ctx context.Context, p *domain.Policy, write func(ctx context.Context) error, linking ...ids.ConsumerID) error
 }
 
 var _ LevelGuard = (*levelGuard)(nil)
@@ -69,7 +76,7 @@ func NewLevelGuard(lock LevelLock) LevelGuard {
 	return &levelGuard{lock: lock}
 }
 
-func (g *levelGuard) Check(ctx context.Context, p *domain.Policy, write func(ctx context.Context) error) error {
+func (g *levelGuard) Check(ctx context.Context, p *domain.Policy, write func(ctx context.Context) error, linking ...ids.ConsumerID) error {
 	if p == nil || write == nil {
 		return errors.New("policy: level guard: nil policy or write")
 	}
@@ -77,7 +84,7 @@ func (g *levelGuard) Check(ctx context.Context, p *domain.Policy, write func(ctx
 	if taken.Len() == 0 {
 		return write(ctx)
 	}
-	return g.lock.WithSlugLocked(ctx, p.GatewayID, p.Slug, p.ID, func(ctx context.Context, occupants []*domain.Policy) error {
+	return g.lock.WithSlugLocked(ctx, p.GatewayID, p.Slug, p.ID, linking, func(ctx context.Context, occupants []*domain.Policy) error {
 		if err := firstConflict(taken, p.ID, occupants); err != nil {
 			return err
 		}
