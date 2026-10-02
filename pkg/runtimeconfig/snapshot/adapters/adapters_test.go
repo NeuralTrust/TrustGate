@@ -310,7 +310,10 @@ func TestPolicyAdapter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, crossGateway)
 
-	assert.ErrorIs(t, repo.SetGlobal(ctx, f.gateway.ID, f.policy.ID, true), configsync.ErrReadOnly)
+	_, err = repo.SetGlobal(ctx, f.gateway.ID, f.policy.ID, true, time.Time{})
+	assert.ErrorIs(t, err, configsync.ErrReadOnly)
+	_, err = repo.SetMCPWide(ctx, f.gateway.ID, f.policy.ID, true, time.Time{})
+	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Save(ctx, &policydomain.Policy{}), configsync.ErrReadOnly)
 }
 

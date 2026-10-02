@@ -218,7 +218,8 @@ func TestLockOrder_GuardedWriteHoldsItsOwnRowBeforeTheRegistryDelete(t *testing.
 		{
 			name: "promotion",
 			write: func(ctx context.Context, r *repo.Repository, p *domain.Policy) error {
-				return r.SetGlobal(ctx, p.GatewayID, p.ID, true)
+				_, err := r.SetGlobal(ctx, p.GatewayID, p.ID, true, time.Time{})
+				return err
 			},
 			landed: func(got *domain.Policy) bool { return got.Global },
 		},

@@ -22,6 +22,7 @@ import (
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -80,14 +81,30 @@ type registryDeleterGrants struct {
 	Grants storeaccessdomain.Repository `optional:"true"`
 }
 
+// registryAuthParams carries the auth repository a save uses to check
+// mcp_target.auth.identity_id. Optional so a container without auths still
+// boots; such a container refuses targets that set it.
+type registryAuthParams struct {
+	dig.In
+	Auths authdomain.Repository `optional:"true"`
+}
+
+func (l registryAuthParams) options(compiler appopenapi.Compiler) []appregistry.Option {
+	opts := []appregistry.Option{appregistry.WithOpenAPICompiler(compiler)}
+	if l.Auths != nil {
+		opts = append(opts, appregistry.WithAuthLookup(l.Auths))
+	}
+	return opts
+}
+
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, compiler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, auths.options(compiler)...)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Updater {
-		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, compiler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler, auths registryAuthParams) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, auths.options(compiler)...)
 	}); err != nil {
 		return err
 	}

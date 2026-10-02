@@ -155,6 +155,9 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
+	if pol.MCPWide {
+		return domain.ErrPolicyMCPWide
+	}
 	if err := a.validatePolicyScope(cons, pol); err != nil {
 		return err
 	}

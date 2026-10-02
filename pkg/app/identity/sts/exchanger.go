@@ -35,6 +35,12 @@ import (
 var (
 	ErrInteractionRequired = errors.New("sts: interaction required")
 	ErrNoUserIdentity      = errors.New("sts: exchange requires an inbound user token")
+	// ErrIdentityIssuerMismatch is returned when the caller token's issuer
+	// differs from the issuer of the identity the registry pins for the exchange.
+	ErrIdentityIssuerMismatch = errors.New("sts: caller token issuer does not match the exchange identity")
+	// ErrExchangeIdentityUnavailable is returned when the pinned identity is
+	// gone, disabled, not oauth2 or lacks the client credentials to sign.
+	ErrExchangeIdentityUnavailable = errors.New("sts: exchange identity is unavailable")
 )
 
 const DefaultTokenTTL = 5 * time.Minute
@@ -169,7 +175,7 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	if principal.RawToken == "" || !principal.Method.IsExternalIdPAssertion() {
 		return nil, ErrNoUserIdentity
 	}
-	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)
+	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer, cfg.IdentityID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +194,7 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 		(!principal.Method.IsExternalIdPAssertion() && principal.Method != identity.MethodIntrospection) {
 		return nil, ErrNoUserIdentity
 	}
-	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)
+	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer, cfg.IdentityID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,10 +211,13 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer string) (*authdomain.OAuth2Config, error) {
+func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer, identityID string) (*authdomain.OAuth2Config, error) {
 	auths, err := e.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("sts: load oauth2 auths: %w", err)
+	}
+	if identityID != "" {
+		return pinnedIdP(auths, issuer, identityID)
 	}
 	for _, a := range auths {
 		if a.Config.OAuth2 != nil && a.Config.OAuth2.Issuer == issuer {
@@ -219,4 +228,30 @@ func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer 
 		}
 	}
 	return nil, fmt.Errorf("sts: no oauth2 auth configured for issuer %s", issuer)
+}
+
+// pinnedIdP never falls back to the issuer lookup: a pinned identity that is
+// gone, disabled or for another issuer fails the call.
+func pinnedIdP(auths []*authdomain.Auth, issuer, identityID string) (*authdomain.OAuth2Config, error) {
+	pinned, err := ids.Parse[ids.AuthKind](identityID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid identity id %q", ErrExchangeIdentityUnavailable, identityID)
+	}
+	for _, a := range auths {
+		if a.ID != pinned {
+			continue
+		}
+		cfg := a.Config.OAuth2
+		if cfg == nil {
+			break
+		}
+		if cfg.Issuer != issuer {
+			return nil, fmt.Errorf("%w: got %s, identity %s expects %s", ErrIdentityIssuerMismatch, issuer, pinned, cfg.Issuer)
+		}
+		if cfg.ClientID == "" || cfg.ClientSecret == "" {
+			return nil, fmt.Errorf("%w: identity %s lacks client_id/client_secret", ErrExchangeIdentityUnavailable, pinned)
+		}
+		return cfg, nil
+	}
+	return nil, fmt.Errorf("%w: identity %s is not an enabled oauth2 auth of this gateway", ErrExchangeIdentityUnavailable, pinned)
 }

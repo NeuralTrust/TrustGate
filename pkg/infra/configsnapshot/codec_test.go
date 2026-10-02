@@ -202,3 +202,36 @@ func TestCodecRoundTripsPolicyMCPScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
 }
+
+func TestCodecRoundTripsPolicyMCPWide(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+	gw := ids.New[ids.GatewayKind]()
+	newPolicy := func(name string, mcpWide bool) policydomain.Policy {
+		p, err := policydomain.NewPolicy(gw, name, "tool_allowlist", true, 0, false, nil, nil, "", policydomain.ModeEnforce, nil)
+		require.NoError(t, err)
+		p.SetMCPWide(mcpWide)
+		return *p
+	}
+	plain := newPolicy("plain", false)
+	wide := newPolicy("wide", true)
+
+	plainRaw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{plain}}))
+	require.NoError(t, err)
+	assert.False(t, bytes.Contains(plainRaw, []byte(`"mcp_wide"`)), "a policy that is not MCP-wide must encode as it did before the field existed")
+
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", Policies: []policydomain.Policy{plain, wide}}))
+	require.NoError(t, err)
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+
+	got := snap.Data().Policies
+	require.Len(t, got, 2)
+	assert.False(t, got[0].MCPWide)
+	assert.True(t, got[1].MCPWide)
+	assert.False(t, got[1].Global)
+
+	reraw, err := codec.Encode(snap)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(raw, reraw), "decode then re-encode must be byte-identical")
+}

@@ -97,6 +97,11 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 			mutate:  func(p *Policy) { p.Mode = Mode("bogus") },
 			wantErr: ErrInvalidMode,
 		},
+		{
+			name:    "global and mcp-wide at once",
+			mutate:  func(p *Policy) { p.Global, p.MCPWide = true, true },
+			wantErr: ErrInvalidPlacement,
+		},
 	}
 	for _, tc := range tests {
 		tc := tc
@@ -248,5 +253,61 @@ func TestPolicy_IsGlobal_ReadsOnlyTheGlobalFlag(t *testing.T) {
 	dormant := &Policy{Global: true, MCPScope: &MCPScope{}}
 	if !dormant.IsGlobal() {
 		t.Fatal("a tombstone scope must not change what IsGlobal reports")
+	}
+	if (&Policy{MCPWide: true}).IsGlobal() {
+		t.Fatal("an MCP-wide policy must not report global")
+	}
+}
+
+func TestPolicy_GatewayWideAndDraft(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		policy      *Policy
+		gatewayWide bool
+		draft       bool
+	}{
+		{name: "nil policy", policy: nil},
+		{name: "no placement and no links", policy: &Policy{}, draft: true},
+		{name: "attached to a consumer", policy: &Policy{ConsumerIDs: []ids.ConsumerID{ids.New[ids.ConsumerKind]()}}},
+		{name: "global", policy: &Policy{Global: true}, gatewayWide: true},
+		{name: "mcp-wide", policy: &Policy{MCPWide: true}, gatewayWide: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.policy.GatewayWide(); got != tc.gatewayWide {
+				t.Fatalf("GatewayWide() = %t, want %t", got, tc.gatewayWide)
+			}
+			if got := tc.policy.Draft(); got != tc.draft {
+				t.Fatalf("Draft() = %t, want %t", got, tc.draft)
+			}
+		})
+	}
+}
+
+func TestPolicy_PlacementMutators(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		from        Policy
+		apply       func(*Policy)
+		wantGlobal  bool
+		wantMCPWide bool
+	}{
+		{name: "promoting to mcp-wide clears global", from: Policy{Global: true}, apply: func(p *Policy) { p.SetMCPWide(true) }, wantMCPWide: true},
+		{name: "promoting to global clears mcp-wide", from: Policy{MCPWide: true}, apply: func(p *Policy) { p.SetGlobal(true) }, wantGlobal: true},
+		{name: "demoting global keeps mcp-wide", from: Policy{MCPWide: true}, apply: func(p *Policy) { p.SetGlobal(false) }, wantMCPWide: true},
+		{name: "demoting mcp-wide keeps global", from: Policy{Global: true}, apply: func(p *Policy) { p.SetMCPWide(false) }, wantGlobal: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := tc.from
+			tc.apply(&p)
+			if p.Global != tc.wantGlobal || p.MCPWide != tc.wantMCPWide {
+				t.Fatalf("Global, MCPWide = %t, %t, want %t, %t", p.Global, p.MCPWide, tc.wantGlobal, tc.wantMCPWide)
+			}
+		})
 	}
 }

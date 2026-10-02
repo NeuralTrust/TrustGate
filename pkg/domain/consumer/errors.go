@@ -51,4 +51,11 @@ var (
 	// to any consumer as long as its plugin does not resolve tool or registry
 	// names (RUN-1621, rules 2 and 7).
 	ErrPolicyScopeDoesNotCross = fmt.Errorf("consumer: this mcp_scope does not cross into the consumer's plane: %w", ErrPolicyProtocolMismatch)
+
+	// ErrPolicyMCPWide refuses to attach a consumer to an MCP-wide policy. The
+	// policy already runs on every MCP consumer and the load path ignores its
+	// links, so a link would show a consumer as covered where nothing changes;
+	// the promotion removed the links the policy had. It wraps ErrValidation,
+	// which the HTTP layer answers with 422.
+	ErrPolicyMCPWide = fmt.Errorf("consumer: policy is MCP-wide: it already runs on every MCP consumer; demote it before attaching a consumer: %w", commonerrors.ErrValidation)
 )

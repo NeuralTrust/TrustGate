@@ -362,14 +362,7 @@ func attachPolicyWarnings(t *testing.T, gatewayID, consumerID, policyID string) 
 	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
 	require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, status,
 		"attach policy failed: %v", body)
-	raw, _ := body["warnings"].([]any)
-	out := make([]string, 0, len(raw))
-	for _, w := range raw {
-		if text, ok := w.(string); ok {
-			out = append(out, text)
-		}
-	}
-	return out
+	return responseWarnings(body)
 }
 
 func TestMCPPolicyScope_ListToolsOncePerRegistryWithinTTL(t *testing.T) {

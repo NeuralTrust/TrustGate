@@ -774,9 +774,78 @@ const docTemplate = `{
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/auths/{id}/rotate": {
+            "post": {
+                "description": "Replaces the secret of an api_key auth and returns the new one. The auth keeps its id, its name and every consumer it is attached to; the previous secret stops authenticating immediately. The new secret is returned once and is not retrievable afterwards.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auths"
+                ],
+                "summary": "Rotate an api key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expiry for the new secret",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers": {
             "get": {
-                "description": "Returns a paginated list of consumers in a gateway.",
+                "description": "Returns a paginated list of consumers in a gateway. Stored consumers only, unless include_synthetic asks for the ones the gateway serves without storing.",
                 "produces": [
                     "application/json"
                 ],
@@ -822,6 +891,12 @@ const docTemplate = `{
                         "format": "uuid",
                         "description": "Filter consumers linked to this auth id",
                         "name": "auth_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Also list the consumers the gateway serves without storing (the MCP Store). They carry synthetic=true, appear on the first page only, and cannot be edited, deleted or given a key",
+                        "name": "include_synthetic",
                         "in": "query"
                     },
                     {
@@ -1283,7 +1358,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
-                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
+                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. An MCP-wide policy already runs on every MCP consumer and holds no links, so attaching one answers 422: demote it first. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -1352,7 +1427,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Unprocessable Entity",
+                        "description": "The policy is MCP-wide, or its mcp_scope or plugin does not fit the consumer",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1609,7 +1684,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "boolean",
-                        "description": "Filter by global flag",
+                        "description": "Filter by global flag; global=false also lists MCP-wide policies",
                         "name": "global",
                         "in": "query"
                     },
@@ -1826,7 +1901,7 @@ const docTemplate = `{
                 ]
             },
             "put": {
-                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. The response may carry non-blocking warnings.",
+                "description": "Updates an existing policy. mcp_scope is tri-state: omitted keeps the stored scope, null clears it and an object replaces it. An update that moves the policy onto a level another policy of the same plugin already holds is refused with 409, and so is turning enabled back on when that is what takes the level. An update racing a promotion or demotion of the same policy is refused with 409: reload it and retry. Changing the slug of an MCP-wide policy to a plugin without MCP support is refused with 422. The response may carry non-blocking warnings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1890,7 +1965,13 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "A policy of this name already exists, or the gateway already runs this plugin at one of the levels the update would take",
+                        "description": "A policy of this name already exists, the gateway already runs this plugin at one of the levels the update would take, or the policy's placement changed while it was being updated",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The request fails validation, such as an MCP-wide policy moved to a plugin without MCP support",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -1967,7 +2048,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
             "post": {
-                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
+                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is neither global nor MCP-wide.",
                 "produces": [
                     "application/json"
                 ],
@@ -2034,7 +2115,7 @@ const docTemplate = `{
         },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
-                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer). Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting moves the policy to the all-traffic level, so it answers 409 when another policy of the same plugin already holds it; a policy that changed while it was being promoted also answers 409: reload it and retry, unless it is already global by then, which answers 200 with the policy as stored. For a policy with mcp_scope the response may carry non-blocking warnings about consumers that already run the same plugin without scope.",
                 "produces": [
                     "application/json"
                 ],
@@ -2086,7 +2167,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "The gateway already runs this plugin at the all-traffic level",
+                        "description": "The gateway already runs this plugin at the all-traffic level, or the policy changed while it was being promoted",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2099,7 +2180,7 @@ const docTemplate = `{
                 ]
             },
             "delete": {
-                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers).",
+                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers). Clears only global: a policy that is not global is returned unchanged with 200, an MCP-wide one included.",
                 "produces": [
                     "application/json"
                 ],
@@ -2107,6 +2188,138 @@ const docTemplate = `{
                     "policies"
                 ],
                 "summary": "Clear a policy's global scope",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/mcp-wide": {
+            "post": {
+                "description": "Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers. Promoting clears global and removes the policy's consumer links in the same write; while the flag is set a consumer cannot be attached (422). The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A retry that finds the policy already MCP-wide answers 200 with the policy as stored. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Mark a policy as MCP-wide",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The gateway already runs this plugin at one of the levels the policy would take on every MCP consumer, or the policy changed while it was being promoted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The plugin does not support MCP",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Demotes an MCP-wide policy to a draft: it holds no consumer links, so it runs nowhere until a consumer is attached or it is promoted again. Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Clear a policy's MCP-wide placement",
                 "parameters": [
                     {
                         "type": "string",
@@ -2699,6 +2912,183 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account": {
+            "get": {
+                "description": "Reports whether the account this MCP instance holds for every caller is connected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Read an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Forgets the stored account. Nothing is revoked upstream, but calls through this instance stop until it is connected again.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Drop an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/shared-account/connect-link": {
+            "post": {
+                "description": "Mints the connect page an administrator walks to authorize the account every caller of this instance uses. The body is optional: resume_url is where the page sends the administrator back to once the account is connected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Start connecting an instance's shared upstream account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Where to come back to",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4191,6 +4581,10 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt retires an api key on its own, as an RFC 3339 instant. Omitted\nor empty is no expiry, which is what every key was before the field\nexisted.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4322,6 +4716,14 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.RotateAuthRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -4331,7 +4733,28 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt is left alone when absent, cleared by an empty string, and set\nby an RFC 3339 instant.",
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
                     "type": "string"
                 },
                 "type": {
@@ -4349,11 +4772,22 @@ const docTemplate = `{
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
                 },
+                "consumers": {
+                    "description": "Consumers are the consumers this auth reaches, which is what a caller\nneeds before revoking one: a key can be attached to several, so\ndisabling it stops more than the endpoint the reader was looking at.\nEmpty means it reaches none, which is an answer rather than a gap.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthConsumerResponse"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "expires_at": {
+                    "description": "When the key retires itself. Absent means it never does.",
+                    "type": "string"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -4790,15 +5224,12 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "acts_for_users": {
-                    "description": "ActsForUsers turns on per-user behaviour on an MCP consumer.",
                     "type": "boolean"
                 },
                 "end_user_header": {
-                    "description": "EndUserHeader lets an LLM consumer forward an end-user id for attribution.",
                     "type": "boolean"
                 },
                 "source": {
-                    "description": "Source is how end users are known: platform (they sign in) or app (the\napplication names them through the X-NeuralTrust-End-User header).\nDefaults to platform.",
                     "type": "string"
                 }
             }
@@ -5114,6 +5545,10 @@ const docTemplate = `{
                 "slug": {
                     "type": "string"
                 },
+                "synthetic": {
+                    "description": "Synthetic marks a consumer the gateway serves without storing: today the\nMCP Store. It has no row, so it cannot be edited, deleted or given a key,\nand it is only listed when a caller asks for it.",
+                    "type": "boolean"
+                },
                 "toolkit": {
                     "type": "array",
                     "items": {
@@ -5201,18 +5636,7 @@ const docTemplate = `{
             }
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse": {
-            "type": "object",
-            "properties": {
-                "acts_for_users": {
-                    "type": "boolean"
-                },
-                "end_user_header": {
-                    "type": "boolean"
-                },
-                "source": {
-                    "type": "string"
-                }
-            }
+            "type": "object"
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse": {
             "type": "object",
@@ -5390,6 +5814,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                     "type": "string"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 }
             }
         },
@@ -5431,6 +5858,9 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 }
             }
         },
@@ -5487,6 +5917,9 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "topic_classification": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
                 },
                 "updated_at": {
                     "type": "string"
@@ -5747,6 +6180,10 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "mcp_wide": {
+                    "description": "MCPWide marks a policy that runs on every MCP consumer of the gateway and\non the MCP Store, narrowed by its mcp_scope. It is never true together\nwith Global, and an MCP-wide policy has no consumer_ids.",
+                    "type": "boolean"
+                },
                 "mode": {
                     "type": "string"
                 },
@@ -5936,6 +6373,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is: the caller's own\n(empty, or \"user\") or the one the instance holds for everyone (\"shared\").",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -5956,6 +6397,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "header": {
+                    "type": "string"
+                },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
                     "type": "string"
                 },
                 "mode": {
@@ -6062,6 +6507,15 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.SharedAccountConnectLink": {
+            "type": "object",
+            "properties": {
+                "resume_url": {
+                    "description": "ResumeURL is where the connect page sends the admin once the account is\nconnected: the console screen they started from. An absolute https URL;\nempty leaves them on the page.",
+                    "type": "string"
                 }
             }
         },
@@ -6333,6 +6787,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse": {
             "type": "object",
             "properties": {
+                "account": {
+                    "description": "Account is whose account a forwarded credential is; empty means the\ncaller's own.",
+                    "type": "string"
+                },
                 "actor": {
                     "type": "string"
                 },
@@ -6353,6 +6811,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "header": {
+                    "type": "string"
+                },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
                     "type": "string"
                 },
                 "mode": {
@@ -6531,6 +6993,43 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountLinkResponse": {
+            "type": "object",
+            "properties": {
+                "consumer_path": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.SharedAccountResponse": {
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "needs_reconnect": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -7517,10 +8016,6 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
-                "multi_instance": {
-                    "description": "MultiInstance reports whether more than one registry of this server is\nmeaningful on one gateway: two of them can only differ in what an operator\nconfigures — a templated URL, a credential of its own, an OAuth client they\nregister — so a server that is one URL behind per-user OAuth holds exactly\none, and a second would be a copy of the first.\n\nDeclared per entry in the catalog seed as multi_instance, like\nSelfService, and nothing moves it after load. The zero value is the\nconservative answer.",
-                    "type": "boolean"
-                },
                 "oauth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },
@@ -7633,7 +8128,8 @@ const docTemplate = `{
             "additionalProperties": {
                 "type": "array",
                 "items": {
-                    "type": "integer"
+                    "type": "integer",
+                    "format": "int32"
                 }
             }
         },
@@ -7757,6 +8253,40 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "message_window": {
+                    "type": "integer"
+                },
+                "sampling_rate": {
+                    "type": "number"
+                },
+                "threshold": {
+                    "type": "number"
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic": {
+            "type": "object",
+            "properties": {
+                "definition": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt": {
             "type": "object",
             "properties": {
@@ -7824,6 +8354,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
@@ -7843,7 +8393,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "end_user": {
-                    "type": "string"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.EndUser"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -7946,6 +8496,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "catalog_code": {
+                    "type": "string"
+                },
+                "decision": {
+                    "description": "Decision is the tools/call-level outcome PluginRunner recorded directly\non the MCP span — currently only \"failed_open\", when a plugin stage\nfailed on a non-block error and the call proceeded uninspected. Empty\nwhen nothing at that level failed; a per-plugin decision still lives on\nits own PolicyChain entry.",
                     "type": "string"
                 },
                 "host": {

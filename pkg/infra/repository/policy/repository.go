@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
@@ -34,10 +35,18 @@ import (
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+	pgCheckViolation      = "23514"
 )
 
+const placementCheckConstraint = "policies_global_mcp_wide_check"
+
+// nextUpdatedAt is the updated_at a placement or prune write stores. It is
+// strictly later than the one it replaces even when the clock has not moved,
+// so a conditional write that read the old value can never match the new one.
+const nextUpdatedAt = `GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')`
+
 const policySelectColumns = `
-		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description, p.mode, p.mcp_scope,
+		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.mcp_wide, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description, p.mode, p.mcp_scope,
 		       COALESCE((SELECT array_agg(cp.consumer_id ORDER BY cp.consumer_id)
 		                   FROM consumer_policy cp WHERE cp.policy_id = p.id), '{}')::uuid[] AS consumer_ids`
 
@@ -89,11 +98,11 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 		return fmt.Errorf("policy repository: marshal mcp_scope: %w", err)
 	}
 	const query = `
-		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at, description, mode, mcp_scope)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, mcp_wide, priority, parallel, settings, stages, created_at, updated_at, description, mode, mcp_scope)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
+			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.MCPWide, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), scopeBytes,
 		); err != nil {
 			return mapPgError(err)
@@ -102,9 +111,14 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	})
 }
 
-// Update writes every column of p. writeMCPScope false leaves mcp_scope as
+// Update writes the columns of p. writeMCPScope false leaves mcp_scope as
 // stored, so an update that did not ask to change the scope cannot overwrite a
 // prune that ran between the caller's read and this write.
+//
+// global and mcp_wide are not written; they are compared instead. The level
+// guard approved p with the placement the caller read, so if a promotion or
+// demotion committed in between, the row matches nothing and the update fails
+// with ErrPlacementChanged rather than land a placement nobody checked.
 func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope bool) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
@@ -126,44 +140,116 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy, writeMCPScope
 		   SET name        = $2,
 		       slug        = $3,
 		       enabled     = $4,
-		       global      = $5,
-		       priority    = $6,
-		       parallel    = $7,
-		       settings    = $8,
-		       stages      = $9,
-		       updated_at  = $10,
-		       description = $11,
-		       mode        = $12,
-		       mcp_scope   = CASE WHEN $15::boolean THEN $14::jsonb ELSE mcp_scope END
-		 WHERE id = $1 AND gateway_id = $13`
+		       priority    = $5,
+		       parallel    = $6,
+		       settings    = $7,
+		       stages      = $8,
+		       updated_at  = $9,
+		       description = $10,
+		       mode        = $11,
+		       mcp_scope   = CASE WHEN $14::boolean THEN $13::jsonb ELSE mcp_scope END
+		 WHERE id = $1 AND gateway_id = $12
+		   AND global = $15 AND mcp_wide = $16`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
+			p.ID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
 			settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID, scopeBytes,
-			writeMCPScope,
+			writeMCPScope, p.Global, p.MCPWide,
 		)
 		if err != nil {
 			return mapPgError(err)
 		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
+		if cmd.RowsAffected() > 0 {
+			return nil
 		}
-		return nil
+		return missingOrMoved(ctx, tx, p.GatewayID, p.ID)
 	})
 }
 
-func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error {
-	const query = `UPDATE policies SET global = $2, updated_at = now() WHERE id = $1 AND gateway_id = $3`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id, global, gatewayID)
+func missingOrMoved(ctx context.Context, tx pgx.Tx, gatewayID ids.GatewayID, id ids.PolicyID) error {
+	const query = `SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1 AND gateway_id = $2)`
+	var exists bool
+	if err := tx.QueryRow(ctx, query, id, gatewayID).Scan(&exists); err != nil {
+		return fmt.Errorf("policy repository: check policy exists: %w", err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+	return domain.ErrPlacementChanged
+}
+
+// SetGlobal writes global. The right-hand side of SET reads the row as it was,
+// so promoting clears mcp_wide in the same write and demoting leaves it alone:
+// each setter owns one flag and the exclusivity CHECK cannot fire. It returns
+// the flags and updated_at the row holds once written.
+//
+// A non-zero readAt adds updated_at = readAt to the match. Every write of the
+// row moves updated_at, so a row updated or re-placed since the caller read it
+// matches nothing and the write fails with ErrPlacementChanged.
+func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool, readAt time.Time) (domain.Placement, error) {
+	const query = `
+		UPDATE policies
+		   SET global     = $2::boolean,
+		       mcp_wide   = mcp_wide AND NOT $2::boolean,
+		       updated_at = ` + nextUpdatedAt + `
+		 WHERE id = $1 AND gateway_id = $3
+		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
+		RETURNING global, mcp_wide, updated_at`
+	return r.setPlacementFlag(ctx, query, gatewayID, id, global, readAt, false)
+}
+
+// SetMCPWide writes mcp_wide, clearing global on promotion the way SetGlobal
+// clears mcp_wide, and matching readAt the same way. A promotion also deletes
+// the policy's consumer_policy rows in the same transaction: an MCP-wide policy
+// runs on every MCP consumer without them, so it holds none, and a demotion
+// has no link to revive.
+func (r *Repository) SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool, readAt time.Time) (domain.Placement, error) {
+	const query = `
+		UPDATE policies
+		   SET mcp_wide   = $2::boolean,
+		       global     = global AND NOT $2::boolean,
+		       updated_at = ` + nextUpdatedAt + `
+		 WHERE id = $1 AND gateway_id = $3
+		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
+		RETURNING global, mcp_wide, updated_at`
+	return r.setPlacementFlag(ctx, query, gatewayID, id, mcpWide, readAt, mcpWide)
+}
+
+func (r *Repository) setPlacementFlag(
+	ctx context.Context,
+	query string,
+	gatewayID ids.GatewayID,
+	id ids.PolicyID,
+	on bool,
+	readAt time.Time,
+	unlinkConsumers bool,
+) (domain.Placement, error) {
+	var unchangedSince any
+	if !readAt.IsZero() {
+		unchangedSince = readAt
+	}
+	var written domain.Placement
+	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, query, id, on, gatewayID, unchangedSince).
+			Scan(&written.Global, &written.MCPWide, &written.UpdatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return missingOrMoved(ctx, tx, gatewayID, id)
+		}
 		if err != nil {
 			return mapPgError(err)
 		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
+		if !unlinkConsumers {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM consumer_policy WHERE policy_id = $1`, id); err != nil {
+			return fmt.Errorf("policy repository: unlink consumers: %w", err)
 		}
 		return nil
 	})
+	if err != nil {
+		return domain.Placement{}, err
+	}
+	return written, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error {
@@ -343,7 +429,7 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	var consumerIDs []uuid.UUID
 	var mode string
 	if err := s.Scan(
-		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.Priority, &p.Parallel,
+		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.MCPWide, &p.Priority, &p.Parallel,
 		&settingsRaw, &stagesRaw,
 		&p.CreatedAt, &p.UpdatedAt, &p.Description, &mode, &scopeRaw,
 		&consumerIDs,
@@ -452,6 +538,10 @@ func mapPgError(err error) error {
 				return domain.ErrInvalidConsumerID
 			}
 			return domain.ErrInvalidGatewayID
+		case pgCheckViolation:
+			if pgErr.ConstraintName == placementCheckConstraint {
+				return domain.ErrInvalidPlacement
+			}
 		}
 	}
 	return err

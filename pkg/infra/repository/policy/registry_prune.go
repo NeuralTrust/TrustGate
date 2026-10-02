@@ -104,7 +104,7 @@ func updateMCPScope(ctx context.Context, tx pgx.Tx, p *domain.Policy) error {
 	if err != nil {
 		return fmt.Errorf("policy repository: marshal mcp_scope: %w", err)
 	}
-	const query = `UPDATE policies SET mcp_scope = $2, updated_at = now() WHERE id = $1`
+	const query = `UPDATE policies SET mcp_scope = $2, updated_at = ` + nextUpdatedAt + ` WHERE id = $1`
 	if _, err := tx.Exec(ctx, query, p.ID, scopeBytes); err != nil {
 		return mapPgError(err)
 	}
