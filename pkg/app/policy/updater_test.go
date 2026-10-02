@@ -756,6 +756,25 @@ func TestUpdater_Update_PausingAnUnloadablePolicyWithTheFullConsoleBodySucceeds(
 	}
 }
 
+// A pause skips the plugin checks only for the stored slug. Pointing an
+// MCP-wide policy at an unknown plugin in the same write is refused, or it
+// would sit MCP-wide on a slug no protocol check ever saw.
+func TestUpdater_Update_PausingWithASlugChangeIsValidated(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.MCPWide = true
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	in := consoleWriteBody(existing, false)
+	in.Slug = ptr("gone")
+	updater := apppolicy.NewUpdater(repo, nil, freeLevels(t), newRegistryRepo(t), brokenRegistry(t), newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	_, err := updater.Update(context.Background(), in)
+	if !errors.Is(err, appplugins.ErrUnknownPlugin) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrUnknownPlugin wrapping ErrValidation", err)
+	}
+}
+
 // Re-enabling the same row with the same body goes through validation again.
 func TestUpdater_Update_ReEnablingAnUnloadablePolicyIsValidated(t *testing.T) {
 	t.Parallel()
