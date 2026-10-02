@@ -72,6 +72,10 @@ type Plugin struct {
 	registry *adapter.Registry
 	clients  *clientCache
 	logger   *slog.Logger
+	// allowAmbientIdentity mirrors MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY. False
+	// (the zero value, so a Plugin built without New is safe) refuses every
+	// credential path that acts as the gateway pod's shared identity.
+	allowAmbientIdentity bool
 }
 
 // New builds the plugin. baseURL and timeout come from cfg.ModelArmor
@@ -80,11 +84,16 @@ type Plugin struct {
 // *client (and the token source it wraps) is built lazily, at most once per
 // distinct credentials fingerprint, the first time a policy using that
 // credential set runs — see clientFor and Settings.Credentials.
-func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
+//
+// allowAmbientIdentity comes from cfg.ModelArmor.AllowAmbientIdentity. When
+// false, policies that would act as the pod identity (no credentials, or
+// impersonate_service_account) are rejected on write and refused at run time.
+func New(registry *adapter.Registry, baseURL string, timeout time.Duration, allowAmbientIdentity bool, logger *slog.Logger) *Plugin {
 	return &Plugin{
-		registry: registry,
-		clients:  newModelArmorClientCache(baseURL, timeout, newCredentialSources()),
-		logger:   logger,
+		registry:             registry,
+		clients:              newModelArmorClientCache(baseURL, timeout, newCredentialSources()),
+		logger:               logger,
+		allowAmbientIdentity: allowAmbientIdentity,
 	}
 }
 
@@ -122,8 +131,35 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 }
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
-	_, err := parseConfig(settings)
-	return err
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	return p.checkIdentity(cfg)
+}
+
+// checkIdentity refuses the credential paths that act as the gateway pod's own
+// identity unless the operator enabled MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY. The
+// pod identity is shared by every tenant, so impersonating a tenant-named
+// service account through it, or calling Model Armor as the pod directly, lets
+// one tenant spend another's trust: only service_account_json proves the tenant
+// controls the identity. The error names the field, never a value.
+func (p *Plugin) checkIdentity(cfg Settings) error {
+	if p.allowAmbientIdentity {
+		return nil
+	}
+	creds := credentialsFromConfig(cfg.Credentials)
+	switch {
+	case creds.impersonateServiceAccount != "":
+		return fmt.Errorf(
+			"google_model_armor: credentials.impersonate_service_account is not allowed on this gateway: " +
+				"a service account key (credentials.service_account_json) is required")
+	case strings.TrimSpace(creds.serviceAccountJSON) == "":
+		return fmt.Errorf(
+			"google_model_armor: credentials.service_account_json is required on this gateway: " +
+				"a service account key is required, the gateway's own identity is not available")
+	}
+	return nil
 }
 
 // CredentialPaths declares the settings paths that hold secrets, so the policy
@@ -145,6 +181,9 @@ func (p *Plugin) CredentialDestinations() []string {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
+		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, err: err})
+	}
+	if err := p.checkIdentity(cfg); err != nil {
 		return p.externalFailure(ctx, in, cfg, 0, failureInfo{reason: appplugins.FailureConfigInvalid, err: err})
 	}
 	cl, err := p.clientFor(cfg)

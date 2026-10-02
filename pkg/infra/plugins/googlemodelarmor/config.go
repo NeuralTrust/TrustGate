@@ -56,14 +56,17 @@ var allFilters = []string{filterSDP, filterRAI, filterPIAndJailbreak, filterMali
 //     project, grants it roles/modelarmor.user, and grants our ambient
 //     identity roles/iam.serviceAccountTokenCreator on it. An email is not a
 //     credential — useless without their grant, and revocable without
-//     touching our database.
+//     touching our database. Refused unless the gateway sets
+//     MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY: the impersonating identity is the
+//     pod's, shared by every tenant, so a tenant naming any service account
+//     is a confused deputy (see Plugin.checkIdentity).
 //  2. ServiceAccountJSON set: mint tokens from that explicit service-account
 //     key. Policy settings are persisted unencrypted, but the policy API masks
 //     this field in every response (see CredentialPaths); encryption at rest
 //     is tracked separately.
 //  3. Neither set: Application Default Credentials / GKE Workload Identity —
-//     today's only behaviour, unchanged, so a policy with no credentials
-//     block keeps working exactly as before.
+//     the pod identity, refused unless MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY is
+//     set, for the same reason as path 1.
 type Credentials struct {
 	ImpersonateServiceAccount string `mapstructure:"impersonate_service_account"`
 	ServiceAccountJSON        string `mapstructure:"service_account_json"` // #nosec G101 -- config field name, not a credential
