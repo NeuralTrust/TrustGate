@@ -15,10 +15,20 @@
 package postgres
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard/netguardtest"
@@ -187,4 +197,78 @@ func TestParseTenantDSN_FileKeysAreRejectedByTheAllowListNotByTheFileSystem(t *t
 		_, err := parseTenantDSN(dsn)
 		require.ErrorContains(t, err, "ConnStringAllowedKeys", dsn)
 	}
+}
+
+func TestParseTenantDSN_PasswordIsDecidedFromTheParsedKeys(t *testing.T) {
+	t.Setenv("PGPASSWORD", "opsecret")
+	// The old substring check kept the operator's password whenever its text
+	// appeared anywhere in the DSN, which made it a guessing oracle.
+	conf, err := parseTenantDSN("host=db.example.com user=u application_name=opsecret")
+	require.NoError(t, err)
+	require.Empty(t, conf.ConnConfig.Password)
+
+	conf, err = parseTenantDSN("host=db.example.com user=u password=opsecret")
+	require.NoError(t, err)
+	require.Equal(t, "opsecret", conf.ConnConfig.Password, "written by the tenant, so theirs")
+}
+
+func TestParseTenantDSN_HostMustBeWrittenInTheDSN(t *testing.T) {
+	t.Setenv("PGHOST", "db.internal")
+	for _, dsn := range []string{"user=u dbname=app", "postgres:///app?user=u"} {
+		_, err := parseTenantDSN(dsn)
+		require.ErrorIs(t, err, errTenantDSN, dsn)
+	}
+	_, err := parseTenantDSN("host=db.example.com user=u")
+	require.NoError(t, err)
+}
+
+func writeCAFile(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "operator-ca"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+	return path
+}
+
+// The operator's CA file, named by the pod environment, must not decide whom a
+// tenant connection trusts.
+func TestParseTenantDSN_OperatorTrustRootsDoNotApply(t *testing.T) {
+	t.Setenv("PGSSLROOTCERT", writeCAFile(t))
+
+	conf, err := parseTenantDSN("host=db.example.com user=u sslmode=verify-full")
+	require.NoError(t, err)
+	require.Nil(t, conf.ConnConfig.TLSConfig.RootCAs, "verification falls back to the system pool")
+	require.Empty(t, conf.ConnConfig.TLSConfig.Certificates)
+	require.Equal(t, "db.example.com", conf.ConnConfig.TLSConfig.ServerName)
+
+	_, err = parseTenantDSN("host=db.example.com user=u sslmode=verify-ca")
+	require.ErrorIs(t, err, errTenantDSN, "verify-ca keeps the original roots in a closure, so it is refused")
+}
+
+// On a self-hosted gateway the tenant is the operator: the DSN keeps every pgx
+// parameter and only the dial is guarded.
+func TestTenantSettings_SelfHostedDSNKeepsAllPgxParameters(t *testing.T) {
+	netguardtest.Allow(t)
+	tpl := NewTemplate(testLogger(), nil)
+	dsn := "host=127.0.0.1 port=1 user=u sslmode=disable options='-c search_path=x' sslrootcert=/does/not/exist"
+
+	require.NoError(t, tpl.ValidateTenantConfig(map[string]interface{}{"dsn": dsn}))
+	_, err := tpl.WithTenantSettings(map[string]interface{}{"dsn": dsn})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errTenantDSN)
+	require.NotContains(t, err.Error(), "ConnStringAllowedKeys")
+
+	// A DSN pgx can parse is built (and fails only at the connect).
+	_, err = tpl.WithTenantSettings(map[string]interface{}{"dsn": "host=127.0.0.1 port=1 user=u sslmode=disable options='-c search_path=x'"})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errTenantDSN)
+	require.NotContains(t, err.Error(), "ConnStringAllowedKeys", "built without the tenant allow-list")
 }
