@@ -32,6 +32,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
@@ -89,7 +90,10 @@ func newGRPCExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 			otlploggrpc.WithCompressor(s.Compression),
 			otlploggrpc.WithDialOption(grpc.WithContextDialer(guardedGRPCDialer)))
 		if s.Insecure {
-			return otlploggrpc.New(ctx, append(opts, otlploggrpc.WithInsecure())...)
+			// Credentials take precedence over every other transport setting, so the
+			// operator's OTEL_EXPORTER_OTLP_CERTIFICATE/CLIENT_KEY (which would
+			// otherwise build a TLS config that beats WithInsecure) cannot apply.
+			return otlploggrpc.New(ctx, append(opts, otlploggrpc.WithTLSCredentials(insecure.NewCredentials()))...)
 		}
 		tlsCfg, err := guardedTLSConfig(s.TLS)
 		if err != nil {
@@ -153,7 +157,11 @@ func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	if s.guarded {
 		// WithHTTPClient takes precedence over WithTLSClientConfig, so the TLS
 		// settings are carried by the guarded transport itself.
-		opts = append(opts, otlploghttp.WithHTTPClient(guardedHTTPClient(s.Timeout, tlsCfg)))
+		opts = append(opts,
+			otlploghttp.WithHTTPClient(guardedHTTPClient(s.Timeout, tlsCfg)),
+			// Set the SDK's own TLS config explicitly (to none) so the env
+			// certificate and client key never populate it.
+			otlploghttp.WithTLSClientConfig(nil))
 	} else if tlsCfg != nil {
 		opts = append(opts, otlploghttp.WithTLSClientConfig(tlsCfg))
 	}
