@@ -16,6 +16,7 @@ package googlemodelarmor
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -57,9 +58,9 @@ var allFilters = []string{filterSDP, filterRAI, filterPIAndJailbreak, filterMali
 //     credential — useless without their grant, and revocable without
 //     touching our database.
 //  2. ServiceAccountJSON set: mint tokens from that explicit service-account
-//     key. Policy settings are persisted unencrypted and are returned to the
-//     console in full, so this key is exposed exactly as bedrock's own
-//     secret_access_key is; tracked in RUN-1646.
+//     key. Policy settings are persisted unencrypted, but the policy API masks
+//     this field in every response (see CredentialPaths); encryption at rest
+//     is tracked separately.
 //  3. Neither set: Application Default Credentials / GKE Workload Identity —
 //     today's only behaviour, unchanged, so a policy with no credentials
 //     block keeps working exactly as before.
@@ -118,6 +119,18 @@ func (s *Settings) applyDefaults() {
 	s.Streaming.ApplyDefaults(streamingDefaults, pluginutil.StreamOnErrorFailClosed)
 }
 
+var (
+	// locationPattern is a GCP region (us-central1, europe-west4). It has no dot,
+	// slash, colon, '#', '@' or '?', so it cannot change the host it is put in.
+	locationPattern = regexp.MustCompile(`^[a-z]+(-[a-z]+)*[0-9]+$`)
+	// projectPattern is a project id (lowercase letters, digits, hyphens, up to
+	// 30 characters) or a numeric project number. Legacy domain-scoped ids
+	// ("example.com:proj") are not accepted: the colon and dot are path-unsafe.
+	projectPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$`)
+	// templatePattern is a Model Armor template id.
+	templatePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
+)
+
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.Project) == "" {
 		return fmt.Errorf("google_model_armor: project is required")
@@ -127,6 +140,19 @@ func (s *Settings) validate() error {
 	}
 	if strings.TrimSpace(s.Template) == "" {
 		return fmt.Errorf("google_model_armor: template is required")
+	}
+	// project, location and template are interpolated into the request URL, and
+	// location into the HOST. The request carries a cloud-platform bearer token
+	// (the policy's own, or the gateway pod's ambient identity), so a value that
+	// can change the host or the path is a token leak, not a typo.
+	if !locationPattern.MatchString(s.Location) {
+		return fmt.Errorf("google_model_armor: location must be a GCP region such as us-central1")
+	}
+	if !projectPattern.MatchString(s.Project) {
+		return fmt.Errorf("google_model_armor: project must be a GCP project id or number")
+	}
+	if !templatePattern.MatchString(s.Template) {
+		return fmt.Errorf("google_model_armor: template must contain only letters, digits, hyphens and underscores")
 	}
 	for _, f := range s.BlockOn {
 		if !isValidFilter(f) {
