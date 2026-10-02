@@ -64,6 +64,29 @@ func (c *Config) Rate() float64 {
 	return *c.SamplingRate
 }
 
+// Normalized returns a copy of the config with every topic name and definition
+// trimmed. It never mutates the receiver, so a config shared between
+// goroutines stays safe to read. The write path calls it before Validate so
+// that persisted values are trimmed.
+func (c *Config) Normalized() *Config {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.Topics != nil {
+		out.Topics = make([]Topic, len(c.Topics))
+		for i, t := range c.Topics {
+			out.Topics[i] = Topic{
+				Name:       strings.TrimSpace(t.Name),
+				Definition: strings.TrimSpace(t.Definition),
+			}
+		}
+	}
+	return &out
+}
+
+// Validate checks the config without modifying it. Whitespace is judged on the
+// trimmed values, matching what Normalized would store.
 func (c *Config) Validate() error {
 	if c == nil {
 		return nil
@@ -76,9 +99,10 @@ func (c *Config) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(c.Topics))
 	for i := range c.Topics {
-		t := &c.Topics[i]
-		t.Name = strings.TrimSpace(t.Name)
-		t.Definition = strings.TrimSpace(t.Definition)
+		t := Topic{
+			Name:       strings.TrimSpace(c.Topics[i].Name),
+			Definition: strings.TrimSpace(c.Topics[i].Definition),
+		}
 		if t.Name == "" {
 			return fmt.Errorf("%w: topics[%d].name is required", ErrInvalidConfig, i)
 		}

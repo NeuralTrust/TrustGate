@@ -137,7 +137,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.SessionConfig = in.SessionConfig
 	}
 	if in.TopicClassification != nil {
-		g.TopicClassification = in.TopicClassification
+		g.TopicClassification = in.TopicClassification.Normalized()
 	}
 	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
