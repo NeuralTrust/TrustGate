@@ -41,10 +41,12 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/docs"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
@@ -175,6 +177,18 @@ type adminParam struct {
 	OpsSDK         *o11y.SDK
 }
 
+// rateLimitParams is what the plan rate limiter needs to run in the background
+// of a plane that serves proxy or MCP traffic. Meter is nil when the
+// limiter is disabled.
+type rateLimitParams struct {
+	dig.In
+	Meter *ratelimitapp.Meter
+	// SyncRedis is nil when the limiter is disabled.
+	SyncRedis *cache.SyncClient `optional:"true"`
+	// Caps is the Postgres planes' tenant caps copy; absent (or nil) elsewhere.
+	Caps *ratelimitapp.TenantCapsCache `optional:"true"`
+}
+
 type proxyParam struct {
 	dig.In
 	Srv             server.Server `name:"proxy"`
@@ -183,6 +197,7 @@ type proxyParam struct {
 	Conn            *database.Connection
 	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit       rateLimitParams
 	OpsSDK          *o11y.SDK
 }
 
@@ -193,6 +208,7 @@ type mcpParam struct {
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit    rateLimitParams
 	OpsSDK       *o11y.SDK
 }
 
@@ -205,6 +221,7 @@ type allParam struct {
 	Conn            *database.Connection
 	Dispatcher      *appsnapshot.Dispatcher
 	ConfigSyncGRPC  *configsyncgrpc.Server
+	RateLimit       rateLimitParams
 	OpsSDK          *o11y.SDK
 }
 
@@ -225,6 +242,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
+	defer startRateLimit(p.RateLimit, logger)()
 	runServer(p.Srv, serverMCP, logger)
 }
 
@@ -235,6 +253,7 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer p.Worker.Shutdown()
 	defer stopWorker()
 	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
+	defer startRateLimit(p.RateLimit, logger)()
 	runServer(p.Srv, serverProxy, logger)
 }
 
@@ -268,11 +287,55 @@ func runAll(p allParam, logger *slog.Logger) {
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()
 	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
+	defer startRateLimit(p.RateLimit, logger)()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
 		namedServer{name: serverProxy, srv: p.Proxy},
 		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
 	)
+}
+
+// startRateLimit runs the plan counter sync loop
+// for as long as the process serves traffic. It loads the tenant caps once,
+// bounded, before returning, so call it before the servers start: the first
+// requests are then measured against the tenant's row and not the gateway stamp.
+//
+// The returned stop waits for the loop's final flush, so it must run after the
+// servers have drained and before Redis is closed: that flush is what keeps the
+// last interval of usage from being lost on a rolling restart. The callers
+// register it with defer right before the servers run, which makes it the first
+// deferred function to run once they return.
+func startRateLimit(p rateLimitParams, logger *slog.Logger) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	if p.Meter != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.Meter.Run(ctx)
+		}()
+		logger.Info(bootlog.RateLimitSyncStarted)
+	}
+	if p.Meter != nil && p.Caps != nil {
+		// One bounded load before the servers start. A failure is logged and
+		// counted by the cache itself; the gateway stamp applies until Run, which
+		// waits before its first retry, gets a copy.
+		_ = p.Caps.Prime(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.Caps.Run(ctx)
+		}()
+	}
+	return func() {
+		cancel()
+		wg.Wait()
+		if p.SyncRedis != nil {
+			if err := p.SyncRedis.Close(); err != nil {
+				logger.Warn("rate limit redis shutdown error", slog.String("error", err.Error()))
+			}
+		}
+	}
 }
 
 // startDispatcher runs the debounced snapshot dispatcher in its own goroutine and

@@ -104,7 +104,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	g.TopicClassification = in.TopicClassification
+	g.TopicClassification = in.TopicClassification.Normalized()
 	// Platform create must stamp full entitlements; tenant callers cannot set them.
 	if in.PlatformAdmin {
 		if in.Entitlements == nil || !in.Entitlements.HasStampedLimits() {

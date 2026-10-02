@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -76,6 +77,10 @@ func (p *Plugin) inspectSegment(
 		return p.segmentGuardFailure(ctx, in, cfg, seg, failureReasonCredentialsMissing, errors.New("trustguard: client credentials not configured"))
 	}
 	traceID := gatewayTraceID(ctx)
+	// Counted here, after every check that can skip the call, so the position is
+	// that of an evaluate that is really sent. A block that fails on the wire was
+	// still sent and keeps its place.
+	block := p.nextStreamBlock(ctx, in, seg)
 	body := GuardRequest{
 		OriginalRequest: requestmeta.FromContext(ctx),
 		Payload:         payload,
@@ -91,7 +96,7 @@ func (p *Plugin) inspectSegment(
 				Provider: in.Request.Provider,
 			},
 			User:   principalUser(ctx),
-			Stream: segmentStream(traceID, seg),
+			Stream: segmentStream(traceID, seg, block),
 		},
 	}
 
@@ -161,6 +166,7 @@ func (p *Plugin) recordStreamOutcome(
 			failure, _ = v.(*streamFailure)
 		}
 	}
+	p.forgetStreamPosition(ctx, in, seg)
 	if in.Event == nil {
 		return
 	}
@@ -202,7 +208,7 @@ func findingPrints(findings []appplugins.StreamFinding) []string {
 // segmentStream places the block in its stream. An id is what the engine
 // correlates a stream's calls on, and an empty one is not a missing id but a
 // shared one, so without an id the envelope is left off entirely.
-func segmentStream(traceID string, seg appplugins.StreamSegment) *GuardStream {
+func segmentStream(traceID string, seg appplugins.StreamSegment, block int) *GuardStream {
 	id := segmentStreamID(traceID, seg)
 	if id == "" {
 		return nil
@@ -210,6 +216,7 @@ func segmentStream(traceID string, seg appplugins.StreamSegment) *GuardStream {
 	return &GuardStream{
 		ID:        id,
 		Seq:       seg.Seq,
+		Block:     block,
 		Final:     seg.Final,
 		Truncated: seg.Truncated,
 	}
@@ -453,6 +460,70 @@ func (p *Plugin) sweepStreamFailures(now time.Time) {
 	p.streamFailures.Range(func(k, v any) bool {
 		if f, _ := v.(*streamFailure); f == nil || now.Sub(f.at) > streamFailureTTL {
 			p.streamFailures.Delete(k)
+		}
+		return true
+	})
+}
+
+// streamPosition is how many evaluates one policy has sent for one stream.
+type streamPosition struct {
+	mu   sync.Mutex
+	sent int
+	at   time.Time
+}
+
+// nextStreamBlock returns the 1-based position of the evaluate about to be sent
+// for this stream, or 0 when the stream has no identity to count under (no
+// trace and no caller handle). That is the same condition under which the
+// stream envelope is dropped altogether, so a 0 never reaches the wire: without
+// an id there is nothing to correlate the calls on.
+func (p *Plugin) nextStreamBlock(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment) int {
+	key, ok := streamFailureKey(ctx, in, seg)
+	if !ok {
+		return 0
+	}
+	v, _ := p.streamBlocks.LoadOrStore(key, &streamPosition{})
+	pos, _ := v.(*streamPosition)
+	if pos == nil {
+		return 0
+	}
+	now := time.Now()
+	pos.mu.Lock()
+	pos.sent++
+	pos.at = now
+	n := pos.sent
+	pos.mu.Unlock()
+	p.sweepStreamBlocks(now)
+	return n
+}
+
+// forgetStreamPosition drops the stream's counter when its closing segment
+// arrives, so a finished stream leaves nothing behind.
+func (p *Plugin) forgetStreamPosition(ctx context.Context, in appplugins.ExecInput, seg appplugins.StreamSegment) {
+	if key, ok := streamFailureKey(ctx, in, seg); ok {
+		p.streamBlocks.Delete(key)
+	}
+}
+
+// sweepStreamBlocks drops counters untouched for longer than streamFailureTTL,
+// at most once a minute, so a stream whose closing never arrived cannot grow the
+// map.
+func (p *Plugin) sweepStreamBlocks(now time.Time) {
+	last := p.streamBlocksSweptAt.Load()
+	if now.UnixNano()-last < int64(time.Minute) || !p.streamBlocksSweptAt.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	p.streamBlocks.Range(func(k, v any) bool {
+		pos, _ := v.(*streamPosition)
+		if pos == nil {
+			p.streamBlocks.Delete(k)
+			return true
+		}
+		pos.mu.Lock()
+		stale := now.Sub(pos.at) > streamFailureTTL
+		pos.mu.Unlock()
+		if stale {
+			p.streamBlocks.Delete(k)
 		}
 		return true
 	})

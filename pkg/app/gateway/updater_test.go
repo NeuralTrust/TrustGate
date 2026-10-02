@@ -746,3 +746,32 @@ func TestUpdater_Update_TopicClassification(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdater_Update_StoresTopicClassificationTrimmed(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			tc := g.TopicClassification
+			return tc != nil && len(tc.Topics) == 1 &&
+				tc.Topics[0].Name == "billing" && tc.Topics[0].Definition == "refunds"
+		})).
+		Return(nil).
+		Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+
+	in := &topic.Config{Enabled: true, Topics: []topic.Topic{{Name: " billing ", Definition: "  refunds "}}}
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
+	if _, err := updater.Update(context.Background(), appgateway.UpdateInput{ID: id, TopicClassification: in}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if in.Topics[0].Name != " billing " {
+		t.Fatalf("Update mutated the caller's config: %+v", in.Topics[0])
+	}
+}
