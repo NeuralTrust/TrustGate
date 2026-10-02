@@ -75,6 +75,10 @@ Una lápida (`mcp_scope: {}`) MUST ocupar **cero** niveles: no entra en un confl
 
 `DetachPolicy`, `UnsetGlobal` y `UnsetMCPWide` MUST NOT llevar guard: quitar un consumer o quitar una ubicación solo libera niveles. Quitar un flag que no está puesto MUST responder la policy tal cual, sin escribir.
 
+Salvedad, anterior a este cambio y que este cambio no corrige: una global conserva sus enlaces, y al degradarla esos enlaces vuelven a ocupar los niveles de sus consumers sin pasar por el guard, así que puede quedar en el mismo nivel que otra policy del mismo plugin adjunta a uno de ellos. No aplica a `UnsetMCPWide`: una policy MCP-wide no tiene enlaces (`policy-mcp-wide-placement`).
+
+`associator.AttachPolicy` sobre una policy MCP-wide MUST responder 422 antes de llegar al guard (`policy-mcp-wide-placement`).
+
 Pasar de una ubicación a la otra (`SetMCPWide` sobre una global, `SetGlobal` sobre una MCP-wide) MUST ser una sola escritura que limpia el otro flag, y MUST pasar por el guard **una sola vez**, con la policy ya en la ubicación nueva. La propia fila MUST quedar fuera de los ocupantes, así que el cambio no choca consigo mismo.
 
 El guard MUST hacer `SELECT … FOR UPDATE` sobre los candidatos `(gateway, slug)` en la **misma transacción**, la misma forma que ya usa `PruneRegistryReferencesTx`. Sin él, dos creates concurrentes del mismo nivel pasan los dos.
@@ -187,6 +191,7 @@ El guard decide sobre la policy que el caller leyó. Esa lectura ocurre antes de
 - Una promoción (`SetGlobal` o `SetMCPWide` a `true`) MUST aterrizar solo mientras `updated_at` siga siendo el que se leyó. Sin esto, un `PUT {enabled: true}` confirmado después de que el scoper leyera la policy deshabilitada dejaría la promoción, que nadie comprobó, sobre una fila habilitada: dos globales habilitadas del mismo plugin sin 409.
 - Toda escritura de la fila (`Update`, `SetGlobal`, `SetMCPWide` y la poda de registry) MUST mover `updated_at`. `SetGlobal`, `SetMCPWide` y la poda MUST dejarlo estrictamente por encima del anterior aunque el reloj no avance (`GREATEST(clock_timestamp(), updated_at + 1 µs)`). Así, de dos promociones decididas sobre la misma lectura solo aterriza la primera.
 - Una degradación MUST NOT ser condicional: solo libera niveles, y un 409 en un `DELETE` por una edición ajena no protegería nada.
+- Una promoción que falla con `ErrPlacementChanged` MUST releer la fila. Si promoverla no cambiaría nada (para `global`, `global` y no `mcp_wide`; para MCP-wide, `mcp_wide` y no `global`), otra escritura ya la dejó ahí, normalmente la misma petición repetida: MUST responder 200 con la fila releída, sin escribir, sin cachear y sin publicar invalidación ni señal, porque esa otra escritura ya lo hizo. En cualquier otro caso, o si la relectura falla, MUST seguir siendo 409.
 - `SetGlobal` y `SetMCPWide` MUST devolver la ubicación que la fila tiene tras escribir (`global`, `mcp_wide` y `updated_at`, con `RETURNING`), y la respuesta y la caché del scoper MUST salir de ella, no de la copia leída. Una degradación toca solo su flag, así que el otro puede haber cambiado desde la lectura.
 
 #### Scenario: Promoción sobre una fila editada
@@ -207,6 +212,12 @@ El guard decide sobre la policy que el caller leyó. Esa lectura ocurre antes de
 - GIVEN `POST .../global` y `POST .../mcp-wide` concurrentes sobre la misma policy, decididos sobre la misma lectura
 - WHEN los dos escriben
 - THEN uno aterriza y el otro responde 409
+
+#### Scenario: Dos promociones iguales sobre la misma lectura
+
+- GIVEN dos `POST .../mcp-wide` concurrentes sobre la misma policy, decididos sobre la misma lectura
+- WHEN los dos escriben
+- THEN el primero aterriza y el segundo, al releer la fila ya MCP-wide, responde 200 con ella sin escribir
 
 #### Scenario: La degradación no es condicional
 

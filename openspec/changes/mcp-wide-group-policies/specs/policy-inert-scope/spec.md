@@ -22,7 +22,7 @@ Ninguna formulación por scope entero MUST sustituir a esta: la dimensión de co
 
 La dimensión de destino MUST describirse como **imposible** fuera de MCP, no como inerte: "inerte" describe algo que llega y no gatea, y ese es solo el caso del grupo.
 
-> Nota de alcance: dentro del plano MCP la dimensión de principal también deja de gatear para un caller autenticado por api-key (Regla 5 del diseño). Ese requisito **no forma parte de esta capability** y sigue pendiente del visto bueno de producto; hasta entonces `mcp-policy-scope` describe el comportamiento vigente (un caller sin grupos no hace match con `groups`).
+> Nota de alcance: dentro del plano MCP la dimensión de principal también deja de gatear para un caller autenticado por api-key. Esa regla **no forma parte de esta capability**: la fija `mcp-policy-scope`, en «El principal es inerte para un caller por api-key». Una policy MCP-wide con `groups` la hereda tal cual en los consumers MCP que admiten api-key; el Store no las admite.
 
 #### Scenario: El consumer gatea en los tres planos
 
@@ -68,7 +68,7 @@ Un borrador —una policy sin consumers, sin `global` y sin `mcp_wide` (`Policy.
 
 ### Requirement: MCP-wide nunca entra en una cadena LLM/A2A
 
-Una policy con `mcp_wide: true` MUST NOT entrar en `Policies`, `PolicyPlan` ni `ScopedPolicies` de un consumer LLM o A2A, sea cual sea su scope y su plugin. No llega por `everywhere`, que solo lleva las globales, ni por sus enlaces, que la carga ignora igual que ignora los de una global. Por tanto `inertPolicies` y `coalesceInert` MUST NOT verla: no hay inercia ni coalescencia para ella. Eso la distingue de una global de solo grupo, que sí cruza con el grupo inerte.
+Una policy con `mcp_wide: true` MUST NOT entrar en `Policies`, `PolicyPlan` ni `ScopedPolicies` de un consumer LLM o A2A, sea cual sea su scope y su plugin. No llega por `everywhere`, que solo lleva las globales, ni por enlaces: no los tiene (`policy-mcp-wide-placement`), y la carga ignoraría los de una fila anterior igual que ignora los de una global. Por tanto `inertPolicies` y `coalesceInert` MUST NOT verla: no hay inercia ni coalescencia para ella. Eso la distingue de una global de solo grupo, que sí cruza con el grupo inerte.
 
 `loadPolicies` MUST repartir por ubicación:
 

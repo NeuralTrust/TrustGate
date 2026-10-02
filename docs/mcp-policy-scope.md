@@ -229,7 +229,7 @@ existing policy instead of creating another one.
 | | Behaviour |
 |---|---|
 | Checked on | create, update (including flipping `enabled` to true), attach, promotion to `global` or `mcp_wide`, duplicate |
-| Not checked on | detach, un-setting `global` or `mcp_wide` — they only free levels |
+| Not checked on | detach, un-setting `global` or `mcp_wide` — they only free levels, with one exception that predates `mcp_wide`: a global policy keeps its links, and demoting it puts them back on their consumers' levels unchecked. An MCP-wide policy holds no links, so its demotion only frees levels |
 | Answer | `409 {"error": "conflict"}`, with the conflicting policy and the level in the message |
 | `enabled: false` | Does not occupy and does not conflict, so "create the replacement disabled, review it, then switch" still works. Enabling it is a write and goes through the check |
 | `mcp_scope: {}` | Occupies zero levels: a dormant policy never conflicts and never causes one |
@@ -263,7 +263,7 @@ how many warnings to expect.
 | Caller by api key | **The principal dimension does not gate for it.** An api key acting as the application runs as `app:<consumer_id>`, and an `acts_for_users` consumer with source `app` runs as `app:<consumer_id>:<end_user>`; the credential belongs to the application, not to a person, so the scope's `groups` are ignored and the policy runs. A policy written for one group therefore also runs on the consumer's api-key traffic, and `groups` can no longer keep a policy off it. See [Api-key callers and `groups`](#api-key-callers-and-groups). |
 | Caller by token without a `groups` claim | Gates as before: it is not in `groups`, so a scope naming them skips it (`principal`), and it never falls in `except_groups` either. An identity provider that emits no groups does not make the principal inert — only the api key does. |
 | `global: true` + scope | Allowed (`POST .../policies/{id}/global`). This is one way a scoped policy reaches the MCP Store, whose consumer only sees global and MCP-wide policies. What it does to the rest of the gateway depends on the dimension: with `registry_ids` or `tools` it stays MCP-only, exactly as before — promotion is not a back door. With **only** `groups` it now runs on every LLM and A2A consumer of the gateway too, with the group inert; to reach MCP by group, the Store included, without touching LLM and A2A, use `mcp_wide`. Promotion also goes through the level check and can answer 409. |
-| `mcp_wide: true` + scope | Allowed (`POST .../policies/{id}/mcp-wide`) for a plugin that supports MCP, 422 otherwise. Runs on every MCP consumer of the gateway and on the Store, narrowed by the scope, and never on LLM or A2A. A `null` scope means every MCP caller. Consumer links are ignored while it is set, as for `global`, and an unscoped policy attached to a consumer still overrides an unscoped MCP-wide one of the same slug. Plugin state is gateway-wide, as for `global`: one budget across every MCP consumer and the Store, reported with the dimension `global` (`exceeded_type: global`, Redis key `ratelimit:<policy>:global:<gateway>`). Api-key callers of a regular MCP consumer skip the group check, as for any group scope: see [Api-key callers and `groups`](#api-key-callers-and-groups). A same-plugin policy with the same groups attached to an MCP consumer holds that consumer's level, not the "all" one, so the level check lets it through and both run there; nothing warns about it, and `global` + groups has the same gap. |
+| `mcp_wide: true` + scope | Allowed (`POST .../policies/{id}/mcp-wide`) for a plugin that supports MCP, 422 otherwise. Runs on every MCP consumer of the gateway and on the Store, narrowed by the scope, and never on LLM or A2A. A `null` scope means every MCP caller. It holds no consumer links: the promotion removes them in the same write, attaching a consumer answers 422 until the policy is demoted, and the demotion leaves a draft with nothing to revive. An unscoped policy attached to a consumer still overrides an unscoped MCP-wide one of the same slug. Plugin state is gateway-wide, as for `global`: one budget across every MCP consumer and the Store, reported with the dimension `global` (`exceeded_type: global`, Redis key `ratelimit:<policy>:global:<gateway>`). Api-key callers of a regular MCP consumer skip the group check, as for any group scope: see [Api-key callers and `groups`](#api-key-callers-and-groups). A same-plugin policy with the same groups attached to an MCP consumer holds that consumer's level, not the "all" one, so the level check lets it through and both run there; nothing warns about it, and `global` + groups has the same gap. |
 | Same `slug` twice | On MCP, scoped policies are additive **except between a registry and one of its tools**, where the nearer destination wins — see [The nearer destination wins](#the-nearer-destination-wins). A scoped `trustguard` next to an unscoped one still runs both. The API returns non-blocking `warnings` (`consumer <id> already runs plugin <slug> without scope`) on create, update and the promotions (`global`, `mcp_wide`); attach answers `200 {"warnings": [...]}` when there are warnings and `204` otherwise. Two same-slug policies at the **same** level are a 409 instead, and on an inert plane same-slug policies collapse rather than stack. |
 | LLM or A2A consumer | Depends on the dimension. With `registry_ids` or `tools`: 422, the destination does not cross. With only `groups`/`except_groups`: accepted if the plugin is cross-plane safe, and the policy runs there with the group inert; 422 naming the plugin if it is not. The two 422s have different messages. |
 | Policy with no consumers, neither `global` nor `mcp_wide` (a draft) | Runs nowhere, on any plane, and always did. Nothing was added to make that true — it simply falls in none of the global, MCP-wide or per-consumer buckets. Create and update answer with a warning (`policy has no consumers and is not global: it runs nowhere`); an MCP-wide policy never gets it. |
@@ -521,9 +521,9 @@ member of the group look the same.
 | `POST /v1/gateways/{gw}/policies` | `mcp_scope` object as in the example; omitted keeps the policy consumer-wide. 422 on: registry of another gateway or not MCP, empty `tool`/`groups` entries, duplicates, a registry both in `registry_ids` and `tools`, a scope without entries, a plugin without MCP support, a `users` or `except_users` key. 409 when the policy would occupy a level another enabled policy of the same plugin already occupies. |
 | `PUT /v1/gateways/{gw}/policies/{id}` | Tri-state: `mcp_scope` **omitted** leaves the stored scope untouched, `null` clears it, an object replaces it. Same 409. Flipping `enabled` to true is a write and is checked too. Changing the slug of an MCP-wide policy to a plugin without MCP support is a 422. An update racing a promotion or demotion of the policy is a 409 `placement changed`: reload and retry. |
 | `GET /v1/gateways/{gw}/policies?registry_id=<uuid>` | Only policies whose scope names that registry, in `registry_ids` or in `tools`. A non-UUID value is a 400. |
-| `POST .../policies/{id}/global` | Promotes the policy to the all-traffic level and clears `mcp_wide` in the same write; the response may carry `warnings`, and it can answer 409. `DELETE` clears only `global`: on a policy that is not global it answers 200 and changes nothing. |
-| `POST .../policies/{id}/mcp-wide` | Places the policy on every MCP consumer and the Store and clears `global` in the same write; the response may carry `warnings`. 409 on a level conflict or a placement that changed meanwhile, 422 for a plugin without MCP support. `DELETE` clears only `mcp_wide`, is idempotent and never answers 409 or 422. |
-| `POST .../consumers/{id}/policies/{pid}` | `204`, or `200 {"warnings": [...]}` when the attach has something to warn about: the consumer already runs the plugin without scope, or the policy narrows to `groups` and the consumer accepts an api-key auth. 409 on a level conflict. On a non-MCP consumer, 422 for a destination scope or for a plugin that gates on tool names. |
+| `POST .../policies/{id}/global` | Promotes the policy to the all-traffic level and clears `mcp_wide` in the same write; the response may carry `warnings`, and it can answer 409. A retry that finds the policy already global answers 200 with it, including one whose first attempt landed while the retry was in flight. `DELETE` clears only `global`: on a policy that is not global it answers 200 and changes nothing. |
+| `POST .../policies/{id}/mcp-wide` | Places the policy on every MCP consumer and the Store, clears `global` and removes the policy's consumer links, all in the same write; the response may carry `warnings` and never carries `consumer_ids`. 409 on a level conflict or a placement that changed meanwhile, 422 for a plugin without MCP support. A retry that finds the policy already MCP-wide answers 200 with it. `DELETE` clears only `mcp_wide`, is idempotent and never answers 409 or 422; the policy is then a draft. |
+| `POST .../consumers/{id}/policies/{pid}` | `204`, or `200 {"warnings": [...]}` when the attach has something to warn about: the consumer already runs the plugin without scope, or the policy narrows to `groups` and the consumer accepts an api-key auth. 409 on a level conflict. 422 when the policy is MCP-wide, on any consumer: `consumer: policy is MCP-wide: it already runs on every MCP consumer; demote it before attaching a consumer`. On a non-MCP consumer, also 422 for a destination scope or for a plugin that gates on tool names. |
 | `GET .../registries/{id}/tools` | The registry's advertised tools, with the upstream's **native** names — the key `mcp_scope.tools[].tool` stores. 409 when the registry cannot be introspected without a principal (per-principal auth, or URL variables in the target): write the tool name by hand. 502 when the upstream is unreachable or `tools/list` fails: retry. |
 
 Responses echo `mcp_scope` (absent when unset, `{}` when pruned), `global` and
@@ -610,33 +610,75 @@ FROM lvl GROUP BY 1,2,3,4 HAVING count(*) > 1;
 The `policies.mcp_wide` column is additive, exclusive with `global` through a
 CHECK, and rides in the snapshot's policy JSON, so the proto does not change.
 
-- **Ship TrustGate before the console.** An older console never calls
-  `/mcp-wide`; an older TrustGate answers it with 404.
+- **Ship TrustGate before the console, on every plane.** The admin, proxy and
+  MCP planes (the MCP plane also serves the Store) must all run the new version
+  before the console that promotes to MCP-wide ships. An older console never
+  calls `/mcp-wide`; an older TrustGate answers it with 404. An older plane
+  places a policy by its links alone, so it runs an MCP-wide policy nowhere,
+  and an older admin does not refuse links on one.
 - **Do not promote anything to MCP-wide, by SQL or by the API, before the
   console that reads `mcp_wide` is deployed.** An older console reads an
-  MCP-wide policy as targeted: switching it to *Applications* there attaches
-  links TrustGate ignores and writes a scope with no groups, without demoting
-  it, so the policy then runs for every MCP caller.
+  MCP-wide policy as targeted: switching it to *Applications* there writes a
+  scope with no groups without demoting it, and TrustGate then refuses the
+  attaches with 422, so the policy runs for every MCP caller.
 - Before deploying the console, list per environment the drafts whose scope
   names `groups` or `except_groups`, which is what the console used to save,
-  and record the decision for each on the issue:
+  and record the decision for each on the issue. Disabled drafts are listed
+  too: the console promotes a group-only draft the next time it is saved,
+  enabled or not.
 
 ```sql
-SELECT p.id, p.gateway_id, p.slug, p.name, p.mcp_scope
+SELECT p.id, p.gateway_id, p.slug, p.name, p.enabled, p.mcp_scope
   FROM policies p
- WHERE NOT p.global AND NOT p.mcp_wide AND p.enabled
+ WHERE NOT p.global AND NOT p.mcp_wide
    AND (p.mcp_scope ? 'groups' OR p.mcp_scope ? 'except_groups')
    AND NOT EXISTS (SELECT 1 FROM consumer_policy cp WHERE cp.policy_id = p.id);
 ```
 
-- **Rollback.** An old binary, or one rolled back, places an MCP-wide policy by
-  its links alone: with none it runs nowhere; with links it runs on those
-  consumers, as it did before the promotion. The console detaches every link on
-  promotion, so only a policy promoted through the API with its links kept is
-  in the second case. Migrations only run up on boot, so an old admin binary on
-  the migrated schema answers 500 to `POST /global` on a row that is still
-  MCP-wide (the CHECK refuses it): run the down migration, or
-  `DELETE .../mcp-wide` those rows, before rolling back.
+- **Rollback.** There is no down-migration runner: migrations only run up, on
+  boot, so a binary rollback leaves the column, the CHECK and every flag as
+  they are. Before rolling a binary back, list the MCP-wide rows and demote each
+  one through the API, and keep the list to promote them again afterwards:
+
+```sql
+SELECT p.id, p.gateway_id, p.slug, p.name
+  FROM policies p
+ WHERE p.mcp_wide
+ ORDER BY p.gateway_id, p.id;
+```
+
+  ```
+  DELETE /v1/gateways/{gateway_id}/policies/{id}/mcp-wide
+  ```
+
+  A row left MCP-wide reads as a draft on the old binary, because it holds no
+  links, so it runs nowhere. But the old admin answers 500 to `POST /global` on
+  it (the CHECK refuses it), it does not refuse attaching a consumer to it, and
+  on roll-forward the row runs MCP-wide again at once, on every MCP consumer
+  and the Store, with whatever scope the old binary left.
+
+  "Runs nowhere" is fail-closed only in one direction: the policy never runs
+  wider than its groups, but for as long as the old binary runs it enforces
+  nothing at all, for its groups included. Demoted or not, it protects nothing
+  again until it is MCP-wide on the new version.
+
+- **Roll-forward.** Links an old admin attached to an MCP-wide row survive the
+  roll-forward, and an MCP-wide policy must hold none. List them:
+
+```sql
+SELECT p.gateway_id, p.id AS policy_id, cp.consumer_id
+  FROM policies p
+  JOIN consumer_policy cp ON cp.policy_id = p.id
+ WHERE p.mcp_wide
+ ORDER BY p.gateway_id, p.id, cp.consumer_id;
+```
+
+  Then detach each row with
+  `DELETE /v1/gateways/{gateway_id}/consumers/{consumer_id}/policies/{policy_id}`,
+  or run `DELETE` and then `POST .../policies/{id}/mcp-wide` on the policy: the
+  promotion removes every link. The promotion goes through the level check
+  again, so it can answer 409 if another policy took the level meanwhile. Then
+  promote again the rows you demoted before the rollback.
 
 ### Observation window
 
