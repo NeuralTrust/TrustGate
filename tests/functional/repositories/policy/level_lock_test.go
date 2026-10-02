@@ -7,8 +7,10 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 )
@@ -113,6 +115,38 @@ func TestLevelLock_WithSlugLocked_ReadsTheCandidatesOfThatSlugOnly(t *testing.T)
 	}
 	if got[0].Occupancy().Len() != 1 {
 		t.Fatalf("candidate occupancy = %d levels, want 1", got[0].Occupancy().Len())
+	}
+}
+
+// An MCP-wide occupant read without its flag would look like a draft, occupy
+// nothing and never conflict with the policy being promoted.
+func TestLevelLock_WithSlugLocked_ReadsTheMCPWideFlag(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "level-lock-mcp-wide")
+
+	occupant := scopedPolicy(t, gwID, "mcp-wide occupant", &domain.MCPScope{Groups: []string{"Finanzas"}})
+	if err := r.Save(ctx, occupant); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, occupant.ID, true, time.Time{}); err != nil {
+		t.Fatalf("SetMCPWide: %v", err)
+	}
+
+	var got []*domain.Policy
+	if err := r.WithSlugLocked(ctx, gwID, occupant.Slug, ids.New[ids.PolicyKind](),
+		func(_ context.Context, occupants []*domain.Policy) error {
+			got = occupants
+			return nil
+		}); err != nil {
+		t.Fatalf("WithSlugLocked: %v", err)
+	}
+
+	if len(got) != 1 || !got[0].MCPWide {
+		t.Fatalf("candidates = %+v, want the MCP-wide occupant with its flag", got)
+	}
+	if !got[0].Occupancy().Has(domain.AllTraffic().WithGroup("Finanzas")) {
+		t.Fatalf("occupancy = %v, want the all-consumer level of Finanzas", got[0].Occupancy().Levels())
 	}
 }
 

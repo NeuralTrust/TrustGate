@@ -441,9 +441,32 @@ func (r *Repository) DetachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 	})
 }
 
+// AttachPolicy links the policy to the consumer, and refuses an MCP-wide policy
+// with ErrPolicyMCPWide. It reads the policy row FOR SHARE first, which a
+// placement write cannot overtake: a promotion to MCP-wide that commits first
+// is seen and refuses the link, and one that comes later waits for the link
+// and removes it with the others. A missing policy falls through to the
+// insert, whose foreign key answers it.
+//
+// The consumer row is locked before the policy row, FOR KEY SHARE as the
+// foreign key would lock it anyway: a registry delete locks the consumers and
+// then the policies, so taking them in the other order could deadlock with it.
 func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
+	const lockConsumer = `SELECT 1 FROM consumers WHERE id = $1 FOR KEY SHARE`
+	const lockPolicy = `SELECT mcp_wide FROM policies WHERE id = $1 FOR SHARE`
 	const query = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, lockConsumer, consumerID); err != nil {
+			return fmt.Errorf("consumer repository: lock consumer: %w", err)
+		}
+		var mcpWide bool
+		err := tx.QueryRow(ctx, lockPolicy, policyID).Scan(&mcpWide)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("consumer repository: lock policy: %w", err)
+		}
+		if mcpWide {
+			return domain.ErrPolicyMCPWide
+		}
 		if _, err := tx.Exec(ctx, query, consumerID, policyID); err != nil {
 			return mapPgError(err)
 		}

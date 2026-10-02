@@ -108,7 +108,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	if err != nil {
 		return nil, err
 	}
-	globalPolicies, policiesByConsumer, err := f.loadPolicies(ctx, gatewayID)
+	loaded, err := f.loadPolicies(ctx, gatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +117,21 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
-	globals := partitionScoped(globalPolicies)
+	everywhere := partitionScoped(loaded.everywhere)
+	onMCP := partitionScoped(loaded.onMCP)
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
 		chain := fallbackChainOf(c)
 		fallbackBackends := collectBackends(chain, backendByID)
 		f.warnUnresolvedFallbackChain(c, fallbackBackends)
-		attached := partitionScoped(policiesByConsumer[c.ID])
-		unscoped := composePolicies(globals.unscoped, attached.unscoped)
-		scoped := mergeScoped(attached.scoped, globals.scoped)
-		policies, plan, mcpPlans := f.plansFor(c, unscoped, scoped, mergeScoped(attached.crossing, globals.crossing))
+		gatewayWide := everywhere
+		if c.Type == domain.TypeMCP {
+			gatewayWide = onMCP
+		}
+		attached := partitionScoped(loaded.byConsumer[c.ID])
+		unscoped := composePolicies(gatewayWide.unscoped, attached.unscoped)
+		scoped := mergeScoped(attached.scoped, gatewayWide.scoped)
+		policies, plan, mcpPlans := f.plansFor(c, unscoped, scoped, mergeScoped(attached.crossing, gatewayWide.crossing))
 		routable = append(routable, RoutableConsumer{
 			Consumer:         c,
 			Registries:       collectBackends(poolRegistryIDs(c.RegistryIDs, chain), backendByID),
@@ -142,10 +147,10 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	data := NewData(gatewayID, routable)
 	data.StoreConsumer = &RoutableConsumer{
 		Consumer:       domain.BuildStoreConsumer(gatewayID),
-		Policies:       globals.unscoped,
-		PolicyPlan:     f.buildPolicyPlan(globals.unscoped),
-		ScopedPolicies: globals.scoped,
-		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, globals.unscoped, globals.scoped, f.logger),
+		Policies:       onMCP.unscoped,
+		PolicyPlan:     f.buildPolicyPlan(onMCP.unscoped),
+		ScopedPolicies: onMCP.scoped,
+		MCPPlans:       BuildPolicyPlans(f.pluginRegistry, onMCP.unscoped, onMCP.scoped, f.logger),
 	}
 	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
@@ -301,29 +306,44 @@ func (f *dataFinder) loadBackends(
 	return byID, nil
 }
 
-func (f *dataFinder) loadPolicies(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-) ([]*policydomain.Policy, map[ids.ConsumerID][]*policydomain.Policy, error) {
+// loadedPolicies is a gateway's policies split by placement: everywhere holds
+// the global policies, which reach every consumer; onMCP holds the global and
+// the MCP-wide ones in load order, which reach the MCP consumers and the Store;
+// and byConsumer holds the links of every policy that is neither. A
+// gateway-wide policy's links are ignored, so it never reaches a consumer twice
+// and an MCP-wide one never reaches an LLM or A2A consumer through a link.
+type loadedPolicies struct {
+	everywhere []*policydomain.Policy
+	onMCP      []*policydomain.Policy
+	byConsumer map[ids.ConsumerID][]*policydomain.Policy
+}
+
+func (f *dataFinder) loadPolicies(ctx context.Context, gatewayID ids.GatewayID) (loadedPolicies, error) {
 	all, err := f.policyRepo.ListByGateway(ctx, gatewayID)
 	if err != nil {
-		return nil, nil, err
+		return loadedPolicies{}, err
 	}
-	globals := make([]*policydomain.Policy, 0)
-	byConsumer := make(map[ids.ConsumerID][]*policydomain.Policy)
+	out := loadedPolicies{
+		everywhere: make([]*policydomain.Policy, 0),
+		onMCP:      make([]*policydomain.Policy, 0),
+		byConsumer: make(map[ids.ConsumerID][]*policydomain.Policy),
+	}
 	for _, p := range all {
 		if p == nil {
 			continue
 		}
-		if p.IsGlobal() {
-			globals = append(globals, p)
+		if p.GatewayWide() {
+			if p.IsGlobal() {
+				out.everywhere = append(out.everywhere, p)
+			}
+			out.onMCP = append(out.onMCP, p)
 			continue
 		}
 		for _, cid := range p.ConsumerIDs {
-			byConsumer[cid] = append(byConsumer[cid], p)
+			out.byConsumer[cid] = append(out.byConsumer[cid], p)
 		}
 	}
-	return globals, byConsumer, nil
+	return out, nil
 }
 
 func (f *dataFinder) loadAuths(
@@ -452,13 +472,13 @@ func partitionScoped(policies []*policydomain.Policy) scopeBuckets {
 	return buckets
 }
 
-func mergeScoped(consumerScoped, globalsScoped []*policydomain.Policy) []*policydomain.Policy {
-	if len(consumerScoped)+len(globalsScoped) == 0 {
+func mergeScoped(attached, gatewayWideScoped []*policydomain.Policy) []*policydomain.Policy {
+	if len(attached)+len(gatewayWideScoped) == 0 {
 		return nil
 	}
-	out := make([]*policydomain.Policy, 0, len(consumerScoped)+len(globalsScoped))
-	seenIDs := make(map[ids.PolicyID]struct{}, len(consumerScoped)+len(globalsScoped))
-	for _, list := range [][]*policydomain.Policy{consumerScoped, globalsScoped} {
+	out := make([]*policydomain.Policy, 0, len(attached)+len(gatewayWideScoped))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(attached)+len(gatewayWideScoped))
+	for _, list := range [][]*policydomain.Policy{attached, gatewayWideScoped} {
 		for _, p := range list {
 			if _, dup := seenIDs[p.ID]; dup {
 				continue
@@ -470,11 +490,11 @@ func mergeScoped(consumerScoped, globalsScoped []*policydomain.Policy) []*policy
 	return out
 }
 
-func composePolicies(globals, consumerScoped []*policydomain.Policy) []*policydomain.Policy {
-	out := make([]*policydomain.Policy, 0, len(globals)+len(consumerScoped))
-	overriddenSlugs := make(map[string]struct{}, len(consumerScoped))
-	seenIDs := make(map[ids.PolicyID]struct{}, len(globals)+len(consumerScoped))
-	for _, p := range consumerScoped {
+func composePolicies(gatewayWide, attached []*policydomain.Policy) []*policydomain.Policy {
+	out := make([]*policydomain.Policy, 0, len(gatewayWide)+len(attached))
+	overriddenSlugs := make(map[string]struct{}, len(attached))
+	seenIDs := make(map[ids.PolicyID]struct{}, len(gatewayWide)+len(attached))
+	for _, p := range attached {
 		if _, dup := seenIDs[p.ID]; dup {
 			continue
 		}
@@ -482,7 +502,7 @@ func composePolicies(globals, consumerScoped []*policydomain.Policy) []*policydo
 		overriddenSlugs[p.Slug] = struct{}{}
 		out = append(out, p)
 	}
-	for _, p := range globals {
+	for _, p := range gatewayWide {
 		if _, dup := seenIDs[p.ID]; dup {
 			continue
 		}
