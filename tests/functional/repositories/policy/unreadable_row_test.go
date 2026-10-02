@@ -14,12 +14,19 @@ import (
 // middle one in storage (settings becomes a JSON array, which cannot decode into
 // the settings map). It returns the gateway and the ids of the readable pair and
 // the corrupt one.
-func seedWithUnreadable(t *testing.T) (r interface {
+func seedWithUnreadable(t *testing.T) (r policyReads, gwID ids.GatewayID, good []ids.PolicyID, bad ids.PolicyID) {
+	t.Helper()
+	return seedCorrupting(t, `settings = '[1,2]'::jsonb`)
+}
+
+type policyReads interface {
 	ListByGateway(context.Context, ids.GatewayID) ([]*domain.Policy, error)
 	List(context.Context, domain.ListFilter) ([]*domain.Policy, int, error)
 	FindByID(context.Context, ids.PolicyID) (*domain.Policy, error)
 	FindByIDs(context.Context, ids.GatewayID, []ids.PolicyID) ([]*domain.Policy, error)
-}, gwID ids.GatewayID, good []ids.PolicyID, bad ids.PolicyID) {
+}
+
+func seedCorrupting(t *testing.T, set string) (r policyReads, gwID ids.GatewayID, good []ids.PolicyID, bad ids.PolicyID) {
 	t.Helper()
 	repo, gw, conn := setupRepo(t)
 	ctx := context.Background()
@@ -35,7 +42,7 @@ func seedWithUnreadable(t *testing.T) (r interface {
 		all = append(all, p)
 	}
 	bad = all[1].ID
-	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET settings = '[1,2]'::jsonb WHERE id = $1`, bad); err != nil {
+	if _, err := conn.Pool.Exec(ctx, `UPDATE policies SET `+set+` WHERE id = $1`, bad); err != nil {
 		t.Fatalf("corrupt settings: %v", err)
 	}
 	return repo, gwID, []ids.PolicyID{all[0].ID, all[2].ID}, bad
@@ -78,13 +85,38 @@ func TestRepository_ListSkipsUnreadableRow(t *testing.T) {
 	}
 }
 
-func TestRepository_FindByIDsSkipsUnreadableRow(t *testing.T) {
+// FindByIDs is a targeted lookup: a missing id would read as "deleted", so an
+// unreadable row fails it instead of being skipped.
+func TestRepository_FindByIDsFailsOnUnreadableRow(t *testing.T) {
 	r, gwID, good, bad := seedWithUnreadable(t)
-	got, err := r.FindByIDs(context.Background(), gwID, append([]ids.PolicyID{bad}, good...))
-	if err != nil {
-		t.Fatalf("one unreadable row must not fail the lookup: %v", err)
+	if _, err := r.FindByIDs(context.Background(), gwID, append([]ids.PolicyID{bad}, good...)); err == nil {
+		t.Fatal("FindByIDs must fail when a requested policy is unreadable")
 	}
-	assertOnlyGood(t, got, good)
+	if got, err := r.FindByIDs(context.Background(), gwID, good); err != nil || len(got) != len(good) {
+		t.Fatalf("FindByIDs of readable policies: %v, %d rows", err, len(got))
+	}
+}
+
+// stages and mcp_scope decode separately from settings; each must be skippable.
+func TestRepository_ListSkipsRowsWithCorruptStagesOrScope(t *testing.T) {
+	for name, set := range map[string]string{
+		"stages":    `stages = '{"a":1}'::jsonb`,
+		"mcp_scope": `mcp_scope = '"x"'::jsonb`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, gwID, good, _ := seedCorrupting(t, set)
+			got, err := r.ListByGateway(context.Background(), gwID)
+			if err != nil {
+				t.Fatalf("ListByGateway: %v", err)
+			}
+			assertOnlyGood(t, got, good)
+			got, _, err = r.List(context.Background(), domain.ListFilter{GatewayID: gwID})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			assertOnlyGood(t, got, good)
+		})
+	}
 }
 
 func TestRepository_FindByIDFailsOnUnreadableRow(t *testing.T) {
