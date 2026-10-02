@@ -218,23 +218,17 @@ func TestRateLimit_MCPToolsCallPathMakesZeroRedisCalls(t *testing.T) {
 	}
 }
 
-// A DB-less plane holds a snapshot that may be scoped to one gateway, so it
-// never runs the rollout audit, even when a month is configured; the limiter
-// itself is wired.
-func TestRateLimit_SnapshotPlaneNeverAuditsButMeters(t *testing.T) {
+// A DB-less plane still wires the limiter.
+func TestRateLimit_SnapshotPlaneMeters(t *testing.T) {
 	setDBLessSmokeEnv(t)
-	t.Setenv("RATE_LIMIT_ROLLOUT_AUDIT_MONTH", "2026-10")
 	c, err := container.New(modules.All("proxy", true)...)
 	if err != nil {
 		t.Fatalf("container: %v", err)
 	}
-	if err := c.Invoke(func(meter *ratelimitapp.Meter, audit *ratelimitapp.RolloutAudit, sc *cache.SyncClient) {
+	if err := c.Invoke(func(meter *ratelimitapp.Meter, sc *cache.SyncClient) {
 		defer func() { _ = sc.Close() }()
 		if meter == nil {
 			t.Fatal("the meter is not wired")
-		}
-		if audit != nil {
-			t.Fatal("a snapshot plane must not run the rollout audit")
 		}
 	}); err != nil {
 		t.Fatalf("resolve: %v", err)

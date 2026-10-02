@@ -101,34 +101,10 @@ func RateLimit(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	// The audit reads the old per-gateway keys and maps each back to its tenant,
-	// so it needs a plane that resolves every gateway: one that reads Postgres.
-	if err := c.Provide(func(p rateLimitDeps) *ratelimitapp.RolloutAudit {
-		if !rolloutAuditApplies(p.Cfg, p.Cache) {
-			return nil
-		}
-		return ratelimitapp.NewRolloutAudit(
-			p.tierLoader(),
-			inforatelimit.NewStore(p.SyncClient.Client, p.Logger),
-			p.Cfg.RateLimit.RolloutAuditMonth,
-			p.Logger,
-		)
-	}); err != nil {
-		return err
-	}
 	return c.Provide(func(meter *ratelimitapp.Meter) ratelimitapp.Checker {
 		if meter == nil {
 			return ratelimitapp.NewNoopChecker()
 		}
 		return meter
 	})
-}
-
-// rolloutAuditApplies says whether this plane runs the rollout audit: the limiter
-// is on, a rollout month is configured, and the plane resolves gateways from
-// Postgres, where it sees every tenant. A plane that answers from the config
-// snapshot may hold one scoped to a single gateway; it would resolve almost none
-// of the legacy keys and report nonsense, so it never audits.
-func rolloutAuditApplies(cfg *config.Config, caps *ratelimitapp.TenantCapsCache) bool {
-	return cfg.RateLimit.Enabled && cfg.RateLimit.RolloutAuditMonth != "" && caps != nil
 }

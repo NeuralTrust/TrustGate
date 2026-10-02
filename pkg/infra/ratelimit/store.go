@@ -19,12 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
@@ -43,14 +41,6 @@ const (
 	// minQuotaTTL keeps a late delta for a month that has just ended from
 	// creating a key that expires in the same instant.
 	minQuotaTTL = time.Minute
-
-	auditKeyPattern = "gt:rl:audit:%s"
-	auditTTL        = 40 * 24 * time.Hour
-
-	// legacyQuotaPrefix is the per-gateway quota key of the previous release:
-	// gt:rl:quota:<gateway uuid>:<YYYY-MM>, with no hash tag.
-	legacyQuotaPrefix = "gt:rl:quota:"
-	scanCount         = 500
 )
 
 // syncScript applies every bump of one tenant in a single atomic call and
@@ -286,85 +276,4 @@ func subjectTag(subject string) string {
 
 func isNoScript(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "NOSCRIPT")
-}
-
-// AcquireAudit reports whether this caller is the first to claim name. It is a
-// SET NX, so of any number of pods racing, exactly one gets true.
-func (s *Store) AcquireAudit(ctx context.Context, name string) (bool, error) {
-	if !s.available() {
-		return false, errors.New("redis unavailable")
-	}
-	return s.redis.SetNX(ctx, fmt.Sprintf(auditKeyPattern, name), "1", auditTTL).Result()
-}
-
-// ReleaseAudit gives the claim on name back, so that a pod that claimed the
-// audit and then failed does not take it from every other pod and boot.
-func (s *Store) ReleaseAudit(ctx context.Context, name string) error {
-	if !s.available() {
-		return errors.New("redis unavailable")
-	}
-	return s.redis.Del(ctx, fmt.Sprintf(auditKeyPattern, name)).Err()
-}
-
-// LegacyQuotaByGateway scans the per-gateway quota keys of the previous release for
-// the month and returns the count under each gateway. Keys of the current format
-// (the subject in braces) and anything that is not a gateway uuid are skipped.
-func (s *Store) LegacyQuotaByGateway(ctx context.Context, month string) (map[ids.GatewayID]int64, error) {
-	if !s.available() {
-		return nil, errors.New("redis unavailable")
-	}
-	suffix := ":" + month
-	out := map[ids.GatewayID]int64{}
-	var keys []string
-	var gateways []ids.GatewayID
-
-	flush := func() error {
-		if len(keys) == 0 {
-			return nil
-		}
-		vals, err := s.redis.MGet(ctx, keys...).Result()
-		if err != nil {
-			return err
-		}
-		for i, v := range vals {
-			raw, ok := v.(string)
-			if !ok {
-				continue
-			}
-			if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
-				out[gateways[i]] = n
-			}
-		}
-		keys, gateways = keys[:0], gateways[:0]
-		return nil
-	}
-
-	iter := s.redis.Scan(ctx, 0, legacyQuotaPrefix+"*"+suffix, scanCount).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-		part := strings.TrimSuffix(strings.TrimPrefix(key, legacyQuotaPrefix), suffix)
-		// uuid parsing also accepts the braced form, which is exactly what a
-		// current key for a tenant whose id is a uuid looks like.
-		if strings.HasPrefix(part, "{") {
-			continue
-		}
-		id, err := ids.Parse[ids.GatewayKind](part)
-		if err != nil {
-			continue
-		}
-		keys = append(keys, key)
-		gateways = append(gateways, id)
-		if len(keys) >= scanCount {
-			if err := flush(); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return nil, err
-	}
-	if err := flush(); err != nil {
-		return nil, err
-	}
-	return out, nil
 }

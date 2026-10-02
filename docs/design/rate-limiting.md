@@ -122,7 +122,6 @@ The unit is the **admitted attempt**: the plan is charged when the request enter
 gt:rl:quota:{<tenant>}:<YYYY-MM>        TTL until 00:00 UTC on the 1st of the next month
 gt:rl:burst:{<tenant>}:<unix_minute>    TTL 2 min
 gt:rl:tok:{<tenant>}:<pod>-<round>      TTL max(2 x retention, 1 min): idempotency token of one sync round
-gt:rl:audit:per-tenant-rollout:<YYYY-MM>  rollout audit claim (SET NX, 40 days; DEL if the scan fails)
 ```
 
 - The subject is a **hash tag** (`{...}`): the quota, the burst and the token of one tenant land in one Redis Cluster slot, which the multi-key script requires. Braces inside the tenant id are replaced by `_`.
@@ -202,15 +201,9 @@ Reading it: under sustained load the overshoot is **the tenant's rps x the sync 
 | Caps table unreadable at compile time | Snapshot published with the last good caps (or none, on a compiler that never read them) |
 | Caps table unreadable on a Postgres plane | The last good copy is kept; before the first load the gateway stamp applies |
 
-### Rollout month: counters restart and the audit
+### Rollout month: counters restart
 
-The month in which the per-tenant keys are introduced **starts from zero**: the old per-gateway counters are not summed in, because they cannot be summed safely while old pods still write them. A tenant that had already spent part of its quota recovers it for that month.
-
-So that this is not invisible, a one-off audit adds up the old `gt:rl:quota:<gateway_id>:<YYYY-MM>` counters by tenant and logs a `WARN` for every tenant whose sum already exceeded its monthly cap.
-
-- **Enabled by month:** `RATE_LIMIT_ROLLOUT_AUDIT_MONTH=YYYY-MM` (empty = **off**, the default). It runs only if the current month is that one, so it never repeats each month. Set it in the month the per-tenant keys roll out; remove it afterwards.
-- **Only on planes that see every tenant**, those that resolve gateways from Postgres. A plane answering from the snapshot may hold one scoped to a single gateway, would resolve almost none of the old keys, and the report would be false, so it does not run it.
-- **One pod per month** (about 90 s after start, to let the caps copy load): the claim key is taken with `SET NX` before scanning. **If the scan fails the claim is released (`DEL`)**, so another pod, or this one on its next boot, can retry; a finished audit keeps the key for the rest of the month (40 days TTL). Keys already in the per-tenant format (the subject in braces) are skipped.
+The month in which the per-tenant keys are introduced **starts from zero**: the old per-gateway counters are not summed in, because they cannot be summed safely while old pods still write them. A tenant that had already spent part of its quota recovers it for that month. The old per-gateway keys are no longer written and expire on their own by TTL.
 
 ---
 
@@ -246,11 +239,10 @@ Common rules:
 | `RATE_LIMIT_SYNC_INTERVAL` | `1s` | How often a pod reconciles with Redis. Sustained overshoot is about the tenant's rps x this value |
 | `RATE_LIMIT_SYNC_TIMEOUT` | `200ms` | Bound of each **sync** round trip (never of a request). Maximum 5 s |
 | `RATE_LIMIT_FAILED_RETENTION` | `30s` | How long, from its first failure, the usage of a sync that did not reach Redis is kept before it is dropped. Maximum 10 min; it sets the token TTL |
-| `RATE_LIMIT_ROLLOUT_AUDIT_MONTH` | empty (off) | Month `YYYY-MM` in which the one-off rollout audit runs, on Postgres planes only |
 
 `REDIS_DB` selects the database as for every other Redis use of the process.
 
-Customer-run (hybrid) data planes meter against their scoped snapshot and sync to the Redis they are configured with; they never run the audit.
+Customer-run (hybrid) data planes meter against their scoped snapshot and sync to the Redis they are configured with.
 
 ---
 
