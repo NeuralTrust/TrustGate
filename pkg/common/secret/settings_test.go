@@ -121,29 +121,47 @@ func TestResolveSettings(t *testing.T) {
 	t.Parallel()
 	paths := []string{"credentials.session_token", "credentials.secret_access_key"}
 	stored := map[string]any{"credentials": map[string]any{
-		"secret_access_key": "real-secret",
-		"session_token":     "real-token",
+		"secret_access_key": "real-secret-0123456789",
+		"session_token":     "tok", // short: its mask is the bare "***"
 	}}
 	creds := func(m map[string]any) map[string]any { return m["credentials"].(map[string]any) }
 
-	t.Run("masked value keeps stored", func(t *testing.T) {
+	t.Run("exact mask of the stored value keeps it", func(t *testing.T) {
 		t.Parallel()
-		in := map[string]any{"credentials": map[string]any{"secret_access_key": "***cret", "session_token": "***"}}
+		in := map[string]any{"credentials": map[string]any{
+			"secret_access_key": secret.Mask("real-secret-0123456789"),
+			"session_token":     secret.Mask("tok"),
+		}}
 		secret.ResolveSettings(in, stored, paths)
-		assert.Equal(t, "real-secret", creds(in)["secret_access_key"])
-		assert.Equal(t, "real-token", creds(in)["session_token"])
+		assert.Equal(t, "real-secret-0123456789", creds(in)["secret_access_key"])
+		assert.Equal(t, "tok", creds(in)["session_token"])
 	})
 
-	t.Run("omitted and empty keep stored, including a missing parent object", func(t *testing.T) {
+	t.Run("a mask of some other value is left for validation to reject", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]any{"credentials": map[string]any{"secret_access_key": "***zzzz"}}
+		secret.ResolveSettings(in, stored, paths)
+		assert.Equal(t, "***zzzz", creds(in)["secret_access_key"])
+		require.Error(t, secret.ValidateCredentialSettings(in, paths))
+	})
+
+	t.Run("a mask with nothing stored is left for validation to reject", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]any{"credentials": map[string]any{"session_token": "***"}}
+		secret.ResolveSettings(in, map[string]any{}, paths)
+		assert.Equal(t, "***", creds(in)["session_token"])
+	})
+
+	t.Run("omitted and empty are cleared, not merged", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"secret_access_key": ""}}
 		secret.ResolveSettings(in, stored, paths)
-		assert.Equal(t, "real-secret", creds(in)["secret_access_key"])
-		assert.Equal(t, "real-token", creds(in)["session_token"])
+		assert.Equal(t, "", creds(in)["secret_access_key"])
+		assert.NotContains(t, creds(in), "session_token")
 
 		bare := map[string]any{"guardrail_id": "x"}
 		secret.ResolveSettings(bare, stored, paths)
-		assert.Equal(t, "real-token", creds(bare)["session_token"])
+		assert.NotContains(t, bare, "credentials")
 	})
 
 	t.Run("a new value replaces", func(t *testing.T) {
@@ -153,12 +171,11 @@ func TestResolveSettings(t *testing.T) {
 		assert.Equal(t, "fresh", creds(in)["secret_access_key"])
 	})
 
-	t.Run("explicit null clears and is not merged back", func(t *testing.T) {
+	t.Run("explicit null is removed", func(t *testing.T) {
 		t.Parallel()
-		in := map[string]any{"credentials": map[string]any{"session_token": nil, "secret_access_key": "***cret"}}
+		in := map[string]any{"credentials": map[string]any{"session_token": nil}}
 		secret.ResolveSettings(in, stored, paths)
 		assert.NotContains(t, creds(in), "session_token")
-		assert.Equal(t, "real-secret", creds(in)["secret_access_key"])
 	})
 
 	t.Run("a non-string is left for validation, not overwritten", func(t *testing.T) {
@@ -170,9 +187,9 @@ func TestResolveSettings(t *testing.T) {
 
 	t.Run("does not mutate the stored settings", func(t *testing.T) {
 		t.Parallel()
-		in := map[string]any{"credentials": map[string]any{"session_token": nil}}
+		in := map[string]any{"credentials": map[string]any{"session_token": nil, "secret_access_key": secret.Mask("real-secret-0123456789")}}
 		secret.ResolveSettings(in, stored, paths)
-		assert.Equal(t, "real-token", creds(stored)["session_token"])
+		assert.Equal(t, "tok", creds(stored)["session_token"])
 	})
 }
 
