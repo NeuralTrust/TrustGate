@@ -34,7 +34,6 @@ func TestParseConfig_RejectsHostileDestinationFields(t *testing.T) {
 		{"location subdomain", "location", "us-central1.evil.com"},
 		{"location uppercase", "location", "US-CENTRAL1"},
 		{"location userinfo", "location", "x@evil.com"},
-		{"location without digit", "location", "global"},
 		{"project path traversal", "project", "../other"},
 		{"project query", "project", "p?x=1"},
 		{"project slash", "project", "p/q"},
@@ -56,7 +55,7 @@ func TestParseConfig_RejectsHostileDestinationFields(t *testing.T) {
 
 func TestParseConfig_AcceptsRealDestinationFields(t *testing.T) {
 	t.Parallel()
-	for _, loc := range []string{"us-central1", "europe-west4", "asia-northeast1", "northamerica-northeast2"} {
+	for _, loc := range []string{"us-central1", "europe-west4", "asia-northeast1", "northamerica-northeast2", "us", "eu"} {
 		s := validSettings()
 		s["location"] = loc
 		_, err := parseConfig(s)

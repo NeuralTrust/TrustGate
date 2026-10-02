@@ -120,9 +120,10 @@ func (s *Settings) applyDefaults() {
 }
 
 var (
-	// locationPattern is a GCP region (us-central1, europe-west4). It has no dot,
+	// locationPattern is a GCP region (us-central1, europe-west4) or a Model Armor
+	// multi-region (us, eu). It has no dot,
 	// slash, colon, '#', '@' or '?', so it cannot change the host it is put in.
-	locationPattern = regexp.MustCompile(`^[a-z]+(-[a-z]+)*[0-9]+$`)
+	locationPattern = regexp.MustCompile(`^[a-z]+(-[a-z]+)*[0-9]*$`)
 	// projectPattern is a project id (lowercase letters, digits, hyphens, up to
 	// 30 characters) or a numeric project number. Legacy domain-scoped ids
 	// ("example.com:proj") are not accepted: the colon and dot are path-unsafe.
@@ -146,7 +147,7 @@ func (s *Settings) validate() error {
 	// (the policy's own, or the gateway pod's ambient identity), so a value that
 	// can change the host or the path is a token leak, not a typo.
 	if !locationPattern.MatchString(s.Location) {
-		return fmt.Errorf("google_model_armor: location must be a GCP region such as us-central1")
+		return fmt.Errorf("google_model_armor: location must be a GCP region or multi-region such as us-central1 or eu")
 	}
 	if !projectPattern.MatchString(s.Project) {
 		return fmt.Errorf("google_model_armor: project must be a GCP project id or number")
