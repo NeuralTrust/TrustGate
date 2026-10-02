@@ -54,7 +54,8 @@ func TestGetPolicyHandler_ReportsLoadStatus(t *testing.T) {
 			finder := policymocks.NewFinder(t)
 			finder.EXPECT().FindByID(mock.Anything, gatewayID, tt.policy.ID).Return(tt.policy, nil).Once()
 
-			handler := policyhttp.NewGetPolicyHandler(finder, apppolicy.NewStatusEvaluator(statusRegistry(t)))
+			reg := statusRegistry(t)
+			handler := policyhttp.NewGetPolicyHandler(finder, apppolicy.NewStatusEvaluator(reg), reg)
 			app := fiber.New()
 			app.Get("/v1/gateways/:gateway_id/policies/:id", handler.Handle)
 

@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -27,12 +28,13 @@ import (
 )
 
 type ListPolicyHandler struct {
-	finder apppolicy.Finder
-	status apppolicy.StatusEvaluator
+	finder   apppolicy.Finder
+	status   apppolicy.StatusEvaluator
+	registry appplugins.Registry
 }
 
-func NewListPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvaluator) *ListPolicyHandler {
-	return &ListPolicyHandler{finder: finder, status: status}
+func NewListPolicyHandler(finder apppolicy.Finder, status apppolicy.StatusEvaluator, registry appplugins.Registry) *ListPolicyHandler {
+	return &ListPolicyHandler{finder: finder, status: status, registry: registry}
 }
 
 // Handle godoc
@@ -127,7 +129,7 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 	}
 	for _, p := range items {
 		status, message := h.status.Evaluate(p)
-		out.Items = append(out.Items, response.FromPolicy(p).WithStatus(string(status), message))
+		out.Items = append(out.Items, response.FromPolicy(p, h.registry).WithStatus(string(status), message))
 	}
 	return httpio.WriteOK(c, out)
 }
