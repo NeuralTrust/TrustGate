@@ -66,11 +66,11 @@ type trustedKey struct{}
 // guard. Call it only with the Trusted flag of the config object the request is
 // made for, never with a comparison of URLs: the flag is set solely on
 // identity providers the operator configured through the environment.
+//
+// The value is always set, so trust is not sticky: a call scoped to a tenant
+// config clears whatever an outer, operator-scoped call had marked.
 func TrustedIf(ctx context.Context, trusted bool) context.Context {
-	if !trusted {
-		return ctx
-	}
-	return context.WithValue(ctx, trustedKey{}, true)
+	return context.WithValue(ctx, trustedKey{}, trusted)
 }
 
 // IsTrusted reports whether ctx was marked by TrustedIf. Caches that sit in

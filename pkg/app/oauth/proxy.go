@@ -444,6 +444,7 @@ func (p *authProxy) verifiedPlatformClaims(ctx context.Context, auth *authdomain
 		Audiences:  cfg.Audiences,
 		JWKSURL:    cfg.JWKSURL,
 		Algorithms: algorithms,
+		Trusted:    cfg.Trusted,
 	})
 	if err != nil {
 		slog.Warn("oauth: platform token failed verification", "issuer", cfg.Issuer, "error", err)
