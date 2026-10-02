@@ -14,8 +14,8 @@
 
 // Package googlemodelarmor is a REST client for Google Cloud Model Armor
 // (https://cloud.google.com/security-command-center/docs/model-armor-overview).
-// There is no global Model Armor endpoint: every template lives in one of 21
-// regional hosts (modelarmor.{location}.rep.googleapis.com), so callers name
+// There is no global Model Armor endpoint: every template lives in one regional
+// or multi-regional (us, eu) host (modelarmor.{location}.rep.googleapis.com), so callers name
 // project/location/template on every call rather than baking them into the
 // client. This package intentionally stops at transport: sanitize/anonymize
 // policy decisions (block_on handling, message building, plugin
