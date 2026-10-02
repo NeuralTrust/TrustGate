@@ -105,7 +105,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),
-		googlemodelarmor.New(p.Adapters, p.Cfg.ModelArmor.BaseURL, p.Cfg.ModelArmor.Timeout, p.Logger),
+		googlemodelarmor.New(p.Adapters, p.Cfg.ModelArmor.BaseURL, p.Cfg.ModelArmor.Timeout, p.Cfg.ModelArmor.AllowAmbientIdentity, p.Logger),
 		regexreplace.New(p.Adapters, p.Logger),
 	}
 	for _, plugin := range catalog {

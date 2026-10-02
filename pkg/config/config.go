@@ -489,9 +489,16 @@ type OpenAIModerationConfig struct {
 // Armor's regional host — Model Armor has no global endpoint — for tests or
 // a private egress proxy; leave it empty in production so each call
 // addresses the region its own request names.
+//
+// AllowAmbientIdentity lets a policy authenticate as the gateway pod's own
+// identity (no credentials, or impersonate_service_account, which the pod
+// identity performs). That identity is shared by every tenant on the gateway,
+// so on a multi-tenant deploy it is a cross-tenant confused deputy and stays
+// off; enable it only on a single-tenant or self-hosted gateway.
 type ModelArmorConfig struct {
-	BaseURL string
-	Timeout time.Duration
+	BaseURL              string
+	Timeout              time.Duration
+	AllowAmbientIdentity bool
 }
 
 type RateLimitConfig struct {
@@ -878,7 +885,8 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	}
 }
 
-// getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT. Unlike
+// getModelArmorConfig reads MODEL_ARMOR_BASE_URL/MODEL_ARMOR_TIMEOUT and
+// MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY (default false). Unlike
 // OpenAIModeration, BaseURL has no default host: Model Armor is regional, so
 // an empty value tells the client to derive the host per call from the
 // request's own location instead of pinning one region.
@@ -886,6 +894,8 @@ func getModelArmorConfig() ModelArmorConfig {
 	return ModelArmorConfig{
 		BaseURL: getEnv("MODEL_ARMOR_BASE_URL", ""),
 		Timeout: getEnvDuration("MODEL_ARMOR_TIMEOUT", defaultModelArmorTimeout),
+		// Default false: the pod identity is shared across tenants.
+		AllowAmbientIdentity: getEnvBool("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", false),
 	}
 }
 

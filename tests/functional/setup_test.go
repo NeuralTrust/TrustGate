@@ -84,6 +84,9 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
 	env = append(env, "MODEL_ARMOR_BASE_URL="+modelArmorEndpoint)
 	env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+writeModelArmorFakeCredentials())
+	// The functional policies carry no credentials block, so they authenticate as
+	// the pod identity (the fake ADC above); the gateway refuses that by default.
+	env = append(env, "MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY=true")
 	env = append(env, "TRUSTGUARD_CLIENT_ID="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_ID", trustGuardFunctionalClientID))
 	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+getEnv("FUNCTIONAL_TRUSTGUARD_CLIENT_SECRET", trustGuardFunctionalClientSecret))
 	if trustGuardBaseURL != "" {
