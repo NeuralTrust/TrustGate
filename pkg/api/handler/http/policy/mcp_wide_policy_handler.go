@@ -19,16 +19,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 )
 
 type MCPWidePolicyHandler struct {
 	scoper apppolicy.Scoper
 	warner apppolicy.Warner
+	status apppolicy.StatusEvaluator
 }
 
-func NewMCPWidePolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *MCPWidePolicyHandler {
-	return &MCPWidePolicyHandler{scoper: scoper, warner: warner}
+func NewMCPWidePolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner, status apppolicy.StatusEvaluator) *MCPWidePolicyHandler {
+	return &MCPWidePolicyHandler{scoper: scoper, warner: warner, status: status}
 }
 
 // SetMCPWide godoc
@@ -55,7 +57,7 @@ func (h *MCPWidePolicyHandler) SetMCPWide(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)))
+	return httpio.WriteOK(c, response.FromPolicyWithWarnings(p, overlapWarnings(c, h.warner, p)).WithStatus(h.evaluate(p)))
 }
 
 // UnsetMCPWide godoc
@@ -80,5 +82,10 @@ func (h *MCPWidePolicyHandler) UnsetMCPWide(c *fiber.Ctx) error {
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	return httpio.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicy(p).WithStatus(h.evaluate(p)))
+}
+
+func (h *MCPWidePolicyHandler) evaluate(p *domain.Policy) (string, string) {
+	status, message := h.status.Evaluate(p)
+	return string(status), message
 }
