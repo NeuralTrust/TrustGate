@@ -128,8 +128,24 @@ func (t *Template) tenantSettings(raw map[string]interface{}) (Settings, error) 
 	if err := validateTenantEndpoint(own.Endpoint); err != nil {
 		return Settings{}, err
 	}
+	// A tenant endpoint is always a full URL, so the scheme (not a process env
+	// var) decides whether the connection is encrypted. A bare host is https
+	// unless the tenant asked for insecure.
+	own.Endpoint = tenantEndpointURL(own.Endpoint, own.Insecure)
+	own.Insecure = strings.HasPrefix(own.Endpoint, "http://")
 	own.guarded = true
 	return own, nil
+}
+
+// tenantEndpointURL returns endpoint as a URL with a scheme.
+func tenantEndpointURL(endpoint string, insecure bool) string {
+	if hasScheme(endpoint) {
+		return endpoint
+	}
+	if insecure {
+		return "http://" + endpoint
+	}
+	return "https://" + endpoint
 }
 
 // validateTenantEndpoint rejects, at write time and without any lookup, the
