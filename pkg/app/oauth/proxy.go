@@ -35,6 +35,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -102,7 +103,7 @@ func NewAuthProxy(
 	opts ...ProxyOption,
 ) AuthProxy {
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewHTTPClient(15 * time.Second)
 	}
 	meta := &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}}
 	p := &authProxy{

@@ -29,6 +29,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 var (
@@ -93,7 +94,7 @@ type asCacheEntry struct {
 
 func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client, clients FlowStore) MetadataService {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = netguard.NewHTTPClient(10 * time.Second)
 	}
 	return &metadataService{credentials: credentials, paths: paths, client: client, clients: clients, asCache: map[string]asCacheEntry{}}
 }
