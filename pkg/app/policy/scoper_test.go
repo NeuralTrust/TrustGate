@@ -16,9 +16,11 @@ package policy_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport/configsynctest"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -64,9 +66,13 @@ func TestScoper_Placement(t *testing.T) {
 		call scoperCall
 		// protocols is what the policy's plugin supports. nil means the plugin
 		// registry must not be consulted at all.
-		protocols   []appplugins.Protocol
-		foreign     bool
-		write       *flagWrite
+		protocols []appplugins.Protocol
+		foreign   bool
+		write     *flagWrite
+		// stored is the row a re-read finds once a promotion is refused as
+		// stale, and rereadErr fails that re-read.
+		stored      placement
+		rereadErr   error
 		wantErr     []error
 		wantGlobal  bool
 		wantMCPWide bool
@@ -113,7 +119,26 @@ func TestScoper_Placement(t *testing.T) {
 			call:      apppolicy.Scoper.SetMCPWide,
 			protocols: []appplugins.Protocol{appplugins.ProtocolMCP},
 			write:     &flagWrite{mcpWide: true, on: true, conditional: true, err: domain.ErrPlacementChanged},
+			stored:    placedDraft,
 			wantErr:   []error{domain.ErrPlacementChanged, commonerrors.ErrConflict},
+		},
+		{
+			name:      "SetMCPWide on a row made global since the read is a conflict",
+			from:      placedDraft,
+			call:      apppolicy.Scoper.SetMCPWide,
+			protocols: []appplugins.Protocol{appplugins.ProtocolMCP},
+			write:     &flagWrite{mcpWide: true, on: true, conditional: true, err: domain.ErrPlacementChanged},
+			stored:    placedGlobal,
+			wantErr:   []error{domain.ErrPlacementChanged, commonerrors.ErrConflict},
+		},
+		{
+			name:        "SetMCPWide retried after the same promotion landed answers the row as stored",
+			from:        placedDraft,
+			call:        apppolicy.Scoper.SetMCPWide,
+			protocols:   []appplugins.Protocol{appplugins.ProtocolMCP},
+			write:       &flagWrite{mcpWide: true, on: true, conditional: true, err: domain.ErrPlacementChanged},
+			stored:      placedMCPWide,
+			wantMCPWide: true,
 		},
 		{
 			name:  "UnsetMCPWide demotes unconditionally",
@@ -164,7 +189,33 @@ func TestScoper_Placement(t *testing.T) {
 			from:    placedDraft,
 			call:    apppolicy.Scoper.SetGlobal,
 			write:   &flagWrite{on: true, conditional: true, err: domain.ErrPlacementChanged},
+			stored:  placedDraft,
 			wantErr: []error{domain.ErrPlacementChanged},
+		},
+		{
+			name:       "SetGlobal retried after the same promotion landed answers the row as stored",
+			from:       placedMCPWide,
+			call:       apppolicy.Scoper.SetGlobal,
+			write:      &flagWrite{on: true, conditional: true, err: domain.ErrPlacementChanged},
+			stored:     placedGlobal,
+			wantGlobal: true,
+		},
+		{
+			name:      "SetGlobal keeps the conflict when the re-read fails",
+			from:      placedDraft,
+			call:      apppolicy.Scoper.SetGlobal,
+			write:     &flagWrite{on: true, conditional: true, err: domain.ErrPlacementChanged},
+			rereadErr: errors.New("connection reset"),
+			wantErr:   []error{domain.ErrPlacementChanged},
+		},
+		{
+			name:      "SetMCPWide on a policy deleted before the re-read is not found",
+			from:      placedDraft,
+			call:      apppolicy.Scoper.SetMCPWide,
+			protocols: []appplugins.Protocol{appplugins.ProtocolMCP},
+			write:     &flagWrite{mcpWide: true, on: true, conditional: true, err: domain.ErrPlacementChanged},
+			rereadErr: domain.ErrNotFound,
+			wantErr:   []error{domain.ErrNotFound},
 		},
 		{
 			name:  "UnsetGlobal demotes unconditionally",
@@ -183,13 +234,8 @@ func TestScoper_Placement(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			existing := existingPolicy(t)
-			switch tt.from {
-			case placedGlobal:
-				existing.Global = true
-			case placedMCPWide:
-				existing.MCPWide = true
-			}
+			existing := placedPolicy(existingPolicy(t), tt.from)
+			links := existing.ConsumerIDs
 			readAt := existing.UpdatedAt
 			writtenAt := readAt.Add(time.Second)
 			gatewayID := existing.GatewayID
@@ -200,6 +246,15 @@ func TestScoper_Placement(t *testing.T) {
 			repo := repomocks.NewRepository(t)
 			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 			publisher := cachemocks.NewEventPublisher(t)
+			rereads := tt.write != nil && errors.Is(tt.write.err, domain.ErrPlacementChanged)
+			var stored *domain.Policy
+			if rereads {
+				if tt.rereadErr == nil {
+					stored = placedPolicy(existing, tt.stored)
+					stored.UpdatedAt = writtenAt
+				}
+				repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(stored, tt.rereadErr).Once()
+			}
 			if tt.write != nil {
 				written := domain.Placement{Global: tt.wantGlobal, MCPWide: tt.wantMCPWide, UpdatedAt: writtenAt}
 				expectFlagWrite(repo, existing, *tt.write, readAt, written)
@@ -218,9 +273,16 @@ func TestScoper_Placement(t *testing.T) {
 			}
 			manager := newCacheManager()
 
-			scoper := apppolicy.NewScoper(repo, freeLevels(t), plugins, manager, publisher, newTestLogger(), nil)
+			signaler := &configsynctest.FakeSignaler{}
+
+			scoper := apppolicy.NewScoper(repo, freeLevels(t), plugins, manager, publisher, newTestLogger(), signaler)
 			got, err := tt.call(scoper, context.Background(), gatewayID, existing.ID)
 
+			wantSignals := 0
+			if tt.write != nil && tt.write.err == nil {
+				wantSignals = 1
+			}
+			assert.Equal(t, wantSignals, signaler.Count(), "only a write that lands signals the snapshot")
 			cached, isCached := manager.GetTTLMap(cache.PolicyTTLName).Get(existing.ID.String())
 			if len(tt.wantErr) > 0 {
 				for _, want := range tt.wantErr {
@@ -232,6 +294,16 @@ func TestScoper_Placement(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantGlobal, got.Global, "global")
 			assert.Equal(t, tt.wantMCPWide, got.MCPWide, "mcp_wide")
+			if rereads {
+				assert.Same(t, stored, got, "a retried promotion answers the row as re-read")
+				assert.False(t, isCached, "the write that placed the row cached it; the retry wrote nothing")
+				return
+			}
+			if got.MCPWide {
+				assert.Empty(t, got.ConsumerIDs, "an MCP-wide policy holds no consumer links")
+			} else {
+				assert.Equal(t, links, got.ConsumerIDs, "a placement that is not MCP-wide keeps its links")
+			}
 			if tt.write == nil {
 				assert.Equal(t, readAt, got.UpdatedAt, "a no-op answers the policy as read")
 				assert.False(t, isCached, "a no-op must not touch the cache")
@@ -243,6 +315,20 @@ func TestScoper_Placement(t *testing.T) {
 		})
 	}
 }
+
+// placedPolicy is a copy of p at the given placement. Only a policy that is not
+// MCP-wide carries a consumer link, because promoting to MCP-wide removes them.
+func placedPolicy(p *domain.Policy, at placement) *domain.Policy {
+	placed := *p
+	placed.Global, placed.MCPWide = at == placedGlobal, at == placedMCPWide
+	placed.ConsumerIDs = nil
+	if at != placedMCPWide {
+		placed.ConsumerIDs = []ids.ConsumerID{consumerLink}
+	}
+	return &placed
+}
+
+var consumerLink = ids.New[ids.ConsumerKind]()
 
 func expectFlagWrite(repo *repomocks.Repository, p *domain.Policy, w flagWrite, readAt time.Time, written domain.Placement) {
 	var expectedReadAt time.Time

@@ -40,7 +40,7 @@ type PolicyResponse struct {
 	Global      bool             `json:"global"`
 	// MCPWide marks a policy that runs on every MCP consumer of the gateway and
 	// on the MCP Store, narrowed by its mcp_scope. It is never true together
-	// with Global.
+	// with Global, and an MCP-wide policy has no consumer_ids.
 	MCPWide  bool           `json:"mcp_wide"`
 	Priority int            `json:"priority"`
 	Parallel bool           `json:"parallel,omitempty"`

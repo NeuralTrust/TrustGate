@@ -16,6 +16,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -118,10 +119,22 @@ func (s *scoper) place(ctx context.Context, gatewayID ids.GatewayID, id ids.Poli
 		return existing, nil
 	}
 	written, err := s.write(ctx, existing, flag, on)
+	if on && errors.Is(err, domain.ErrPlacementChanged) {
+		current, placed, rereadErr := s.placedMeanwhile(ctx, existing, flag)
+		if rereadErr != nil {
+			return nil, rereadErr
+		}
+		if placed {
+			return current, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
 	existing.Global, existing.MCPWide, existing.UpdatedAt = written.Global, written.MCPWide, written.UpdatedAt
+	if existing.MCPWide {
+		existing.ConsumerIDs = nil
+	}
 	s.memoryCache.Set(existing.ID.String(), existing)
 	invalidation.GatewayData(ctx, s.publisher, s.logger, existing.GatewayID)
 	if s.signaler != nil {
@@ -163,4 +176,29 @@ func (s *scoper) write(ctx context.Context, existing *domain.Policy, flag placem
 		return err
 	})
 	return written, err
+}
+
+// placedMeanwhile re-reads a policy whose promotion was refused because the row
+// changed after it was read. When the promotion would change nothing on the row
+// as it stands, another write already placed it there, most often the same
+// request sent twice, and that write cached and announced it. The promotion
+// then answers the row the way a no-op does, so a retry stays idempotent. A
+// policy deleted in between answers ErrNotFound; any other row, or a re-read
+// that fails otherwise, keeps the conflict.
+func (s *scoper) placedMeanwhile(ctx context.Context, existing *domain.Policy, flag placementFlag) (*domain.Policy, bool, error) {
+	current, err := s.repo.FindByID(ctx, existing.ID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, false, err
+	}
+	if err != nil {
+		s.logger.Warn("policy placement re-read failed",
+			slog.String("policy_id", existing.ID.String()),
+			slog.String("gateway_id", existing.GatewayID.String()),
+			slog.String("error", err.Error()),
+		)
+		return nil, false, nil
+	}
+	promoted := *current
+	flag.set(&promoted, true)
+	return current, promoted.Global == current.Global && promoted.MCPWide == current.MCPWide, nil
 }

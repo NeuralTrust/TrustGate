@@ -1131,7 +1131,7 @@ definitions:
         description: |-
           MCPWide marks a policy that runs on every MCP consumer of the gateway and
           on the MCP Store, narrowed by its mcp_scope. It is never true together
-          with Global.
+          with Global, and an MCP-wide policy has no consumer_ids.
         type: boolean
       mode:
         type: string
@@ -4301,13 +4301,14 @@ paths:
       tags:
       - consumers
     post:
-      description: Associates a policy with a consumer (idempotent). Editing the policy
-        later affects every consumer it is attached to. An mcp_scope that names a
-        registry or a tool, or that is the empty object, only attaches to an MCP consumer;
-        a scope narrowing by group alone also attaches to a non-MCP consumer, where
-        the group is inert, provided the plugin runs under an inert scope. Answers
-        204, or 200 with a warnings body when the consumer already runs the same plugin
-        without scope.
+      description: 'Associates a policy with a consumer (idempotent). Editing the
+        policy later affects every consumer it is attached to. An mcp_scope that names
+        a registry or a tool, or that is the empty object, only attaches to an MCP
+        consumer; a scope narrowing by group alone also attaches to a non-MCP consumer,
+        where the group is inert, provided the plugin runs under an inert scope. An
+        MCP-wide policy already runs on every MCP consumer and holds no links, so
+        attaching one answers 422: demote it first. Answers 204, or 200 with a warnings
+        body when the consumer already runs the same plugin without scope.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4354,7 +4355,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "422":
-          description: Unprocessable Entity
+          description: The policy is MCP-wide, or its mcp_scope or plugin does not
+            fit the consumer
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4830,9 +4832,10 @@ paths:
         Promoting an MCP-wide policy clears mcp_wide in the same write. Promoting
         moves the policy to the all-traffic level, so it answers 409 when another
         policy of the same plugin already holds it; a policy that changed while it
-        was being promoted also answers 409: reload it and retry. For a policy with
-        mcp_scope the response may carry non-blocking warnings about consumers that
-        already run the same plugin without scope.'
+        was being promoted also answers 409: reload it and retry, unless it is already
+        global by then, which answers 200 with the policy as stored. For a policy
+        with mcp_scope the response may carry non-blocking warnings about consumers
+        that already run the same plugin without scope.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4877,9 +4880,10 @@ paths:
       - policies
   /v1/gateways/{gateway_id}/policies/{id}/mcp-wide:
     delete:
-      description: 'Demotes an MCP-wide policy back to consumer-scoped (applies only
-        to linked consumers; with none it runs nowhere). Clears only mcp_wide: a policy
-        that is not MCP-wide is returned unchanged with 200, a global one included.'
+      description: 'Demotes an MCP-wide policy to a draft: it holds no consumer links,
+        so it runs nowhere until a consumer is attached or it is promoted again. Clears
+        only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200,
+        a global one included.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4921,14 +4925,16 @@ paths:
       description: 'Promotes a policy to run on every MCP consumer of the gateway
         and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries,
         tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A
-        consumers, and consumer links are ignored while the flag is set. Promoting
-        clears global in the same write. The policy takes the all-consumers levels
-        of its scope, the ones a global policy of that scope takes, so it answers
-        409 when another policy of the same plugin already holds one of them, global
-        ones included. A policy that changed while it was being promoted also answers
-        409: reload it and retry. A plugin without MCP support answers 422. Plugin
-        state such as rate-limit counters is shared gateway-wide, as for a global
-        policy. The response may carry non-blocking warnings.'
+        consumers. Promoting clears global and removes the policy''s consumer links
+        in the same write; while the flag is set a consumer cannot be attached (422).
+        The policy takes the all-consumers levels of its scope, the ones a global
+        policy of that scope takes, so it answers 409 when another policy of the same
+        plugin already holds one of them, global ones included. A policy that changed
+        while it was being promoted also answers 409: reload it and retry. A retry
+        that finds the policy already MCP-wide answers 200 with the policy as stored.
+        A plugin without MCP support answers 422. Plugin state such as rate-limit
+        counters is shared gateway-wide, as for a global policy. The response may
+        carry non-blocking warnings.'
       parameters:
       - description: Gateway id
         format: uuid

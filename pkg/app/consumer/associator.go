@@ -155,6 +155,9 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
+	if pol.MCPWide {
+		return domain.ErrPolicyMCPWide
+	}
 	if err := a.validatePolicyScope(cons, pol); err != nil {
 		return err
 	}
@@ -187,7 +190,7 @@ func attachedTo(pol *policydomain.Policy, consumerID ids.ConsumerID) *policydoma
 }
 
 func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {
-	if pol.GatewayWide() {
+	if pol.IsGlobal() {
 		return nil
 	}
 	if cons.Type != domain.TypeLLM && cons.Type != domain.TypeMCP {

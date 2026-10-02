@@ -195,11 +195,14 @@ func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id 
 		 WHERE id = $1 AND gateway_id = $3
 		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
 		RETURNING global, mcp_wide, updated_at`
-	return r.setPlacementFlag(ctx, query, gatewayID, id, global, readAt)
+	return r.setPlacementFlag(ctx, query, gatewayID, id, global, readAt, false)
 }
 
 // SetMCPWide writes mcp_wide, clearing global on promotion the way SetGlobal
-// clears mcp_wide, and matching readAt the same way.
+// clears mcp_wide, and matching readAt the same way. A promotion also deletes
+// the policy's consumer_policy rows in the same transaction: an MCP-wide policy
+// runs on every MCP consumer without them, so it holds none, and a demotion
+// has no link to revive.
 func (r *Repository) SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool, readAt time.Time) (domain.Placement, error) {
 	const query = `
 		UPDATE policies
@@ -209,7 +212,7 @@ func (r *Repository) SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id
 		 WHERE id = $1 AND gateway_id = $3
 		   AND ($4::timestamptz IS NULL OR updated_at = $4::timestamptz)
 		RETURNING global, mcp_wide, updated_at`
-	return r.setPlacementFlag(ctx, query, gatewayID, id, mcpWide, readAt)
+	return r.setPlacementFlag(ctx, query, gatewayID, id, mcpWide, readAt, mcpWide)
 }
 
 func (r *Repository) setPlacementFlag(
@@ -219,6 +222,7 @@ func (r *Repository) setPlacementFlag(
 	id ids.PolicyID,
 	on bool,
 	readAt time.Time,
+	unlinkConsumers bool,
 ) (domain.Placement, error) {
 	var unchangedSince any
 	if !readAt.IsZero() {
@@ -233,6 +237,12 @@ func (r *Repository) setPlacementFlag(
 		}
 		if err != nil {
 			return mapPgError(err)
+		}
+		if !unlinkConsumers {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM consumer_policy WHERE policy_id = $1`, id); err != nil {
+			return fmt.Errorf("policy repository: unlink consumers: %w", err)
 		}
 		return nil
 	})

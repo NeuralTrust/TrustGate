@@ -33,7 +33,7 @@ func NewMCPWidePolicyHandler(scoper apppolicy.Scoper, warner apppolicy.Warner) *
 
 // SetMCPWide godoc
 // @Summary      Mark a policy as MCP-wide
-// @Description  Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers, and consumer links are ignored while the flag is set. Promoting clears global in the same write. The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.
+// @Description  Promotes a policy to run on every MCP consumer of the gateway and on the MCP Store, narrowed by its mcp_scope (groups, except_groups, registries, tools); a null mcp_scope means every MCP caller. It never runs on LLM or A2A consumers. Promoting clears global and removes the policy's consumer links in the same write; while the flag is set a consumer cannot be attached (422). The policy takes the all-consumers levels of its scope, the ones a global policy of that scope takes, so it answers 409 when another policy of the same plugin already holds one of them, global ones included. A policy that changed while it was being promoted also answers 409: reload it and retry. A retry that finds the policy already MCP-wide answers 200 with the policy as stored. A plugin without MCP support answers 422. Plugin state such as rate-limit counters is shared gateway-wide, as for a global policy. The response may carry non-blocking warnings.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth
@@ -60,7 +60,7 @@ func (h *MCPWidePolicyHandler) SetMCPWide(c *fiber.Ctx) error {
 
 // UnsetMCPWide godoc
 // @Summary      Clear a policy's MCP-wide placement
-// @Description  Demotes an MCP-wide policy back to consumer-scoped (applies only to linked consumers; with none it runs nowhere). Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.
+// @Description  Demotes an MCP-wide policy to a draft: it holds no consumer links, so it runs nowhere until a consumer is attached or it is promoted again. Clears only mcp_wide: a policy that is not MCP-wide is returned unchanged with 200, a global one included.
 // @Tags         policies
 // @Produce      json
 // @Security     BearerAuth

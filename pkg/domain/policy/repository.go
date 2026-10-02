@@ -73,7 +73,9 @@ type Repository interface {
 	SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool, readAt time.Time) (Placement, error)
 	// SetMCPWide writes the mcp_wide flag and returns the placement the row
 	// holds after the write. Promoting also clears global in the same row
-	// write; demoting touches mcp_wide only. readAt works as in SetGlobal.
+	// write and removes the policy's consumer links in the same transaction,
+	// so an MCP-wide policy holds none; demoting touches mcp_wide only and has
+	// no link to bring back. readAt works as in SetGlobal.
 	SetMCPWide(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, mcpWide bool, readAt time.Time) (Placement, error)
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error
 	FindByID(ctx context.Context, id ids.PolicyID) (*Policy, error)

@@ -25,6 +25,7 @@ import (
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -778,6 +779,197 @@ func TestRepository_ConsumerPolicyJunction_AttachDetachRoundTrip(t *testing.T) {
 	}
 	if len(got.ConsumerIDs) != 1 || got.ConsumerIDs[0] != c2 {
 		t.Fatalf("detach did not leave exactly c2: %+v", got.ConsumerIDs)
+	}
+}
+
+func junctionRows(t *testing.T, conn *database.Connection, id ids.PolicyID) int {
+	t.Helper()
+	var count int
+	if err := conn.Pool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM consumer_policy WHERE policy_id = $1", id).Scan(&count); err != nil {
+		t.Fatalf("count junction: %v", err)
+	}
+	return count
+}
+
+// An MCP-wide policy runs on every MCP consumer without links, so the promotion
+// removes them in its own transaction and a refused one removes nothing. The
+// demotion has nothing to revive, an attach is refused while the flag holds,
+// and a global promotion keeps its links as before.
+func TestRepository_SetMCPWide_RemovesTheConsumerLinks(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-mcp-wide-links")
+	c1 := seedConsumer(t, conn, gwID, "mcp-wide-links-a")
+	c2 := seedConsumer(t, conn, gwID, "mcp-wide-links-b")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	p := validPolicy(t, gwID, "mcp-wide links")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, c := range []ids.ConsumerID{c1, c2} {
+		if err := consumers.AttachPolicy(ctx, c, p.ID); err != nil {
+			t.Fatalf("AttachPolicy: %v", err)
+		}
+	}
+	if _, err := r.SetGlobal(ctx, gwID, p.ID, true, time.Time{}); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 2 {
+		t.Fatalf("links after a global promotion = %d, want both kept", n)
+	}
+
+	read, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt.Add(-time.Second)); !errors.Is(err, domain.ErrPlacementChanged) {
+		t.Fatalf("stale SetMCPWide: err = %v, want ErrPlacementChanged", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 2 {
+		t.Fatalf("links after a refused promotion = %d, want both kept", n)
+	}
+
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, true, read.UpdatedAt); err != nil {
+		t.Fatalf("SetMCPWide: %v", err)
+	}
+	promoted, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after the promotion: %v", err)
+	}
+	if !promoted.MCPWide || promoted.Global || len(promoted.ConsumerIDs) != 0 {
+		t.Fatalf("global, mcp_wide, consumers = %t, %t, %v, want MCP-wide with no links",
+			promoted.Global, promoted.MCPWide, promoted.ConsumerIDs)
+	}
+
+	err = consumers.AttachPolicy(ctx, c1, p.ID)
+	if !errors.Is(err, consumerdomain.ErrPolicyMCPWide) || !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("AttachPolicy on an MCP-wide policy: err = %v, want ErrPolicyMCPWide", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 0 {
+		t.Fatalf("links after a refused attach = %d, want none", n)
+	}
+
+	if _, err := r.SetMCPWide(ctx, gwID, p.ID, false, time.Time{}); err != nil {
+		t.Fatalf("demotion: %v", err)
+	}
+	if n := junctionRows(t, conn, p.ID); n != 0 {
+		t.Fatalf("links after the demotion = %d, want none revived", n)
+	}
+	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("AttachPolicy on the demoted policy: %v", err)
+	}
+}
+
+// The attach reads the policy row FOR SHARE, so it cannot interleave with a
+// promotion to MCP-wide: whichever commits first, no link outlives the flag.
+func TestRepository_AttachPolicy_RacingAnMCPWidePromotion(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-mcp-wide-race")
+	consumerID := seedConsumer(t, conn, gwID, "mcp-wide-race")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	run := func(t *testing.T, name string, first func(ctx context.Context, id ids.PolicyID) error, second func(ctx context.Context, id ids.PolicyID) error) error {
+		t.Helper()
+		p := validPolicy(t, gwID, name)
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		done := make(chan error, 1)
+		var secondErr error
+		returned := false
+		err := database.WithTx(ctx, conn, func(tx pgx.Tx) error {
+			if err := first(database.TxContext(ctx, tx), p.ID); err != nil {
+				return err
+			}
+			go func() { done <- second(ctx, p.ID) }()
+			select {
+			case secondErr = <-done:
+				returned = true
+				t.Errorf("the second write returned %v while the first held the row", secondErr)
+			case <-time.After(300 * time.Millisecond):
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("first write: %v", err)
+		}
+		if !returned {
+			secondErr = <-done
+		}
+		got, err := r.FindByID(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if !got.MCPWide || len(got.ConsumerIDs) != 0 || junctionRows(t, conn, p.ID) != 0 {
+			t.Fatalf("mcp_wide, consumers = %t, %v, want MCP-wide with no links", got.MCPWide, got.ConsumerIDs)
+		}
+		return secondErr
+	}
+	promote := func(ctx context.Context, id ids.PolicyID) error {
+		_, err := r.SetMCPWide(ctx, gwID, id, true, time.Time{})
+		return err
+	}
+	attach := func(ctx context.Context, id ids.PolicyID) error {
+		return consumers.AttachPolicy(ctx, consumerID, id)
+	}
+
+	t.Run("an attach behind the promotion is refused", func(t *testing.T) {
+		err := run(t, "race promote first", promote, attach)
+		if !errors.Is(err, consumerdomain.ErrPolicyMCPWide) {
+			t.Fatalf("attach after the promotion: err = %v, want ErrPolicyMCPWide", err)
+		}
+	})
+	t.Run("a promotion behind the attach removes the link", func(t *testing.T) {
+		if err := run(t, "race attach first", attach, promote); err != nil {
+			t.Fatalf("promotion after the attach: %v", err)
+		}
+	})
+}
+
+// A registry delete locks every consumer of the gateway and then the policies
+// whose scope names the registry. The attach locks the same two rows, so it
+// must take the consumer first too. Here the delete already holds the consumer
+// when the attach starts and only then asks for the policy: an attach that had
+// locked the policy first would close the cycle, and one side would fail with
+// 40P01.
+func TestRepository_AttachPolicy_DoesNotDeadlockWithARegistryDelete(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-attach-vs-prune")
+	consumerID := seedConsumer(t, conn, gwID, "attach-vs-prune")
+	registryID := seedMCPRegistry(t, conn, gwID, "attach-vs-prune-mcp")
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
+
+	p := scopedPolicy(t, gwID, "attach vs prune", &domain.MCPScope{RegistryIDs: []ids.RegistryID{registryID}})
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	done := make(chan error, 1)
+	err := database.WithTx(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := consumers.PruneRegistryReferencesTx(ctx, tx, gwID, registryID); err != nil {
+			return err
+		}
+		go func() { done <- consumers.AttachPolicy(ctx, consumerID, p.ID) }()
+		time.Sleep(300 * time.Millisecond)
+		_, err := r.PruneRegistryReferencesTx(ctx, tx, gwID, registryID)
+		return err
+	})
+	attachErr := <-done
+	var pgErr *pgconn.PgError
+	for name, err := range map[string]error{"registry prune": err, "attach": attachErr} {
+		if errors.As(err, &pgErr) && pgErr.Code == "40P01" {
+			t.Fatalf("%s deadlocked: %v", name, err)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if n := junctionRows(t, conn, p.ID); n != 1 {
+		t.Fatalf("links after the attach = %d, want 1", n)
 	}
 }
 

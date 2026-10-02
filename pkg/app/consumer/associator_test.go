@@ -310,7 +310,6 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 		name              string
 		consumerType      domain.Type
 		global            bool
-		mcpWide           bool
 		slug              string
 		resolverProtocols map[string][]string
 		wantAttach        bool
@@ -360,14 +359,6 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 			wantAttach:        true,
 		},
 		{
-			name:              "skip validation for MCP-wide policy",
-			consumerType:      domain.TypeLLM,
-			mcpWide:           true,
-			slug:              "per_tool_rate_limiter",
-			resolverProtocols: map[string][]string{"per_tool_rate_limiter": {"MCP"}},
-			wantAttach:        true,
-		},
-		{
 			name:              "skip validation for a2a consumer",
 			consumerType:      domain.TypeA2A,
 			slug:              "cost_cap",
@@ -399,7 +390,7 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 
 			policyRepo := policymocks.NewRepository(t)
 			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
-				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, Global: tt.global, MCPWide: tt.mcpWide}, nil).Once()
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, Global: tt.global}, nil).Once()
 
 			publisher := cachemocks.NewEventPublisher(t)
 			if tt.wantAttach {
@@ -715,6 +706,73 @@ func TestAssociator_AttachPolicy_RefusesAnOccupiedLevel(t *testing.T) {
 	repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
 	if len(levels.checked.ConsumerIDs) != 1 || levels.checked.ConsumerIDs[0] != consumerID {
 		t.Fatalf("guard saw consumers %v, want only %s", levels.checked.ConsumerIDs, consumerID)
+	}
+}
+
+// An MCP-wide policy already runs on every MCP consumer and its links are
+// ignored at load, so attaching one is refused before any other check, on every
+// consumer type, and nothing is written or announced. A global policy, whose
+// links are kept, still attaches.
+func TestAssociator_AttachPolicy_RefusesAnMCPWidePolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		consumerType domain.Type
+		global       bool
+		mcpWide      bool
+		wantAttach   bool
+	}{
+		{name: "mcp-wide on an mcp consumer", consumerType: domain.TypeMCP, mcpWide: true},
+		{name: "mcp-wide on an llm consumer", consumerType: domain.TypeLLM, mcpWide: true},
+		{name: "mcp-wide on an a2a consumer", consumerType: domain.TypeA2A, mcpWide: true},
+		{name: "global still attaches", consumerType: domain.TypeMCP, global: true, wantAttach: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			consumerID := ids.New[ids.ConsumerKind]()
+			policyID := ids.New[ids.PolicyKind]()
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, consumerID).
+				Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Once()
+			policyRepo := policymocks.NewRepository(t)
+			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+				Return(&policydomain.Policy{
+					ID: policyID, GatewayID: gwID, Slug: "tool_allowlist", Enabled: true,
+					Global: tt.global, MCPWide: tt.mcpWide,
+					MCPScope: &policydomain.MCPScope{Groups: []string{"Finanzas"}},
+				}, nil).Once()
+			publisher := cachemocks.NewEventPublisher(t)
+			if tt.wantAttach {
+				repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+				publisher.EXPECT().
+					Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+					Return(nil).
+					Once()
+			}
+			levels := &stubLevelGuard{}
+			resolver := &fakeProtocolResolver{protocols: map[string][]string{"tool_allowlist": {"MCP"}}}
+			a := newAssociatorWithGuard(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo,
+				publisher, levels, resolver)
+
+			err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+			if tt.wantAttach {
+				if err != nil {
+					t.Fatalf("AttachPolicy error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, domain.ErrPolicyMCPWide) || !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("err = %v, want ErrPolicyMCPWide wrapping ErrValidation", err)
+			}
+			if levels.checked != nil {
+				t.Fatal("a refused attach must not reach the level guard")
+			}
+			repo.AssertNotCalled(t, "AttachPolicy", mock.Anything, mock.Anything, mock.Anything)
+			publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+		})
 	}
 }
 
