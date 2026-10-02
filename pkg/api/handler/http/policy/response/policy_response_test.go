@@ -38,7 +38,7 @@ func TestFromPolicy_PlacementFlagsAreAlwaysPresent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			raw, err := json.Marshal(response.FromPolicy(&tt.policy))
+			raw, err := json.Marshal(response.FromPolicy(&tt.policy, nil))
 			require.NoError(t, err)
 
 			var body map[string]any

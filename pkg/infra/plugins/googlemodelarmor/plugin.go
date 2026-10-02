@@ -126,6 +126,22 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read. impersonate_service_account is deliberately absent:
+// it is an email, useless without the customer's own IAM grant.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"credentials.service_account_json"}
+}
+
+// CredentialDestinations binds the service account key to what builds the
+// request URL: the location is the host and the project is part of the path.
+// bedrock_guardrail, openai_moderation and semantic_cache declare none: their
+// requests go to a fixed vendor URL or are SigV4-signed for AWS hosts, so no
+// settings field can redirect the secret.
+func (p *Plugin) CredentialDestinations() []string {
+	return []string{"location", "project"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
