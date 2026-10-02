@@ -1239,6 +1239,11 @@ definitions:
         type: string
       header:
         type: string
+      identity_id:
+        description: |-
+          IdentityID is the gateway oauth2 auth that signs an obo or
+          token_exchange call.
+        type: string
       mode:
         type: string
       pattern:
@@ -1502,6 +1507,11 @@ definitions:
       expected_audience:
         type: string
       header:
+        type: string
+      identity_id:
+        description: |-
+          IdentityID is the gateway oauth2 auth that signs an obo or
+          token_exchange call.
         type: string
       mode:
         type: string

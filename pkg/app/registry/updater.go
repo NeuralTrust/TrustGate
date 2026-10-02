@@ -60,6 +60,7 @@ type updater struct {
 	signaler    configsyncport.SnapshotSignaler
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
+	auths       AuthLookup
 }
 
 func NewUpdater(
@@ -69,12 +70,9 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	catalog MCPAuthCatalog,
-	compilers ...appopenapi.Compiler,
+	opts ...Option,
 ) Updater {
-	var compiler appopenapi.Compiler
-	if len(compilers) > 0 {
-		compiler = compilers[0]
-	}
+	o := applyOptions(opts)
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
@@ -82,7 +80,8 @@ func NewUpdater(
 		logger:      logger,
 		signaler:    signaler,
 		catalog:     catalog,
-		openapi:     compiler,
+		openapi:     o.openapi,
+		auths:       o.auths,
 	}
 }
 
@@ -104,8 +103,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		existing.Enabled = *in.Enabled
 	}
 	applyLLMTargetUpdate(existing, in)
+	prevAuth := storedMCPAuth(existing)
 	if err := applyMCPTargetUpdate(ctx, existing, in, u.catalog, u.openapi); err != nil {
 		return nil, err
+	}
+	if exchangeIdentityChanged(prevAuth, storedMCPAuth(existing)) {
+		if err := validateExchangeIdentity(ctx, u.auths, existing.GatewayID, existing.MCPTarget); err != nil {
+			return nil, err
+		}
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if !existing.IsMCP() {
@@ -236,4 +241,26 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	if in.SetPricing {
 		target.Pricing = in.Pricing
 	}
+}
+
+func storedMCPAuth(r *domain.Registry) *domain.MCPAuth {
+	if r.MCPTarget == nil || r.MCPTarget.Auth == nil {
+		return nil
+	}
+	a := *r.MCPTarget.Auth
+	return &a
+}
+
+// exchangeIdentityChanged limits the identity check to a pin this request
+// introduces. Re-sending the stored one, as a client echoing a read does,
+// must not refuse unrelated edits because the identity has since gone; the
+// exchange refuses that at call time.
+func exchangeIdentityChanged(prev, next *domain.MCPAuth) bool {
+	if next == nil || next.IdentityID == "" || !next.UsesIdPClient() {
+		return false
+	}
+	if prev == nil || !prev.UsesIdPClient() {
+		return true
+	}
+	return !strings.EqualFold(prev.IdentityID, next.IdentityID)
 }
