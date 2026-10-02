@@ -181,3 +181,24 @@ func TestUpdater_Update_ExchangeIdentity(t *testing.T) {
 		}
 	})
 }
+
+func TestCreator_Create_AcceptsAnExchangeOnlyIdentity(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	identity := &authdomain.Auth{
+		ID: ids.New[ids.AuthKind](), GatewayID: gwID, Type: authdomain.TypeOAuth2, Enabled: true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: "https://login.microsoftonline.com/tid/v2.0", ExchangeClientID: "gw-app", ExchangeClientSecret: "s3cret",
+		}},
+	}
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil, nil,
+		appregistry.WithAuthLookup(authLookupStub{identity.ID: identity}))
+
+	if _, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: gwID, Name: "agentcore", Type: domain.TypeMCP, MCPTarget: oboTarget(identity.ID.String()),
+	}); err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+}

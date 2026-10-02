@@ -90,8 +90,8 @@ func validateExchangeIdentity(ctx context.Context, auths AuthLookup, gatewayID i
 		return fmt.Errorf("%w: identity_id %s references a disabled auth", domain.ErrInvalidMCPTarget, id)
 	}
 	cfg := a.Config.OAuth2
-	if strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.ClientID) == "" || strings.TrimSpace(cfg.ClientSecret) == "" {
-		return fmt.Errorf("%w: identity_id %s needs an issuer, client_id and client_secret to sign the exchange",
+	if _, _, ok := cfg.ExchangeCredentials(); !ok || strings.TrimSpace(cfg.Issuer) == "" {
+		return fmt.Errorf("%w: identity_id %s needs an issuer and exchange client credentials to sign the exchange",
 			domain.ErrInvalidMCPTarget, id)
 	}
 	return nil
