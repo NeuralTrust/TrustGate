@@ -102,14 +102,34 @@ func (t *Template) tenantSettings(raw map[string]interface{}) (Settings, error) 
 		}
 		return inherited, inherited.validateShape()
 	}
-	if err := s.validateShape(); err != nil {
+	// The tenant names its own collector, so nothing of the operator's may ride
+	// along: not the OTEL_EXPORTER_OTLP_HEADERS credentials, not the operator's
+	// insecure flag or protocol. Only operator-neutral defaults fill the gaps.
+	own := supplied
+	own.Endpoint = strings.TrimSpace(supplied.Endpoint)
+	if own.Protocol == "" {
+		own.Protocol = resolveProtocol(own.Endpoint)
+	}
+	if own.Signal == "" {
+		own.Signal = defaultSignal
+	}
+	if own.Timeout == 0 {
+		own.Timeout = defaultTimeout
+	}
+	if own.Compression == "" {
+		own.Compression = defaultCompression
+	}
+	if own.MaxBodyBytes <= 0 {
+		own.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if err := own.validateShape(); err != nil {
 		return Settings{}, err
 	}
-	if err := validateTenantEndpoint(s.Endpoint); err != nil {
+	if err := validateTenantEndpoint(own.Endpoint); err != nil {
 		return Settings{}, err
 	}
-	s.guarded = true
-	return s, nil
+	own.guarded = true
+	return own, nil
 }
 
 // validateTenantEndpoint rejects, at write time and without any lookup, the
