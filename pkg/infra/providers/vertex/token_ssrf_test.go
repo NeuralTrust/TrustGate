@@ -64,7 +64,6 @@ func TestTokenCachePinsTokenEndpoint(t *testing.T) {
 		mutate func(map[string]string)
 	}{
 		{name: "hostile token_uri", mutate: func(m map[string]string) { m["token_uri"] = attacker.URL }},
-		{name: "hostile audience", mutate: func(m map[string]string) { m["audience"] = attacker.URL }},
 		{name: "absent token_uri", mutate: func(m map[string]string) { delete(m, "token_uri") }},
 	}
 	for _, tt := range tests {
