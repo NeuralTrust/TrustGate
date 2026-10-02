@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard/netguardtest"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +66,12 @@ func TestTenantSettings_LiteralDSNShape(t *testing.T) {
 		{"service file", "service=prod", true},
 		{"unix socket url", "postgres://u:p@%2Fvar%2Frun%2Fpostgresql/app", true},
 		{"unix socket keyword", "host=/var/run/postgresql user=u", true},
+		{"quote-adjacent sslrootcert", "host=db.example.com password='x'sslrootcert=/etc/hostname", true},
+		{"quote-adjacent sslkey after user", "host=db.example.com user='u'sslkey=/etc/hostname", true},
+		{"upper-case key", "host=db.example.com SSLROOTCERT=/etc/hostname", true},
+		{"url form sslcert", "postgres://u:p@db.example.com/app?SslCert=/etc/hostname", true},
+		{"unknown runtime parameter", "postgres://u:p@db.example.com/app?options=-c%20x", true},
+		{"unix socket fallback host", "postgres://u:p@db.example.com,%2Fvar%2Frun%2Fpostgresql/app", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -109,4 +116,75 @@ func TestTenantSettings_LiteralDSNDialIsGuarded(t *testing.T) {
 	_, err = tpl.WithSettings(settings)
 	require.Error(t, err, "the stub is not a database, so the build still fails")
 	require.NotZero(t, accepted.Load())
+}
+
+// A tenant DSN without a password must not pick up the operator's from the
+// environment or a passfile, or a host the tenant owns could collect it.
+func TestParseTenantDSN_DoesNotInheritOperatorCredentials(t *testing.T) {
+	t.Setenv("PGPASSWORD", "operator-secret")
+
+	conf, err := parseTenantDSN("postgres://u@db.example.com/app")
+	require.NoError(t, err)
+	require.Empty(t, conf.ConnConfig.Password)
+
+	conf, err = parseTenantDSN("host=db.example.com user=u password='it\\'s'")
+	require.NoError(t, err)
+	require.Equal(t, "it's", conf.ConnConfig.Password, "a password the tenant wrote is kept")
+
+	conf, err = parseTenantDSN("postgres://u:mine@db.example.com/app")
+	require.NoError(t, err)
+	require.Equal(t, "mine", conf.ConnConfig.Password)
+}
+
+// A tenant exporter with no settings is the operator's own database (existing
+// behaviour); it must not be dialled through the tenant guard.
+func TestTenantSettings_NoDSNStaysOnTheOperatorPath(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lis.Close() })
+	var accepted atomic.Int32
+	go func() {
+		for {
+			c, aerr := lis.Accept()
+			if aerr != nil {
+				return
+			}
+			accepted.Add(1)
+			_ = c.Close()
+		}
+	}()
+	t.Setenv("SENSIBLE_PG_DSN", fmt.Sprintf("postgres://u:p@%s/app?sslmode=disable", lis.Addr().String()))
+	netguardtest.Deny(t)
+
+	_, err = NewTemplate(testLogger(), nil).WithTenantSettings(map[string]interface{}{})
+	require.Error(t, err, "the stub is not a database")
+	require.NotErrorIs(t, err, netguard.ErrBlockedDestination)
+	require.NotZero(t, accepted.Load(), "the operator DSN must reach the dial")
+}
+
+func TestTenantSettings_KeyCaseDoesNotHideOperatorOnlySettings(t *testing.T) {
+	netguardtest.Deny(t)
+	tpl := NewTemplate(testLogger(), nil)
+	for _, key := range []string{"dsn_env", "Dsn_Env", "DSN_ENV"} {
+		require.ErrorContains(t, tpl.ValidateTenantConfig(map[string]interface{}{key: "DATABASE_URL"}), "dsn_env is an operator setting", key)
+	}
+	for _, key := range []string{"dsn", "DSN", "Dsn"} {
+		require.Error(t, tpl.ValidateTenantConfig(map[string]interface{}{key: "host=h sslrootcert=/etc/hostname"}), key)
+	}
+}
+
+// The refusal must come from the key allow-list, before pgx touches a file: a
+// path that happens to exist (or not) must make no difference.
+func TestParseTenantDSN_FileKeysAreRejectedByTheAllowListNotByTheFileSystem(t *testing.T) {
+	for _, dsn := range []string{
+		"host=db.example.com password='x'sslrootcert=/etc/hosts",
+		"host=db.example.com password='x'sslrootcert=/does/not/exist",
+		"host=db.example.com sslkey=/does/not/exist",
+		"postgres://u:p@db.example.com/app?sslcert=/does/not/exist",
+		"postgres://u:p@db.example.com/app?passfile=/does/not/exist",
+		"service=prod",
+	} {
+		_, err := parseTenantDSN(dsn)
+		require.ErrorContains(t, err, "ConnStringAllowedKeys", dsn)
+	}
 }

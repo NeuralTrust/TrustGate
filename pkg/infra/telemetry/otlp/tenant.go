@@ -73,18 +73,42 @@ func (t *Template) tenantSettings(raw map[string]interface{}) (Settings, error) 
 	if netguard.AllowPrivate() {
 		return s, s.validate()
 	}
+	// Provenance comes from the decoded value: mapstructure matches "Endpoint"
+	// and "ENDPOINT" too, so a lookup of the lowercase key in raw would miss them.
+	supplied, err := decodeSettings(raw)
+	if err != nil {
+		return Settings{}, err
+	}
+	if supplied.TLS != nil && (supplied.TLS.CAFile != "" || supplied.TLS.CertFile != "" || supplied.TLS.KeyFile != "") {
+		return Settings{}, errTenantTLSFiles
+	}
+	if strings.TrimSpace(supplied.Endpoint) == "" {
+		// The endpoint is the operator's collector, so everything that decides
+		// how it is reached is the operator's too: a tenant must not add
+		// headers to it, turn TLS off, skip verification or switch protocol.
+		// Compression, timeout and body limit are the tenant's to tune.
+		inherited, err := parseSettings(nil, t.envCfg)
+		if err != nil {
+			return Settings{}, err
+		}
+		if supplied.Compression != "" {
+			inherited.Compression = supplied.Compression
+		}
+		if supplied.Timeout != 0 {
+			inherited.Timeout = supplied.Timeout
+		}
+		if supplied.MaxBodyBytes > 0 {
+			inherited.MaxBodyBytes = supplied.MaxBodyBytes
+		}
+		return inherited, inherited.validateShape()
+	}
 	if err := s.validateShape(); err != nil {
 		return Settings{}, err
 	}
-	if s.TLS != nil && (s.TLS.CAFile != "" || s.TLS.CertFile != "" || s.TLS.KeyFile != "") {
-		return Settings{}, errTenantTLSFiles
+	if err := validateTenantEndpoint(s.Endpoint); err != nil {
+		return Settings{}, err
 	}
-	if endpoint, _ := raw["endpoint"].(string); strings.TrimSpace(endpoint) != "" {
-		if err := validateTenantEndpoint(s.Endpoint); err != nil {
-			return Settings{}, err
-		}
-		s.guarded = true
-	}
+	s.guarded = true
 	return s, nil
 }
 

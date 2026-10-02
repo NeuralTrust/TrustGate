@@ -95,18 +95,9 @@ type Settings struct {
 // parseSettings decodes raw gateway settings, applies the env fallback
 // (settings win over env), then fills defaults. Unknown keys are ignored.
 func parseSettings(raw map[string]interface{}, env config.OTLPConfig) (Settings, error) {
-	var s Settings
-	if len(raw) > 0 {
-		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-			DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
-			Result:     &s,
-		})
-		if err != nil {
-			return Settings{}, fmt.Errorf("otlp: %w", err)
-		}
-		if err := decoder.Decode(raw); err != nil {
-			return Settings{}, fmt.Errorf("otlp: invalid settings: %w", err)
-		}
+	s, err := decodeSettings(raw)
+	if err != nil {
+		return Settings{}, err
 	}
 
 	if s.Endpoint == "" {
@@ -142,6 +133,27 @@ func parseSettings(raw map[string]interface{}, env config.OTLPConfig) (Settings,
 	}
 	if s.MaxBodyBytes <= 0 {
 		s.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	return s, nil
+}
+
+// decodeSettings decodes the raw map only. mapstructure matches keys
+// case-insensitively, so every decision about what a tenant supplied has to be
+// made on the decoded struct, never on a lookup in the raw map.
+func decodeSettings(raw map[string]interface{}) (Settings, error) {
+	var s Settings
+	if len(raw) == 0 {
+		return s, nil
+	}
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
+		Result:     &s,
+	})
+	if err != nil {
+		return Settings{}, fmt.Errorf("otlp: %w", err)
+	}
+	if err := decoder.Decode(raw); err != nil {
+		return Settings{}, fmt.Errorf("otlp: invalid settings: %w", err)
 	}
 	return s, nil
 }
