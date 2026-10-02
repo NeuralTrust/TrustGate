@@ -38,9 +38,9 @@ type client struct {
 func newClient() *client {
 	// endpoint is a policy setting a tenant controls, so the transport comes
 	// from the guarded provider pool: it refuses private, loopback and
-	// link-local destinations at dial time, redirects included. The pooled
-	// client is shared under its key, so wrap its transport in our own client
-	// instead of mutating it.
+	// link-local destinations at dial time, redirects included. Only the
+	// transport is borrowed: the client needs its own CheckRedirect, which the
+	// pool's client does not set.
 	pooled := providers.NewHTTPClientPool().Get(PluginName, defaultTimeout)
 	return &client{http: &http.Client{
 		Transport: pooled.Transport,
