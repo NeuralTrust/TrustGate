@@ -32,6 +32,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/common/strutil"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -575,9 +576,39 @@ func (p *authProxy) captureSubject(ctx context.Context, cfg *authdomain.OAuth2Co
 		if claim == "" {
 			claim = "sub"
 		}
-		return coerceClaim(info[claim]), nil
+		return userInfoSubject(info[claim])
 	}
 	return subjectFromToken(token), nil
+}
+
+// maxSubjectLen bounds a subject taken from a userinfo response.
+const maxSubjectLen = 256
+
+// userInfoSubject extracts the subject from a userinfo claim. The endpoint is
+// tenant-chosen and its answer becomes the session subject, so anything that is
+// not a plain identifier is refused instead of being stringified: an object or
+// array rendered with %v would copy an arbitrary part of the response into the
+// session. Numbers are accepted because several providers (GitHub's id) use
+// them as identifiers; absence stays an empty subject, as before.
+func userInfoSubject(v any) (string, error) {
+	var subject string
+	switch t := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		subject = t
+	case json.Number, float64, float32, int, int64:
+		subject = coerceClaim(t)
+	default:
+		return "", errors.New("oauth: userinfo subject claim is not a string or number")
+	}
+	if subject == "" {
+		return "", nil
+	}
+	if !strutil.IsBoundedPrintable(subject, maxSubjectLen) {
+		return "", errors.New("oauth: userinfo subject claim is empty, too long or not printable")
+	}
+	return subject, nil
 }
 
 func subjectFromClaims(claims jwt.MapClaims, claim string) string {
@@ -609,7 +640,9 @@ func coerceClaim(v any) string {
 	case bool:
 		return strconv.FormatBool(t)
 	default:
-		return fmt.Sprintf("%v", v)
+		// Objects and arrays have no scalar form; stringifying them would
+		// copy arbitrary upstream JSON into a subject or account label.
+		return ""
 	}
 }
 
