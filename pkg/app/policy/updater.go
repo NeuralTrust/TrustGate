@@ -22,8 +22,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -166,7 +166,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	// this keys on the transition and not on the shape of the input. Every
 	// other write validates as always: editing a policy that is already paused
 	// must not store junk, and enabling goes through validatePlugin again.
-	if !wasEnabled || existing.Enabled {
+	// A pause that also changes the slug validates too: the new slug is input,
+	// not a row the gateway already holds.
+	if !wasEnabled || existing.Enabled || slugChanged {
 		if err := validatePlugin(
 			u.registry,
 			existing.Slug,
@@ -176,6 +178,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 			previousForWrite,
 			in.Settings != nil || slugChanged,
 		); err != nil {
+			return nil, err
+		}
+	}
+	if slugChanged && existing.MCPWide {
+		if err := validateMCPWidePlugin(u.registry, existing.Slug); err != nil {
 			return nil, err
 		}
 	}
@@ -228,6 +235,10 @@ func (u *updater) validateScopeAfterPatch(ctx context.Context, in UpdateInput, e
 // consumer is refused, but attaching it unscoped and then setting the scope is
 // not — the same end state, and a policy that runs nowhere on that consumer
 // while its screen says otherwise.
+//
+// It also runs for a global policy, whose links loadPolicies ignores: demoting
+// it brings them back into play, and the demotion checks nothing. An MCP-wide
+// policy holds no links, since its promotion removed them.
 func (u *updater) validateScopeReachesConsumers(ctx context.Context, p *domain.Policy) error {
 	if p.MCPScope == nil || len(p.ConsumerIDs) == 0 || u.consumers == nil {
 		return nil

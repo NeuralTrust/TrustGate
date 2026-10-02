@@ -185,14 +185,68 @@ func TestDataFinder_FindByGateway_GroupOnlyScopeRunsOnItsOwnConsumerOnly(t *test
 	assert.False(t, containsPolicyID(rcX.Policies, byRegistry.ID),
 		"a registry scope reaches no non-MCP plane")
 
-	// The policy with no consumers and no global is absent because loadPolicies
-	// routes it neither to globals nor to byConsumer. Nothing in the inert path
-	// filters it out, and nothing should: if this assertion ever needs a new
-	// filter to hold, the routing changed underneath it.
+	// The policy with no consumers and no placement flag is absent because
+	// loadPolicies routes it neither to a gateway-wide bucket nor to byConsumer.
+	// Nothing in the inert path filters it out, and nothing should: if this
+	// assertion ever needs a new filter to hold, the routing changed underneath
+	// it.
 	for _, rc := range []appconsumer.RoutableConsumer{rcX, rcY} {
 		assert.False(t, containsPolicyID(rc.Policies, unrouted.ID))
 		assert.False(t, containsPolicyID(rc.ScopedPolicies, unrouted.ID),
 			"a policy with no consumers and no global never reaches a consumer at all")
+	}
+}
+
+// An MCP-wide policy never enters an LLM or A2A chain, whatever its scope and
+// even through a link to that consumer. The group-only row is the one a global
+// policy would carry across, inert, when its plugin is inert-safe.
+func TestDataFinder_FindByGateway_MCPWidePolicyNeverReachesANonMCPChain(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		scope *policydomain.MCPScope
+	}{
+		{name: "group-only scope", scope: groupScope("finance")},
+		{name: "destination scope", scope: &policydomain.MCPScope{RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()}}},
+		{name: "no scope"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			llm := routableConsumer(gwID, nil)
+			a2a := routableConsumer(gwID, nil)
+			a2a.Type = domain.TypeA2A
+			mcpCons := mcpRoutableConsumer(gwID)
+			h := newInertHarness(t)
+
+			mcpWide := inertPolicy(gwID, "W", inertSafeSlug, tc.scope, llm.ID, a2a.ID)
+			mcpWide.SetMCPWide(true)
+			global := inertPolicy(gwID, "G", inertSafeSlugB, groupScope("finance"))
+			global.SetGlobal(true)
+
+			data := loadInert(t, gwID, h.reg, newTestLogger(),
+				[]*domain.Consumer{llm, a2a, mcpCons}, []*policydomain.Policy{mcpWide, global})
+
+			for _, c := range []*domain.Consumer{llm, a2a} {
+				rc := consumerByID(t, data, c.ID)
+				assert.Equal(t, []string{"G"}, h.executedPlan(rc.PolicyPlan),
+					"%s: the global group policy crosses and the MCP-wide one does not", c.Type)
+				assert.False(t, containsPolicyID(rc.Policies, mcpWide.ID), "%s: Policies", c.Type)
+				assert.False(t, containsPolicyID(rc.ScopedPolicies, mcpWide.ID), "%s: ScopedPolicies", c.Type)
+				assert.Nil(t, rc.MCPPlans, "%s: MCPPlans", c.Type)
+			}
+
+			rcMCP := consumerByID(t, data, mcpCons.ID)
+			if tc.scope == nil {
+				assert.True(t, containsPolicyID(rcMCP.Policies, mcpWide.ID),
+					"the MCP consumer, which no link names, runs it in its base chain")
+				assert.Equal(t, []string{"W"}, h.executedPlan(rcMCP.PolicyPlan))
+				return
+			}
+			assert.True(t, containsPolicyID(rcMCP.ScopedPolicies, mcpWide.ID),
+				"the MCP consumer, which no link names, selects it by scope")
+			assert.False(t, containsPolicyID(rcMCP.Policies, mcpWide.ID))
+		})
 	}
 }
 

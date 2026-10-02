@@ -28,7 +28,7 @@ import (
 )
 
 const lockedPolicyColumns = `
-		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.mcp_scope,
+		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.mcp_wide, p.mcp_scope,
 		       COALESCE((SELECT array_agg(cp.consumer_id ORDER BY cp.consumer_id)
 		                   FROM consumer_policy cp WHERE cp.policy_id = p.id), '{}')::uuid[] AS consumer_ids`
 
@@ -106,7 +106,7 @@ func scanLockedPolicy(s rowScanner) (*domain.Policy, error) {
 	var scopeRaw []byte
 	var consumerIDs []uuid.UUID
 	if err := s.Scan(
-		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &scopeRaw, &consumerIDs,
+		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.MCPWide, &scopeRaw, &consumerIDs,
 	); err != nil {
 		return nil, err
 	}

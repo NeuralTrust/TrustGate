@@ -19,7 +19,10 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	policymocks "github.com/NeuralTrust/TrustGate/pkg/app/policy/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -455,12 +458,12 @@ func TestScoper_SetGlobal_RefusesAnOccupiedAllTrafficLevel(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	scoper := apppolicy.NewScoper(repo, occupiedLevels(t, occupant), newCacheManager(),
+	scoper := apppolicy.NewScoper(repo, occupiedLevels(t, occupant), pluginmocks.NewRegistry(t), newCacheManager(),
 		cachemocks.NewEventPublisher(t), newTestLogger(), nil)
 
 	_, err := scoper.SetGlobal(context.Background(), existing.GatewayID, existing.ID)
 	require.ErrorIs(t, err, domain.ErrPolicyLevelConflict)
-	repo.AssertNotCalled(t, "SetGlobal", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "SetGlobal", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // Demoting only releases levels, so it must not be refused by a guard that
@@ -474,13 +477,106 @@ func TestScoper_UnsetGlobal_IsNotGuarded(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().SetGlobal(mock.Anything, existing.GatewayID, existing.ID, false).Return(nil).Once()
+	repo.EXPECT().SetGlobal(mock.Anything, existing.GatewayID, existing.ID, false, time.Time{}).
+		Return(domain.Placement{UpdatedAt: time.Now()}, nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
-	scoper := apppolicy.NewScoper(repo, occupiedLevels(t, occupant), newCacheManager(), publisher, newTestLogger(), nil)
+	scoper := apppolicy.NewScoper(repo, occupiedLevels(t, occupant), pluginmocks.NewRegistry(t), newCacheManager(),
+		publisher, newTestLogger(), nil)
 
 	_, err := scoper.UnsetGlobal(context.Background(), existing.GatewayID, existing.ID)
 	require.NoError(t, err)
+}
+
+// An MCP-wide policy takes the same all-consumers cell as a global one, so a
+// second MCP-wide policy of the plugin on overlapping groups has nowhere to go.
+func TestScoper_SetMCPWide_RefusesAnOverlappingMCPWideOccupant(t *testing.T) {
+	t.Parallel()
+	existing := existingPolicy(t)
+	existing.MCPScope = &domain.MCPScope{Groups: []string{"Finanzas", "Marketing"}}
+	occupant := groupScopedPolicy(existing.GatewayID, existing.Slug, "Finanzas")
+	occupant.Name = "finance guard"
+	occupant.MCPWide = true
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	scoper := apppolicy.NewScoper(repo, occupiedLevels(t, occupant), newScopedRegistryMock(t, appplugins.ProtocolMCP),
+		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+
+	_, err := scoper.SetMCPWide(context.Background(), existing.GatewayID, existing.ID)
+	require.ErrorIs(t, err, domain.ErrPolicyLevelConflict)
+	assert.Contains(t, err.Error(), "finance guard")
+	assert.Contains(t, err.Error(), "consumer=all group=Finanzas")
+	repo.AssertNotCalled(t, "SetMCPWide", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// The protocol check comes before the guard: a plugin that cannot run on MCP
+// is refused as such, without taking the lock, even where its level is also
+// taken.
+func TestScoper_SetMCPWide_RefusesTheProtocolBeforeTheLevel(t *testing.T) {
+	t.Parallel()
+	existing := existingPolicy(t)
+	occupant := unscopedPolicy(existing.GatewayID, existing.Slug)
+	occupant.MCPWide = true
+	lock := newFakeLevelLock(occupant)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	scoper := apppolicy.NewScoper(repo, apppolicy.NewLevelGuard(lock), newScopedRegistryMock(t, appplugins.ProtocolLLM),
+		newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+
+	_, err := scoper.SetMCPWide(context.Background(), existing.GatewayID, existing.ID)
+	require.ErrorIs(t, err, domain.ErrMCPWideUnsupported)
+	require.NotErrorIs(t, err, domain.ErrPolicyLevelConflict)
+	assert.Zero(t, lock.callCount(), "a refused protocol never reaches the guard")
+	repo.AssertNotCalled(t, "SetMCPWide", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Swapping global for MCP-wide is one write and one check, and the policy's own
+// row, still global in the store, is not an occupant it collides with.
+func TestScoper_SetMCPWide_SwapIsGuardedOnce(t *testing.T) {
+	t.Parallel()
+	existing := existingPolicy(t)
+	existing.Global = true
+	lock := newFakeLevelLock(existing)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().SetMCPWide(mock.Anything, existing.GatewayID, existing.ID, true, existing.UpdatedAt).
+		Return(domain.Placement{MCPWide: true, UpdatedAt: time.Now()}, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+	scoper := apppolicy.NewScoper(repo, apppolicy.NewLevelGuard(lock), newScopedRegistryMock(t, appplugins.ProtocolMCP),
+		newCacheManager(), publisher, newTestLogger(), nil)
+
+	got, err := scoper.SetMCPWide(context.Background(), existing.GatewayID, existing.ID)
+	require.NoError(t, err)
+	assert.True(t, got.MCPWide)
+	assert.False(t, got.Global)
+	assert.Equal(t, 1, lock.callCount(), "the swap is checked exactly once")
+}
+
+func TestScoper_UnsetMCPWide_IsNotGuarded(t *testing.T) {
+	t.Parallel()
+	existing := existingPolicy(t)
+	existing.MCPWide = true
+	occupant := unscopedPolicy(existing.GatewayID, existing.Slug)
+	occupant.MCPWide = true
+	lock := newFakeLevelLock(occupant)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().SetMCPWide(mock.Anything, existing.GatewayID, existing.ID, false, time.Time{}).
+		Return(domain.Placement{UpdatedAt: time.Now()}, nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
+	scoper := apppolicy.NewScoper(repo, apppolicy.NewLevelGuard(lock), pluginmocks.NewRegistry(t), newCacheManager(),
+		publisher, newTestLogger(), nil)
+
+	got, err := scoper.UnsetMCPWide(context.Background(), existing.GatewayID, existing.ID)
+	require.NoError(t, err)
+	assert.False(t, got.MCPWide)
+	assert.Zero(t, lock.callCount(), "a demotion takes no lock")
 }
 
 // The duplicate writes through the creator, so it carries the creator's guard
