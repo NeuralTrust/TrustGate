@@ -144,6 +144,14 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read: the embedding provider key, "embedding.api_key" (see
+// embeddingConfig). There is no credentials.api_key variant in this plugin's
+// config; only embedding_provider and embedding_model have top-level aliases.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"embedding.api_key"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

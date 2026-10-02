@@ -104,6 +104,16 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read: the AWS credentials nested under "credentials".
+func (p *Plugin) CredentialPaths() []string {
+	return []string{
+		"credentials.access_key_id",
+		"credentials.secret_access_key",
+		"credentials.session_token",
+	}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

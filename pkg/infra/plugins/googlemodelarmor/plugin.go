@@ -126,6 +126,13 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read. impersonate_service_account is deliberately absent:
+// it is an email, useless without the customer's own IAM grant.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"credentials.service_account_json"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {

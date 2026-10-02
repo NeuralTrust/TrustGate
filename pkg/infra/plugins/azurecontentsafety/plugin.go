@@ -112,6 +112,12 @@ func (p *Plugin) ValidateSettingsWrite(settings, _ map[string]any) error {
 	return nil
 }
 
+// CredentialPaths declares the settings paths that hold secrets, so the policy
+// API masks them on read.
+func (p *Plugin) CredentialPaths() []string {
+	return []string{"api_key"}
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
