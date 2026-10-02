@@ -37,12 +37,11 @@ const (
 )
 
 // allowedTokenURIs are the token_uri values Google itself writes into key files.
-// The legacy and v4 forms appear in older downloaded keys. They are accepted so
+// The legacy form appears in older downloaded keys. They are accepted so
 // those keys keep working, but the request is still sent to TokenURL.
 var allowedTokenURIs = map[string]struct{}{
 	TokenURL: {},
 	"https://accounts.google.com/o/oauth2/token": {},
-	"https://www.googleapis.com/oauth2/v4/token": {},
 }
 
 type keyFile struct {
