@@ -204,6 +204,22 @@ func ValidateCredentialSettings(settings map[string]any, paths []string) error {
 	return nil
 }
 
+// HasCredentials reports whether any declared path holds a value (a non-empty
+// string, or any non-string value, which is also something stored there).
+func HasCredentials(settings map[string]any, paths []string) bool {
+	for _, path := range paths {
+		v, ok := pathGet(settings, strings.Split(path, "."))
+		if !ok || v == nil {
+			continue
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func pathGet(m map[string]any, parts []string) (any, bool) {
 	var cur any = m
 	for _, part := range parts {
