@@ -46,7 +46,7 @@ func TestValidateMCPScopePlugin_RejectsEveryExternalGuardrail(t *testing.T) {
 	plugins := []appplugins.Plugin{
 		azurecontentsafety.New(adapterRegistry, nil),
 		bedrockguardrail.New(adapterRegistry, nil),
-		googlemodelarmor.New(adapterRegistry, "", time.Second, nil),
+		googlemodelarmor.New(adapterRegistry, "", time.Second, true, nil),
 		openaimoderation.New(adapterRegistry, "", time.Second, nil),
 	}
 	for _, p := range plugins {
@@ -80,7 +80,7 @@ func TestValidateMCPScopePlugin_ExternalGuardrailsDeclareNoMCPProtocol(t *testin
 	plugins := []appplugins.Plugin{
 		azurecontentsafety.New(adapterRegistry, nil),
 		bedrockguardrail.New(adapterRegistry, nil),
-		googlemodelarmor.New(adapterRegistry, "", time.Second, nil),
+		googlemodelarmor.New(adapterRegistry, "", time.Second, true, nil),
 		openaimoderation.New(adapterRegistry, "", time.Second, nil),
 	}
 	for _, p := range plugins {

@@ -82,6 +82,9 @@ func (p *Plugin) InspectSegment(
 	if !cfg.Streaming.Enabled {
 		return segmentAllow(), nil
 	}
+	if err := p.checkIdentity(cfg); err != nil {
+		return nil, appplugins.WrapExternalStreamFailure(PluginName, appplugins.FailureConfigInvalid, "", err)
+	}
 	if seg.Closing {
 		p.recordStreamOutcome(ctx, in, cfg, seg)
 		return segmentAllow(), nil

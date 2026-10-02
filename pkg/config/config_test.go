@@ -241,7 +241,11 @@ func TestGetModelArmorConfig(t *testing.T) {
 		if err := os.Unsetenv("MODEL_ARMOR_TIMEOUT"); err != nil {
 			t.Fatalf("unset MODEL_ARMOR_TIMEOUT: %v", err)
 		}
+		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "")
 		cfg := getModelArmorConfig()
+		if cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity must default to false: the pod identity is shared across tenants")
+		}
 		if cfg.BaseURL != "" {
 			t.Errorf("BaseURL = %q, want empty so the client derives the regional host per call", cfg.BaseURL)
 		}
@@ -253,7 +257,11 @@ func TestGetModelArmorConfig(t *testing.T) {
 	t.Run("explicit values", func(t *testing.T) {
 		t.Setenv("MODEL_ARMOR_BASE_URL", "https://modelarmor.example.internal")
 		t.Setenv("MODEL_ARMOR_TIMEOUT", "5s")
+		t.Setenv("MODEL_ARMOR_ALLOW_AMBIENT_IDENTITY", "true")
 		cfg := getModelArmorConfig()
+		if !cfg.AllowAmbientIdentity {
+			t.Error("AllowAmbientIdentity = false, want true")
+		}
 		if cfg.BaseURL != "https://modelarmor.example.internal" {
 			t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://modelarmor.example.internal")
 		}

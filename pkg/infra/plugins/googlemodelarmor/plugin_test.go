@@ -76,7 +76,8 @@ func (s *modelArmorStub) path() string {
 
 func pluginWithStub(s *modelArmorStub) *Plugin {
 	return &Plugin{
-		registry: adapter.NewRegistry(),
+		registry:             adapter.NewRegistry(),
+		allowAmbientIdentity: true,
 		clients: &clientCache{
 			build: func(modelArmorCredentials) (*client, error) {
 				return newClientWithTokenSource(s.server.URL, time.Second, staticTokenSource("test-token", nil)), nil
@@ -91,7 +92,8 @@ func pluginWithStub(s *modelArmorStub) *Plugin {
 // tests use a recordingClient with a static err.
 func pluginWithClientError(err error) *Plugin {
 	return &Plugin{
-		registry: adapter.NewRegistry(),
+		registry:             adapter.NewRegistry(),
+		allowAmbientIdentity: true,
 		clients: &clientCache{
 			build: func(modelArmorCredentials) (*client, error) {
 				return newClientWithTokenSource("https://example.invalid", time.Second, staticTokenSource("", err)), nil
@@ -643,7 +645,7 @@ func TestExecuteUnknownStagePassThrough(t *testing.T) {
 
 func TestPluginContract(t *testing.T) {
 	t.Parallel()
-	p := New(adapter.NewRegistry(), "", 0, nil)
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	if p.Name() != PluginName {
 		t.Fatalf("Name = %q, want %q", p.Name(), PluginName)
 	}
@@ -672,7 +674,7 @@ func TestPluginContract(t *testing.T) {
 
 func TestValidateConfigRejectsMissingProject(t *testing.T) {
 	t.Parallel()
-	p := New(adapter.NewRegistry(), "", 0, nil)
+	p := New(adapter.NewRegistry(), "", 0, true, nil)
 	set := modelArmorSettings()
 	delete(set, "project")
 	if err := p.ValidateConfig(set); err == nil {
@@ -686,7 +688,8 @@ func TestValidateConfigRejectsMissingProject(t *testing.T) {
 // path, not transport.
 func pluginWithClientBuildError(err error) *Plugin {
 	return &Plugin{
-		registry: adapter.NewRegistry(),
+		registry:             adapter.NewRegistry(),
+		allowAmbientIdentity: true,
 		clients: &clientCache{
 			build: func(modelArmorCredentials) (*client, error) { return nil, err },
 		},
@@ -731,7 +734,7 @@ func TestExecuteClientBuildErrorObserveFailsOpen(t *testing.T) {
 
 func TestExecuteParseConfigErrorEnforceFailsClosed(t *testing.T) {
 	t.Parallel()
-	p := New(adapter.NewRegistry(), "", time.Second, nil)
+	p := New(adapter.NewRegistry(), "", time.Second, true, nil)
 	event, span := newStreamEvent()
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIRequest()), nil)
