@@ -17,6 +17,7 @@ package providers
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -124,6 +125,11 @@ type VertexOptions struct {
 	BaseURL  string `mapstructure:"base_url"`
 }
 
+// vertexLocationPattern matches a GCP region (us-central1, europe-west4), a
+// multi-region (us, eu) or global. It has no dot, slash, colon, '@', '#', '?'
+// or '%', so it cannot change the host it is put in.
+var vertexLocationPattern = regexp.MustCompile(`^[a-z]+(-[a-z]+)*[0-9]*$`)
+
 func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	var opts VertexOptions
 	if len(options) > 0 {
@@ -142,6 +148,12 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	}
 	if opts.Location == "" {
 		return VertexOptions{}, fmt.Errorf("vertex: provider_options.location is required")
+	}
+	// The location is interpolated into the HOST of a credentialed request, so a value that can change the host is a token leak, not a typo.
+	if !vertexLocationPattern.MatchString(opts.Location) {
+		return VertexOptions{}, fmt.Errorf(
+			"vertex: provider_options.location must be a GCP region or multi-region such as us-central1, eu or global",
+		)
 	}
 	if opts.Version == "" {
 		opts.Version = vertexDefaultAPIVersion
