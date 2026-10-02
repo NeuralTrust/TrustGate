@@ -410,11 +410,18 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 		}
 		return out, nil
 	}
-	if !errors.Is(err, commonerrors.ErrCorruptData) || errors.Is(err, errUnreadablePolicies) {
+	if !errors.Is(err, commonerrors.ErrCorruptData) || errors.Is(err, ErrUnreadablePolicies) {
 		// A mass of unreadable policies is systemic, not one tenant's problem:
 		// the per-gateway fallback would skip them silently and publish a
 		// snapshot without their guardrails.
 		return nil, err
+	}
+	// The bulk scans run in one errgroup, so a corrupt registries row can cancel
+	// the policies scan before its check ran. Re-run that check on its own, or the
+	// per-gateway fallback below (whose ListByGateway skips unreadable rows with no
+	// breaker) would publish a snapshot without the guardrails.
+	if _, perr := c.listPolicies(ctx); perr != nil {
+		return nil, perr
 	}
 	c.logger.Warn("bulk snapshot collect hit corrupt persisted config; falling back to per-gateway collect",
 		slog.String("component", component),
@@ -448,14 +455,8 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		return err
 	})
 	g.Go(func() (err error) {
-		var total int
-		policies, total, err = listAllCounted(gctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
-			return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
-		})
-		if err != nil {
-			return err
-		}
-		return checkUnreadablePolicies(len(policies), total)
+		policies, err = c.listPolicies(gctx)
+		return err
 	})
 	g.Go(func() (err error) {
 		auths, err = listAll(gctx, "auths", func(ctx context.Context, page int) ([]*authdomain.Auth, int, error) {
@@ -521,39 +522,72 @@ func groupByGateway[T any](
 // deploy that changed how settings, stages or mcp_scope decode, and publishing a
 // snapshot without those policies would drop their guardrails on every data
 // plane. Failing the compile instead leaves running pods on their last known
-// good snapshot.
+// good snapshot. The share is global across all tenants, not per tenant. On a
+// small table the share rounds down to nothing, so one row is always tolerated
+// (see checkUnreadablePolicies).
 const maxUnreadablePolicyPercent = 10
 
-// errUnreadablePolicies marks the mass-skip failure. It always travels wrapped
+// ErrUnreadablePolicies marks the mass-skip failure. It always travels wrapped
 // together with commonerrors.ErrCorruptData.
-var errUnreadablePolicies = errors.New("too many unreadable policies")
+var ErrUnreadablePolicies = errors.New("too many unreadable policies")
 
 // checkUnreadablePolicies fails when the repository skipped too many of the
 // total rows it matched. Skipped rows are the ones counted by total but missing
-// from the pages.
+// from the pages. The repository counts and selects in separate statements, so a
+// concurrent write can skew skipped slightly; that is accepted. It trips when no
+// row is readable, or when skipped exceeds max(1, total*percent/100): the floor
+// keeps a small install from failing on a single bad row (1 of 5 is skipped, 2 of
+// 5 trips).
 func checkUnreadablePolicies(readable, total int) error {
 	skipped := total - readable
 	if skipped <= 0 {
 		return nil
 	}
-	if readable == 0 || skipped*100 > total*maxUnreadablePolicyPercent {
-		return fmt.Errorf("configsnapshot: %d of %d policies are unreadable (limit %d%%); refusing to publish a snapshot without their guardrails: %w: %w",
-			skipped, total, maxUnreadablePolicyPercent, errUnreadablePolicies, commonerrors.ErrCorruptData)
+	limit := max(1, total*maxUnreadablePolicyPercent/100)
+	if readable == 0 || skipped > limit {
+		return fmt.Errorf("configsnapshot: %d of %d policies are unreadable (limit %d); refusing to publish a snapshot without their guardrails: %w: %w",
+			skipped, total, limit, ErrUnreadablePolicies, commonerrors.ErrCorruptData)
 	}
 	return nil
 }
 
-// listAll pages one entity table to exhaustion via fetch(page).
-func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, error) {
-	out, _, err := listAllCounted(ctx, entity, fetch)
-	return out, err
+// listPolicies pages every policy and applies the mass-skip breaker.
+func (c *Compiler) listPolicies(ctx context.Context) ([]*policydomain.Policy, error) {
+	policies, total, err := listAllSkipping(ctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
+		return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUnreadablePolicies(len(policies), total); err != nil {
+		return nil, err
+	}
+	return policies, nil
 }
 
-// listAllCounted is listAll that also returns the total the last page reported.
-// A short page does not end the walk while the total says rows remain: a
-// repository may skip rows it cannot read, so a full page can come back short
-// (RUN-1663).
-func listAllCounted[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, int, error) {
+// listAll pages one entity table to exhaustion via fetch(page).
+func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, error) {
+	out := make([]T, 0)
+	for page := 1; ; page++ {
+		items, _, err := fetch(ctx, page)
+		if err != nil {
+			if errors.Is(err, commonerrors.ErrNotFound) {
+				return out, nil
+			}
+			return nil, fmt.Errorf("configsnapshot: list %s: %w", entity, err)
+		}
+		out = append(out, items...)
+		if len(items) < compilerBulkPageSize {
+			return out, nil
+		}
+	}
+}
+
+// listAllSkipping is listAll for a table whose repository skips rows it cannot
+// read (policies, RUN-1663), and also returns the total the last page reported.
+// A full page can then come back short, so a short page ends the walk only once
+// the total is exhausted too.
+func listAllSkipping[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, int, error) {
 	out := make([]T, 0)
 	for page := 1; ; page++ {
 		items, total, err := fetch(ctx, page)
