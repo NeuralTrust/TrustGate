@@ -19,15 +19,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/netguard"
 )
 
 const (
@@ -80,6 +86,9 @@ func newGRPCExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	if s.Compression == compressionGzip {
 		opts = append(opts, otlploggrpc.WithCompressor(compressionGzip))
 	}
+	if s.guarded {
+		opts = append(opts, otlploggrpc.WithDialOption(grpc.WithContextDialer(guardedGRPCDialer)))
+	}
 	if s.Insecure {
 		opts = append(opts, otlploggrpc.WithInsecure())
 	} else if s.TLS != nil {
@@ -111,16 +120,37 @@ func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	} else {
 		opts = append(opts, otlploghttp.WithCompression(otlploghttp.NoCompression))
 	}
-	if s.Insecure {
-		opts = append(opts, otlploghttp.WithInsecure())
-	} else if s.TLS != nil {
-		tlsCfg, err := buildTLSConfig(s.TLS)
-		if err != nil {
+	var tlsCfg *tls.Config
+	if !s.Insecure && s.TLS != nil {
+		var err error
+		if tlsCfg, err = buildTLSConfig(s.TLS); err != nil {
 			return nil, err
 		}
+	}
+	if s.guarded {
+		// WithHTTPClient takes precedence over WithTLSClientConfig, so the TLS
+		// settings are carried by the guarded transport itself.
+		opts = append(opts, otlploghttp.WithHTTPClient(guardedHTTPClient(s.Timeout, tlsCfg)))
+	} else if tlsCfg != nil {
 		opts = append(opts, otlploghttp.WithTLSClientConfig(tlsCfg))
 	}
+	if s.Insecure {
+		opts = append(opts, otlploghttp.WithInsecure())
+	}
 	return otlploghttp.New(ctx, opts...)
+}
+
+// guardedHTTPClient dials only public destinations and carries no proxy, so a
+// redirect or an HTTP_PROXY in the environment cannot route around the guard.
+func guardedHTTPClient(timeout time.Duration, tlsCfg *tls.Config) *http.Client {
+	transport := netguard.NewTransport()
+	transport.Proxy = nil
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: netguard.CheckRedirect}
+}
+
+func guardedGRPCDialer(ctx context.Context, addr string) (net.Conn, error) {
+	return netguard.Shared().DialContext(ctx, "tcp", addr)
 }
 
 func hasScheme(endpoint string) bool {

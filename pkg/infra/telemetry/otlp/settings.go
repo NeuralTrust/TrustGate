@@ -84,6 +84,12 @@ type Settings struct {
 	Timeout      time.Duration     `mapstructure:"timeout"`
 	Compression  string            `mapstructure:"compression"`
 	MaxBodyBytes int               `mapstructure:"max_body_bytes"`
+
+	// guarded is set for tenant-written settings that name their own endpoint:
+	// every connection to it then goes through the netguard dialer. An endpoint
+	// inherited from OTEL_EXPORTER_OTLP_ENDPOINT is the operator's choice (the
+	// in-cluster collector) and stays unguarded.
+	guarded bool
 }
 
 // parseSettings decodes raw gateway settings, applies the env fallback
@@ -196,8 +202,26 @@ func portOf(host string) string {
 	return port
 }
 
-// validate performs structural validation only; it never performs network I/O.
+// validate performs structural validation only; it never performs network I/O
+// beyond checking that operator-written TLS files exist.
 func (s Settings) validate() error {
+	if err := s.validateShape(); err != nil {
+		return err
+	}
+	if s.TLS != nil {
+		for _, file := range []string{s.TLS.CAFile, s.TLS.CertFile, s.TLS.KeyFile} {
+			if file == "" {
+				continue
+			}
+			if _, err := os.Stat(file); err != nil {
+				return fmt.Errorf("otlp: tls file %q: %w", file, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s Settings) validateShape() error {
 	if strings.TrimSpace(s.Endpoint) == "" {
 		return errors.New("otlp: endpoint is required (set settings.endpoint or OTEL_EXPORTER_OTLP_ENDPOINT)")
 	}
@@ -233,14 +257,6 @@ func (s Settings) validate() error {
 	if s.TLS != nil {
 		if (s.TLS.CertFile == "") != (s.TLS.KeyFile == "") {
 			return errors.New("otlp: tls cert_file and key_file must be provided together")
-		}
-		for _, file := range []string{s.TLS.CAFile, s.TLS.CertFile, s.TLS.KeyFile} {
-			if file == "" {
-				continue
-			}
-			if _, err := os.Stat(file); err != nil {
-				return fmt.Errorf("otlp: tls file %q: %w", file, err)
-			}
 		}
 	}
 	return nil

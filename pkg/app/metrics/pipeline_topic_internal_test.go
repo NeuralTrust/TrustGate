@@ -61,6 +61,12 @@ func (f *topicFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, erro
 
 func (f *topicFactory) Validate(telemetrydomain.ExporterConfig) error { return nil }
 
+func (f *topicFactory) ValidateTenant(telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *topicFactory) BuildTenant(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
+	return f.Build(cfg)
+}
+
 func newTopicPipeline(factory *topicFactory, defaults ...telemetrydomain.ExporterConfig) *Pipeline {
 	cache := NewExporterCache(factory, internalTestLogger())
 	return NewPipeline(NewBuilder(adapter.NewRegistry(), stubPricing{}), cache, nil, internalTestLogger(), defaults...)
