@@ -212,6 +212,8 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	return e.idp.Call(idp.context(ctx), principal.Issuer, form)
 }
 
+// The built-in default IdP is not an exchange source today (OAuth2AuthsForGateway
+// is repository-only); trusted is carried so it stays correct if that changes.
 func (c *exchangeClient) context(ctx context.Context) context.Context {
 	return netguard.TrustedIf(ctx, c.trusted)
 }

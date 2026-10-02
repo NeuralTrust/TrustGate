@@ -94,6 +94,8 @@ func TestCheckRedirect(t *testing.T) {
 func TestNewHTTPClientTrustedContextSkipsTheGuardOnlyWhenMarked(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
+	prev := AllowPrivate()
+	t.Cleanup(func() { SetAllowPrivate(prev) })
 	SetAllowPrivate(false)
 	client := NewHTTPClient(time.Second)
 
@@ -110,7 +112,10 @@ func TestNewHTTPClientTrustedContextSkipsTheGuardOnlyWhenMarked(t *testing.T) {
 	if _, err := client.Do(req); !errors.Is(err, ErrBlockedDestination) {
 		t.Fatalf("untrusted request err = %v, want ErrBlockedDestination", err)
 	}
-	if TrustedIf(context.Background(), false).Value(trustedKey{}) != nil {
+	if IsTrusted(TrustedIf(context.Background(), false)) {
 		t.Fatal("TrustedIf(false) must not mark the context")
+	}
+	if IsTrusted(TrustedIf(TrustedIf(context.Background(), true), false)) {
+		t.Fatal("trust must not be sticky: a tenant-scoped call clears an outer operator mark")
 	}
 }
