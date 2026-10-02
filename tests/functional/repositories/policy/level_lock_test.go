@@ -97,7 +97,7 @@ func TestLevelLock_WithSlugLocked_ReadsTheCandidatesOfThatSlugOnly(t *testing.T)
 	}
 
 	var got []*domain.Policy
-	if err := r.WithSlugLocked(ctx, gwID, sameSlug.Slug, excluded.ID,
+	if err := r.WithSlugLocked(ctx, gwID, sameSlug.Slug, excluded.ID, nil,
 		func(_ context.Context, occupants []*domain.Policy) error {
 			got = occupants
 			return nil
@@ -126,7 +126,7 @@ func TestLevelLock_WithSlugLocked_TheWriteJoinsTheTransaction(t *testing.T) {
 	sentinel := errors.New("write failed")
 	p := validPolicy(t, gwID, "rolled back")
 
-	err := r.WithSlugLocked(ctx, gwID, p.Slug, p.ID,
+	err := r.WithSlugLocked(ctx, gwID, p.Slug, p.ID, nil,
 		func(txCtx context.Context, _ []*domain.Policy) error {
 			if err := r.Save(txCtx, p); err != nil {
 				t.Fatalf("Save: %v", err)

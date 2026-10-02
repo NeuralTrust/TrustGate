@@ -163,7 +163,7 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	}
 	if err := a.policyLevels.Check(ctx, attachedTo(pol, consumerID), func(ctx context.Context) error {
 		return a.repo.AttachPolicy(ctx, consumerID, policyID)
-	}); err != nil {
+	}, consumerID); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
