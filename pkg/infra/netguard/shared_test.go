@@ -15,6 +15,7 @@
 package netguard
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -87,5 +88,29 @@ func TestCheckRedirect(t *testing.T) {
 				t.Fatalf("CheckRedirect err = %v, blocked want %v", err, tt.blocked)
 			}
 		})
+	}
+}
+
+func TestNewHTTPClientTrustedContextSkipsTheGuardOnlyWhenMarked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	SetAllowPrivate(false)
+	client := NewHTTPClient(time.Second)
+
+	req, _ := http.NewRequestWithContext(TrustedIf(context.Background(), true), http.MethodGet, srv.URL, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("trusted request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// The same client, same URL, unmarked context: still refused, and the
+	// connection opened for the trusted request is not reused for it.
+	req, _ = http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if _, err := client.Do(req); !errors.Is(err, ErrBlockedDestination) {
+		t.Fatalf("untrusted request err = %v, want ErrBlockedDestination", err)
+	}
+	if TrustedIf(context.Background(), false).Value(trustedKey{}) != nil {
+		t.Fatal("TrustedIf(false) must not mark the context")
 	}
 }

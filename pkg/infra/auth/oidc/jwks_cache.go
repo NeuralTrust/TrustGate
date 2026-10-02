@@ -74,9 +74,18 @@ func NewJWKSCache(client *http.Client, ttl time.Duration) *JWKSCache {
 	}
 }
 
+// itemKey separates trusted (operator) fetches from tenant ones: the same URL
+// is fetched under different network rules, so they never share an entry.
+func itemKey(ctx context.Context, url string) string {
+	if netguard.IsTrusted(ctx) {
+		return "trusted\x00" + url
+	}
+	return url
+}
+
 func (c *JWKSCache) Get(ctx context.Context, url string) (jwkSet, error) {
 	c.mu.Lock()
-	entry := c.entryLocked(url)
+	entry := c.entryLocked(itemKey(ctx, url))
 	if entry.hasKeys && c.now().Before(entry.expiresAt) {
 		keys := entry.keys
 		c.mu.Unlock()
@@ -87,7 +96,7 @@ func (c *JWKSCache) Get(ctx context.Context, url string) (jwkSet, error) {
 
 func (c *JWKSCache) Refresh(ctx context.Context, url string) (jwkSet, error) {
 	c.mu.Lock()
-	entry := c.entryLocked(url)
+	entry := c.entryLocked(itemKey(ctx, url))
 	now := c.now()
 	if entry.hasKeys && entry.hasForcedFetch && now.Sub(entry.lastForcedAt) < c.refreshInterval {
 		keys := entry.keys
@@ -113,7 +122,7 @@ func (c *JWKSCache) awaitFetchLocked(ctx context.Context, url string, entry *jwk
 	if fetch == nil {
 		fetch = &jwksFetch{done: make(chan struct{})}
 		entry.inflight = fetch
-		go c.runFetch(url, entry, fetch) // #nosec G118 -- shared fetch must not adopt a single caller's context; runFetch owns its own timeout
+		go c.runFetch(url, netguard.IsTrusted(ctx), entry, fetch) // #nosec G118 -- shared fetch must not adopt a single caller's context; runFetch owns its own timeout
 	}
 	c.mu.Unlock()
 	select {
@@ -124,11 +133,11 @@ func (c *JWKSCache) awaitFetchLocked(ctx context.Context, url string, entry *jwk
 	}
 }
 
-func (c *JWKSCache) runFetch(url string, entry *jwksEntry, fetch *jwksFetch) {
+func (c *JWKSCache) runFetch(url string, trusted bool, entry *jwksEntry, fetch *jwksFetch) {
 	// The fetch is shared across awaiting callers, so it must not adopt any
 	// single caller's context; it owns a timeout so an in-flight request cannot
 	// outlive an explicit bound.
-	ctx, cancel := context.WithTimeout(context.Background(), c.fetchTimeout())
+	ctx, cancel := context.WithTimeout(netguard.TrustedIf(context.Background(), trusted), c.fetchTimeout())
 	defer cancel()
 	keys, err := c.fetchRemote(ctx, url)
 	c.mu.Lock()

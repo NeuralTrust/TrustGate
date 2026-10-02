@@ -53,3 +53,25 @@ func TestTokenClient_DiscoveredInternalTokenEndpointIsRefused(t *testing.T) {
 	require.EqualValues(t, 1, issuerHits.Load())
 	require.Zero(t, internalHits.Load())
 }
+
+func TestTokenClient_TrustedContextReachesPrivateIssuerAndTenantStillDoesNot(t *testing.T) {
+	netguardtest.Deny(t)
+	var srvURL string
+	srv, hits := netguardtest.Hostile(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/openid-configuration") {
+			_, _ = fmt.Fprintf(w, "{\"token_endpoint\":%q}", srvURL+"/token")
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"a","expires_in":60}`))
+	})
+	srvURL = srv.URL
+	client := NewTokenClient(nil)
+
+	_, err := client.Call(netguard.TrustedIf(context.Background(), true), srv.URL, url.Values{"x": {"y"}})
+	require.NoError(t, err)
+	before := hits.Load()
+
+	_, err = client.Call(context.Background(), srv.URL, url.Values{"x": {"y"}})
+	require.ErrorContains(t, err, "discovery failed", "the cached trusted endpoint must not serve a tenant call")
+	require.Equal(t, before, hits.Load())
+}

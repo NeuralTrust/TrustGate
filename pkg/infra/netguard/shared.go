@@ -15,6 +15,7 @@
 package netguard
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -59,15 +60,61 @@ func NewTransport() *http.Transport {
 	}
 }
 
+type trustedKey struct{}
+
+// TrustedIf marks ctx so that clients built by NewHTTPClient dial without the
+// guard. Call it only with the Trusted flag of the config object the request is
+// made for, never with a comparison of URLs: the flag is set solely on
+// identity providers the operator configured through the environment.
+func TrustedIf(ctx context.Context, trusted bool) context.Context {
+	if !trusted {
+		return ctx
+	}
+	return context.WithValue(ctx, trustedKey{}, true)
+}
+
+// IsTrusted reports whether ctx was marked by TrustedIf. Caches that sit in
+// front of a guarded client must include it in their key.
+func IsTrusted(ctx context.Context) bool {
+	v, _ := ctx.Value(trustedKey{}).(bool)
+	return v
+}
+
+// routedTransport sends trusted requests through a transport with no guard and
+// everything else through the guarded one. They are separate transports, so a
+// connection opened for a trusted request is never reused for an untrusted one.
+type routedTransport struct {
+	guarded, trusted *http.Transport
+}
+
+func (r *routedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if IsTrusted(req.Context()) {
+		return r.trusted.RoundTrip(req)
+	}
+	return r.guarded.RoundTrip(req)
+}
+
+func (r *routedTransport) CloseIdleConnections() {
+	r.guarded.CloseIdleConnections()
+	r.trusted.CloseIdleConnections()
+}
+
+func newTrustedTransport() *http.Transport {
+	tr := NewTransport()
+	tr.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	return tr
+}
+
 // maxRedirects bounds a redirect chain followed by a guarded client.
 const maxRedirects = 5
 
 // NewHTTPClient returns an http.Client for a URL a tenant can influence. Every
-// dial, redirects included, is checked against the shared guard.
+// dial, redirects included, is checked against the shared guard, unless the
+// request context was marked with TrustedIf (operator-configured endpoints).
 func NewHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:       timeout,
-		Transport:     NewTransport(),
+		Transport:     &routedTransport{guarded: NewTransport(), trusted: newTrustedTransport()},
 		CheckRedirect: CheckRedirect,
 	}
 }

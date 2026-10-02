@@ -77,6 +77,7 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 		return nil, fmt.Errorf("%w: no introspection endpoint configured", ErrInvalidToken)
 	}
 
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	res, err := v.introspect(ctx, raw, cfg)
 	if err != nil {
 		return nil, err
@@ -113,7 +114,7 @@ func sameIssuer(got, want string) bool {
 }
 
 func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (result, error) {
-	sum := sha256.Sum256([]byte(cfg.IntrospectionURL + "\x00" + raw))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%t\x00%s\x00%s", netguard.IsTrusted(ctx), cfg.IntrospectionURL, raw)))
 	key := hex.EncodeToString(sum[:])
 
 	v.mu.Lock()
