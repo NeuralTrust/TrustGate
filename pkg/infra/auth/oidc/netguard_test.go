@@ -70,3 +70,29 @@ func TestOIDC_DiscoveredInternalJWKSURIIsRefused(t *testing.T) {
 	require.EqualValues(t, 1, issuerHits.Load(), "discovery on the legitimate issuer still works")
 	require.Zero(t, internalHits.Load(), "the internal jwks_uri must never be dialled")
 }
+
+// The operator's default IdP can sit on a private address (split-horizon DNS);
+// a tenant config naming the very same URL cannot, and cannot ride on the
+// operator's cache entry either.
+func TestOIDC_TrustedConfigReachesPrivateIdPAndTenantStillDoesNot(t *testing.T) {
+	netguardtest.Deny(t)
+	stub := newOIDCStub(t)
+	v := oidc.NewOAuth2TokenValidator(oidc.NewVerifier(), nil)
+	token := stub.sign(t, stub.baseClaims())
+
+	trusted := stub.config()
+	trusted.Trusted = true
+	_, err := v.Validate(context.Background(), token, trusted)
+	require.NoError(t, err, "operator-configured IdP on a private address must work with the flag off")
+
+	tenant := stub.config() // same issuer and JWKS URL, Trusted unset
+	_, err = v.Validate(context.Background(), token, tenant)
+	require.Error(t, err, "a tenant config pointing at the same address stays refused, cache included")
+
+	// Discovery path too.
+	trusted.JWKSURL, tenant.JWKSURL = "", ""
+	_, err = v.Validate(context.Background(), token, trusted)
+	require.NoError(t, err)
+	_, err = v.Validate(context.Background(), token, tenant)
+	require.Error(t, err)
+}

@@ -69,8 +69,14 @@ func (c *TokenClient) Call(ctx context.Context, issuer string, form url.Values) 
 }
 
 func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (string, error) {
+	// Keyed by trust, so a tenant config naming the operator's issuer string
+	// cannot read an endpoint resolved under the operator's network rules.
+	key := issuer
+	if netguard.IsTrusted(ctx) {
+		key = "trusted\x00" + issuer
+	}
 	c.mu.Lock()
-	if ent, ok := c.endpoints[issuer]; ok && time.Since(ent.fetchedAt) < endpointTTL {
+	if ent, ok := c.endpoints[key]; ok && time.Since(ent.fetchedAt) < endpointTTL {
 		c.mu.Unlock()
 		return ent.tokenEndpoint, nil
 	}
@@ -84,7 +90,7 @@ func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (stri
 		return "", fmt.Errorf("sts: OIDC discovery failed for issuer %s and no known token endpoint convention applies", issuer)
 	}
 	c.mu.Lock()
-	c.endpoints[issuer] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
+	c.endpoints[key] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
 	c.mu.Unlock()
 	return endpoint, nil
 }

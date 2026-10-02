@@ -106,6 +106,9 @@ func BuildDefaultIdP(cfg DefaultIdPConfig) *domain.Auth {
 				SessionMode:    true,
 				AuthorizeURL:   authorize,
 				TokenURL:       token,
+				// Operator-configured, so it may sit on a private address
+				// (split-horizon DNS) and is dialled without the network guard.
+				Trusted: true,
 			},
 		},
 	}

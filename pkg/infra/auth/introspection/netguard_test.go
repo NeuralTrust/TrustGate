@@ -16,6 +16,7 @@ package introspection_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -37,4 +38,23 @@ func TestValidator_DefaultClientRefusesInternalIntrospectionURL(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, netguard.ErrBlockedDestination)
 	require.Zero(t, hits.Load())
+}
+
+func TestValidator_TrustedConfigReachesPrivateEndpointAndTenantStillDoesNot(t *testing.T) {
+	netguardtest.Deny(t)
+	srv, hits := netguardtest.Hostile(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"active":true,"sub":"u","iss":"https://idp.example","exp":4102444800}`))
+	})
+	v := introspection.NewValidator(nil)
+	cfg := authdomain.OAuth2Config{IntrospectionURL: srv.URL, Issuer: "https://idp.example"}
+
+	trusted := cfg
+	trusted.Trusted = true
+	_, err := v.Validate(context.Background(), "tok", &trusted)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, hits.Load())
+
+	_, err = v.Validate(context.Background(), "tok", &cfg)
+	require.ErrorIs(t, err, netguard.ErrBlockedDestination, "the tenant must not reuse the operator's cached result")
+	require.EqualValues(t, 1, hits.Load())
 }

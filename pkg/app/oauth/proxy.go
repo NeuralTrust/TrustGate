@@ -173,6 +173,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		}
 	}
 	cfg := auth.Config.OAuth2
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -278,6 +279,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 			effectiveGatewayID = gw
 		}
 	}
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -581,6 +583,7 @@ func (p *authProxy) captureSubject(ctx context.Context, cfg *authdomain.OAuth2Co
 		return subjectFromClaims(claims, cfg.SubjectClaim), nil
 	}
 	if cfg.UserInfoURL != "" {
+		ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 		accessToken, _ := token["access_token"].(string)
 		info, err := p.userinfo.Fetch(ctx, cfg.UserInfoURL, accessToken)
 		if err != nil {
@@ -844,6 +847,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		return nil, err
 	}
 	cfg := auth.Config.OAuth2
+	ctx = netguard.TrustedIf(ctx, cfg.Trusted)
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return nil, err

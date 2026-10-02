@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -56,4 +57,21 @@ func TestMetadataService_DefaultClientRefusesInternalIssuer(t *testing.T) {
 	_, err := svc.fetchASMetadata(context.Background(), srv.URL)
 	require.ErrorIs(t, err, netguard.ErrBlockedDestination)
 	require.Zero(t, hits.Load())
+}
+
+func TestAuthProxy_TrustedIdPIsReachableAndTenantIdPIsNot(t *testing.T) {
+	netguardtest.Deny(t)
+	srv, hits := netguardtest.Hostile(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"a","token_type":"Bearer"}`))
+	})
+	p, ok := NewAuthProxy(nil, nil, nil, nil, nil, nil, nil).(*authProxy)
+	require.True(t, ok)
+	operator := authdomain.OAuth2Config{TokenURL: srv.URL, Trusted: true}
+	tenant := authdomain.OAuth2Config{TokenURL: srv.URL}
+
+	_, err := p.idp.tokenCall(netguard.TrustedIf(context.Background(), operator.Trusted), operator.TokenURL, url.Values{})
+	require.NoError(t, err)
+	_, err = p.idp.tokenCall(netguard.TrustedIf(context.Background(), tenant.Trusted), tenant.TokenURL, url.Values{})
+	require.ErrorIs(t, err, netguard.ErrBlockedDestination)
+	require.EqualValues(t, 1, hits.Load())
 }
