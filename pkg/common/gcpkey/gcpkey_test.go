@@ -50,7 +50,6 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "google token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://oauth2.googleapis.com/token"})},
 		{name: "legacy token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://accounts.google.com/o/oauth2/token"})},
-		{name: "v4 token_uri", raw: keyJSON(t, map[string]string{"token_uri": "https://www.googleapis.com/oauth2/v4/token"})},
 		{name: "absent token_uri", raw: keyJSON(t, nil)},
 		{name: "default universe", raw: keyJSON(t, map[string]string{"universe_domain": "googleapis.com"})},
 		{name: "cluster service token_uri", raw: keyJSON(t, map[string]string{"token_uri": "http://trustgate.svc.cluster.local:8080/x"}), wantErr: "token_uri"},
