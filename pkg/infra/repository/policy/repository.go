@@ -324,6 +324,9 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
+			if reportUnreadable(ctx, "list_by_gateway", err) {
+				continue
+			}
 			return nil, fmt.Errorf("policy repository: scan: %w", err)
 		}
 		out = append(out, p)
@@ -407,6 +410,9 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
+			if reportUnreadable(ctx, "list", err) {
+				continue
+			}
 			return nil, 0, fmt.Errorf("policy repository: scan: %w", err)
 		}
 		items = append(items, p)
@@ -421,6 +427,12 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// scanPolicy decodes one policies row. Only a settings, stages or mcp_scope
+// blob that is not the JSON we expect comes back as an *UnreadablePolicyError
+// (carrying the policy id and gateway id), so a list loop can skip that row and
+// say which policy it skipped. Errors from s.Scan are returned raw: pgx treats a
+// column-level scan failure as fatal for the whole result set, and a single-row
+// Scan does I/O, so neither is a row that can be skipped.
 func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
 	var settingsRaw []byte
@@ -441,20 +453,24 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 
 	if len(settingsRaw) > 0 {
 		if err := json.Unmarshal(settingsRaw, &p.Settings); err != nil {
-			return nil, fmt.Errorf("scan settings: %w", err)
+			return nil, unreadable(p, fmt.Errorf("scan settings: %w", err))
 		}
 	}
 	if len(stagesRaw) > 0 {
 		if err := json.Unmarshal(stagesRaw, &p.Stages); err != nil {
-			return nil, fmt.Errorf("scan stages: %w", err)
+			return nil, unreadable(p, fmt.Errorf("scan stages: %w", err))
 		}
 	}
 	scope, err := unmarshalMCPScope(scopeRaw)
 	if err != nil {
-		return nil, err
+		return nil, unreadable(p, err)
 	}
 	p.MCPScope = scope
 	return p, nil
+}
+
+func unreadable(p *domain.Policy, err error) *UnreadablePolicyError {
+	return &UnreadablePolicyError{ID: p.ID, GatewayID: p.GatewayID, Err: err}
 }
 
 // marshalMCPScope keeps the nil-vs-empty distinction on the wire: a nil scope
