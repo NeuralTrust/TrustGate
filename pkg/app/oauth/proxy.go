@@ -543,6 +543,20 @@ func firstClaimOf[T any](token map[string]any, pick func(claims map[string]any) 
 }
 
 func subjectFromToken(token map[string]any) string {
+	return boundedSubject(rawSubjectFromToken(token))
+}
+
+// boundedSubject returns s only when it is a plain identifier. A subject that
+// came out of an IdP-controlled token or claim set is empty (no subject) rather
+// than oversized or carrying control characters.
+func boundedSubject(s string) string {
+	if !strutil.IsBoundedPrintable(s, maxSubjectLen) {
+		return ""
+	}
+	return s
+}
+
+func rawSubjectFromToken(token map[string]any) string {
 	raw, _ := token["access_token"].(string)
 	if raw == "" {
 		return ""
@@ -612,6 +626,10 @@ func userInfoSubject(v any) (string, error) {
 }
 
 func subjectFromClaims(claims jwt.MapClaims, claim string) string {
+	return boundedSubject(rawSubjectFromClaims(claims, claim))
+}
+
+func rawSubjectFromClaims(claims jwt.MapClaims, claim string) string {
 	if claim != "" {
 		return coerceClaim(claims[claim])
 	}

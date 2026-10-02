@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,4 +89,18 @@ func TestIDPTokenCall_ErrorDescriptionIsCappedAndStripped(t *testing.T) {
 	require.NotContains(t, oe.Description, "\r")
 	require.NotContains(t, oe.Description, "\n")
 	require.NotContains(t, oe.Description, "\x00")
+}
+
+func TestSubjectFromClaimsAndToken_AreBounded(t *testing.T) {
+	long := strings.Repeat("a", maxSubjectLen+1)
+	require.Equal(t, "user-1", subjectFromClaims(map[string]any{"sub": "user-1"}, ""))
+	require.Empty(t, subjectFromClaims(map[string]any{"sub": long}, ""))
+	require.Empty(t, subjectFromClaims(map[string]any{"sub": "a\nb"}, ""))
+	require.Empty(t, subjectFromClaims(map[string]any{"email": long}, "email"))
+	require.Empty(t, subjectFromClaims(map[string]any{"sub": map[string]any{"k": "v"}}, ""))
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"sub": long})
+	raw, err := tok.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	require.NoError(t, err)
+	require.Empty(t, subjectFromToken(map[string]any{"access_token": raw}))
 }
