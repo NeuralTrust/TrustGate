@@ -132,7 +132,7 @@ func TestResolveSettings(t *testing.T) {
 			"secret_access_key": secret.Mask("real-secret-0123456789"),
 			"session_token":     secret.Mask("tok"),
 		}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, "real-secret-0123456789", creds(in)["secret_access_key"])
 		assert.Equal(t, "tok", creds(in)["session_token"])
 	})
@@ -140,7 +140,7 @@ func TestResolveSettings(t *testing.T) {
 	t.Run("a mask of some other value is left for validation to reject", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"secret_access_key": "***zzzz"}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, "***zzzz", creds(in)["secret_access_key"])
 		require.Error(t, secret.ValidateCredentialSettings(in, paths))
 	})
@@ -148,47 +148,47 @@ func TestResolveSettings(t *testing.T) {
 	t.Run("a mask with nothing stored is left for validation to reject", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"session_token": "***"}}
-		secret.ResolveSettings(in, map[string]any{}, paths)
+		require.NoError(t, secret.ResolveSettings(in, map[string]any{}, paths, nil))
 		assert.Equal(t, "***", creds(in)["session_token"])
 	})
 
 	t.Run("omitted and empty are cleared, not merged", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"secret_access_key": ""}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, "", creds(in)["secret_access_key"])
 		assert.NotContains(t, creds(in), "session_token")
 
 		bare := map[string]any{"guardrail_id": "x"}
-		secret.ResolveSettings(bare, stored, paths)
+		require.NoError(t, secret.ResolveSettings(bare, stored, paths, nil))
 		assert.NotContains(t, bare, "credentials")
 	})
 
 	t.Run("a new value replaces", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"secret_access_key": "fresh"}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, "fresh", creds(in)["secret_access_key"])
 	})
 
 	t.Run("explicit null is removed", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"session_token": nil}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.NotContains(t, creds(in), "session_token")
 	})
 
 	t.Run("a non-string is left for validation, not overwritten", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"secret_access_key": float64(1)}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, float64(1), creds(in)["secret_access_key"])
 	})
 
 	t.Run("does not mutate the stored settings", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]any{"credentials": map[string]any{"session_token": nil, "secret_access_key": secret.Mask("real-secret-0123456789")}}
-		secret.ResolveSettings(in, stored, paths)
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, nil))
 		assert.Equal(t, "tok", creds(stored)["session_token"])
 	})
 }
@@ -259,4 +259,46 @@ func TestMaskSettings_MasksCaseVariantKeys(t *testing.T) {
 	assert.Equal(t, "***MPLE", out["Credentials"].(map[string]any)["ACCESS_KEY_ID"])
 	assert.Equal(t, "***6789", out["API_KEY"])
 	assert.Equal(t, "sk-live-0123456789", in["API_KEY"], "input is not mutated")
+}
+
+func TestResolveSettings_MaskedCredentialIsBoundToItsDestinations(t *testing.T) {
+	t.Parallel()
+	paths, dests := []string{"api_key"}, []string{"endpoint", "project"}
+	stored := map[string]any{"api_key": "REAL-key-0123456789", "endpoint": "https://a.example", "project": "p"}
+	mask := secret.Mask("REAL-key-0123456789")
+
+	t.Run("unchanged destinations keep the credential", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]any{"api_key": mask, "endpoint": "https://a.example", "project": "p"}
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, dests))
+		assert.Equal(t, "REAL-key-0123456789", in["api_key"])
+	})
+	for name, in := range map[string]map[string]any{
+		"changed endpoint": {"api_key": mask, "endpoint": "https://attacker.example", "project": "p"},
+		"changed project":  {"api_key": mask, "endpoint": "https://a.example", "project": "other"},
+		"removed endpoint": {"api_key": mask, "project": "p"},
+		"added nesting":    {"api_key": mask, "endpoint": map[string]any{"x": 1}, "project": "p"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := secret.ResolveSettings(in, stored, paths, dests)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "settings.api_key")
+			assert.Contains(t, err.Error(), "re-enter the credential")
+			assert.NotContains(t, err.Error(), "REAL")
+			assert.Equal(t, mask, in["api_key"], "the stored credential must not be merged in")
+		})
+	}
+	t.Run("a new credential may move the destination", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]any{"api_key": "fresh", "endpoint": "https://b.example", "project": "p"}
+		require.NoError(t, secret.ResolveSettings(in, stored, paths, dests))
+		assert.Equal(t, "fresh", in["api_key"])
+	})
+}
+
+func TestRejectCaseVariants(t *testing.T) {
+	t.Parallel()
+	require.Error(t, secret.RejectCaseVariants(map[string]any{"Endpoint": "x"}, []string{"endpoint"}))
+	require.NoError(t, secret.RejectCaseVariants(map[string]any{"endpoint": "x"}, []string{"endpoint"}))
 }

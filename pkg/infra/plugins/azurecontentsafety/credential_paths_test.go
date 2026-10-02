@@ -33,3 +33,13 @@ func TestCredentialPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "canary", cfg.APIKey)
 }
+
+// api_key is sent to cfg.Endpoint, so the endpoint is bound to the credential.
+func TestCredentialDestinations(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"endpoint"}, (&Plugin{}).CredentialDestinations())
+
+	cfg, err := parseConfig(map[string]any{"api_key": "k", "endpoint": "https://x.cognitiveservices.azure.com", "category_severity": map[string]any{CategoryHate: 4}})
+	require.NoError(t, err)
+	assert.Equal(t, "https://x.cognitiveservices.azure.com", cfg.Endpoint)
+}

@@ -16,6 +16,7 @@ package secret
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -132,7 +133,11 @@ func withhold(v any) any {
 // the payload does not carry is cleared, exactly as before masking existed:
 //
 //   - exactly the mask of the stored value (what a read returned, echoed back
-//     by a read-modify-write) keeps the stored credential;
+//     by a read-modify-write) keeps the stored credential, provided every
+//     destination path bound to it (plugin CredentialDestinations) is unchanged;
+//     if one differs, ResolveSettings returns an error naming the credential
+//     path and the destination, because keeping the secret would let it be sent
+//     somewhere the caller chose without ever having read it;
 //   - omitted, "" or null clears it (null is removed from the payload; whether
 //     an emptied credential is acceptable is up to the plugin's own validation,
 //     which runs next: a required api_key fails there, an optional bedrock
@@ -151,9 +156,9 @@ func withhold(v any) any {
 //
 // Callers must not call this when the update changes the plugin: stored
 // credentials belong to the previous plugin and must not be carried across.
-func ResolveSettings(incoming, existing map[string]any, paths []string) {
+func ResolveSettings(incoming, existing map[string]any, paths, destinations []string) error {
 	if incoming == nil {
-		return
+		return nil
 	}
 	for _, path := range paths {
 		parts := strings.Split(path, ".")
@@ -174,9 +179,40 @@ func ResolveSettings(incoming, existing map[string]any, paths []string) {
 			continue
 		}
 		if s, isStr := stored.(string); isStr && s != "" && sent == Mask(s) {
+			if moved := changedDestination(incoming, existing, destinations); moved != "" {
+				return fmt.Errorf("settings.%s: re-enter the credential when changing %s", path, moved)
+			}
 			pathSetCreate(incoming, parts, s)
 		}
 	}
+	return nil
+}
+
+// changedDestination returns the first destination path whose incoming value
+// differs from the stored one (absent on both sides is equal), or "".
+func changedDestination(incoming, existing map[string]any, destinations []string) string {
+	for _, d := range destinations {
+		parts := strings.Split(d, ".")
+		in, inOK := pathGet(incoming, parts)
+		old, oldOK := pathGet(existing, parts)
+		if inOK != oldOK || (inOK && !reflect.DeepEqual(in, old)) {
+			return d
+		}
+	}
+	return ""
+}
+
+// RejectCaseVariants rejects a key that matches a path segment only by case, for
+// paths that are not credentials (destinations): the plugin decoder would accept
+// the variant, and with both spellings present which one wins is undefined, so
+// it could be used to dodge the exact-match destination comparison.
+func RejectCaseVariants(settings map[string]any, paths []string) error {
+	for _, path := range paths {
+		if err := rejectCaseVariants(settings, strings.Split(path, "."), path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ValidateCredentialSettings rejects, at each declared path, a key that matches a
@@ -219,7 +255,7 @@ func ValidateCredentialSettings(settings map[string]any, paths []string) error {
 			return fmt.Errorf("settings.%s must be a string", path)
 		}
 		if IsMasked(s) {
-			return fmt.Errorf("settings.%s cannot be a masked value; provide the credential, or omit the field to keep the stored one", path)
+			return fmt.Errorf("settings.%s cannot be a masked value; provide the credential", path)
 		}
 	}
 	return nil
