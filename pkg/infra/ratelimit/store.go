@@ -34,7 +34,7 @@ const (
 	// when they share a slot.
 	quotaKeyPattern = "gt:rl:quota:{%s}:%s"
 	burstKeyPattern = "gt:rl:burst:{%s}:%s"
-	tokenKeyPattern = "gt:rl:tok:{%s}:%s"
+	tokenKeyPattern = "gt:rl:tok:{%s}:%s" // #nosec G101 -- redis key format string, not a credential
 
 	burstTTL = 2 * time.Minute
 
