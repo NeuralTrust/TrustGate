@@ -126,18 +126,27 @@ func withhold(v any) any {
 	}
 }
 
-// ResolveSettings applies the merge-on-omit rule at each declared path of an
-// update payload: a credential that is omitted, empty, or a masked value echoed
-// back from a response keeps the value stored in existing. A real new string
-// replaces it.
+// ResolveSettings applies the update contract at each declared path of an
+// update payload. An update replaces settings wholesale, so a credential that
+// the payload does not carry is cleared, exactly as before masking existed:
 //
-// An explicit null clears the credential: the key is removed from incoming and
-// nothing is merged. This is the only way to clear a field, because omitted and
-// empty both mean "keep" (a read-modify-write round-trip echoes the mask, and a
-// form that leaves a secret box blank must not wipe it). Whether an emptied
-// credential is acceptable is up to the plugin's own validation, which runs
-// next: clearing a required api_key fails there, clearing an optional bedrock
-// session_token does not.
+//   - exactly the mask of the stored value (what a read returned, echoed back
+//     by a read-modify-write) keeps the stored credential;
+//   - omitted, "" or null clears it (null is removed from the payload; whether
+//     an emptied credential is acceptable is up to the plugin's own validation,
+//     which runs next: a required api_key fails there, an optional bedrock
+//     session_token does not);
+//   - a real new string replaces it;
+//   - any other masked-looking string is left in place for
+//     ValidateCredentialSettings to reject: it is a stale or foreign mask that
+//     stands for nothing stored.
+//
+// "Exactly the mask of the stored value" is a comparison with Mask(stored), which
+// is deterministic. For a short secret that mask is the bare "***", so any
+// "***" is accepted as the echo of a short stored value, which cannot be told
+// apart from it; but it is never accepted when nothing is stored at the path.
+// A long secret's mask carries its last four characters, so a mask taken from a
+// different value is rejected rather than silently kept.
 //
 // Callers must not call this when the update changes the plugin: stored
 // credentials belong to the previous plugin and must not be carried across.
@@ -147,21 +156,23 @@ func ResolveSettings(incoming, existing map[string]any, paths []string) {
 	}
 	for _, path := range paths {
 		parts := strings.Split(path, ".")
-		if v, ok := pathGet(incoming, parts); ok {
-			if v == nil {
-				pathDelete(incoming, parts)
-				continue
-			}
-			s, isStr := v.(string)
-			if !isStr || (s != "" && !IsMasked(s)) {
-				continue // a real value, or a non-string left for validation to reject
-			}
+		v, ok := pathGet(incoming, parts)
+		if !ok {
+			continue
+		}
+		if v == nil {
+			pathDelete(incoming, parts)
+			continue
+		}
+		sent, isStr := v.(string)
+		if !isStr || !IsMasked(sent) {
+			continue // cleared, replaced, or a non-string left for validation
 		}
 		stored, ok := pathGet(existing, parts)
 		if !ok {
 			continue
 		}
-		if s, isStr := stored.(string); isStr && s != "" {
+		if s, isStr := stored.(string); isStr && s != "" && sent == Mask(s) {
 			pathSetCreate(incoming, parts, s)
 		}
 	}

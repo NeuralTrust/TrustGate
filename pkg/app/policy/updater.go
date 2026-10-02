@@ -215,10 +215,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 // guardCredentials applies the credential rules of an update, for the plugin
 // the settings will be validated against (newSlug):
 //
-//   - Settings carried, same plugin: a credential that is omitted, empty or a
-//     masked value echoed from a response keeps the stored one (merge-on-omit),
-//     so saving a policy exactly as read does not wipe its secrets. An explicit
-//     null clears one.
+//   - Settings carried, same plugin: settings replace the stored ones wholesale,
+//     so an omitted, empty or null credential is cleared (the plugin's own
+//     validation rejects it if required). The one exception is a value that is
+//     exactly the mask of the stored credential, i.e. a read echoed back: that
+//     keeps the stored one. Any other masked-looking value is rejected with a
+//     400; a real new value replaces.
 //   - Settings carried, plugin changed: nothing is resolved against the stored
 //     settings, which belong to the previous plugin. A masked credential has
 //     nothing to stand for and is rejected, as on create; an omitted one fails

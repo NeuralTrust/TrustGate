@@ -36,6 +36,7 @@ const (
 	azureSlug   = "azure_content_safety"
 	openaiSlug  = "openai_moderation"
 	bedrockSlug = "bedrock_guardrail"
+	armorSlug   = "google_model_armor"
 	realKey     = "REAL-azure-key-0123456789"
 )
 
@@ -56,6 +57,7 @@ func credentialRegistryMock(t *testing.T) *pluginmocks.Registry {
 	decl := map[string][]string{
 		azureSlug:  {"api_key"},
 		openaiSlug: {"api_key"},
+		armorSlug:  {"credentials.service_account_json"},
 		bedrockSlug: {
 			"credentials.access_key_id",
 			"credentials.secret_access_key",
@@ -119,7 +121,7 @@ func TestUpdater_Update_MaskedCredentialKeepsTheStoredOne(t *testing.T) {
 	assert.Equal(t, "https://b", saved["endpoint"], "non-credential fields still update")
 }
 
-func TestUpdater_Update_OmittedAndEmptyCredentialKeepTheStoredOne(t *testing.T) {
+func TestUpdater_Update_OmittedAndEmptyCredentialClearTheStoredOne(t *testing.T) {
 	t.Parallel()
 	for name, settings := range map[string]map[string]any{
 		"omitted": {"endpoint": "https://b"},
@@ -129,8 +131,8 @@ func TestUpdater_Update_OmittedAndEmptyCredentialKeepTheStoredOne(t *testing.T) 
 			t.Parallel()
 			existing := storedPolicy(t, azureSlug, map[string]any{"api_key": realKey, "endpoint": "https://a"})
 			saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: &settings})
-			require.NoError(t, err)
-			assert.Equal(t, realKey, saved["api_key"])
+			require.NoError(t, err) // required-field validation is stubbed here; it is what rejects a cleared key
+			assert.Empty(t, saved["api_key"], "an update replaces settings wholesale: what is not sent is cleared")
 		})
 	}
 }
@@ -164,9 +166,8 @@ func TestUpdater_Update_NonStringCredentialIsRejected(t *testing.T) {
 	}
 }
 
-// Merge-on-omit means omitted and empty both keep the stored value, so the
-// only way to clear a credential is an explicit null. The bedrock STS
-// session_token is the case that has to be clearable.
+// An update replaces settings wholesale, so an explicit null clears exactly like
+// omitting does. The bedrock STS session_token has to be clearable.
 func TestUpdater_Update_ExplicitNullClearsOnlyThatCredential(t *testing.T) {
 	t.Parallel()
 	existing := storedPolicy(t, bedrockSlug, bedrockStored("REAL-sts-token-000000003"))
@@ -188,15 +189,73 @@ func TestUpdater_Update_ExplicitNullClearsOnlyThatCredential(t *testing.T) {
 	assert.Equal(t, "REAL-secret-000000000002", creds["secret_access_key"])
 }
 
-func TestUpdater_Update_SavingASessionTokenKeepsItWhenBlankOrMasked(t *testing.T) {
+func TestUpdater_Update_AMaskThatIsNotTheStoredOneIsRejected(t *testing.T) {
+	t.Parallel()
+	existing := storedPolicy(t, azureSlug, map[string]any{"api_key": realKey})
+	saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: &map[string]any{"api_key": "***zzzz"}})
+	require.ErrorIs(t, err, commonerrors.ErrValidation)
+	assert.Nil(t, saved)
+}
+
+// Console flow: Bedrock session_token is written only when non-empty, so blanking
+// it omits it. That must clear it, while an echoed mask keeps it.
+func TestUpdater_Update_BedrockSessionTokenOmittedIsClearedAndMaskedIsKept(t *testing.T) {
+	t.Parallel()
+	body := func(token any, omit bool) *map[string]any {
+		c := map[string]any{"access_key_id": "***0001", "secret_access_key": "***0002"}
+		if !omit {
+			c["session_token"] = token
+		}
+		return &map[string]any{"guardrail_id": "gr-1", "credentials": c}
+	}
+	t.Run("omitted is cleared", func(t *testing.T) {
+		t.Parallel()
+		existing := storedPolicy(t, bedrockSlug, bedrockStored("REAL-sts-token-000000003"))
+		saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: body(nil, true)})
+		require.NoError(t, err)
+		assert.NotContains(t, saved["credentials"], "session_token")
+	})
+	t.Run("masked echo is kept", func(t *testing.T) {
+		t.Parallel()
+		existing := storedPolicy(t, bedrockSlug, bedrockStored("REAL-sts-token-000000003"))
+		saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: body("***0003", false)})
+		require.NoError(t, err)
+		assert.Equal(t, "REAL-sts-token-000000003", saved["credentials"].(map[string]any)["session_token"])
+	})
+}
+
+// Console flow: Bedrock static -> role omits the three static keys. They must
+// not survive in storage.
+func TestUpdater_Update_BedrockStaticToRoleClearsTheStaticKeys(t *testing.T) {
 	t.Parallel()
 	existing := storedPolicy(t, bedrockSlug, bedrockStored("REAL-sts-token-000000003"))
 	saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: &map[string]any{
 		"guardrail_id": "gr-1",
-		"credentials":  map[string]any{"session_token": "***0003"},
+		"credentials":  map[string]any{"use_role": true, "role_arn": "arn:aws:iam::1:role/x", "aws_region": "eu-west-1"},
 	}})
 	require.NoError(t, err)
-	assert.Equal(t, "REAL-sts-token-000000003", saved["credentials"].(map[string]any)["session_token"])
+	creds := saved["credentials"].(map[string]any)
+	for _, k := range []string{"access_key_id", "secret_access_key", "session_token"} {
+		assert.NotContains(t, creds, k)
+	}
+}
+
+// Console flow: Model Armor explicit -> impersonate drops service_account_json.
+// Restoring it would leave both fields set, which the plugin rejects.
+func TestUpdater_Update_ModelArmorExplicitToImpersonateDropsTheServiceAccountJSON(t *testing.T) {
+	t.Parallel()
+	existing := storedPolicy(t, armorSlug, map[string]any{
+		"project": "p", "location": "l", "template": "t",
+		"credentials": map[string]any{"service_account_json": `{"type":"service_account","k":"REAL"}`},
+	})
+	saved, err := updateWith(t, existing, apppolicy.UpdateInput{Settings: &map[string]any{
+		"project": "p", "location": "l", "template": "t",
+		"credentials": map[string]any{"impersonate_service_account": "sa@p.iam.gserviceaccount.com"},
+	}})
+	require.NoError(t, err)
+	creds := saved["credentials"].(map[string]any)
+	assert.NotContains(t, creds, "service_account_json")
+	assert.Equal(t, "sa@p.iam.gserviceaccount.com", creds["impersonate_service_account"])
 }
 
 // A plugin change repoints the policy at another vendor. The stored credential
