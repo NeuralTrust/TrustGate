@@ -508,11 +508,13 @@ func groupByGateway[T any](
 	}
 }
 
-// listAll pages one entity table to exhaustion via fetch(page).
+// listAll pages one entity table to exhaustion via fetch(page). A short page
+// does not end the walk while the reported total says rows remain: a repository
+// may skip rows it cannot read, so a full page can come back short (RUN-1663).
 func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.Context, page int) ([]T, int, error)) ([]T, error) {
 	out := make([]T, 0)
 	for page := 1; ; page++ {
-		items, _, err := fetch(ctx, page)
+		items, total, err := fetch(ctx, page)
 		if err != nil {
 			if errors.Is(err, commonerrors.ErrNotFound) {
 				return out, nil
@@ -520,7 +522,7 @@ func listAll[T any](ctx context.Context, entity string, fetch func(ctx context.C
 			return nil, fmt.Errorf("configsnapshot: list %s: %w", entity, err)
 		}
 		out = append(out, items...)
-		if len(items) < compilerBulkPageSize {
+		if len(items) < compilerBulkPageSize && page*compilerBulkPageSize >= total {
 			return out, nil
 		}
 	}
