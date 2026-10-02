@@ -49,39 +49,40 @@ func MaskSettings(settings map[string]any, paths []string) map[string]any {
 }
 
 // maskPath returns a masked copy of m along parts, or nil when nothing along
-// that path needs masking. Only the maps on the path are copied.
+// that path needs masking. Only the maps on the path are copied. Keys are
+// matched case-insensitively: plugin config decoding (mapstructure) is, so a
+// stored {"API_KEY": ...} is the credential even though the declared path says
+// api_key, and an exact-match lookup would return it in the clear.
 func maskPath(m map[string]any, parts []string) map[string]any {
-	v, ok := m[parts[0]]
-	if !ok || v == nil {
-		return nil
-	}
-	if len(parts) == 1 {
+	var out map[string]any
+	for key, v := range m {
+		if !strings.EqualFold(key, parts[0]) || v == nil {
+			continue
+		}
 		var masked any
-		switch t := v.(type) {
-		case string:
-			if t == "" {
-				return nil
+		if len(parts) == 1 {
+			if s, isStr := v.(string); isStr {
+				if s == "" {
+					continue
+				}
+				masked = Mask(s)
+			} else {
+				masked = Redacted
 			}
-			masked = Mask(t)
-		default:
+		} else if child, isMap := v.(map[string]any); isMap {
+			maskedChild := maskPath(child, parts[1:])
+			if maskedChild == nil {
+				continue
+			}
+			masked = maskedChild
+		} else {
 			masked = Redacted
 		}
-		out := cloneMap(m)
-		out[parts[0]] = masked
-		return out
+		if out == nil {
+			out = cloneMap(m)
+		}
+		out[key] = masked
 	}
-	child, isMap := v.(map[string]any)
-	if !isMap {
-		out := cloneMap(m)
-		out[parts[0]] = Redacted
-		return out
-	}
-	maskedChild := maskPath(child, parts[1:])
-	if maskedChild == nil {
-		return nil
-	}
-	out := cloneMap(m)
-	out[parts[0]] = maskedChild
 	return out
 }
 
@@ -178,16 +179,25 @@ func ResolveSettings(incoming, existing map[string]any, paths []string) {
 	}
 }
 
-// ValidateCredentialSettings rejects, at each declared path, a masked value (a
+// ValidateCredentialSettings rejects, at each declared path, a key that matches a
+// declared segment only case-insensitively (see below), a masked value (a
 // mask is never a credential, and on create or a plugin change there is nothing
 // stored to resolve it against) and a non-string value (a credential must be a
 // string; anything else would be stored and then returned without masking being
 // able to reason about it). Absent, null and empty are fine here. Call it after
 // ResolveSettings so only an unresolvable mask is reported. Errors name the path,
 // never the value.
+//
+// A key that differs from a declared segment only in case ("API_KEY" for
+// "api_key") is rejected too: the plugin's decoder would accept it as the
+// credential, but every exact-match helper here (resolve, clear) would not see
+// it, so it could be stored and echoed without being treated as a secret.
 func ValidateCredentialSettings(settings map[string]any, paths []string) error {
 	for _, path := range paths {
 		parts := strings.Split(path, ".")
+		if err := rejectCaseVariants(settings, parts, path); err != nil {
+			return err
+		}
 		var cur any = settings
 		for i, part := range parts {
 			m, ok := cur.(map[string]any)
@@ -229,6 +239,23 @@ func HasCredentials(settings map[string]any, paths []string) bool {
 		return true
 	}
 	return false
+}
+
+func rejectCaseVariants(m map[string]any, parts []string, path string) error {
+	for key, v := range m {
+		if !strings.EqualFold(key, parts[0]) {
+			continue
+		}
+		if key != parts[0] {
+			return fmt.Errorf("settings.%s must be spelled exactly %q, not %q", path, parts[0], key)
+		}
+		if child, ok := v.(map[string]any); ok && len(parts) > 1 {
+			if err := rejectCaseVariants(child, parts[1:], path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func pathGet(m map[string]any, parts []string) (any, bool) {

@@ -232,3 +232,31 @@ func TestHasCredentials(t *testing.T) {
 	assert.False(t, secret.HasCredentials(map[string]any{"guardrail_id": "x"}, bedrockPaths))
 	assert.False(t, secret.HasCredentials(nil, bedrockPaths))
 }
+
+func TestValidateCredentialSettings_RejectsCaseVariantKeys(t *testing.T) {
+	t.Parallel()
+	for name, settings := range map[string]map[string]any{
+		"leaf":   {"credentials": map[string]any{"SECRET_ACCESS_KEY": "abc"}},
+		"parent": {"Credentials": map[string]any{"secret_access_key": "abc"}},
+		"mask":   {"credentials": map[string]any{"Secret_Access_Key": "***abcd"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := secret.ValidateCredentialSettings(settings, []string{"credentials.secret_access_key"})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "settings.credentials.secret_access_key")
+			assert.NotContains(t, err.Error(), "abc")
+		})
+	}
+}
+
+// A case-variant key already in storage (written before the write-side check)
+// is still the credential to the plugin's decoder, so a read must mask it.
+func TestMaskSettings_MasksCaseVariantKeys(t *testing.T) {
+	t.Parallel()
+	in := map[string]any{"Credentials": map[string]any{"ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE"}, "API_KEY": "sk-live-0123456789"}
+	out := secret.MaskSettings(in, []string{"credentials.access_key_id", "api_key"})
+	assert.Equal(t, "***MPLE", out["Credentials"].(map[string]any)["ACCESS_KEY_ID"])
+	assert.Equal(t, "***6789", out["API_KEY"])
+	assert.Equal(t, "sk-live-0123456789", in["API_KEY"], "input is not mutated")
+}
