@@ -463,3 +463,13 @@ func TestProtectedResourceMetadataOmitsValidationOnlyProvider(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoAuthorizationServer", err)
 	}
 }
+
+func TestHasUpstreamClient_IgnoresExchangeOnlyIdentities(t *testing.T) {
+	t.Parallel()
+	exchangeOnly := []*authdomain.Auth{{Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+		Issuer: "https://login.microsoftonline.com/tid/v2.0", ExchangeClientID: "obo", ExchangeClientSecret: "s",
+	}}}}
+	if hasUpstreamClient(exchangeOnly) {
+		t.Fatal("an identity that only signs token exchanges must not enable brokered login")
+	}
+}
