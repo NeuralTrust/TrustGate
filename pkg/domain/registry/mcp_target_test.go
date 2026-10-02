@@ -351,3 +351,31 @@ func TestMCPTarget_ResolveSecretsFrom_ClientCredentialsSecret(t *testing.T) {
 		t.Fatalf("ClientSecret = %q, want previous secret kept", next.Auth.ClientSecret)
 	}
 }
+
+func TestMCPAuth_Validate_IdentityID(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]().String()
+	tests := []struct {
+		name    string
+		auth    *MCPAuth
+		wantErr bool
+	}{
+		{"obo pinned", &MCPAuth{Mode: MCPAuthModeExchange, Pattern: ExchangeOBO, Scope: "api://t/.default", IdentityID: authID}, false},
+		{"token_exchange pinned", &MCPAuth{Mode: MCPAuthModeExchange, Pattern: ExchangeTokenExchange, Audience: "https://up", IdentityID: authID}, false},
+		{"not a uuid", &MCPAuth{Mode: MCPAuthModeExchange, Pattern: ExchangeOBO, Scope: "api://t/.default", IdentityID: "entra"}, true},
+		{"minted pattern", &MCPAuth{Mode: MCPAuthModeExchange, Pattern: ExchangeImpersonation, Audience: "https://up", IdentityID: authID}, true},
+		{"non exchange mode", &MCPAuth{Mode: MCPAuthModePassthrough, ExpectedAudience: "api://up", IdentityID: authID}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.auth.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && !errors.Is(err, ErrInvalidMCPTarget) {
+				t.Fatalf("Validate() = %v, want ErrInvalidMCPTarget", err)
+			}
+		})
+	}
+}

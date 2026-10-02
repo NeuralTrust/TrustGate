@@ -51,6 +51,7 @@ type creator struct {
 	signaler    configsyncport.SnapshotSignaler
 	catalog     MCPAuthCatalog
 	openapi     appopenapi.Compiler
+	auths       AuthLookup
 }
 
 func NewCreator(
@@ -59,19 +60,17 @@ func NewCreator(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	catalog MCPAuthCatalog,
-	compilers ...appopenapi.Compiler,
+	opts ...Option,
 ) Creator {
-	var compiler appopenapi.Compiler
-	if len(compilers) > 0 {
-		compiler = compilers[0]
-	}
+	o := applyOptions(opts)
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		logger:      logger,
 		signaler:    signaler,
 		catalog:     catalog,
-		openapi:     compiler,
+		openapi:     o.openapi,
+		auths:       o.auths,
 	}
 }
 
@@ -84,6 +83,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			return nil, err
 		}
 		if err := CanonicalizeMCPAuthFromCatalog(in.MCPTarget, c.catalog); err != nil {
+			return nil, err
+		}
+		if err := validateExchangeIdentity(ctx, c.auths, in.GatewayID, in.MCPTarget); err != nil {
 			return nil, err
 		}
 		b, err = domain.NewMCPRegistry(

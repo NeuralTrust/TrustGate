@@ -5958,6 +5958,10 @@ const docTemplate = `{
                 "header": {
                     "type": "string"
                 },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
+                    "type": "string"
+                },
                 "mode": {
                     "type": "string"
                 },
@@ -6353,6 +6357,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "header": {
+                    "type": "string"
+                },
+                "identity_id": {
+                    "description": "IdentityID is the gateway oauth2 auth that signs an obo or\ntoken_exchange call.",
                     "type": "string"
                 },
                 "mode": {
