@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -58,6 +59,36 @@ var tenantDSNKeys = []string{
 	"connect_timeout", "application_name", "target_session_attrs",
 }
 
+var errTenantVerifyCA = errors.New("postgres: sslmode=verify-ca (or require with a root CA configured on the gateway) is not supported in gateway settings; use verify-full")
+
+// noPassfile is a path nothing exists at, so pgx finds no stored password.
+const noPassfile = "/nonexistent/trustgate-no-passfile"
+
+// sslmodeIfOmitted is the libpq default, applied only when the DSN has no
+// sslmode of its own, so PGSSLMODE in the pod environment never picks it.
+func sslmodeIfOmitted(dsn string) string {
+	if dsnOmitsKey(dsn, "sslmode") {
+		return "prefer"
+	}
+	return ""
+}
+
+// withParam adds key=value to a DSN that has already passed the allow-list (so
+// it does not contain the key and is well formed). An empty value is a no-op.
+func withParam(dsn, key, value string) string {
+	if value == "" {
+		return dsn
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		return dsn + sep + key + "=" + url.QueryEscape(value)
+	}
+	return dsn + " " + key + "=" + value
+}
+
 var errTenantDSN = errors.New("postgres: dsn is invalid or uses parameters that are not allowed in gateway settings")
 
 // validateTenant restricts what a tenant may ask the exporter to connect to.
@@ -83,10 +114,19 @@ func (s Settings) validateTenant() error {
 	}
 	if dsn := strings.TrimSpace(s.DSN); dsn != "" {
 		if _, err := parseTenantDSN(dsn); err != nil {
-			return errTenantDSN
+			return publicDSNError(err)
 		}
 	}
 	return nil
+}
+
+// publicDSNError is the error a tenant sees: the specific verify-ca message, or
+// a generic one that never echoes the DSN or what pgx found on the pod.
+func publicDSNError(err error) error {
+	if errors.Is(err, errTenantVerifyCA) {
+		return errTenantVerifyCA
+	}
+	return errTenantDSN
 }
 
 // parseTenantDSN parses a tenant DSN and strips what pgx merges in from the
@@ -106,13 +146,29 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 	if dsnOmitsKey(dsn, "host") {
 		return nil, errTenantDSN
 	}
-	conf, err := pgxpool.ParseConfig(dsn)
+	// Pin what pgx would otherwise take from the pod: a passfile (PGPASSFILE or
+	// ~/.pgpass, looked up even for an explicitly empty password) and, when the
+	// DSN says nothing, sslmode (PGSSLMODE). The values come from this package,
+	// never from the environment or the tenant.
+	conf, err := pgxpool.ParseConfig(withParam(withParam(dsn, "passfile", noPassfile), "sslmode", sslmodeIfOmitted(dsn)))
 	if err != nil {
 		return nil, err
 	}
 	cc := conf.ConnConfig
 	if dsnOmitsKey(dsn, "password") {
 		cc.Password = ""
+	}
+	// Anything the DSN did not write but PG* variables supplied is not the
+	// tenant's to use against its own host.
+	if dsnOmitsKey(dsn, "user") {
+		cc.User = ""
+	}
+	if dsnOmitsKey(dsn, "dbname") {
+		cc.Database = ""
+	}
+	delete(cc.RuntimeParams, "options")
+	if dsnOmitsKey(dsn, "application_name") {
+		delete(cc.RuntimeParams, "application_name")
 	}
 	hosts := []string{cc.Host}
 	for _, fb := range cc.Fallbacks {
@@ -144,9 +200,11 @@ func parseTenantDSN(dsn string) (*pgxpool.Config, error) {
 func dsnOmitsKey(dsn, key string) bool {
 	allowed := make([]string, 0, len(tenantDSNKeys))
 	for _, k := range tenantDSNKeys {
-		if k != key {
-			allowed = append(allowed, k)
+		// dbname and database are one key to pgx.
+		if k == key || (key == "dbname" && k == "database") || (key == "database" && k == "dbname") {
+			continue
 		}
+		allowed = append(allowed, k)
 	}
 	_, err := pgconn.ParseConfigWithOptions(dsn, pgconn.ParseConfigOptions{ConnStringAllowedKeys: allowed})
 	return err == nil
@@ -162,7 +220,7 @@ func withoutFileTLS(c *tls.Config) (*tls.Config, error) {
 		return nil, nil
 	}
 	if c.VerifyPeerCertificate != nil {
-		return nil, errTenantDSN
+		return nil, errTenantVerifyCA
 	}
 	c = c.Clone()
 	c.Certificates = nil
@@ -190,7 +248,7 @@ func openGuardedPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 		if netguard.AllowPrivate() {
 			return nil, fmt.Errorf("postgres: open pool: %w", err)
 		}
-		return nil, errTenantDSN
+		return nil, publicDSNError(err)
 	}
 	conf.ConnConfig.DialFunc = netguard.Shared().DialContext
 	pool, err := pgxpool.NewWithConfig(ctx, conf)

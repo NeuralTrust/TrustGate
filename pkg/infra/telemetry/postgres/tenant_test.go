@@ -250,7 +250,7 @@ func TestParseTenantDSN_OperatorTrustRootsDoNotApply(t *testing.T) {
 	require.Equal(t, "db.example.com", conf.ConnConfig.TLSConfig.ServerName)
 
 	_, err = parseTenantDSN("host=db.example.com user=u sslmode=verify-ca")
-	require.ErrorIs(t, err, errTenantDSN, "verify-ca keeps the original roots in a closure, so it is refused")
+	require.ErrorIs(t, err, errTenantVerifyCA, "verify-ca keeps the original roots in a closure, so it is refused")
 }
 
 // On a self-hosted gateway the tenant is the operator: the DSN keeps every pgx
@@ -271,4 +271,44 @@ func TestTenantSettings_SelfHostedDSNKeepsAllPgxParameters(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, errTenantDSN)
 	require.NotContains(t, err.Error(), "ConnStringAllowedKeys", "built without the tenant allow-list")
+}
+
+func TestParseTenantDSN_EmptyPasswordDoesNotFallBackToAPassfile(t *testing.T) {
+	passfile := filepath.Join(t.TempDir(), "pgpass")
+	require.NoError(t, os.WriteFile(passfile, []byte("*:*:*:*:from-passfile\n"), 0o600))
+	t.Setenv("PGPASSFILE", passfile)
+
+	for _, dsn := range []string{
+		"host=db.example.com user=u password=''",
+		"postgres://u:@db.example.com/app",
+		"host=db.example.com user=u", // omitted entirely
+	} {
+		conf, err := parseTenantDSN(dsn)
+		require.NoError(t, err, dsn)
+		require.Empty(t, conf.ConnConfig.Password, dsn)
+	}
+}
+
+func TestParseTenantDSN_EnvironmentDefaultsAreNotAppliedToTenantConnections(t *testing.T) {
+	t.Setenv("PGOPTIONS", "-c search_path=operator")
+	t.Setenv("PGUSER", "operator")
+	t.Setenv("PGDATABASE", "operatordb")
+	t.Setenv("PGAPPNAME", "operator-app")
+	t.Setenv("PGSSLMODE", "disable")
+
+	conf, err := parseTenantDSN("host=db.example.com")
+	require.NoError(t, err)
+	cc := conf.ConnConfig
+	require.Empty(t, cc.User)
+	require.Empty(t, cc.Database)
+	require.NotContains(t, cc.RuntimeParams, "options")
+	require.NotContains(t, cc.RuntimeParams, "application_name")
+	require.NotNil(t, cc.TLSConfig, "an omitted sslmode is the libpq default (prefer), not PGSSLMODE=disable")
+
+	conf, err = parseTenantDSN("host=db.example.com user=mine dbname=mydb application_name=mine sslmode=require")
+	require.NoError(t, err)
+	cc = conf.ConnConfig
+	require.Equal(t, "mine", cc.User)
+	require.Equal(t, "mydb", cc.Database)
+	require.Equal(t, "mine", cc.RuntimeParams["application_name"])
 }
