@@ -1276,3 +1276,23 @@ func TestLoadConfig_RateLimitDisabledIgnoresTheSyncTuning(t *testing.T) {
 		t.Fatalf("a disabled limiter must not be validated: %v", err)
 	}
 }
+
+func TestProviderAllowPrivateNetworks(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{"unset defaults to off", "", false},
+		{"explicit true", "true", true},
+		{"explicit false", "false", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PROVIDER_ALLOW_PRIVATE_NETWORKS", tc.env)
+			if got := getProviderConfig().AllowPrivateNetworks; got != tc.want {
+				t.Fatalf("AllowPrivateNetworks = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

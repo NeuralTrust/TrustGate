@@ -445,6 +445,10 @@ type ProviderConfig struct {
 	RequestTimeout        time.Duration
 	ResponseHeaderTimeout time.Duration
 	MaxRetries            int
+	// AllowPrivateNetworks lets provider clients dial loopback, RFC1918,
+	// link-local and other non-public addresses. Registry base_url is tenant
+	// input, so this is off by default; see PROVIDER_ALLOW_PRIVATE_NETWORKS.
+	AllowPrivateNetworks bool
 }
 
 type CatalogConfig struct {
@@ -822,6 +826,7 @@ func getProviderConfig() ProviderConfig {
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
 		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+		AllowPrivateNetworks:  getEnvBool("PROVIDER_ALLOW_PRIVATE_NETWORKS", false),
 	}
 }
 

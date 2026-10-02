@@ -106,7 +106,7 @@ func newClientWithTokenSource(baseURL string, timeout time.Duration, ts tokenSou
 	// CheckRedirect must stay ours, to stop the bearer token following a
 	// redirect off-host, and writing that field on a shared client would be a
 	// data race.
-	pooled := providers.NewHTTPClientPool().Get(PluginName, timeout)
+	pooled := providers.NewTrustedHTTPClientPool().Get(PluginName, timeout)
 	return &client{
 		http: &http.Client{
 			Transport: pooled.Transport,
