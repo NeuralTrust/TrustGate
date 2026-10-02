@@ -178,12 +178,11 @@ type adminParam struct {
 }
 
 // rateLimitParams is what the plan rate limiter needs to run in the background
-// of a plane that serves proxy or MCP traffic. Meter and Audit are nil when the
-// limiter is disabled (Audit also where the plane cannot see every tenant).
+// of a plane that serves proxy or MCP traffic. Meter is nil when the
+// limiter is disabled.
 type rateLimitParams struct {
 	dig.In
 	Meter *ratelimitapp.Meter
-	Audit *ratelimitapp.RolloutAudit
 	// SyncRedis is nil when the limiter is disabled.
 	SyncRedis *cache.SyncClient `optional:"true"`
 	// Caps is the Postgres planes' tenant caps copy; absent (or nil) elsewhere.
@@ -296,7 +295,7 @@ func runAll(p allParam, logger *slog.Logger) {
 	)
 }
 
-// startRateLimit runs the plan counter sync loop (and the one-off rollout audit)
+// startRateLimit runs the plan counter sync loop
 // for as long as the process serves traffic. It loads the tenant caps once,
 // bounded, before returning, so call it before the servers start: the first
 // requests are then measured against the tenant's row and not the gateway stamp.
@@ -326,13 +325,6 @@ func startRateLimit(p rateLimitParams, logger *slog.Logger) func() {
 		go func() {
 			defer wg.Done()
 			p.Caps.Run(ctx)
-		}()
-	}
-	if p.Audit != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			p.Audit.Run(ctx)
 		}()
 	}
 	return func() {

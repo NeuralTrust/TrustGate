@@ -1204,7 +1204,7 @@ func TestLoadConfig_RateLimitSyncDefaults(t *testing.T) {
 	}
 	rl := cfg.RateLimit
 	if !rl.Enabled || rl.SyncInterval != time.Second || rl.SyncTimeout != 200*time.Millisecond ||
-		rl.FailedRetention != 30*time.Second || rl.RolloutAuditMonth != "" {
+		rl.FailedRetention != 30*time.Second {
 		t.Fatalf("rate limit defaults = %+v", rl)
 	}
 }
@@ -1214,14 +1214,13 @@ func TestLoadConfig_RateLimitSyncConfigured(t *testing.T) {
 	t.Setenv("RATE_LIMIT_SYNC_INTERVAL", "2s")
 	t.Setenv("RATE_LIMIT_SYNC_TIMEOUT", "500ms")
 	t.Setenv("RATE_LIMIT_FAILED_RETENTION", "45s")
-	t.Setenv("RATE_LIMIT_ROLLOUT_AUDIT_MONTH", " 2026-10 ")
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	rl := cfg.RateLimit
 	if rl.SyncInterval != 2*time.Second || rl.SyncTimeout != 500*time.Millisecond ||
-		rl.FailedRetention != 45*time.Second || rl.RolloutAuditMonth != "2026-10" {
+		rl.FailedRetention != 45*time.Second {
 		t.Fatalf("rate limit = %+v", rl)
 	}
 }
@@ -1236,8 +1235,6 @@ func TestLoadConfig_RejectsInvalidRateLimitSync(t *testing.T) {
 		{name: "zero timeout", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "0s"},
 		{name: "timeout over the cap", key: "RATE_LIMIT_SYNC_TIMEOUT", value: "6s"},
 		{name: "retention over the cap", key: "RATE_LIMIT_FAILED_RETENTION", value: "11m"},
-		{name: "malformed audit month", key: "RATE_LIMIT_ROLLOUT_AUDIT_MONTH", value: "2026-13"},
-		{name: "audit month with a day", key: "RATE_LIMIT_ROLLOUT_AUDIT_MONTH", value: "2026-10-01"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

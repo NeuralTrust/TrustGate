@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -280,51 +279,6 @@ func TestStoreUnresponsiveRedisGivesUpOnTheContextDeadline(t *testing.T) {
 	_, err = s.Sync(ctx, []domain.SyncItem{{Subject: "t", Bumps: bumps(1, 1)}})
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), time.Second)
-}
-
-func TestStoreAcquireAuditGrantsExactlyOneCaller(t *testing.T) {
-	s, mr, _ := testStore(t)
-	first, err := s.AcquireAudit(bg, "per-tenant-rollout:2026-10")
-	require.NoError(t, err)
-	second, err := s.AcquireAudit(bg, "per-tenant-rollout:2026-10")
-	require.NoError(t, err)
-	assert.True(t, first)
-	assert.False(t, second)
-	assert.Greater(t, mr.TTL("gt:rl:audit:per-tenant-rollout:2026-10"), 30*24*time.Hour, "the gateway outlives the month")
-
-	other, err := s.AcquireAudit(bg, "per-tenant-rollout:2026-11")
-	require.NoError(t, err)
-	assert.True(t, other, "a new month is a new audit")
-}
-
-func TestStoreReleaseAuditGivesTheClaimBack(t *testing.T) {
-	s, _, _ := testStore(t)
-	first, err := s.AcquireAudit(bg, "per-tenant-rollout:2026-10")
-	require.NoError(t, err)
-	require.True(t, first)
-
-	require.NoError(t, s.ReleaseAudit(bg, "per-tenant-rollout:2026-10"))
-
-	again, err := s.AcquireAudit(bg, "per-tenant-rollout:2026-10")
-	require.NoError(t, err)
-	assert.True(t, again, "a released claim can be taken by the next pod or boot")
-}
-
-func TestStoreLegacyQuotaByGatewayReadsOnlyOldPerGatewayKeys(t *testing.T) {
-	s, mr, _ := testStore(t)
-	g1, g2 := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
-	tenantUUID := ids.New[ids.GatewayKind]()
-	require.NoError(t, mr.Set("gt:rl:quota:"+g1.String()+":2026-10", "40"))
-	require.NoError(t, mr.Set("gt:rl:quota:"+g2.String()+":2026-10", "2"))
-	require.NoError(t, mr.Set("gt:rl:quota:"+g1.String()+":2026-09", "99"))          // another month
-	require.NoError(t, mr.Set("gt:rl:quota:{tenant-1}:2026-10", "7"))                // current format
-	require.NoError(t, mr.Set("gt:rl:quota:{"+tenantUUID.String()+"}:2026-10", "8")) // current format, tenant id is a uuid
-	require.NoError(t, mr.Set("gt:rl:burst:"+g1.String(), "5"))                      // not quota
-	require.NoError(t, mr.Set("gt:rl:quota:not-a-uuid:2026-10", "1"))                // junk
-
-	got, err := s.LegacyQuotaByGateway(bg, "2026-10")
-	require.NoError(t, err)
-	assert.Equal(t, map[ids.GatewayID]int64{g1: 40, g2: 2}, got)
 }
 
 func TestStoreTokenTTLFollowsTheConfiguredRetention(t *testing.T) {

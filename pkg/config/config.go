@@ -506,11 +506,6 @@ type RateLimitConfig struct {
 	// FailedRetention is how long usage that could not be synced is kept for
 	// resending, from its first failure, before it is dropped and counted.
 	FailedRetention time.Duration
-	// RolloutAuditMonth ("YYYY-MM") is the month in which the one-off report on
-	// tenants whose old per-gateway counters had already exceeded their monthly
-	// cap runs. Empty disables it, which is the default: set it to the month the
-	// per-tenant counters are rolled out in.
-	RolloutAuditMonth string
 }
 
 type MCPConnectRateLimitConfig struct {
@@ -940,11 +935,10 @@ func getRateLimitConfig() (RateLimitConfig, error) {
 		return RateLimitConfig{}, err
 	}
 	return RateLimitConfig{
-		Enabled:           getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
-		SyncInterval:      syncInterval,
-		SyncTimeout:       syncTimeout,
-		FailedRetention:   retention,
-		RolloutAuditMonth: strings.TrimSpace(os.Getenv("RATE_LIMIT_ROLLOUT_AUDIT_MONTH")),
+		Enabled:         getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
+		SyncInterval:    syncInterval,
+		SyncTimeout:     syncTimeout,
+		FailedRetention: retention,
 	}, nil
 }
 
@@ -956,11 +950,6 @@ func (c RateLimitConfig) Validate() error {
 	}
 	if err := ratelimitdomain.ValidateRetention(c.FailedRetention, c.SyncInterval, c.SyncTimeout); err != nil {
 		return fmt.Errorf("%w: RATE_LIMIT_FAILED_RETENTION: %v", errors.ErrInvalidConfig, err)
-	}
-	if c.RolloutAuditMonth != "" {
-		if _, err := time.Parse("2006-01", c.RolloutAuditMonth); err != nil {
-			return fmt.Errorf("%w: RATE_LIMIT_ROLLOUT_AUDIT_MONTH must be YYYY-MM, got %q", errors.ErrInvalidConfig, c.RolloutAuditMonth)
-		}
 	}
 	return nil
 }
