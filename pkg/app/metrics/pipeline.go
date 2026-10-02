@@ -152,7 +152,7 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 	for _, e := range explicit {
 		overrides[e.Name] = e
 	}
-	merged := make([]telemetrydomain.ExporterConfig, 0, len(p.defaultConfigs)+len(explicit))
+	merged := make([]SourcedExporter, 0, len(p.defaultConfigs)+len(explicit))
 	seenIdentity := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
 	seenName := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
 	for _, d := range p.defaultConfigs {
@@ -163,23 +163,23 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 		seenIdentity[identity] = struct{}{}
 		seenName[d.Name] = struct{}{}
 		if override, ok := overrides[d.Name]; ok {
-			merged = append(merged, override)
+			merged = append(merged, SourcedExporter{Config: override, Tenant: true})
 			delete(overrides, d.Name)
 			continue
 		}
-		merged = append(merged, d)
+		merged = append(merged, SourcedExporter{Config: d})
 	}
 	for _, e := range explicit {
 		if _, dup := seenName[e.Name]; dup {
 			continue
 		}
 		seenName[e.Name] = struct{}{}
-		merged = append(merged, overrides[e.Name])
+		merged = append(merged, SourcedExporter{Config: overrides[e.Name], Tenant: true})
 	}
 	if len(merged) == 0 {
 		return nil
 	}
-	return p.cache.Resolve(merged)
+	return p.cache.ResolveSourced(merged)
 }
 
 func (p *Pipeline) close() {

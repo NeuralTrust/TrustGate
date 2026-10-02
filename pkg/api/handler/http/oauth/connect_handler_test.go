@@ -391,12 +391,13 @@ func TestConnectPage_DoesNotHoldWhenThereIsNothingToWaitFor(t *testing.T) {
 }
 
 // Calendly refusing the gateway's client registration is the upstream's answer,
-// not a gateway fault: it must not surface as a 500, and the page has to keep
-// the upstream's reason for whoever fixes the configuration.
+// not a gateway fault: it must not surface as a 500, and the page keeps the
+// status and the registered RFC 7591 code (never the response body) for whoever
+// fixes the configuration.
 func TestConnectStart_RejectedRegistrationIsBadGateway(t *testing.T) {
 	t.Parallel()
-	stub := &stubConnectService{startErr: fmt.Errorf("%w (status 400): %s",
-		appoauth.ErrUpstreamRegistrationRejected, `{"error":"invalid_client_metadata"}`)}
+	stub := &stubConnectService{startErr: fmt.Errorf("%w (status 400, invalid_client_metadata)",
+		appoauth.ErrUpstreamRegistrationRejected)}
 	h := NewConnectHandler(stub, nil, "")
 	app := fiber.New()
 	app.Get(ConnectStartPath, h.Start)

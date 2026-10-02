@@ -74,6 +74,12 @@ func (f captureFactory) Build(_ telemetrydomain.ExporterConfig) (appmetrics.Expo
 
 func (f captureFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
 
+func (f captureFactory) ValidateTenant(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f captureFactory) BuildTenant(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
+	return f.Build(cfg)
+}
+
 type stubPricingResolver struct {
 	price appcatalog.Pricing
 }

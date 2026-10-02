@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
@@ -74,6 +75,10 @@ func (t *Template) ValidateConfig(settings map[string]interface{}) error {
 //
 // Connection precedence: literal dsn > dsn_env > SENSIBLE_PG_DSN > service DatabaseConfig.
 func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error) {
+	return t.withSettings(settings, false)
+}
+
+func (t *Template) withSettings(settings map[string]interface{}, tenant bool) (appmetrics.Exporter, error) {
 	s, err := parseSettings(settings)
 	if err != nil {
 		return nil, err
@@ -81,10 +86,15 @@ func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exp
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
+	if tenant {
+		if err := s.validateTenant(); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
 	defer cancel()
 
-	pool, err := t.openPool(ctx, s)
+	pool, err := t.openPool(ctx, s, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +105,15 @@ func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exp
 	return newExporter(pool, s.Table, t.logger), nil
 }
 
-func (t *Template) openPool(ctx context.Context, s Settings) (*pgxpool.Pool, error) {
+func (t *Template) openPool(ctx context.Context, s Settings, tenant bool) (*pgxpool.Pool, error) {
 	dsn, err := s.resolveDSN()
 	if err == nil {
+		// Only a DSN the tenant wrote is a tenant-chosen destination. A tenant
+		// exporter with no dsn of its own resolves to the operator's
+		// SENSIBLE_PG_DSN (existing behaviour) and stays on the operator path.
+		if tenant && strings.TrimSpace(s.DSN) != "" {
+			return openGuardedPool(ctx, dsn)
+		}
 		pool, err := pgxpool.New(ctx, dsn)
 		if err != nil {
 			return nil, fmt.Errorf("postgres: open pool: %w", err)
