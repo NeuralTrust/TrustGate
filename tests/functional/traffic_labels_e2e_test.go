@@ -86,6 +86,21 @@ func newClassifierUpstream(t *testing.T) *classifierUpstream {
 	return u
 }
 
+func (u *classifierUpstream) sawTogether(markers ...string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for _, b := range u.bodies {
+		all := true
+		for _, m := range markers {
+			all = all && strings.Contains(b, m)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
 func (u *classifierUpstream) sawText(marker string) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -142,6 +157,11 @@ type labelRoute struct {
 
 func setupLabelRoute(t *testing.T, enabled bool, receiver *otlpReceiver, policies ...map[string]any) labelRoute {
 	t.Helper()
+	return setupLabelRouteTo(t, newJSONUpstream(t, "labels-upstream"), enabled, receiver, policies...)
+}
+
+func setupLabelRouteTo(t *testing.T, up *fakeUpstream, enabled bool, receiver *otlpReceiver, policies ...map[string]any) labelRoute {
+	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{
 		"slug": uniqueName("labels-gw"),
 		"telemetry": map[string]any{
@@ -157,7 +177,6 @@ func setupLabelRoute(t *testing.T, enabled bool, receiver *otlpReceiver, policie
 			}},
 		},
 	})
-	up := newJSONUpstream(t, "labels-upstream")
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	consumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("cons"), backendID)
 	for _, entry := range policies {
@@ -429,4 +448,32 @@ func TestTrafficLabelsE2E_AdminAPI(t *testing.T) {
 	status, body = putGatewayLabeling(t, gatewayID, nil)
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	assert.Nil(t, body["traffic_labeling"], "an explicit null clears the config")
+}
+
+// A Responses continuation only carries its new turn; the conversation buffer
+// gives the classifier the earlier turns of the chain too.
+func TestTrafficLabelsE2E_ResponsesContinuationIsLabeledWithItsConversation(t *testing.T) {
+	defer Track(t, "TrafficLabels")()
+
+	prefix := uniqueName("labels-chain")
+	route := setupLabelRouteTo(t, newResponsesUpstream(t, prefix), true, newOTLPReceiver(t))
+	path := "/" + ConsumerSlug(t, route.consumerID) + "/v1/responses"
+	first := uniqueName("first-turn")
+	second := uniqueName("second-turn")
+
+	status := postUntilRouted(t, route.apiKey, path, map[string]any{"model": "gpt-4o-mini", "input": first})
+	require.Equal(t, http.StatusOK, status)
+	require.Eventually(t, func() bool { return route.classifier.sawText(first) }, 20*time.Second, 200*time.Millisecond,
+		"the first turn was never labeled")
+
+	status, _, body := proxyRequest(t, http.MethodPost, route.apiKey, path, nil, mustJSON(t, map[string]any{
+		"model": "gpt-4o-mini", "input": second, "previous_response_id": responseTurnID(prefix, 1),
+	}))
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+	require.Eventually(t, func() bool { return route.classifier.sawTogether(first, second) }, 20*time.Second, 200*time.Millisecond,
+		"the continuation must be labeled with the earlier turn of its conversation")
+}
+
+func responseTurnID(prefix string, n int) string {
+	return fmt.Sprintf("resp_%s_%d", prefix, n)
 }

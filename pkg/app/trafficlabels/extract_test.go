@@ -115,15 +115,38 @@ func TestUserTextWithoutBodyOrDecoder(t *testing.T) {
 	assert.Empty(t, userText(nil, []byte(openAIConversation), adapter.FormatOpenAI, 3))
 }
 
-func TestLastUserMessagesSkipsBlankTurns(t *testing.T) {
+func TestUserMessagesSkipBlankTurns(t *testing.T) {
 	t.Parallel()
-	msgs := []adapter.CanonicalMessage{
-		{Role: "user", Content: "first"},
-		{Role: "user", Content: "   "},
-		{Role: "user", Content: "second"},
-	}
+	body := []byte(`{"model":"gpt-4o","messages":[` +
+		`{"role":"user","content":"first"},{"role":"user","content":"   "},{"role":"user","content":"second"}]}`)
+	msgs := userMessages(adapter.NewRegistry(), body, adapter.FormatOpenAI)
+	assert.Equal(t, []string{"first", "second"}, msgs)
 	assert.Equal(t, "first\nsecond", lastUserMessages(msgs, 2))
 	assert.Empty(t, lastUserMessages(msgs, 0))
+}
+
+func TestCapConversationKeepsTheMostRecentMessages(t *testing.T) {
+	t.Parallel()
+
+	many := make([]string, trafficlabel.MaxMessageWindow+10)
+	for i := range many {
+		many[i] = strings.Repeat("m", 3) + string(rune('a'+i%26))
+	}
+	capped := capConversation(many)
+	require.Len(t, capped, trafficlabel.MaxMessageWindow)
+	assert.Equal(t, many[10:], capped)
+
+	half := strings.Repeat("h", trafficlabel.MaxTextChars/2)
+	byChars := capConversation([]string{"oldest", half, half})
+	assert.Equal(t, []string{half, half}, byChars, "the oldest messages go first once the text budget is spent")
+
+	huge := strings.Repeat("x", trafficlabel.MaxTextChars) + "tail"
+	single := capConversation([]string{"older", huge})
+	require.Len(t, single, 1)
+	assert.Equal(t, trafficlabel.MaxTextChars, utf8.RuneCountInString(single[0]))
+	assert.True(t, strings.HasSuffix(single[0], "tail"))
+
+	assert.Empty(t, capConversation(nil))
 }
 
 func TestTruncateTailKeepsTheLatestText(t *testing.T) {
