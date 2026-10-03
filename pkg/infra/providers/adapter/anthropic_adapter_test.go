@@ -1383,7 +1383,7 @@ func TestAnthropicRequest_CacheMarkerKeepsItsBlockBoundary(t *testing.T) {
 			for i, c := range tt.messages {
 				msgs[i] = `{"role":"` + roles[i%2] + `","content":` + c + `}`
 			}
-			body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + tt.system + `,"messages":[` + strings.Join(msgs, ",") + `]}`
+			body := `{"model":"small-chat-model-4-5","max_tokens":5,"system":` + tt.system + `,"messages":[` + strings.Join(msgs, ",") + `]}`
 			got := reencodeAnthropic(t, body)
 
 			wantSystem, wantMessages := tt.wantSystem, tt.wantMessages
@@ -1419,7 +1419,7 @@ func TestAnthropicRequest_CacheBoundarySurvivesTextRewrites(t *testing.T) {
 
 	const blocks = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"text","text":"today\nWhat?"}]`
 	const toolTurn = `[{"type":"text","text":"doc john@example.com\nline2","cache_control":{"type":"ephemeral"}},{"type":"tool_use","id":"t1","name":"f","input":{}}]`
-	body := `{"model":"claude-haiku-4-5","max_tokens":5,"system":` + blocks + `,"messages":[` +
+	body := `{"model":"small-chat-model-4-5","max_tokens":5,"system":` + blocks + `,"messages":[` +
 		`{"role":"user","content":` + blocks + `},` +
 		`{"role":"assistant","content":` + toolTurn + `},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}]}`
@@ -1567,7 +1567,7 @@ func TestAnthropicRequest_AutomaticCachingConflicts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			body := `{"model":"claude-haiku-4-5","max_tokens":5,` + auto + `"messages":[` +
+			body := `{"model":"small-chat-model-4-5","max_tokens":5,` + auto + `"messages":[` +
 				`{"role":"user","content":"q"},` +
 				`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"f","input":{}}]},` +
 				`{"role":"user","content":` + tt.content + `}]}`
@@ -1605,7 +1605,7 @@ func TestAnthropicRequest_BlankSystemBlocks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := reencodeAnthropic(t, `{"model":"claude-haiku-4-5","max_tokens":5,"system":`+tt.system+`,"messages":[{"role":"user","content":"hi"}]}`)
+			got := reencodeAnthropic(t, `{"model":"small-chat-model-4-5","max_tokens":5,"system":`+tt.system+`,"messages":[{"role":"user","content":"hi"}]}`)
 			assert.JSONEq(t, tt.wantSystem, string(got.System))
 		})
 	}
@@ -1650,7 +1650,7 @@ func TestAnthropicRequest_ClaudeCodeShapedBodyKeepsMarkersInPlace(t *testing.T) 
 	t.Parallel()
 
 	got := reencodeAnthropic(t, `{
-		"model": "claude-haiku-4-5", "max_tokens": 5,
+		"model": "small-chat-model-4-5", "max_tokens": 5,
 		"system": [
 			{"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.0;"},
 			{"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
@@ -1685,7 +1685,7 @@ func TestAnthropicRequest_ClaudeCodeShapedBodyKeepsMarkersInPlace(t *testing.T) 
 func TestAnthropicDecodeRequest_BlankSystemStringIsEmpty(t *testing.T) {
 	t.Parallel()
 
-	body := []byte(`{"model":"claude-haiku-4-5","max_tokens":5,"system":" \n ","messages":[{"role":"user","content":"hi"}]}`)
+	body := []byte(`{"model":"small-chat-model-4-5","max_tokens":5,"system":" \n ","messages":[{"role":"user","content":"hi"}]}`)
 	cr, err := (&AnthropicAdapter{}).DecodeRequest(body)
 	require.NoError(t, err)
 	assert.Empty(t, cr.System)

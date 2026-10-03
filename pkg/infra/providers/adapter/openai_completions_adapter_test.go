@@ -891,7 +891,7 @@ func TestCompletionsRequest_PluginRewriteKeepsImage(t *testing.T) {
 }
 
 const chatCachedRequest = `{
-	"model": "anthropic/claude-haiku-4.5",
+	"model": "anthropic/small-chat-model-4.5",
 	"prompt_cache_key": "k1",
 	"prompt_cache_retention": "24h",
 	"prompt_cache_options": {"mode": "explicit", "ttl": "30m"},
@@ -997,7 +997,7 @@ func TestAdaptRequest_OpenAIChatMarkersReachAnthropic(t *testing.T) {
 	reg := NewRegistry()
 	for _, stream := range []bool{false, true} {
 		body := map[string]any{
-			"model":            "claude-haiku-4-5",
+			"model":            "small-chat-model-4-5",
 			"prompt_cache_key": "e2e-nonce",
 			"max_tokens":       64,
 			"stream":           stream,
