@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // Package labelllm labels traffic by asking an LLM, through the registry and
-// model the gateway selected, which of a consumer's labels a text matches.
+// model the gateway selected, which label of each of a consumer's label sets
+// a text gets.
 package labelllm
 
 import (
@@ -38,7 +39,7 @@ import (
 const (
 	capabilityChat    = "chat"
 	defaultTimeout    = 15 * time.Second
-	defaultMaxTokens  = 256
+	defaultMaxTokens  = 512
 	defaultRetryAfter = time.Second
 	maxRetryAfter     = 30 * time.Second
 )
@@ -89,11 +90,12 @@ func New(registries RegistryFinder, locator factory.ProviderLocator, codec Codec
 	}
 }
 
-// Classify makes one completion call for the text and returns the ids of the
-// labels the model picked, restricted to the labels it was given.
+// Classify makes one completion call for the text covering all the label
+// sets, and returns one result per set: the label the model picked from that
+// set, or none.
 func (c *Classifier) Classify(ctx context.Context, in trafficlabels.ClassifyInput) (trafficlabel.Classification, error) {
-	if len(in.Labels) == 0 || strings.TrimSpace(in.Text) == "" {
-		return trafficlabel.Classification{LabelIDs: []string{}}, nil
+	if len(in.LabelSets) == 0 || strings.TrimSpace(in.Text) == "" {
+		return trafficlabel.Classification{Results: unlabeledExcept(in.LabelSets, nil)}, nil
 	}
 	reg, err := c.registry(ctx, in)
 	if err != nil {
@@ -129,11 +131,11 @@ func (c *Classifier) Classify(ctx context.Context, in trafficlabels.ClassifyInpu
 	if resp == nil {
 		return trafficlabel.Classification{}, fmt.Errorf("%w: empty response", trafficlabel.ErrInvalidAnswer)
 	}
-	labelIDs, err := parseAnswer(resp.Content, in.Labels)
+	results, err := parseAnswer(resp.Content, in.LabelSets)
 	if err != nil {
 		return trafficlabel.Classification{}, err
 	}
-	cls := trafficlabel.Classification{LabelIDs: labelIDs, Latency: latency}
+	cls := trafficlabel.Classification{Results: results, Latency: latency}
 	if resp.Usage != nil {
 		cls.InputTokens = resp.Usage.InputTokens
 		cls.OutputTokens = resp.Usage.OutputTokens
@@ -165,7 +167,7 @@ func (c *Classifier) registry(ctx context.Context, in trafficlabels.ClassifyInpu
 }
 
 func (c *Classifier) requestBody(reg *registry.Registry, in trafficlabels.ClassifyInput) ([]byte, adapter.Format, error) {
-	body, err := buildRequest(in.Model, in.Labels, in.Text, c.maxTokens)
+	body, err := buildRequest(in.Model, in.LabelSets, in.Text, c.maxTokens)
 	if err != nil {
 		return nil, "", fmt.Errorf("labelllm: build request: %w", err)
 	}

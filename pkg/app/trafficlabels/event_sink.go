@@ -117,7 +117,7 @@ func (s *eventSink) Publish(ctx context.Context, req trafficlabel.Request, cls t
 		requested = now
 	}
 	evt := &events.TrafficLabels{
-		SchemaVersion: events.SchemaVersion,
+		SchemaVersion: events.TrafficLabelsSchemaVersion,
 		TraceID:       req.TraceID,
 		GatewayID:     req.GatewayID,
 		ConsumerID:    req.ConsumerID,
@@ -125,8 +125,7 @@ func (s *eventSink) Publish(ctx context.Context, req trafficlabel.Request, cls t
 		OccurredOn:    now.UnixMilli(),
 		RequestedOn:   requested.UnixMilli(),
 		Retention:     retentionFor(gw, requested),
-		Matched:       labelRefs(cls.Matched(req.Labels)),
-		Evaluated:     labelRefs(trafficlabel.Refs(req.Labels)),
+		Results:       labelResults(cls.Resolve(req.LabelSets)),
 		RegistryID:    req.RegistryID,
 		Model:         req.Model,
 		CatalogHash:   req.CatalogHash,
@@ -142,10 +141,10 @@ func (s *eventSink) Publish(ctx context.Context, req trafficlabel.Request, cls t
 	return nil
 }
 
-func labelRefs(refs []trafficlabel.Ref) []events.LabelRef {
-	out := make([]events.LabelRef, len(refs))
-	for i, r := range refs {
-		out[i] = events.LabelRef{ID: r.ID, Name: r.Name}
+func labelResults(results []trafficlabel.SetResult) []events.LabelResult {
+	out := make([]events.LabelResult, len(results))
+	for i, r := range results {
+		out[i] = events.LabelResult{LabelSetID: r.LabelSetID, LabelSetName: r.LabelSetName, Label: r.Label}
 	}
 	return out
 }

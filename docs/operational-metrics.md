@@ -19,7 +19,7 @@ Planes are `admin`, `proxy`, and `mcp`. Routes are `health`, `version`,
 
 Traffic labeling (see [traffic labels](traffic-labels.md)) adds its own
 instruments. `outcome` is their only label, so they stay bounded whatever the
-number of gateways, consumers or labels; per-request detail lives in the
+number of gateways, consumers or label sets; per-request detail lives in the
 `traffic_labels` events.
 
 - `agentgateway.traffic_labels.intake_total` (`{request}`): what the request

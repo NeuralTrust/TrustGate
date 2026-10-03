@@ -42,7 +42,7 @@ func TestCache_RoundTripAndExpiry(t *testing.T) {
 	cache, mr := newTestCache(t, 10*time.Minute)
 	ctx := context.Background()
 
-	cls := trafficlabel.Classification{LabelIDs: []string{"label-1", "label-2"}}
+	cls := trafficlabel.Classification{Results: []trafficlabel.Result{{LabelSetID: "set-1", Label: "positive"}, {LabelSetID: "set-2", Label: ""}}}
 	key := trafficlabel.CacheKey("gw-1", trafficlabel.HashText("refund"), trafficlabel.CatalogHash(nil), "reg-1", "gpt-4o-mini")
 	require.NoError(t, cache.SetMany(ctx, map[string]trafficlabel.Classification{key: cls}))
 
@@ -62,9 +62,9 @@ func TestCache_BatchesInOneRoundTrip(t *testing.T) {
 	cache, mr := newTestCache(t, time.Minute)
 	ctx := context.Background()
 	entries := map[string]trafficlabel.Classification{
-		"a": {LabelIDs: []string{"a"}},
-		"b": {LabelIDs: []string{"b"}},
-		"c": {LabelIDs: []string{}},
+		"a": {Results: []trafficlabel.Result{{LabelSetID: "set-1", Label: "a"}}},
+		"b": {Results: []trafficlabel.Result{{LabelSetID: "set-1", Label: "b"}}},
+		"c": {Results: []trafficlabel.Result{{LabelSetID: "set-1", Label: ""}}},
 	}
 	require.NoError(t, cache.SetMany(ctx, entries))
 	got, err := cache.GetMany(ctx, []string{"a", "b", "c"})
@@ -127,7 +127,7 @@ func TestCache_RedisDownIsAnError(t *testing.T) {
 func TestCacheKey_SeparatesWhatChangesTheResult(t *testing.T) {
 	t.Parallel()
 	text := trafficlabel.HashText("refund")
-	catalog := trafficlabel.CatalogHash([]trafficlabel.Label{{ID: "1", Name: "billing", Instructions: "d"}})
+	catalog := trafficlabel.CatalogHash([]trafficlabel.LabelSet{{ID: "1", Name: "Topic", Labels: []trafficlabel.Label{{Name: "billing"}, {Name: "legal"}}}})
 	base := trafficlabel.CacheKey("gw-1", text, catalog, "reg-1", "m1")
 
 	assert.Equal(t, base, trafficlabel.CacheKey("gw-1", text, catalog, "reg-1", "m1"))

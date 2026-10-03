@@ -567,12 +567,13 @@ representative records, not a live capture:
 ## Traffic labels event
 
 Gateways with `traffic_labeling.enabled` emit one extra record per labeled chat
-request of a consumer that holds labels, after the request itself, through the
-gateway's `otlp` exporters (default and per gateway, metadata class only). It
-is correlated with the request's `trustgate.<version>.metadata` and
-`trustgate.<version>.raw` records by trace id. A request that matches no label
-still emits the record, with an empty `matched` list, so unlabeled traffic can
-be counted.
+request of a consumer that holds label sets, after the request itself, through
+the gateway's `otlp` exporters (default and per gateway, metadata class only).
+It is correlated with the request's `trustgate.<version>.metadata` and
+`trustgate.<version>.raw` records by trace id. The record has one result per
+label set the request was evaluated against; a set none of whose labels
+applies still has its result, with `label` `""`, so unlabeled traffic can be
+counted per set.
 
 | Rule | Detail |
 |---|---|
@@ -585,18 +586,26 @@ be counted.
 
 | Attribute | Content |
 |---|---|
-| `trustgate.label.schema_version` | Event schema version (int) |
+| `trustgate.label.schema_version` | Version of this payload (int). `2` since label sets: the version that carries `results`. It is not the `<version>` of the event name |
 | `trustgate.label.trace_id` | Trace id of the request, to join with its metadata and raw records |
 | `trustgate.label.gateway_id` | Gateway id |
-| `trustgate.label.consumer_id` | Consumer whose labels were evaluated |
+| `trustgate.label.consumer_id` | Consumer whose label sets were evaluated |
 | `trustgate.label.tenant_id` | Tenant id |
 | `trustgate.label.requested_on` | Unix ms when the request arrived (int) |
-| `trustgate.label.matched` | JSON `[{"id","name"}]` of the labels that apply (`[]` when none) |
-| `trustgate.label.matched.count` | Number of matched labels (int) |
-| `trustgate.label.evaluated` | JSON `[{"id","name"}]` of every label the consumer had, in its order |
+| `trustgate.label.results` | JSON `[{"label_set_id","label_set_name","label"}]`, one entry per evaluated label set in the consumer's order. `label` is the label name as spelled in the catalog, `""` when none applies |
+| `trustgate.label.results.count` | Number of evaluated label sets (int) |
 | `trustgate.label.registry_id` | Registry that ran the classification |
 | `trustgate.label.model` | Model that ran the classification |
-| `trustgate.label.catalog_hash` | Order-independent hash of the evaluated labels, instructions and examples included |
+| `trustgate.label.catalog_hash` | Order-independent hash of the evaluated label sets: ids, names, instructions, label names and descriptions |
 | `trustgate.label.usage.input_tokens` / `trustgate.label.usage.output_tokens` | Classifier token usage (int). `0` when the provider reports none or the result came from the cache |
 | `trustgate.label.latency_ms` | Classifier call latency in ms (int). `0` for a cached result |
 | `trustgate.retention.expires_at` / `trustgate.retention.plan` | Same expiry as the request event, counted from when the request arrived |
+
+Version 1 of this payload, which never reached a release, carried
+`trustgate.label.matched`, `trustgate.label.matched.count` and
+`trustgate.label.evaluated` (single labels, several per request). Version 2
+replaces them with `trustgate.label.results` and
+`trustgate.label.results.count`; they are no longer emitted. Version 1 records
+were stamped with the event name's version (`3`) in
+`trustgate.label.schema_version`, so a reader tells them apart by the presence
+of `trustgate.label.results`, not by the version alone.

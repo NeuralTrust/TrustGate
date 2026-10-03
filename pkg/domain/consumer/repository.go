@@ -50,9 +50,9 @@ type Writer interface {
 	// non-nil, replaces that association set in the same transaction. A nil
 	// argument leaves the existing links of that kind untouched.
 	Update(ctx context.Context, c *Consumer, registries *RegistryBindings, auths *[]ids.AuthID) error
-	// UpdateLabels persists only the consumer's labels and updated_at, so a
-	// projection from the app never races a concurrent edit of the rest.
-	UpdateLabels(ctx context.Context, c *Consumer) error
+	// UpdateLabelSets persists only the consumer's label sets and updated_at,
+	// so a projection from the app never races a concurrent edit of the rest.
+	UpdateLabelSets(ctx context.Context, c *Consumer) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error
 }
 

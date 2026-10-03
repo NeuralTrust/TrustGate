@@ -14,6 +14,12 @@
 
 package events
 
+// TrafficLabelsSchemaVersion is the version of the traffic labels payload,
+// reported as trustgate.label.schema_version. It moves apart from
+// SchemaVersion, which names the event: version 2 replaced the matched and
+// evaluated label lists with one result per label set.
+const TrafficLabelsSchemaVersion = 2
+
 // TrafficLabels is the result of labeling one chat request. It never carries
 // the prompt or anything derived from it.
 type TrafficLabels struct {
@@ -25,17 +31,20 @@ type TrafficLabels struct {
 	OccurredOn    int64
 	RequestedOn   int64
 	Retention     *Retention
-	Matched       []LabelRef
-	Evaluated     []LabelRef
-	RegistryID    string
-	Model         string
-	CatalogHash   string
-	InputTokens   int
-	OutputTokens  int
-	LatencyMs     int64
+	// Results has one entry per evaluated label set, in the consumer's order.
+	Results      []LabelResult
+	RegistryID   string
+	Model        string
+	CatalogHash  string
+	InputTokens  int
+	OutputTokens int
+	LatencyMs    int64
 }
 
-type LabelRef struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+// LabelResult is the label a request got for one label set; Label is ""
+// when none of the set's labels applies.
+type LabelResult struct {
+	LabelSetID   string `json:"label_set_id"`
+	LabelSetName string `json:"label_set_name"`
+	Label        string `json:"label"`
 }

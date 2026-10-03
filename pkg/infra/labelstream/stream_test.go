@@ -58,7 +58,9 @@ func request(gateway, text string) trafficlabel.Request {
 		TraceID:   "trace-" + text,
 		Text:      text,
 		Config:    &trafficlabel.Config{Enabled: true, RegistryID: "0190e0d2-6c1f-7a5e-9a3b-1f2e3d4c5b6a", Model: "gpt-4o-mini"},
-		Labels:    []trafficlabel.Label{{ID: "l-1", Name: "billing", Instructions: "refunds"}},
+		LabelSets: []trafficlabel.LabelSet{{
+			ID: "set-1", Name: "Topic", Labels: []trafficlabel.Label{{Name: "billing", Description: "refunds"}, {Name: "legal"}},
+		}},
 	})
 }
 
@@ -92,7 +94,7 @@ func TestStream_EnqueueAndRead(t *testing.T) {
 	assert.Equal(t, int64(1), got[0].Deliveries)
 	assert.Equal(t, want.TraceID, got[0].Request.TraceID)
 	assert.Equal(t, want.TextHash, got[0].Request.TextHash)
-	assert.Equal(t, want.Labels, got[0].Request.Labels)
+	assert.Equal(t, want.LabelSets, got[0].Request.LabelSets)
 	assert.Equal(t, want.RegistryID, got[0].Request.RegistryID)
 	assert.Equal(t, want.Model, got[0].Request.Model)
 
@@ -340,12 +342,15 @@ func TestStream_InvalidEntry(t *testing.T) {
 
 	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{fieldRequest: "{not json"}}).Err())
 	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"other": "x"}}).Err())
+	v1 := `{"gateway_id":"gw-1","text":"refund","labels":[{"id":"l-1","name":"Billing","instructions":"refunds"}]}`
+	require.NoError(t, h.client.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{fieldRequest: v1}}).Err())
 
 	got, err := s.Read(ctx, 10, 10*time.Millisecond)
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Len(t, got, 3)
 	assert.True(t, got[0].Invalid)
 	assert.True(t, got[1].Invalid)
+	assert.True(t, got[2].Invalid, "an entry of the single-label version has no label sets to classify")
 }
 
 func TestStream_ReadTimesOutEmpty(t *testing.T) {

@@ -408,19 +408,28 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest:
     properties:
-      examples:
-        items:
-          type: string
-        type: array
+      description:
+        example: The user is satisfied or happy
+        type: string
+      name:
+        example: positive
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest:
+    properties:
       id:
-        description: ID is the label's id in the app's catalog, opaque to TrustGate.
+        description: ID is the label set's id in the app's catalog, opaque to TrustGate.
         example: 0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b
         type: string
       instructions:
-        example: Questions about invoices, charges and refunds.
+        example: Classify the overall sentiment of the user's message
         type: string
+      labels:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest'
+        type: array
       name:
-        example: Billing
+        example: Sentiment analysis
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
@@ -603,11 +612,11 @@ definitions:
       tool:
         type: string
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest:
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest:
     properties:
-      labels:
+      label_sets:
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelSetRequest'
         type: array
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
@@ -684,14 +693,21 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse:
     properties:
-      examples:
-        items:
-          type: string
-        type: array
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse:
+    properties:
       id:
         type: string
       instructions:
         type: string
+      labels:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse'
+        type: array
       name:
         type: string
     type: object
@@ -721,12 +737,12 @@ definitions:
         type: string
       identity:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse'
-      labels:
+      label_sets:
         description: |-
-          Labels are the traffic labels the consumer's chat requests are
+          LabelSets are the traffic label sets the consumer's chat requests are
           classified against; empty when it has none.
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelSetResponse'
         type: array
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse'
@@ -4310,16 +4326,18 @@ paths:
       summary: Attach an auth to a consumer
       tags:
       - consumers
-  /v1/gateways/{gateway_id}/consumers/{id}/labels:
+  /v1/gateways/{gateway_id}/consumers/{id}/label-sets:
     put:
       consumes:
       - application/json
-      description: 'Replaces the whole list of traffic labels a consumer''s chat requests
-        are classified against. Labels are projected from the app''s catalog: ids
-        are opaque and must be unique, names are unique ignoring case. At most 10
-        labels; name 1-64 characters, instructions 1-2000, up to 5 examples of 1-500.
-        Send `{"labels": []}` to clear. Only LLM consumers can hold labels. Returns
-        the full consumer.'
+      description: 'Replaces all the traffic label sets a consumer''s chat requests
+        are classified against; each set yields at most one of its labels per request.
+        Label sets are projected from the app''s catalog: ids are opaque and must
+        be unique, set names are unique ignoring case. At most 10 label sets; set
+        name 1-64 characters, instructions 0-2000; 2 to 20 labels per set, label name
+        1-64 characters and unique in its set ignoring case, description 0-500. Send
+        `{"label_sets": []}` to clear; the field is required. Only LLM consumers can
+        hold label sets. Returns the full consumer.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -4333,12 +4351,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: The consumer's labels
+      - description: The consumer's label sets
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelSetsRequest'
       produces:
       - application/json
       responses:
@@ -4364,7 +4382,7 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
-      summary: Replace a consumer's traffic labels
+      summary: Replace a consumer's traffic label sets
       tags:
       - consumers
   /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}:
