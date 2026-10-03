@@ -94,7 +94,7 @@ const (
 	defaultTrafficLabelsIntakeMaxBuffer    = 64 << 20
 	defaultTrafficLabelsEnqueueTimeout     = 500 * time.Millisecond
 	defaultTrafficLabelsTimeout            = 15 * time.Second
-	defaultTrafficLabelsMaxTokens          = 512
+	defaultTrafficLabelsMaxTokens          = 4096
 	defaultTrafficLabelsCacheTTL           = time.Hour
 	defaultTrafficLabelsStreamMaxLen       = 100_000
 	defaultTrafficLabelsStreamRetention    = time.Hour

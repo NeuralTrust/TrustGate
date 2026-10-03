@@ -19,6 +19,7 @@ package labelllm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,11 +38,13 @@ import (
 )
 
 const (
-	capabilityChat    = "chat"
-	defaultTimeout    = 15 * time.Second
-	defaultMaxTokens  = 512
-	defaultRetryAfter = time.Second
-	maxRetryAfter     = 30 * time.Second
+	capabilityChat   = "chat"
+	defaultTimeout   = 15 * time.Second
+	defaultMaxTokens = 4096
+
+	maxProviderErrorRunes = 300
+	defaultRetryAfter     = time.Second
+	maxRetryAfter         = 30 * time.Second
 )
 
 // RegistryFinder resolves the registry selected in the gateway's traffic
@@ -196,10 +199,44 @@ func classifyError(err error) error {
 	case be.StatusCode == http.StatusTooManyRequests || be.StatusCode == http.StatusServiceUnavailable:
 		return &trafficlabel.BackpressureError{RetryAfter: retryAfter(be.RetryAfter)}
 	case be.StatusCode >= 400 && be.StatusCode < 500 && be.StatusCode != http.StatusRequestTimeout:
+		if msg := providerErrorMessage(be.Body); msg != "" {
+			return fmt.Errorf("%w: provider answered %d: %s", trafficlabel.ErrClassifierUnavailable, be.StatusCode, msg)
+		}
 		return fmt.Errorf("%w: provider answered %d", trafficlabel.ErrClassifierUnavailable, be.StatusCode)
 	default:
 		return fmt.Errorf("labelllm: completion: %w", err)
 	}
+}
+
+// providerErrorMessage reads the message of a provider's error envelope
+// ({"error":{"message":...}} for OpenAI and Anthropic alike, or a bare
+// {"error":"..."} / {"message":"..."}), so a refused
+// call says why in the log. Only that field is kept, cut to a bounded length,
+// never the raw body.
+func providerErrorMessage(body []byte) string {
+	var envelope struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if len(body) == 0 || json.Unmarshal(body, &envelope) != nil {
+		return ""
+	}
+	msg := envelope.Message
+	var nested struct {
+		Message string `json:"message"`
+	}
+	var flat string
+	switch {
+	case json.Unmarshal(envelope.Error, &nested) == nil && nested.Message != "":
+		msg = nested.Message
+	case json.Unmarshal(envelope.Error, &flat) == nil && flat != "":
+		msg = flat
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	if r := []rune(msg); len(r) > maxProviderErrorRunes {
+		msg = string(r[:maxProviderErrorRunes]) + "…"
+	}
+	return msg
 }
 
 func retryAfter(header string) time.Duration {

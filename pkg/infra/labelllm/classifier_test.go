@@ -183,9 +183,9 @@ func TestClassify_ValidJSON(t *testing.T) {
 	assert.Equal(t, "gpt-4o-mini", cfg.Model)
 
 	var sent struct {
-		Model          string  `json:"model"`
-		Temperature    float64 `json:"temperature"`
-		MaxTokens      int     `json:"max_completion_tokens"`
+		Model          string   `json:"model"`
+		Temperature    *float64 `json:"temperature"`
+		MaxTokens      int      `json:"max_completion_tokens"`
 		ResponseFormat struct {
 			Type string `json:"type"`
 		} `json:"response_format"`
@@ -196,7 +196,7 @@ func TestClassify_ValidJSON(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(h.client.bodies[0], &sent))
 	assert.Equal(t, "gpt-4o-mini", sent.Model)
-	assert.Zero(t, sent.Temperature)
+	assert.Nil(t, sent.Temperature, "no sampling parameters: current models reject temperature")
 	assert.Equal(t, defaultMaxTokens, sent.MaxTokens, "OpenAI takes the output cap as max_completion_tokens")
 	assert.Equal(t, "json_object", sent.ResponseFormat.Type)
 	require.Len(t, sent.Messages, 2)
@@ -505,4 +505,82 @@ func TestRetryAfter(t *testing.T) {
 	assert.Equal(t, 3*time.Second, retryAfter(" 3 "))
 	assert.Equal(t, maxRetryAfter, retryAfter("3600"))
 	assert.Equal(t, defaultRetryAfter, retryAfter(time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)))
+}
+
+// Claude Opus 5.5 answers 400 to any temperature, and always thinks, so the
+// request to an Anthropic registry must carry no sampling parameter and
+// leave room for the thinking in max_tokens.
+func TestClassify_AnthropicRequestHasNoSamplingParameters(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "anthropic", func([]byte) ([]byte, error) {
+		return anthropicAnswer(`{"results":[{"label_set_id":"set-sentiment","label":"negative"},{"label_set_id":"set-topic","label":"Billing"}]}`), nil
+	})
+	h.input.Model = "claude-opus-5-5"
+
+	cls, err := h.classifier.Classify(context.Background(), h.input)
+	require.NoError(t, err)
+	assert.Equal(t, results("negative", "Billing"), cls.Results)
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(h.client.bodies[0], &sent))
+	for _, key := range []string{"temperature", "top_p", "top_k"} {
+		assert.NotContains(t, sent, key, "current Claude models reject %s", key)
+	}
+	assert.EqualValues(t, defaultMaxTokens, sent["max_tokens"])
+	assert.Equal(t, "claude-opus-5-5", sent["model"])
+}
+
+func TestClassify_RefusedRequestSaysWhy(t *testing.T) {
+	t.Parallel()
+	body := `{"type":"error","error":{"type":"invalid_request_error","message":"temperature is not supported for this model."}}`
+	h := newHarness(t, "anthropic", func([]byte) ([]byte, error) {
+		return nil, registry.NewBackendHTTPError(http.StatusBadRequest, []byte(body), http.Header{})
+	})
+	h.input.Model = "claude-opus-5-5"
+
+	_, err := h.classifier.Classify(context.Background(), h.input)
+	require.ErrorIs(t, err, trafficlabel.ErrClassifierUnavailable)
+	assert.Contains(t, err.Error(), "provider answered 400: temperature is not supported for this model.")
+}
+
+func TestProviderErrorMessage(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", maxProviderErrorRunes+50)
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "openai envelope", body: `{"error":{"message":"The model does not exist","type":"invalid_request_error"}}`, want: "The model does not exist"},
+		{name: "flat message", body: `{"message":"bad request"}`, want: "bad request"},
+		{name: "error as a string", body: `{"error":"model not found"}`, want: "model not found"},
+		{name: "whitespace collapsed", body: `{"error":{"message":"line one\n  line two"}}`, want: "line one line two"},
+		{name: "cut to a bounded length", body: `{"error":{"message":"` + long + `"}}`, want: long[:maxProviderErrorRunes] + "…"},
+		{name: "not json", body: `<html>bad gateway</html>`, want: ""},
+		{name: "empty", body: ``, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, providerErrorMessage([]byte(tt.body)))
+		})
+	}
+}
+
+// anthropicAnswer is a Messages API response from a model that always
+// thinks: an empty thinking block (display omitted) before the text.
+func anthropicAnswer(text string) []byte {
+	raw, _ := json.Marshal(map[string]any{
+		"id":    "msg_01",
+		"type":  "message",
+		"role":  "assistant",
+		"model": "claude-opus-5-5",
+		"content": []map[string]any{
+			{"type": "thinking", "thinking": "", "signature": "sig"},
+			{"type": "text", "text": text},
+		},
+		"stop_reason": "end_turn",
+		"usage":       map[string]any{"input_tokens": 420, "output_tokens": 37},
+	})
+	return raw
 }

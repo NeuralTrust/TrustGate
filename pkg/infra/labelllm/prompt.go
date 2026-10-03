@@ -63,10 +63,12 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
+// chatRequest sets no sampling parameters: Claude Opus 5.x, Sonnet 5.x and
+// Fable, and OpenAI's reasoning models, reject temperature with a 400. The
+// JSON answer format and the tolerant parser keep the answer stable instead.
 type chatRequest struct {
 	Model          string          `json:"model"`
 	Messages       []chatMessage   `json:"messages"`
-	Temperature    float64         `json:"temperature"`
 	MaxTokens      int             `json:"max_tokens"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
@@ -105,7 +107,6 @@ func buildRequest(model string, sets []trafficlabel.LabelSet, text string, maxTo
 			{Role: "system", Content: system},
 			{Role: "user", Content: fence(text)},
 		},
-		Temperature:    0,
 		MaxTokens:      maxTokens,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 	})
