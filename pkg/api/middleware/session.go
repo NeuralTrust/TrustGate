@@ -37,7 +37,8 @@ import (
 const (
 	defaultSessionHeader = "X-Session-Id"
 
-	maxSessionIDLen           = 128
+	// Matches the firewall's own cap on conversation_id, which receives this id.
+	maxSessionIDLen           = 256
 	minWellKnownSessionIDLen  = 8
 	maxSessionLookupBodyBytes = 8 << 20
 
@@ -63,6 +64,15 @@ var knownSessionHeaders = []string{
 	"Helicone-Session-Id",
 	"x-litellm-session-id",
 	"x-litellm-trace-id",
+}
+
+// legacySessionHeaders were accepted before the well-known list grew, with any
+// value: they keep the lenient check so an existing client's short or free-form
+// id is never silently dropped.
+var legacySessionHeaders = []string{
+	"X-Session-Id",
+	"X-TG-Session-Id",
+	"X-OpenWebUI-Chat-Id",
 }
 
 var (
@@ -122,7 +132,7 @@ func (m *SessionMiddleware) resolve(c *fiber.Ctx, cfg *domain.SessionConfig) inf
 		if strings.EqualFold(name, headerName) {
 			continue
 		}
-		if id, ok := wellKnownSessionID(c.Get(name)); ok {
+		if id, ok := knownHeaderSessionID(name, c.Get(name)); ok {
 			return exposedSession(id, infracontext.SessionSourceKnownHeader)
 		}
 	}
@@ -175,6 +185,17 @@ func configuredSessionID(raw string) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+// knownHeaderSessionID applies the lenient check to the headers the gateway
+// already read before and the strict one to those it learned since.
+func knownHeaderSessionID(name, raw string) (string, bool) {
+	for _, legacy := range legacySessionHeaders {
+		if strings.EqualFold(name, legacy) {
+			return configuredSessionID(raw)
+		}
+	}
+	return wellKnownSessionID(raw)
 }
 
 // wellKnownSessionID is stricter than configuredSessionID because the gateway
