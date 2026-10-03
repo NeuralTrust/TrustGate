@@ -42,6 +42,9 @@ type ConsumerResponse struct {
 	FailMode        string                   `json:"fail_mode,omitempty"`
 	Identity        IdentityResponse         `json:"identity"`
 	AuthBinding     AuthBindingResponse      `json:"auth_binding"`
+	// Labels are the traffic labels the consumer's chat requests are
+	// classified against; empty when it has none.
+	Labels []ConsumerLabelResponse `json:"labels"`
 	// Synthetic marks a consumer the gateway serves without storing: today the
 	// MCP Store. It has no row, so it cannot be edited, deleted or given a key,
 	// and it is only listed when a caller asks for it.
@@ -152,6 +155,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		FailMode:        string(c.FailMode()),
 		Identity:        fromIdentity(c.Identity),
 		AuthBinding:     fromAuthBinding(c.AuthBinding),
+		Labels:          fromLabels(c.Labels),
 		Synthetic:       domain.IsStoreConsumer(c),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,

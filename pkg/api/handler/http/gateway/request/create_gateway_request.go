@@ -21,7 +21,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 type CreateGatewayRequest struct {
@@ -29,12 +29,12 @@ type CreateGatewayRequest struct {
 	Slug   string `json:"slug,omitempty" example:"acme-prod"`
 	Domain string `json:"domain,omitempty"`
 	// TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).
-	TenantID            string                 `json:"tenant_id,omitempty"`
-	Metadata            map[string]string      `json:"metadata,omitempty"`
-	Telemetry           *telemetry.Telemetry   `json:"telemetry,omitempty"`
-	ClientTLSConfig     domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig       *domain.SessionConfig  `json:"session_config,omitempty"`
-	TopicClassification *topic.Config          `json:"topic_classification,omitempty"`
+	TenantID        string                 `json:"tenant_id,omitempty"`
+	Metadata        map[string]string      `json:"metadata,omitempty"`
+	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
+	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	TrafficLabeling *trafficlabel.Config   `json:"traffic_labeling,omitempty"`
 	// Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.
 	// Tenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free
 	// or inherits the highest sibling tier.
@@ -45,7 +45,7 @@ type CreateGatewayRequest struct {
 // server generates a unique random slug at creation time. A provided slug must
 // still be a valid lowercase DNS label.
 func (r *CreateGatewayRequest) Validate() error {
-	if err := r.TopicClassification.Validate(); err != nil {
+	if err := r.TrafficLabeling.Validate(); err != nil {
 		return err
 	}
 	if r.Entitlements != nil {

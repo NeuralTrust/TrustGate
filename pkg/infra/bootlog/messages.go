@@ -28,8 +28,8 @@ const (
 	MetricsWorkerStarted       = "📊 metrics worker started"
 	MetricsWorkersShuttingDown = "📉 shutting down metrics workers"
 	MetricsWorkersStopped      = "✅ metrics workers stopped"
-	TopicClassifierStarted     = "🏷️  topic classifier started"
-	TopicClassifierStopped     = "✅ topic classifier stopped"
+	TrafficLabelsStarted       = "🏷️  traffic labels started"
+	TrafficLabelsStopped       = "✅ traffic labels stopped"
 )
 
 func rolePrefix(name string) string {

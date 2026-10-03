@@ -118,7 +118,7 @@ func main() {
 	}
 
 	if plane == serverWorker {
-		if err := c.Invoke(runTopicWorker); err != nil {
+		if err := c.Invoke(runLabelWorker); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -191,14 +191,14 @@ type rateLimitParams struct {
 
 type proxyParam struct {
 	dig.In
-	Srv             server.Server `name:"proxy"`
-	Worker          appmetrics.Worker
-	TopicClassifier modules.TopicClassifierParams
-	Conn            *database.Connection
-	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
-	RateLimit       rateLimitParams
-	OpsSDK          *o11y.SDK
+	Srv           server.Server `name:"proxy"`
+	Worker        appmetrics.Worker
+	TrafficLabels modules.TrafficLabelsParams
+	Conn          *database.Connection
+	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
+	RateLimit     rateLimitParams
+	OpsSDK        *o11y.SDK
 }
 
 type mcpParam struct {
@@ -214,15 +214,15 @@ type mcpParam struct {
 
 type allParam struct {
 	dig.In
-	Admin           server.Server `name:"admin"`
-	Proxy           server.Server `name:"proxy"`
-	Worker          appmetrics.Worker
-	TopicClassifier modules.TopicClassifierParams
-	Conn            *database.Connection
-	Dispatcher      *appsnapshot.Dispatcher
-	ConfigSyncGRPC  *configsyncgrpc.Server
-	RateLimit       rateLimitParams
-	OpsSDK          *o11y.SDK
+	Admin          server.Server `name:"admin"`
+	Proxy          server.Server `name:"proxy"`
+	Worker         appmetrics.Worker
+	TrafficLabels  modules.TrafficLabelsParams
+	Conn           *database.Connection
+	Dispatcher     *appsnapshot.Dispatcher
+	ConfigSyncGRPC *configsyncgrpc.Server
+	RateLimit      rateLimitParams
+	OpsSDK         *o11y.SDK
 }
 
 func runAdmin(p adminParam, logger *slog.Logger) {
@@ -252,28 +252,28 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
-	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
+	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
 	runServer(p.Srv, serverProxy, logger)
 }
 
-type topicWorkerParam struct {
+type labelWorkerParam struct {
 	dig.In
-	TopicClassifier modules.TopicClassifierParams
-	Worker          appmetrics.Worker
-	Conn            *database.Connection
-	ConfigWorker    *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
-	ConfigClient    *configsyncgrpc.Client                  `optional:"true"`
-	OpsSDK          *o11y.SDK
+	TrafficLabels modules.TrafficLabelsParams
+	Worker        appmetrics.Worker
+	Conn          *database.Connection
+	ConfigWorker  *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient  *configsyncgrpc.Client                  `optional:"true"`
+	OpsSDK        *o11y.SDK
 }
 
-func runTopicWorker(p topicWorkerParam, logger *slog.Logger) {
+func runLabelWorker(p labelWorkerParam, logger *slog.Logger) {
 	stopConfig := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer flushOpsTelemetry(p.OpsSDK, logger)
 	defer closeResources(p.Conn, logger)
 	defer stopConfig()
 	defer p.Worker.Shutdown()
-	defer modules.StartTopicClassifier(p.TopicClassifier, false)()
+	defer modules.StartTrafficLabels(p.TrafficLabels, false)()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -286,7 +286,7 @@ func runAll(p allParam, logger *slog.Logger) {
 	defer closeResources(p.Conn, logger)
 	defer stopDispatcher()
 	defer p.Worker.Shutdown()
-	defer modules.StartTopicClassifier(p.TopicClassifier, true)()
+	defer modules.StartTrafficLabels(p.TrafficLabels, true)()
 	defer startRateLimit(p.RateLimit, logger)()
 	runServers(logger,
 		namedServer{name: serverAdmin, srv: p.Admin},
