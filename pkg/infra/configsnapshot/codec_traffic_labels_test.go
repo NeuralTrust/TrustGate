@@ -57,7 +57,7 @@ func TestCodecRoundTrip_CarriesTrafficLabeling(t *testing.T) {
 	require.Nil(t, gotBare.TrafficLabeling)
 }
 
-func TestCodecRoundTrip_CarriesConsumerLabels(t *testing.T) {
+func TestCodecRoundTrip_CarriesConsumerLabelSets(t *testing.T) {
 	t.Parallel()
 	codec := configsnapshot.NewCodec()
 
@@ -65,7 +65,10 @@ func TestCodecRoundTrip_CarriesConsumerLabels(t *testing.T) {
 	require.NoError(t, err)
 	labeled := consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Name: "chat", Slug: "chat", Type: consumerdomain.TypeLLM, Active: true,
-		Labels: []trafficlabel.Label{{ID: "l-1", Name: "Billing", Instructions: "refunds", Examples: []string{"refund?"}}},
+		LabelSets: []trafficlabel.LabelSet{{
+			ID: "set-1", Name: "Sentiment", Instructions: "overall mood",
+			Labels: []trafficlabel.Label{{Name: "positive", Description: "happy"}, {Name: "negative"}},
+		}},
 	}
 	bare := consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw.ID, Name: "bare", Slug: "bare", Type: consumerdomain.TypeLLM, Active: true,
@@ -81,8 +84,8 @@ func TestCodecRoundTrip_CarriesConsumerLabels(t *testing.T) {
 
 	got, ok := snap.ConsumerByID(labeled.ID)
 	require.True(t, ok)
-	require.Equal(t, labeled.Labels, got.Labels)
+	require.Equal(t, labeled.LabelSets, got.LabelSets)
 	gotBare, ok := snap.ConsumerByID(bare.ID)
 	require.True(t, ok)
-	require.Nil(t, gotBare.Labels)
+	require.Nil(t, gotBare.LabelSets)
 }

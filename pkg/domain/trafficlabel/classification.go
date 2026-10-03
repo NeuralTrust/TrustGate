@@ -24,29 +24,50 @@ import (
 	"time"
 )
 
-// Classification is the outcome of labeling one text: the ids of the labels
-// that apply, which may be none, and what the classifier call cost.
+// Result is the label the classifier picked for one label set, or "" when
+// none of the set's labels applies.
+type Result struct {
+	LabelSetID string `json:"label_set_id"`
+	Label      string `json:"label"`
+}
+
+// SetResult is the outcome for one evaluated label set, as reported in the
+// classification event: Label is "" when the request is unlabeled for the set.
+type SetResult struct {
+	LabelSetID   string
+	LabelSetName string
+	Label        string
+}
+
+// Classification is the outcome of labeling one text: at most one label per
+// label set, and what the classifier call cost.
 type Classification struct {
-	LabelIDs     []string      `json:"label_ids"`
+	Results      []Result      `json:"results"`
 	InputTokens  int           `json:"input_tokens,omitempty"`
 	OutputTokens int           `json:"output_tokens,omitempty"`
 	Latency      time.Duration `json:"latency,omitempty"`
 }
 
-// Cached returns the classification as stored in the cache: the labels only,
-// since a cache hit costs nothing.
+// Cached returns the classification as stored in the cache: the results
+// only, since a cache hit costs nothing.
 func (c Classification) Cached() Classification {
-	return Classification{LabelIDs: slices.Clone(c.LabelIDs)}
+	return Classification{Results: slices.Clone(c.Results)}
 }
 
-// Matched resolves the label ids against the labels that were evaluated,
-// keeping the order of the evaluated list.
-func (c Classification) Matched(evaluated []Label) []Ref {
-	out := make([]Ref, 0, len(c.LabelIDs))
-	for _, l := range evaluated {
-		if slices.Contains(c.LabelIDs, l.ID) {
-			out = append(out, Ref{ID: l.ID, Name: l.Name})
+// Resolve returns one result per evaluated label set, in the order of sets.
+// A set the classification has no result for, or whose result is not one of
+// the set's labels, is unlabeled; labels take the set's spelling.
+func (c Classification) Resolve(sets []LabelSet) []SetResult {
+	picked := make(map[string]string, len(c.Results))
+	for _, r := range c.Results {
+		if _, seen := picked[r.LabelSetID]; !seen {
+			picked[r.LabelSetID] = r.Label
 		}
+	}
+	out := make([]SetResult, len(sets))
+	for i, s := range sets {
+		label, _ := s.MatchLabel(picked[s.ID])
+		out[i] = SetResult{LabelSetID: s.ID, LabelSetName: s.Name, Label: label}
 	}
 	return out
 }

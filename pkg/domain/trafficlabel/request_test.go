@@ -24,14 +24,14 @@ func TestNewRequest(t *testing.T) {
 
 	received := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
 	cfg := enabled()
-	lbls := []Label{{ID: "1", Name: "billing", Instructions: "refunds", Examples: []string{"refund?"}}}
+	sets := []LabelSet{sentiment()}
 	req := NewRequest(RequestParams{
 		GatewayID:  "gw",
 		ConsumerID: "consumer",
 		TraceID:    "trace",
 		Text:       "where is my refund",
 		Config:     cfg,
-		Labels:     lbls,
+		LabelSets:  sets,
 		ReceivedAt: received,
 	})
 
@@ -41,8 +41,8 @@ func TestNewRequest(t *testing.T) {
 	if req.TextHash != HashText("where is my refund") {
 		t.Fatalf("TextHash = %q, want the hash of the text", req.TextHash)
 	}
-	if req.CatalogHash != CatalogHash(lbls) {
-		t.Fatalf("CatalogHash = %q, want the hash of the labels", req.CatalogHash)
+	if req.CatalogHash != CatalogHash(sets) {
+		t.Fatalf("CatalogHash = %q, want the hash of the label sets", req.CatalogHash)
 	}
 	if req.RegistryID != testRegistryID || req.Model != "gpt-4o-mini" {
 		t.Fatalf("classifier not carried: %+v", req)
@@ -51,18 +51,18 @@ func TestNewRequest(t *testing.T) {
 		t.Fatalf("ReceivedAt = %v, want %v", req.ReceivedAt, received)
 	}
 
-	lbls[0].Name = "changed"
-	lbls[0].Examples[0] = "changed"
-	if req.Labels[0].Name != "billing" || req.Labels[0].Examples[0] != "refund?" {
-		t.Fatal("request shares the labels with the consumer")
+	sets[0].Name = "changed"
+	sets[0].Labels[0].Name = "changed"
+	if req.LabelSets[0].Name != "Sentiment analysis" || req.LabelSets[0].Labels[0].Name != "positive" {
+		t.Fatal("request shares the label sets with the consumer")
 	}
 }
 
 func TestNewRequestWithoutConfig(t *testing.T) {
 	t.Parallel()
 	req := NewRequest(RequestParams{Text: "hi"})
-	if req.Labels != nil || req.RegistryID != "" || req.Model != "" {
-		t.Fatalf("expected no labels and no classifier, got %+v", req)
+	if req.LabelSets != nil || req.RegistryID != "" || req.Model != "" {
+		t.Fatalf("expected no label sets and no classifier, got %+v", req)
 	}
 	if req.CatalogHash != CatalogHash(nil) {
 		t.Fatal("catalog hash of an empty list is not stable")

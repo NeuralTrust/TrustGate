@@ -17,23 +17,22 @@ package trafficlabel
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"slices"
 	"time"
 )
 
 // Request is one chat request waiting to be labeled. It is what travels in the
 // queue, so it carries everything the worker needs without reading the config.
 type Request struct {
-	GatewayID   string    `json:"gateway_id"`
-	ConsumerID  string    `json:"consumer_id"`
-	TraceID     string    `json:"trace_id"`
-	Text        string    `json:"text"`
-	TextHash    string    `json:"text_hash"`
-	Labels      []Label   `json:"labels"`
-	CatalogHash string    `json:"catalog_hash"`
-	RegistryID  string    `json:"registry_id"`
-	Model       string    `json:"model"`
-	ReceivedAt  time.Time `json:"received_at"`
+	GatewayID   string     `json:"gateway_id"`
+	ConsumerID  string     `json:"consumer_id"`
+	TraceID     string     `json:"trace_id"`
+	Text        string     `json:"text"`
+	TextHash    string     `json:"text_hash"`
+	LabelSets   []LabelSet `json:"label_sets"`
+	CatalogHash string     `json:"catalog_hash"`
+	RegistryID  string     `json:"registry_id"`
+	Model       string     `json:"model"`
+	ReceivedAt  time.Time  `json:"received_at"`
 }
 
 type RequestParams struct {
@@ -42,20 +41,20 @@ type RequestParams struct {
 	TraceID    string
 	Text       string
 	Config     *Config
-	Labels     []Label
+	LabelSets  []LabelSet
 	ReceivedAt time.Time
 }
 
 func NewRequest(p RequestParams) Request {
-	labels := cloneLabels(p.Labels)
+	sets := cloneLabelSets(p.LabelSets)
 	req := Request{
 		GatewayID:   p.GatewayID,
 		ConsumerID:  p.ConsumerID,
 		TraceID:     p.TraceID,
 		Text:        p.Text,
 		TextHash:    HashText(p.Text),
-		Labels:      labels,
-		CatalogHash: CatalogHash(labels),
+		LabelSets:   sets,
+		CatalogHash: CatalogHash(sets),
 		ReceivedAt:  p.ReceivedAt,
 	}
 	if p.Config != nil {
@@ -63,18 +62,6 @@ func NewRequest(p RequestParams) Request {
 		req.Model = p.Config.Model
 	}
 	return req
-}
-
-func cloneLabels(labels []Label) []Label {
-	if labels == nil {
-		return nil
-	}
-	out := make([]Label, len(labels))
-	for i, l := range labels {
-		out[i] = l
-		out[i].Examples = slices.Clone(l.Examples)
-	}
-	return out
 }
 
 func HashText(text string) string {

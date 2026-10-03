@@ -1,10 +1,13 @@
 # Traffic labels
 
-TrustGate can label the chat requests of a gateway with the traffic labels of
-the consumer that sent them. A label is a name, instructions that say when it
-applies and a few optional examples. A request can match several labels, one,
-or none ("unlabeled"). The classification is done by an LLM, through a
-registry and model of the gateway chosen by its admin.
+TrustGate can label the chat requests of a gateway with the label sets of the
+consumer that sent them. A label set is a name, optional instructions that say
+what it classifies, and 2 to 20 labels, each a name and an optional
+description: "Sentiment analysis", with the labels positive, negative and
+neutral, is one. Each label set gives a request at most one of its labels, or
+none ("unlabeled" for that set); the sets are independent of each other. The
+classification is done by an LLM, through a registry and model of the gateway
+chosen by its admin.
 
 It is a gateway feature with its own async process: it never blocks, delays or
 alters a request, and it is not a policy plugin. Its output is observability
@@ -12,12 +15,12 @@ only, one `traffic_labels` event per labeled request.
 
 ## Who owns what
 
-- **The app** owns the label catalog (per gateway) and decides which labels
-  apply to each application. It projects the resolved labels of an application
-  onto the application's LLM consumer in TrustGate.
+- **The app** owns the catalog of label sets (per gateway) and decides which
+  label sets apply to each application. It projects the resolved label sets of
+  an application onto the application's LLM consumer in TrustGate.
 - **TrustGate** stores the gateway's classifier settings and each consumer's
-  label list, labels the traffic and emits the events. It has no catalog of its
-  own.
+  label sets, labels the traffic and emits the events. It has no catalog of
+  its own.
 
 ## Turning it on
 
@@ -55,34 +58,52 @@ as `unconfigured`).
 
 ### Consumer
 
-Every consumer response carries `labels` (`[]` when none). They are written
-only through a dedicated endpoint, so the app never round-trips the whole
-consumer; the generic consumer create and update endpoints never touch them.
+Every consumer response carries `label_sets` (`[]` when none). They are
+written only through a dedicated endpoint, so the app never round-trips the
+whole consumer; the generic consumer create and update endpoints never touch
+them.
 
 ```
-PUT /v1/gateways/{gateway_id}/consumers/{consumer_id}/labels
-{"labels": [{"id": "<app id>", "name": "Billing", "instructions": "...", "examples": ["..."]}]}
+PUT /v1/gateways/{gateway_id}/consumers/{consumer_id}/label-sets
+{
+  "label_sets": [
+    {
+      "id": "<app id>",
+      "name": "Sentiment analysis",
+      "instructions": "Classify the overall sentiment of the user's message",
+      "labels": [
+        {"name": "positive", "description": "Happy or satisfied"},
+        {"name": "negative", "description": "Angry or disappointed"},
+        {"name": "neutral", "description": ""}
+      ]
+    }
+  ]
+}
 → 200 with the full consumer
 ```
 
-- At most 10 labels. `id` is opaque (the app's id) and unique in the list.
-  `name` is 1 to 64 characters, unique ignoring case. `instructions` is 1 to
-  2,000 characters. Up to 5 `examples` of 1 to 500 characters.
-- `{"labels": []}` clears them. The `labels` field is required, so a body
-  without it is refused instead of clearing.
-- Only LLM consumers serve chat routes, so only they can hold labels. Setting
-  labels on an MCP or A2A consumer is a validation error; clearing is allowed.
+- At most 10 label sets. `id` is opaque (the app's id) and unique in the list.
+  `name` is 1 to 64 characters, unique ignoring case. `instructions` is
+  optional, up to 2,000 characters.
+- Each set has 2 to 20 labels. A label `name` is 1 to 64 characters, unique in
+  its set ignoring case (two sets may share a label name). `description` is
+  optional, up to 500 characters.
+- `{"label_sets": []}` clears them. The `label_sets` field is required, so a
+  body without it, or with `null`, is refused instead of clearing.
+- Only LLM consumers serve chat routes, so only they can hold label sets.
+  Setting label sets on an MCP or A2A consumer is a validation error; clearing
+  is allowed.
 - Same permissions as the other consumer write endpoints.
 
 A request is labeled only when its gateway has `traffic_labeling.enabled` with
-a registry and a model, **and** its consumer holds at least one label.
+a registry and a model, **and** its consumer holds at least one label set.
 
 ## How a request flows
 
 ```
 Auth → HybridGatewayGuard → Session → Metrics → TrafficLabels → handler
                                                      │
-        gateway enabled? consumer has labels? chat route? sampled in?
+     gateway enabled? consumer has label sets? chat route? sampled in?
         body copy (capped) + non-blocking send to an in-memory buffer
                                                      │
    dispatcher: decode, last N user messages, truncate to 10,000 chars,
@@ -90,7 +111,8 @@ Auth → HybridGatewayGuard → Session → Metrics → TrafficLabels → handle
                                                      │
    worker: read, batch by gateway + catalog + registry + model,
            cache by text + catalog + registry + model,
-           one completion per text through the selected registry
+           one completion per text, for all its label sets,
+           through the selected registry
                                                      │
    traffic_labels event through the gateway's OTLP exporters
 ```
@@ -102,8 +124,8 @@ Auth → HybridGatewayGuard → Session → Metrics → TrafficLabels → handle
   sampling leaves out are dropped before their body is copied. The buffer is
   bounded both in entries and in bytes (`TRAFFIC_LABELS_INTAKE_MAX_BUFFER_BYTES`);
   when either is full the candidate is dropped and counted.
-- The queued entry carries the consumer's labels and the registry and model,
-  so the worker never reads the config to classify it.
+- The queued entry carries the consumer's label sets and the registry and
+  model, so the worker never reads the config to classify it.
 - The worker keeps a fixed number of batches in flight per replica
   (`TRAFFIC_LABELS_CONCURRENCY`, 8 by default) and classifies the texts of a
   batch one after another, so the classifier registries see at most that many
@@ -123,18 +145,24 @@ way), builds an OpenAI chat request, translates it to the provider's format
 with the same adapter the proxy uses and calls the provider client directly.
 It never goes through the consumer or plugin pipeline.
 
-- One completion per text, `temperature` 0, at most
-  `TRAFFIC_LABELS_MAX_TOKENS` (256) output tokens, JSON response mode where the
-  provider supports it (the adapter drops it elsewhere and the prompt asks for
-  JSON anyway).
-- The system prompt lists each label with its id, name, instructions and
-  examples, and states the rules: several labels, one or none may apply; only
-  listed ids; `{"labels": []}` when none applies; the text is untrusted data
-  between `<message>` delimiters and instructions inside it are never
-  followed. Delimiters inside the text are neutralised.
+- One completion per text covering all the consumer's label sets,
+  `temperature` 0, at most `TRAFFIC_LABELS_MAX_TOKENS` (512) output tokens,
+  JSON response mode where the provider supports it (the adapter drops it
+  elsewhere and the prompt asks for JSON anyway).
+- The system prompt lists each label set with its id, name and instructions,
+  and its labels with their name and description, and states the rules: for
+  each set, pick exactly one label name of that set, or `null` when none
+  clearly applies; the text is untrusted data between `<message>` delimiters
+  and instructions inside it are never followed. Delimiters inside the text
+  are neutralised. The expected answer is
+  `{"results": [{"label_set_id": "<id>", "label": "positive"}, {"label_set_id": "<id>", "label": null}]}`.
 - The answer is parsed tolerantly (code fences and text around the JSON are
-  ignored). Ids that are not in the consumer's list are dropped (a label name
-  is accepted for its id), duplicates are removed and the result is sorted.
+  ignored, a bare list of results is accepted). Label names are matched
+  ignoring case and take the catalog's spelling. A result for a set id the
+  consumer does not have is dropped, a label that is not one of its set's
+  labels counts as none, a set missing from the answer is unlabeled and only
+  the first result of a set counts. Every assigned set is in the result. An
+  answer without a `results` list is an unreadable answer.
 - A 429 or 503 pauses the whole worker for `Retry-After` (at most 30 s)
   without counting as a failure. Another 4xx (bad credentials, unknown model),
   a deleted registry or an unreadable answer drops that text without retrying
@@ -146,17 +174,20 @@ It never goes through the consumer or plugin pipeline.
 ## What leaves TrustGate
 
 - **To the selected registry** (the customer's own LLM provider): the text of
-  the latest user messages and the consumer's labels.
-- **To Redis**: the same text and labels, in the stream, until it is labeled:
+  the latest user messages and the consumer's label sets.
+- **To Redis**: the same text and label sets, in the stream, until it is labeled:
   the entry is deleted with its ack. An entry never labeled is trimmed after
   `TRAFFIC_LABELS_STREAM_RETENTION` (1 h by default, checked every 30 s even
-  without traffic). The result (label ids only) stays in the cache for
-  `TRAFFIC_LABELS_CACHE_TTL`, under a key signed with a key derived from
-  `SERVER_SECRET_KEY` and scoped to the gateway, so reading Redis does not
-  reveal which prompts were labeled.
-- **To the OTel collector**: the matched and evaluated labels (id and name),
-  the trace and consumer ids, the registry and model and the call's usage,
-  never the prompt. See the
+  without traffic). The result (label set ids and label names only) stays in
+  the cache for `TRAFFIC_LABELS_CACHE_TTL`, under a key signed with a key
+  derived from `SERVER_SECRET_KEY` and scoped to the gateway, so reading Redis
+  does not reveal which prompts were labeled. The key covers the text, a hash
+  of the consumer's label sets (ids, names, instructions, label names and
+  descriptions, whatever their order), the registry and the model, so editing
+  a set never reuses an older result.
+- **To the OTel collector**: one result per evaluated label set (set id and
+  name, and the label or `""`), the trace and consumer ids, the registry and
+  model and the call's usage, never the prompt. See the
   [event contract](telemetry/otlp-metadata-contract.md#traffic-labels-event).
   Downstream, a view keyed on the event name routes these records to their own
   table; the attributes stay out of the `trustgate_events` namespace so they
@@ -184,8 +215,12 @@ proxies. The `proxy` and `run` planes run both the intake and a worker.
 ## Rollback
 
 - Per gateway: `traffic_labeling.enabled = false`, or clear it.
-- Per consumer: `PUT .../labels` with `{"labels": []}`.
+- Per consumer: `PUT .../label-sets` with `{"label_sets": []}`.
 - Globally: revert the deploy. Migration `20261003120000_add_traffic_labels`
   drops the old `topic_classification` column and adds the nullable
-  `gateways.traffic_labeling` and `consumers.labels` columns; older code
-  ignores them.
+  `gateways.traffic_labeling` column; older code ignores it. Migration
+  `20261003150000_replace_consumer_labels_with_label_sets` drops the
+  single-label `consumers.labels` column, without converting it (the app
+  projects the label sets again), and adds the nullable `consumers.label_sets`.
+  Entries queued by the single-label version are dropped by the worker as
+  invalid.

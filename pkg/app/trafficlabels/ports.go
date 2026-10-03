@@ -27,13 +27,13 @@ type Queue interface {
 	Enqueue(ctx context.Context, req trafficlabel.Request) error
 }
 
-// ClassifyInput is one text to label against a consumer's labels, with the
-// registry and model that run the classification.
+// ClassifyInput is one text to label against a consumer's label sets, with
+// the registry and model that run the classification.
 type ClassifyInput struct {
 	GatewayID  string
 	RegistryID string
 	Model      string
-	Labels     []trafficlabel.Label
+	LabelSets  []trafficlabel.LabelSet
 	Text       string
 }
 
