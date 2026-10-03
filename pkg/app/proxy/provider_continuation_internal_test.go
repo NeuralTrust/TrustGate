@@ -74,3 +74,10 @@ func TestInjectPreviousResponseID_EmptyIDAndBadJSON(t *testing.T) {
 	bad := []byte(`not-json`)
 	assert.Equal(t, bad, injectPreviousResponseID(bad, adapter.FormatOpenAIResponses, "resp_abc"))
 }
+
+func TestInjectPreviousResponseID_SkipsConversationRequests(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","conversation":"conv_abc"}`)
+	out := injectPreviousResponseID(body, adapter.FormatOpenAIResponses, "resp_gateway")
+	_, ok := fieldString(t, out, "previous_response_id")
+	assert.False(t, ok, "conversation and previous_response_id are mutually exclusive upstream")
+}
