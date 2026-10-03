@@ -564,34 +564,39 @@ representative records, not a live capture:
 
 - OTLP → ClickHouse ingestion (collector / data-plane)
 
-## Topic classification event
+## Traffic labels event
 
-Gateways with `topic_classification.enabled` emit one extra record per
-classified request, after the request itself, through the gateway's `otlp`
-exporters (default and per gateway, metadata class only). It is correlated
-with the request's `trustgate.<version>.metadata` and `trustgate.<version>.raw`
-records by trace id.
+Gateways with `traffic_labeling.enabled` emit one extra record per labeled chat
+request of a consumer that holds labels, after the request itself, through the
+gateway's `otlp` exporters (default and per gateway, metadata class only). It
+is correlated with the request's `trustgate.<version>.metadata` and
+`trustgate.<version>.raw` records by trace id. A request that matches no label
+still emits the record, with an empty `matched` list, so unlabeled traffic can
+be counted.
 
 | Rule | Detail |
 |---|---|
-| Event name | `trustgate.<version>.topic_classification`. Downstream routing keys on it |
-| Prompt | **Never emitted**, nor anything derived from it: not the text, its hash, its length or the number of windows topic-guard split it into, nor the system prompt |
-| Namespace | Every attribute is under `trustgate.topic.*`, except the retention pair |
-| Tenant | Sent as `trustgate.topic.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the classification as one more request |
+| Event name | `trustgate.<version>.traffic_labels`. Downstream routing keys on it |
+| Prompt | **Never emitted**, nor anything derived from it: not the text, its hash or its length, nor the system prompt or the classifier's answer |
+| Namespace | Every attribute is under `trustgate.label.*`, except the retention pair |
+| Tenant | Sent as `trustgate.label.tenant_id`, **not** `trustgate.tenant_id`: the view that fills `trustgate_events` takes any record carrying that key and would count the labeling as one more request |
 | Exporters | Only `otlp`. Postgres exporters never receive it: they key rows on the trace id |
-| Timestamp | When the request was classified. `trustgate.topic.requested_on` is when it arrived |
+| Timestamp | When the request was labeled. `trustgate.label.requested_on` is when it arrived |
 
 | Attribute | Content |
 |---|---|
-| `trustgate.topic.schema_version` | Event schema version |
-| `trustgate.topic.trace_id` | Trace id of the request, to join with its metadata and raw records |
-| `trustgate.topic.gateway_id` | Gateway id |
-| `trustgate.topic.tenant_id` | Tenant id |
-| `trustgate.topic.requested_on` | Unix ms when the request arrived |
-| `trustgate.topic.scores` | JSON `[{"topic","probability","matched"}]`, one entry per catalog topic |
-| `trustgate.topic.matched` | JSON array of the topics above the threshold (`[]` when none) |
-| `trustgate.topic.matched.count` | Number of matched topics |
-| `trustgate.topic.model_version` | `name@revision+calibration` of the topic-guard model that scored it |
-| `trustgate.topic.catalog_hash` | Hash of the gateway's topic catalog, order-independent |
-| `trustgate.topic.threshold` | Threshold override, when the gateway sets one |
+| `trustgate.label.schema_version` | Event schema version (int) |
+| `trustgate.label.trace_id` | Trace id of the request, to join with its metadata and raw records |
+| `trustgate.label.gateway_id` | Gateway id |
+| `trustgate.label.consumer_id` | Consumer whose labels were evaluated |
+| `trustgate.label.tenant_id` | Tenant id |
+| `trustgate.label.requested_on` | Unix ms when the request arrived (int) |
+| `trustgate.label.matched` | JSON `[{"id","name"}]` of the labels that apply (`[]` when none) |
+| `trustgate.label.matched.count` | Number of matched labels (int) |
+| `trustgate.label.evaluated` | JSON `[{"id","name"}]` of every label the consumer had, in its order |
+| `trustgate.label.registry_id` | Registry that ran the classification |
+| `trustgate.label.model` | Model that ran the classification |
+| `trustgate.label.catalog_hash` | Order-independent hash of the evaluated labels, instructions and examples included |
+| `trustgate.label.usage.input_tokens` / `trustgate.label.usage.output_tokens` | Classifier token usage (int). `0` when the provider reports none or the result came from the cache |
+| `trustgate.label.latency_ms` | Classifier call latency in ms (int). `0` for a cached result |
 | `trustgate.retention.expires_at` / `trustgate.retention.plan` | Same expiry as the request event, counted from when the request arrived |
