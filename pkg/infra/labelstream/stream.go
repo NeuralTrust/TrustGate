@@ -334,7 +334,9 @@ func decode(msg redis.XMessage) trafficlabels.Delivery {
 		d.Invalid = true
 		return d
 	}
-	if err := json.Unmarshal([]byte(raw), &d.Request); err != nil {
+	if err := json.Unmarshal([]byte(raw), &d.Request); err != nil || len(d.Request.LabelSets) == 0 {
+		// An entry without label sets has nothing to classify; it is also
+		// what an entry queued by the single-label version decodes to.
 		d.Invalid = true
 	}
 	return d

@@ -27,21 +27,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
-type UpdateLabelsInput struct {
+type UpdateLabelSetsInput struct {
 	ID        ids.ConsumerID
 	GatewayID ids.GatewayID
-	// Labels replaces the whole label list; an empty list clears it.
-	Labels []trafficlabel.Label
+	// LabelSets replaces the whole list of label sets; an empty list clears it.
+	LabelSets []trafficlabel.LabelSet
 }
 
-//go:generate mockery --name=LabelUpdater --dir=. --output=./mocks --filename=consumer_label_updater_mock.go --case=underscore --with-expecter
-type LabelUpdater interface {
-	UpdateLabels(ctx context.Context, in UpdateLabelsInput) (*domain.Consumer, error)
+//go:generate mockery --name=LabelSetUpdater --dir=. --output=./mocks --filename=consumer_label_set_updater_mock.go --case=underscore --with-expecter
+type LabelSetUpdater interface {
+	UpdateLabelSets(ctx context.Context, in UpdateLabelSetsInput) (*domain.Consumer, error)
 }
 
-var _ LabelUpdater = (*labelUpdater)(nil)
+var _ LabelSetUpdater = (*labelSetUpdater)(nil)
 
-type labelUpdater struct {
+type labelSetUpdater struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
@@ -49,14 +49,14 @@ type labelUpdater struct {
 	signaler    configsyncport.SnapshotSignaler
 }
 
-func NewLabelUpdater(
+func NewLabelSetUpdater(
 	repo domain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
-) LabelUpdater {
-	return &labelUpdater{
+) LabelSetUpdater {
+	return &labelSetUpdater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:   publisher,
@@ -65,7 +65,7 @@ func NewLabelUpdater(
 	}
 }
 
-func (u *labelUpdater) UpdateLabels(ctx context.Context, in UpdateLabelsInput) (*domain.Consumer, error) {
+func (u *labelSetUpdater) UpdateLabelSets(ctx context.Context, in UpdateLabelSetsInput) (*domain.Consumer, error) {
 	existing, err := u.repo.FindByID(ctx, in.ID)
 	if err != nil {
 		return nil, err
@@ -73,11 +73,11 @@ func (u *labelUpdater) UpdateLabels(ctx context.Context, in UpdateLabelsInput) (
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrNotFound
 	}
-	if err := existing.SetLabels(in.Labels); err != nil {
+	if err := existing.SetLabelSets(in.LabelSets); err != nil {
 		return nil, err
 	}
 	existing.UpdatedAt = time.Now().UTC()
-	if err := u.repo.UpdateLabels(ctx, existing); err != nil {
+	if err := u.repo.UpdateLabelSets(ctx, existing); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)

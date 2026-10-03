@@ -26,37 +26,37 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type UpdateConsumerLabelsHandler struct {
-	updater appconsumer.LabelUpdater
+type UpdateConsumerLabelSetsHandler struct {
+	updater appconsumer.LabelSetUpdater
 }
 
-func NewUpdateConsumerLabelsHandler(updater appconsumer.LabelUpdater) *UpdateConsumerLabelsHandler {
-	return &UpdateConsumerLabelsHandler{updater: updater}
+func NewUpdateConsumerLabelSetsHandler(updater appconsumer.LabelSetUpdater) *UpdateConsumerLabelSetsHandler {
+	return &UpdateConsumerLabelSetsHandler{updater: updater}
 }
 
 // Handle godoc
-// @Summary      Replace a consumer's traffic labels
-// @Description  Replaces the whole list of traffic labels a consumer's chat requests are classified against. Labels are projected from the app's catalog: ids are opaque and must be unique, names are unique ignoring case. At most 10 labels; name 1-64 characters, instructions 1-2000, up to 5 examples of 1-500. Send `{"labels": []}` to clear. Only LLM consumers can hold labels. Returns the full consumer.
+// @Summary      Replace a consumer's traffic label sets
+// @Description  Replaces all the traffic label sets a consumer's chat requests are classified against; each set yields at most one of its labels per request. Label sets are projected from the app's catalog: ids are opaque and must be unique, set names are unique ignoring case. At most 10 label sets; set name 1-64 characters, instructions 0-2000; 2 to 20 labels per set, label name 1-64 characters and unique in its set ignoring case, description 0-500. Send `{"label_sets": []}` to clear; the field is required. Only LLM consumers can hold label sets. Returns the full consumer.
 // @Tags         consumers
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id  path      string                               true  "Gateway id"   format(uuid)
-// @Param        id          path      string                               true  "Consumer id"  format(uuid)
-// @Param        body        body      request.UpdateConsumerLabelsRequest  true  "The consumer's labels"
+// @Param        gateway_id  path      string                                  true  "Gateway id"   format(uuid)
+// @Param        id          path      string                                  true  "Consumer id"  format(uuid)
+// @Param        body        body      request.UpdateConsumerLabelSetsRequest  true  "The consumer's label sets"
 // @Success      200         {object}  response.ConsumerResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
 // @Failure      404         {object}  httpio.ErrorBody
 // @Failure      422         {object}  httpio.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/consumers/{id}/labels [put]
-func (h *UpdateConsumerLabelsHandler) Handle(c *fiber.Ctx) error {
+// @Router       /v1/gateways/{gateway_id}/consumers/{id}/label-sets [put]
+func (h *UpdateConsumerLabelSetsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 
-	var req request.UpdateConsumerLabelsRequest
+	var req request.UpdateConsumerLabelSetsRequest
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
@@ -64,10 +64,10 @@ func (h *UpdateConsumerLabelsHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
-	cons, err := h.updater.UpdateLabels(c.UserContext(), appconsumer.UpdateLabelsInput{
+	cons, err := h.updater.UpdateLabelSets(c.UserContext(), appconsumer.UpdateLabelSetsInput{
 		ID:        id,
 		GatewayID: gatewayID,
-		Labels:    req.ToDomain(),
+		LabelSets: req.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

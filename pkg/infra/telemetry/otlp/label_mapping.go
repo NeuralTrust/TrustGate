@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -34,9 +33,8 @@ const (
 	attrLabelConsumerID    = "trustgate.label.consumer_id"
 	attrLabelTenantID      = "trustgate.label.tenant_id"
 	attrLabelRequestedOn   = "trustgate.label.requested_on"
-	attrLabelMatched       = "trustgate.label.matched"
-	attrLabelMatchedCount  = "trustgate.label.matched.count"
-	attrLabelEvaluated     = "trustgate.label.evaluated"
+	attrLabelResults       = "trustgate.label.results"
+	attrLabelResultsCount  = "trustgate.label.results.count"
 	attrLabelRegistryID    = "trustgate.label.registry_id"
 	attrLabelModel         = "trustgate.label.model"
 	attrLabelCatalogHash   = "trustgate.label.catalog_hash"
@@ -45,11 +43,10 @@ const (
 	attrLabelLatencyMs     = "trustgate.label.latency_ms"
 )
 
-func labelsEventName(schemaVersion int) string {
-	if schemaVersion <= 0 {
-		schemaVersion = metrics.SchemaVersion
-	}
-	return fmt.Sprintf("trustgate.%d.%s", schemaVersion, labelsEventVerb)
+// labelsEventName follows the naming of the request events; the payload's own
+// version travels in trustgate.label.schema_version.
+func labelsEventName() string {
+	return fmt.Sprintf("trustgate.%d.%s", events.SchemaVersion, labelsEventVerb)
 }
 
 func labelsToRecord(evt *events.TrafficLabels) otellog.Record {
@@ -57,7 +54,7 @@ func labelsToRecord(evt *events.TrafficLabels) otellog.Record {
 	if evt == nil {
 		return rec
 	}
-	rec.SetEventName(labelsEventName(evt.SchemaVersion))
+	rec.SetEventName(labelsEventName())
 	if evt.OccurredOn > 0 {
 		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
 	}
@@ -66,7 +63,7 @@ func labelsToRecord(evt *events.TrafficLabels) otellog.Record {
 
 	schemaVersion := evt.SchemaVersion
 	if schemaVersion <= 0 {
-		schemaVersion = metrics.SchemaVersion
+		schemaVersion = events.TrafficLabelsSchemaVersion
 	}
 	attrs := []attribute.KeyValue{attribute.Int(attrLabelSchemaVersion, schemaVersion)}
 	appendStr := func(key, value string) {
@@ -85,9 +82,8 @@ func labelsToRecord(evt *events.TrafficLabels) otellog.Record {
 		attrs = append(attrs, attribute.Int64(attrLabelRequestedOn, evt.RequestedOn))
 	}
 	attrs = append(attrs,
-		attribute.String(attrLabelMatched, jsonString(nonNilRefs(evt.Matched))),
-		attribute.Int(attrLabelMatchedCount, len(evt.Matched)),
-		attribute.String(attrLabelEvaluated, jsonString(nonNilRefs(evt.Evaluated))),
+		attribute.String(attrLabelResults, jsonString(nonNilResults(evt.Results))),
+		attribute.Int(attrLabelResultsCount, len(evt.Results)),
 		attribute.Int(attrLabelInputTokens, max(evt.InputTokens, 0)),
 		attribute.Int(attrLabelOutputTokens, max(evt.OutputTokens, 0)),
 		attribute.Int64(attrLabelLatencyMs, max(evt.LatencyMs, 0)),
@@ -100,9 +96,9 @@ func labelsToRecord(evt *events.TrafficLabels) otellog.Record {
 	return rec
 }
 
-func nonNilRefs(refs []events.LabelRef) []events.LabelRef {
-	if refs == nil {
-		return []events.LabelRef{}
+func nonNilResults(results []events.LabelResult) []events.LabelResult {
+	if results == nil {
+		return []events.LabelResult{}
 	}
-	return refs
+	return results
 }

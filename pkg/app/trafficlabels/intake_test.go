@@ -75,8 +75,11 @@ func enabledConfig() *trafficlabel.Config {
 	}
 }
 
-func consumerLabels() []trafficlabel.Label {
-	return []trafficlabel.Label{{ID: "l-billing", Name: "Billing", Instructions: "Refunds and invoices", Examples: []string{"where is my refund"}}}
+func consumerLabelSets() []trafficlabel.LabelSet {
+	return []trafficlabel.LabelSet{{
+		ID: "set-topic", Name: "Topic", Instructions: "What the request is about",
+		Labels: []trafficlabel.Label{{Name: "Billing", Description: "Refunds and invoices"}, {Name: "Legal"}},
+	}}
 }
 
 func candidate(cfg *trafficlabel.Config) Candidate {
@@ -87,7 +90,7 @@ func candidate(cfg *trafficlabel.Config) Candidate {
 		SourceFormat: adapter.FormatOpenAI,
 		Body:         []byte(openAIConversation),
 		Config:       cfg,
-		Labels:       consumerLabels(),
+		LabelSets:    consumerLabelSets(),
 		ReceivedAt:   time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC),
 	}
 }
@@ -125,8 +128,8 @@ func TestIntake_EnqueuesTheBuiltRequest(t *testing.T) {
 	assert.Equal(t, "trace-1", req.TraceID)
 	assert.Equal(t, "INV-42\nyes, do it", req.Text)
 	assert.Equal(t, trafficlabel.HashText(req.Text), req.TextHash)
-	assert.Equal(t, consumerLabels(), req.Labels)
-	assert.Equal(t, trafficlabel.CatalogHash(consumerLabels()), req.CatalogHash)
+	assert.Equal(t, consumerLabelSets(), req.LabelSets)
+	assert.Equal(t, trafficlabel.CatalogHash(consumerLabelSets()), req.CatalogHash)
 	assert.Equal(t, cfg.RegistryID, req.RegistryID)
 	assert.Equal(t, cfg.Model, req.Model)
 }
@@ -138,8 +141,8 @@ func TestIntake_DropsWithoutEnqueueing(t *testing.T) {
 	noUserText.Body = []byte(`{"model":"gpt-4o","messages":[{"role":"system","content":"only system"}]}`)
 	disabled := enabledConfig()
 	disabled.Enabled = false
-	noLabels := candidate(enabledConfig())
-	noLabels.Labels = nil
+	noLabelSets := candidate(enabledConfig())
+	noLabelSets.LabelSets = nil
 
 	tests := []struct {
 		name string
@@ -147,7 +150,7 @@ func TestIntake_DropsWithoutEnqueueing(t *testing.T) {
 	}{
 		{name: "disabled config", cand: candidate(disabled)},
 		{name: "nil config", cand: candidate(nil)},
-		{name: "consumer without labels", cand: noLabels},
+		{name: "consumer without label sets", cand: noLabelSets},
 		{name: "no user text", cand: noUserText},
 	}
 	for _, tt := range tests {

@@ -421,7 +421,7 @@ func (w *worker) handle(ctx context.Context, batch []Delivery) {
 				GatewayID:  first.GatewayID,
 				RegistryID: first.RegistryID,
 				Model:      first.Model,
-				Labels:     first.Labels,
+				LabelSets:  first.LabelSets,
 				Text:       p.text,
 			})
 		}

@@ -79,7 +79,7 @@ func (r *consumerRepository) Update(_ context.Context, _ *domain.Consumer, _ *do
 	return configsync.ErrReadOnly
 }
 
-func (r *consumerRepository) UpdateLabels(_ context.Context, _ *domain.Consumer) error {
+func (r *consumerRepository) UpdateLabelSets(_ context.Context, _ *domain.Consumer) error {
 	return configsync.ErrReadOnly
 }
 

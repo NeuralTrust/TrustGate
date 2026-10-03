@@ -80,11 +80,14 @@ func TestEventSink_PublishesTheClassification(t *testing.T) {
 		TraceID:    "trace-1",
 		Text:       "refund",
 		Config:     enabledConfig(),
-		Labels:     append(slices.Clone(billing), legal...),
+		LabelSets:  append(slices.Clone(billing), legal...),
 		ReceivedAt: received,
 	})
 	cls := trafficlabel.Classification{
-		LabelIDs:     []string{"l-billing"},
+		Results: []trafficlabel.Result{
+			{LabelSetID: "set-sentiment", Label: "NEGATIVE"},
+			{LabelSetID: "set-topic", Label: "Billing"},
+		},
 		InputTokens:  150,
 		OutputTokens: 12,
 		Latency:      420 * time.Millisecond,
@@ -94,15 +97,17 @@ func TestEventSink_PublishesTheClassification(t *testing.T) {
 
 	require.Len(t, publisher.got, 1)
 	evt := publisher.got[0].evt
-	assert.Equal(t, events.SchemaVersion, evt.SchemaVersion)
+	assert.Equal(t, 2, evt.SchemaVersion, "label sets are version 2 of the payload")
 	assert.Equal(t, "trace-1", evt.TraceID)
 	assert.Equal(t, gw.ID.String(), evt.GatewayID)
 	assert.Equal(t, "consumer-1", evt.ConsumerID)
 	assert.Equal(t, "tenant-1", evt.TenantID)
 	assert.Equal(t, now.UnixMilli(), evt.OccurredOn)
 	assert.Equal(t, received.UnixMilli(), evt.RequestedOn)
-	assert.Equal(t, []events.LabelRef{{ID: "l-billing", Name: "Billing"}}, evt.Matched)
-	assert.Equal(t, []events.LabelRef{{ID: "l-billing", Name: "Billing"}, {ID: "l-legal", Name: "Legal"}}, evt.Evaluated)
+	assert.Equal(t, []events.LabelResult{
+		{LabelSetID: "set-topic", LabelSetName: "Topic", Label: "Billing"},
+		{LabelSetID: "set-sentiment", LabelSetName: "Sentiment", Label: "negative"},
+	}, evt.Results, "one result per evaluated set, in the consumer's order, with the catalog's spelling")
 	assert.Equal(t, testRegistryID, evt.RegistryID)
 	assert.Equal(t, "gpt-4o-mini", evt.Model)
 	assert.Equal(t, req.CatalogHash, evt.CatalogHash)
@@ -130,9 +135,9 @@ func TestEventSink_NeverCarriesThePrompt(t *testing.T) {
 		TraceID:   "4bf92f3577b34da6a3ce929d0e0e4736",
 		Text:      prompt,
 		Config:    enabledConfig(),
-		Labels:    billing,
+		LabelSets: billing,
 	})
-	require.NoError(t, sink.Publish(context.Background(), req, trafficlabel.Classification{LabelIDs: []string{"l-billing"}}))
+	require.NoError(t, sink.Publish(context.Background(), req, trafficlabel.Classification{Results: []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Billing"}}}))
 
 	require.Len(t, publisher.got, 1)
 	raw, err := json.Marshal(publisher.got[0].evt)
@@ -152,8 +157,8 @@ func TestEventSink_WithoutRetentionOrExporters(t *testing.T) {
 	require.NoError(t, sink.Publish(context.Background(), queued(gw.ID.String(), billing, "hi"), trafficlabel.Classification{}))
 
 	require.Len(t, publisher.got, 1)
-	assert.NotNil(t, publisher.got[0].evt.Matched, "no match is an empty list")
-	assert.Empty(t, publisher.got[0].evt.Matched)
+	assert.Equal(t, []events.LabelResult{{LabelSetID: "set-topic", LabelSetName: "Topic", Label: ""}}, publisher.got[0].evt.Results,
+		"a set without a result is reported unlabeled")
 	assert.Nil(t, publisher.got[0].evt.Retention)
 	assert.Nil(t, publisher.got[0].exporters)
 	assert.NotZero(t, publisher.got[0].evt.RequestedOn, "a request without a receive time is stamped now")
