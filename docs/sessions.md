@@ -61,8 +61,8 @@ A value that fails validation is skipped and the next source is tried.
 
 | Source | Accepted |
 |---|---|
-| Configured header, configured body field | 1–128 characters, no control characters |
-| Well-known headers, vendor pattern, `conversation`, `previous_response_id` | 8–128 characters of `[A-Za-z0-9._:-]` |
+| Configured header, configured body field, and the headers read before this list grew (`X-Session-Id`, `X-TG-Session-Id`, `X-OpenWebUI-Chat-Id`) | 1–256 characters, no control characters |
+| The other well-known headers, vendor pattern, `conversation`, `previous_response_id` | 8–256 characters of `[A-Za-z0-9._:-]` |
 
 The stricter rule applies where the gateway guessed the source: a header that
 merely shares a name, or a short placeholder, must not merge unrelated traffic

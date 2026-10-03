@@ -179,7 +179,7 @@ func TestSession_ConfiguredHeaderAcceptsShortIDs(t *testing.T) {
 func TestSession_ConfiguredHeaderRejectsOverlongIDs(t *testing.T) {
 	app, capt := newSessionApp(t, gatewayWithSession(nil))
 	doRequest(t, app, `{}`, map[string]string{
-		defaultSessionHeader: strings.Repeat("a", 129),
+		defaultSessionHeader: strings.Repeat("a", 257),
 		"X-TG-Session-Id":    "sess-fallback",
 	})
 	require.Equal(t, "sess-fallback", capt.effective)
@@ -205,7 +205,7 @@ func TestSession_XSessionIDIsWellKnownWhenNotConfigured(t *testing.T) {
 
 	app, capt = newSessionApp(t, gatewayWithSession(cfg))
 	doRequest(t, app, `{}`, map[string]string{defaultSessionHeader: "short"})
-	require.True(t, capt.generated(), "a well-known header shorter than 8 chars is skipped")
+	require.Equal(t, "short", capt.effective, "X-Session-Id is the default header everywhere, so it keeps the lenient check")
 }
 
 func TestSession_WellKnownHeaders(t *testing.T) {
@@ -243,7 +243,7 @@ func TestSession_WellKnownHeadersFollowTheListOrder(t *testing.T) {
 func TestSession_WellKnownHeaderValidation(t *testing.T) {
 	cases := map[string]string{
 		"too short":       "abc1234",
-		"too long":        strings.Repeat("a", 129),
+		"too long":        strings.Repeat("a", 257),
 		"space":           "conv 0123456789",
 		"slash":           "conv/0123456789",
 		"non ascii":       "conversación-1",
@@ -254,12 +254,35 @@ func TestSession_WellKnownHeaderValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			app, capt := newSessionApp(t, gatewayWithSession(nil))
 			doRequest(t, app, `{}`, map[string]string{
-				"X-TG-Session-Id":     value,
-				"X-OpenWebUI-Chat-Id": "openwebui-chat-1",
+				"X-Claude-Code-Session-Id": value,
+				"Helicone-Session-Id":      "helicone-session-1",
 			})
-			require.Equal(t, "openwebui-chat-1", capt.effective, "an invalid value falls through to the next source")
+			require.Equal(t, "helicone-session-1", capt.effective, "an invalid value falls through to the next source")
 		})
 	}
+}
+
+// The headers read before the well-known list grew keep accepting any value, so
+// an existing client's short or free-form id is never silently dropped.
+func TestSession_LegacyKnownHeadersStayLenient(t *testing.T) {
+	cases := map[string]string{
+		"X-TG-Session-Id":     "abc",
+		"X-OpenWebUI-Chat-Id": "chat 42/ünïcode",
+	}
+	for header, value := range cases {
+		t.Run(header, func(t *testing.T) {
+			app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), HeaderName: "X-Custom-Session"}))
+			doRequest(t, app, `{}`, map[string]string{header: value})
+			require.Equal(t, value, capt.effective)
+		})
+	}
+}
+
+func TestSession_IDsUpTo256CharactersAreAccepted(t *testing.T) {
+	long := strings.Repeat("a", 256)
+	app, capt := newSessionApp(t, gatewayWithSession(nil))
+	doRequest(t, app, `{}`, map[string]string{defaultSessionHeader: long})
+	require.Equal(t, long, capt.effective)
 }
 
 func TestSession_WellKnownHeaderAcceptsTheFullCharset(t *testing.T) {
