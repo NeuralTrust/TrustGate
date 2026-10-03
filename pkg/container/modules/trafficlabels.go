@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/labelcache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/labelconversation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/labelllm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/labelstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -46,6 +47,8 @@ const (
 
 	labelCacheKeyInfo = "trustgate/traffic-labels-cache"
 	labelCacheKeyLen  = 32
+
+	labelConversationKeyInfo = "trustgate/traffic-labels-conversation"
 )
 
 func TrafficLabels(c *container.Container) error {
@@ -54,6 +57,7 @@ func TrafficLabels(c *container.Container) error {
 		newTrafficLabelsMetrics,
 		newLabelClassifier,
 		newLabelCache,
+		newLabelConversationBuffer,
 		newLabelSink,
 		newLabelIntake,
 		newLabelWorker,
@@ -105,6 +109,31 @@ func newLabelCache(cc cache.Client, cfg *config.Config, _ vaultdomain.Encrypter,
 	return labelcache.New(cc.RedisClient(), cfg.TrafficLabels.CacheTTL, key)
 }
 
+// The unused Encrypter forces SERVER_SECRET_KEY to be resolved in prod before it is read.
+func newLabelConversationBuffer(
+	cc cache.Client,
+	cfg *config.Config,
+	_ vaultdomain.Encrypter,
+	logger *slog.Logger,
+) trafficlabels.ConversationBuffer {
+	secret := cfg.Server.SecretKey
+	if secret == "" {
+		logger.Warn("traffic labels: SERVER_SECRET_KEY is not set, Responses continuations are labeled on their new turn only")
+		return nil
+	}
+	key, err := hkdf.Key(sha256.New, []byte(secret), nil, labelConversationKeyInfo, labelconversation.KeyLen)
+	if err != nil {
+		logger.Warn("traffic labels: conversation buffer key not derived", slog.String("error", err.Error()))
+		return nil
+	}
+	buffer, err := labelconversation.New(cc.RedisClient(), cfg.TrafficLabels.ConversationTTL, key)
+	if err != nil {
+		logger.Warn("traffic labels: conversation buffer disabled", slog.String("error", err.Error()))
+		return nil
+	}
+	return buffer
+}
+
 func newLabelSink(gateways gatewaydomain.Repository, pipeline *appmetrics.Pipeline) trafficlabels.Sink {
 	return trafficlabels.NewEventSink(gateways, pipeline)
 }
@@ -114,14 +143,19 @@ func newLabelIntake(
 	registry *adapter.Registry,
 	stream *labelstream.Stream,
 	metrics *o11y.TrafficLabelsMetrics,
+	conversations trafficlabels.ConversationBuffer,
 	cfg *config.Config,
 ) trafficlabels.Intake {
+	var opts []trafficlabels.IntakeOption
+	if conversations != nil {
+		opts = append(opts, trafficlabels.WithConversationBuffer(conversations))
+	}
 	return trafficlabels.NewIntake(logger, registry, stream, metrics, trafficlabels.IntakeConfig{
 		QueueSize:      cfg.TrafficLabels.IntakeQueueSize,
 		Workers:        cfg.TrafficLabels.IntakeWorkers,
 		EnqueueTimeout: cfg.TrafficLabels.EnqueueTimeout,
 		MaxBufferBytes: cfg.TrafficLabels.IntakeMaxBufferBytes,
-	})
+	}, opts...)
 }
 
 func newLabelWorker(
