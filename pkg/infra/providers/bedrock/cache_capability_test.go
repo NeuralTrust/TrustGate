@@ -38,7 +38,7 @@ func TestCacheCapabilityFor(t *testing.T) {
 		{"anthropic.claude-sonnet-4-6", claudeCache1h},
 		{"global.anthropic.claude-sonnet-4-6", claudeCache1h},
 		{"us.anthropic.claude-opus-4-5-20251101-v1:0", claudeCache1h},
-		{"eu.anthropic.claude-haiku-4-5-20251001-v1:0", claudeCache1h},
+		{"eu.anthropic.small-chat-model-4-5-20251001-v1:0", claudeCache1h},
 		{"apac.anthropic.claude-sonnet-4-5-20250929-v1:0", claudeCache1h},
 		{"jp.anthropic.claude-opus-5-5", claudeCache1h},
 		{"au.anthropic.claude-fable-5-1", claudeCache1h},

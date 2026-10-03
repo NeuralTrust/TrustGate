@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 type Type string
@@ -76,8 +77,12 @@ type Consumer struct {
 	MCP             *MCPPolicy             `json:"mcp,omitempty"`
 	Identity        Identity               `json:"identity"`
 	AuthBinding     AuthBinding            `json:"auth_binding"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	// Labels are the traffic labels the consumer's chat requests are
+	// classified against. They are projected from the app and only ever
+	// written through SetLabels.
+	Labels    []trafficlabel.Label `json:"labels,omitempty"`
+	CreatedAt time.Time            `json:"created_at"`
+	UpdatedAt time.Time            `json:"updated_at"`
 }
 
 func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
@@ -182,6 +187,7 @@ type RehydrateParams struct {
 	MCP             *MCPPolicy
 	Identity        Identity
 	AuthBinding     AuthBinding
+	Labels          []trafficlabel.Label
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -204,6 +210,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		MCP:             params.MCP,
 		Identity:        params.Identity,
 		AuthBinding:     params.AuthBinding,
+		Labels:          params.Labels,
 		CreatedAt:       params.CreatedAt,
 		UpdatedAt:       params.UpdatedAt,
 	}
@@ -260,6 +267,23 @@ func (c *Consumer) Validate() error {
 		}
 		return c.MCP.Validate(c.knownRegistryIDs())
 	}
+	return nil
+}
+
+// SetLabels replaces the consumer's traffic labels with a trimmed, validated
+// copy. Only LLM consumers serve chat routes, so only they can hold labels.
+func (c *Consumer) SetLabels(labels []trafficlabel.Label) error {
+	if len(labels) > 0 && c.Type != TypeLLM {
+		return fmt.Errorf("%w: only LLM consumers can hold traffic labels", ErrInvalidLabels)
+	}
+	normalized := trafficlabel.NormalizeLabels(labels)
+	if err := trafficlabel.ValidateLabels(normalized); err != nil {
+		return err
+	}
+	if len(normalized) == 0 {
+		normalized = nil
+	}
+	c.Labels = normalized
 	return nil
 }
 

@@ -111,7 +111,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	return nil
 }
 
-func (e *Exporter) PublishTopic(ctx context.Context, evt *events.TopicClassification) error {
+func (e *Exporter) PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels) error {
 	if evt == nil {
 		return nil
 	}
@@ -121,7 +121,7 @@ func (e *Exporter) PublishTopic(ctx context.Context, evt *events.TopicClassifica
 	if e.class == metrics.Raw {
 		return nil
 	}
-	e.logger.Emit(ctx, topicToRecord(evt))
+	e.logger.Emit(ctx, labelsToRecord(evt))
 	return nil
 }
 
