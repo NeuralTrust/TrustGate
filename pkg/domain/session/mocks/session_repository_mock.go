@@ -22,6 +22,64 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
+// FindSessionIDByTurn provides a mock function with given fields: ctx, gatewayID, turnID
+func (_m *Repository) FindSessionIDByTurn(ctx context.Context, gatewayID string, turnID string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, turnID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindSessionIDByTurn")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, turnID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = rf(ctx, gatewayID, turnID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = rf(ctx, gatewayID, turnID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindSessionIDByTurn_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindSessionIDByTurn'
+type Repository_FindSessionIDByTurn_Call struct {
+	*mock.Call
+}
+
+// FindSessionIDByTurn is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID string
+//   - turnID string
+func (_e *Repository_Expecter) FindSessionIDByTurn(ctx interface{}, gatewayID interface{}, turnID interface{}) *Repository_FindSessionIDByTurn_Call {
+	return &Repository_FindSessionIDByTurn_Call{Call: _e.mock.On("FindSessionIDByTurn", ctx, gatewayID, turnID)}
+}
+
+func (_c *Repository_FindSessionIDByTurn_Call) Run(run func(ctx context.Context, gatewayID string, turnID string)) *Repository_FindSessionIDByTurn_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_FindSessionIDByTurn_Call) Return(_a0 string, _a1 error) *Repository_FindSessionIDByTurn_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindSessionIDByTurn_Call) RunAndReturn(run func(context.Context, string, string) (string, error)) *Repository_FindSessionIDByTurn_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Get provides a mock function with given fields: ctx, gatewayID, sessionID
 func (_m *Repository) Get(ctx context.Context, gatewayID string, sessionID string) (*session.Session, error) {
 	ret := _m.Called(ctx, gatewayID, sessionID)

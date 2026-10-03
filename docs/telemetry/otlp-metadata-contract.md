@@ -54,7 +54,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, or the API key name) |
 | `trustgate.principal.method` | `principal_method` (`api_key`, `jwt`, `introspection`, `mtls`) |
 | `trustgate.principal.email` | `principal_email` (display identity: inbound JWT `email` / `upn` / email-shaped `preferred_username`, or the unique vault `account_ref` when that is an email) |
-| `trustgate.session_id` | `session_id` |
+| `trustgate.session_id` | `session_id`: the conversation id resolved by the session middleware (see [sessions](../sessions.md)). Omitted when the request belongs to no conversation, i.e. a non-Responses request whose id the gateway generated; count sessions on distinct non-empty values |
 | `trustgate.turn_id` | `turn_id` |
 | `trustgate.ip` | `ip` |
 | `trustgate.requested_model` | `request.requested_model` |

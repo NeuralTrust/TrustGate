@@ -111,6 +111,10 @@ func (f *fakeSessionStore) LastTurnID(_ context.Context, _, _ string) string {
 	return f.last
 }
 
+func (f *fakeSessionStore) SessionForTurn(_ context.Context, _, _ string) string {
+	return ""
+}
+
 func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, store appsession.Store) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
@@ -594,6 +598,71 @@ func TestForward_RecordsSessionTurnOnSuccess(t *testing.T) {
 	assert.Equal(t, "sess-1", store.recorded[0].SessionID)
 	assert.Equal(t, gatewayID.String(), store.recorded[0].GatewayID)
 	assert.Equal(t, "openai", store.recorded[0].Provider)
+}
+
+func TestForward_RecordsSessionTurnWhenStreamCompletes(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	stream := func(yield func([]byte, error) bool) {
+		yield([]byte("data: {}"), nil)
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream, ResponseID: "resp_stream"}, nil).
+		Once()
+
+	store := &fakeSessionStore{}
+	fwd := newTestForwarderWithStore(t, invoker, store)
+
+	rt := trace.New("trace-1", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	res, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			GatewayID: gatewayID.String(),
+			SessionID: "sess-stream",
+			Body:      []byte(`{"model":"gpt-4","stream":true}`),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Stream)
+	assert.Empty(t, store.recorded, "the turn is recorded once the stream is drained")
+
+	for _, err := range res.Stream {
+		require.NoError(t, err)
+	}
+	require.Len(t, store.recorded, 1)
+	assert.Equal(t, "resp_stream", store.recorded[0].TurnID)
+	assert.Equal(t, "sess-stream", store.recorded[0].SessionID)
+}
+
+func TestForward_DoesNotRecordSessionTurnOnErrorStatus(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 429, Body: []byte(`{}`), ResponseID: "resp_failed"}, nil).
+		Once()
+
+	store := &fakeSessionStore{}
+	fwd := newTestForwarderWithStore(t, invoker, store)
+
+	rt := trace.New("trace-1", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, store.recorded, "a failed turn must not be indexed")
 }
 
 func TestForward_DoesNotRecordWithoutSession(t *testing.T) {
