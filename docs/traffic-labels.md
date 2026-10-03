@@ -146,7 +146,9 @@ with the same adapter the proxy uses and calls the provider client directly.
 It never goes through the consumer or plugin pipeline.
 
 - One completion per text covering all the consumer's label sets,
-  `temperature` 0, at most `TRAFFIC_LABELS_MAX_TOKENS` (512) output tokens,
+  no sampling parameters (current Claude and OpenAI reasoning models reject
+  `temperature`), at most `TRAFFIC_LABELS_MAX_TOKENS` (4096) output tokens,
+  which also cover the thinking of models that always think,
   JSON response mode where the provider supports it (the adapter drops it
   elsewhere and the prompt asks for JSON anyway).
 - The system prompt lists each label set with its id, name and instructions,
