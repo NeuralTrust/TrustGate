@@ -104,6 +104,54 @@ func (_c *Store_Record_Call) RunAndReturn(run func(context.Context, session.Reco
 	return _c
 }
 
+// SessionForTurn provides a mock function with given fields: ctx, gatewayID, turnID
+func (_m *Store) SessionForTurn(ctx context.Context, gatewayID string, turnID string) string {
+	ret := _m.Called(ctx, gatewayID, turnID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SessionForTurn")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = rf(ctx, gatewayID, turnID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// Store_SessionForTurn_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SessionForTurn'
+type Store_SessionForTurn_Call struct {
+	*mock.Call
+}
+
+// SessionForTurn is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID string
+//   - turnID string
+func (_e *Store_Expecter) SessionForTurn(ctx interface{}, gatewayID interface{}, turnID interface{}) *Store_SessionForTurn_Call {
+	return &Store_SessionForTurn_Call{Call: _e.mock.On("SessionForTurn", ctx, gatewayID, turnID)}
+}
+
+func (_c *Store_SessionForTurn_Call) Run(run func(ctx context.Context, gatewayID string, turnID string)) *Store_SessionForTurn_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Store_SessionForTurn_Call) Return(_a0 string) *Store_SessionForTurn_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Store_SessionForTurn_Call) RunAndReturn(run func(context.Context, string, string) string) *Store_SessionForTurn_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewStore creates a new instance of Store. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewStore(t interface {

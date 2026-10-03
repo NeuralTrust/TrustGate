@@ -163,3 +163,28 @@ func TestStreamFinalizerOwnsOutputUntilAsyncCompletion(t *testing.T) {
 	headers["Content-Type"][0] = "changed"
 	rt.Done()
 }
+
+func TestMetricsTraceMetadataCarriesOnlyTheEffectiveSessionID(t *testing.T) {
+	cases := []struct {
+		name    string
+		session *infracontext.Session
+		want    string
+	}{
+		{"no session", nil, ""},
+		{"hidden generated id", &infracontext.Session{ID: "gen-1", Source: infracontext.SessionSourceGenerated}, ""},
+		{"kept generated id", &infracontext.Session{ID: "gen-2", Source: infracontext.SessionSourceGenerated, Exposed: true}, "gen-2"},
+		{"client id", &infracontext.Session{ID: "sess-1", Source: infracontext.SessionSourceConfiguredHeader, Exposed: true}, "sess-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := fiber.New()
+			c := app.AcquireCtx(&fasthttp.RequestCtx{})
+			defer app.ReleaseCtx(c)
+			if tc.session != nil {
+				c.SetUserContext(infracontext.WithSession(c.UserContext(), *tc.session))
+			}
+			m := NewMetricsMiddleware(nil, &config.Config{})
+			require.Equal(t, tc.want, m.buildTraceMetadata(c, "gw", &gatewaydomain.Gateway{}).SessionID)
+		})
+	}
+}
