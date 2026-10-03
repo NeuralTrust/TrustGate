@@ -19,7 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
@@ -134,20 +134,20 @@ func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
 	if got.ClientTLSConfig != nil {
 		t.Fatalf("ClientTLSConfig should be nil for NULL column, got %+v", got.ClientTLSConfig)
 	}
-	if got.TopicClassification != nil {
-		t.Fatalf("TopicClassification should be nil for NULL column, got %+v", got.TopicClassification)
+	if got.TrafficLabeling != nil {
+		t.Fatalf("TrafficLabeling should be nil for NULL column, got %+v", got.TrafficLabeling)
 	}
 }
 
-func TestRepository_TopicClassification_RoundTrip(t *testing.T) {
+func TestRepository_TrafficLabeling_RoundTrip(t *testing.T) {
 	r, conn := setupRepo(t)
 	ctx := context.Background()
 
 	isNull := func(id ids.GatewayID) bool {
 		t.Helper()
 		var null bool
-		if err := conn.Pool.QueryRow(ctx, `SELECT topic_classification IS NULL FROM gateways WHERE id = $1`, id).Scan(&null); err != nil {
-			t.Fatalf("read topic_classification: %v", err)
+		if err := conn.Pool.QueryRow(ctx, `SELECT traffic_labeling IS NULL FROM gateways WHERE id = $1`, id).Scan(&null); err != nil {
+			t.Fatalf("read traffic_labeling: %v", err)
 		}
 		return null
 	}
@@ -157,16 +157,18 @@ func TestRepository_TopicClassification_RoundTrip(t *testing.T) {
 		t.Fatalf("Save unset: %v", err)
 	}
 	if !isNull(unset.ID) {
-		t.Fatal("a gateway without topic classification must store SQL NULL, not JSON null")
+		t.Fatal("a gateway without traffic labeling must store SQL NULL, not JSON null")
 	}
 
-	threshold := 0.7
-	g, _ := domain.New("classified")
-	g.TopicClassification = &topic.Config{
+	rate := 0.25
+	registryID := ids.New[ids.RegistryKind]().String()
+	g, _ := domain.New("labeled")
+	g.TrafficLabeling = &trafficlabel.Config{
 		Enabled:       true,
-		Topics:        []topic.Topic{{Name: "billing", Definition: "refunds and invoices"}},
-		Threshold:     &threshold,
+		RegistryID:    registryID,
+		Model:         "gpt-4o-mini",
 		MessageWindow: 5,
+		SamplingRate:  &rate,
 	}
 	if err := r.Save(ctx, g); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -175,13 +177,13 @@ func TestRepository_TopicClassification_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	tc := got.TopicClassification
-	if tc == nil || !tc.Enabled || len(tc.Topics) != 1 || tc.Topics[0].Name != "billing" ||
-		tc.Threshold == nil || *tc.Threshold != 0.7 || tc.MessageWindow != 5 {
-		t.Fatalf("TopicClassification round-trip lost data: %+v", tc)
+	tl := got.TrafficLabeling
+	if tl == nil || !tl.Enabled || tl.RegistryID != registryID || tl.Model != "gpt-4o-mini" ||
+		tl.MessageWindow != 5 || tl.SamplingRate == nil || *tl.SamplingRate != 0.25 {
+		t.Fatalf("TrafficLabeling round-trip lost data: %+v", tl)
 	}
 
-	got.TopicClassification = &topic.Config{Enabled: false, Topics: tc.Topics}
+	got.TrafficLabeling = &trafficlabel.Config{Enabled: false, RegistryID: tl.RegistryID, Model: tl.Model}
 	got.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -190,11 +192,16 @@ func TestRepository_TopicClassification_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if updated.TopicClassification == nil || updated.TopicClassification.Enabled {
-		t.Fatalf("Update did not persist the disabled config: %+v", updated.TopicClassification)
+	if updated.TrafficLabeling == nil || updated.TrafficLabeling.Enabled || updated.TrafficLabeling.RegistryID != registryID {
+		t.Fatalf("Update did not persist the disabled config: %+v", updated.TrafficLabeling)
 	}
-	if len(updated.TopicClassification.Topics) != 1 {
-		t.Fatalf("Update dropped the catalog: %+v", updated.TopicClassification)
+
+	updated.TrafficLabeling = nil
+	if err := r.Update(ctx, updated); err != nil {
+		t.Fatalf("Update clearing: %v", err)
+	}
+	if !isNull(g.ID) {
+		t.Fatal("clearing traffic labeling must store SQL NULL")
 	}
 }
 

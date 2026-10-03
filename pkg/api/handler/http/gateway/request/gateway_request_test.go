@@ -16,12 +16,11 @@ package request
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/topic"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
 )
 
 func intPtr(v int) *int { return &v }
@@ -190,36 +189,60 @@ func TestUpdateGatewayRequest_ValidateStoreMode(t *testing.T) {
 	}
 }
 
-func TestGatewayRequests_ValidateTopicClassification(t *testing.T) {
+func TestGatewayRequests_ValidateTrafficLabeling(t *testing.T) {
 	t.Parallel()
 
-	tooMany := make([]topic.Topic, topic.MaxTopics+1)
-	for i := range tooMany {
-		tooMany[i] = topic.Topic{Name: fmt.Sprintf("t%d", i), Definition: "d"}
+	valid := &trafficlabel.Config{Enabled: true, RegistryID: "0190e0d2-6c1f-7a5e-9a3b-1f2e3d4c5b6a", Model: "gpt-4o-mini"}
+	invalid := map[string]*trafficlabel.Config{
+		"no registry":    {Enabled: true, Model: "gpt-4o-mini"},
+		"no model":       {Enabled: true, RegistryID: valid.RegistryID},
+		"bad registry":   {Enabled: true, RegistryID: "not-a-uuid", Model: "m"},
+		"window too big": {Enabled: true, RegistryID: valid.RegistryID, Model: "m", MessageWindow: trafficlabel.MaxMessageWindow + 1},
 	}
-	valid := &topic.Config{Enabled: true, Topics: []topic.Topic{{Name: "billing", Definition: "refunds"}}}
-	invalid := &topic.Config{Enabled: true, Topics: tooMany}
 
 	if err := (&CreateGatewayRequest{}).Validate(); err != nil {
-		t.Fatalf("create without topic_classification rejected: %v", err)
+		t.Fatalf("create without traffic_labeling rejected: %v", err)
 	}
-	if err := (&CreateGatewayRequest{TopicClassification: valid}).Validate(); err != nil {
+	if err := (&CreateGatewayRequest{TrafficLabeling: valid}).Validate(); err != nil {
 		t.Fatalf("create with a valid config rejected: %v", err)
 	}
-	if err := (&UpdateGatewayRequest{TopicClassification: valid}).Validate(); err != nil {
+	if err := (&UpdateGatewayRequest{TrafficLabeling: valid}).Validate(); err != nil {
 		t.Fatalf("update with a valid config rejected: %v", err)
 	}
+	if err := (&UpdateGatewayRequest{TrafficLabeling: &trafficlabel.Config{Enabled: false}}).Validate(); err != nil {
+		t.Fatalf("a disabled config needs no registry: %v", err)
+	}
 
-	for name, validate := range map[string]func() error{
-		"create": (&CreateGatewayRequest{TopicClassification: invalid}).Validate,
-		"update": (&UpdateGatewayRequest{TopicClassification: invalid}).Validate,
-	} {
-		err := validate()
-		if err == nil {
-			t.Fatalf("%s accepted %d topics", name, len(tooMany))
+	for label, cfg := range invalid {
+		for name, validate := range map[string]func() error{
+			"create": (&CreateGatewayRequest{TrafficLabeling: cfg}).Validate,
+			"update": (&UpdateGatewayRequest{TrafficLabeling: cfg}).Validate,
+		} {
+			err := validate()
+			if err == nil {
+				t.Fatalf("%s accepted %s", name, label)
+			}
+			if !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("%s error %v does not wrap ErrValidation", name, err)
+			}
 		}
-		if !errors.Is(err, commonerrors.ErrValidation) {
-			t.Fatalf("%s error %v does not wrap ErrValidation", name, err)
+	}
+}
+
+func TestUpdateGatewayRequest_DetectClears(t *testing.T) {
+	t.Parallel()
+	tests := map[string]bool{
+		`{"traffic_labeling": null}`:               true,
+		`{"traffic_labeling":null,"slug":"a"}`:     true,
+		`{"traffic_labeling": {"enabled": false}}`: false,
+		`{"slug": "a"}`:                            false,
+		`not json`:                                 false,
+	}
+	for body, want := range tests {
+		var req UpdateGatewayRequest
+		req.DetectClears([]byte(body))
+		if req.ClearTrafficLabeling != want {
+			t.Fatalf("DetectClears(%s) = %v, want %v", body, req.ClearTrafficLabeling, want)
 		}
 	}
 }

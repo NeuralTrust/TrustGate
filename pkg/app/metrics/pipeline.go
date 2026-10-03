@@ -33,8 +33,8 @@ type Exporter interface {
 	Close()
 }
 
-type TopicExporter interface {
-	PublishTopic(ctx context.Context, evt *events.TopicClassification) error
+type LabelExporter interface {
+	PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels) error
 }
 
 // PlaygroundTraceStore persists the metrics Event of playground requests so the
@@ -107,17 +107,17 @@ func (p *Pipeline) publishContext(
 	}
 }
 
-func (p *Pipeline) PublishTopic(ctx context.Context, evt *events.TopicClassification, explicit []telemetrydomain.ExporterConfig) {
+func (p *Pipeline) PublishTrafficLabels(ctx context.Context, evt *events.TrafficLabels, explicit []telemetrydomain.ExporterConfig) {
 	if p == nil || evt == nil {
 		return
 	}
 	for _, exporter := range p.resolveTargets(explicit) {
-		topical, ok := exporter.(TopicExporter)
+		labeler, ok := exporter.(LabelExporter)
 		if !ok {
 			continue
 		}
-		if err := topical.PublishTopic(ctx, evt); err != nil {
-			p.logger.Error("failed to publish topic classification event",
+		if err := labeler.PublishTrafficLabels(ctx, evt); err != nil {
+			p.logger.Error("failed to publish traffic labels event",
 				slog.String("gateway_id", evt.GatewayID),
 				slog.String("exporter", exporter.Name()),
 				slog.String("error", err.Error()))

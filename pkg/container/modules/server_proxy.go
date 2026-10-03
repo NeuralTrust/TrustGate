@@ -39,7 +39,7 @@ type proxyMiddlewares struct {
 	Auth               *middleware.AuthMiddleware
 	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
 	Metrics            *middleware.MetricsMiddleware
-	TopicClassifier    *middleware.TopicClassificationMiddleware
+	TrafficLabels      *middleware.TrafficLabelsMiddleware
 }
 
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
@@ -53,7 +53,7 @@ func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 		m.HybridGatewayGuard,
 		m.Session,
 		m.Metrics,
-		m.TopicClassifier,
+		m.TrafficLabels,
 	)
 }
 

@@ -53,7 +53,7 @@ var bedrockCacheFamilies = map[string]cacheCapability{
 	"anthropic.claude-opus-4-5":               claudeCache1h,
 	"anthropic.claude-sonnet-4-6":             claudeCache1h,
 	"anthropic.claude-sonnet-4-5":             claudeCache1h,
-	"anthropic.claude-haiku-4-5":              claudeCache1h,
+	"anthropic.small-chat-model-4-5":              claudeCache1h,
 	"anthropic.claude-3-7-sonnet":             claudeCache5m,
 	"anthropic.claude-3-5-sonnet-20241022-v2": claudeCache5m,
 	"amazon.nova-micro":                       novaCache,
