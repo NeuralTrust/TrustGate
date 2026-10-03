@@ -1674,6 +1674,105 @@
                 ]
             }
         },
+        "/v1/gateways/{gateway_id}/consumers/{id}/labels": {
+            "put": {
+                "description": "Replaces the whole list of traffic labels a consumer's chat requests are classified against. Labels are projected from the app's catalog: ids are opaque and must be unique, names are unique ignoring case. At most 10 labels; name 1-64 characters, instructions 1-2000, up to 5 examples of 1-500. Send `{\"labels\": []}` to clear. Only LLM consumers can hold labels. Returns the full consumer.",
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Replace a consumer's traffic labels",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest"
+                            }
+                        }
+                    },
+                    "description": "The consumer's labels",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
             "post": {
                 "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to. An mcp_scope that names a registry or a tool, or that is the empty object, only attaches to an MCP consumer; a scope narrowing by group alone also attaches to a non-MCP consumer, where the group is inert, provided the plugin runs under an inert scope. An MCP-wide policy already runs on every MCP consumer and holds no links, so attaching one answers 422: demote it first. Answers 204, or 200 with a warnings body when the consumer already runs the same plugin without scope.",
@@ -6273,6 +6372,30 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest": {
+                "type": "object",
+                "properties": {
+                    "examples": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "id": {
+                        "description": "ID is the label's id in the app's catalog, opaque to TrustGate.",
+                        "type": "string",
+                        "example": "0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b"
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "example": "Questions about invoices, charges and refunds."
+                    },
+                    "name": {
+                        "type": "string",
+                        "example": "Billing"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
                 "type": "object",
                 "properties": {
@@ -6534,6 +6657,17 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest": {
+                "type": "object",
+                "properties": {
+                    "labels": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest"
+                        }
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
                 "type": "object",
                 "properties": {
@@ -6633,6 +6767,26 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse": {
+                "type": "object",
+                "properties": {
+                    "examples": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "instructions": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse": {
                 "type": "object",
                 "properties": {
@@ -6671,6 +6825,13 @@
                     },
                     "identity": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse"
+                    },
+                    "labels": {
+                        "description": "Labels are the traffic labels the consumer's chat requests are\nclassified against; empty when it has none.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse"
+                        }
                     },
                     "lb_config": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse"
@@ -6969,8 +7130,8 @@
                         "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                         "type": "string"
                     },
-                    "topic_classification": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                    "traffic_labeling": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                     }
                 }
             },
@@ -7013,8 +7174,13 @@
                     "telemetry": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                     },
-                    "topic_classification": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                    "traffic_labeling": {
+                        "description": "TrafficLabeling replaces the traffic labeling config. Omitted leaves it\nunchanged and an explicit null clears it.",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
+                            }
+                        ]
                     }
                 }
             },
@@ -7072,8 +7238,8 @@
                     "telemetry": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                     },
-                    "topic_classification": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config"
+                    "traffic_labeling": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config"
                     },
                     "updated_at": {
                         "type": "string"
@@ -9407,7 +9573,7 @@
                     }
                 }
             },
-            "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config": {
                 "type": "object",
                 "properties": {
                     "enabled": {
@@ -9416,28 +9582,14 @@
                     "message_window": {
                         "type": "integer"
                     },
+                    "model": {
+                        "type": "string"
+                    },
+                    "registry_id": {
+                        "type": "string"
+                    },
                     "sampling_rate": {
                         "type": "number"
-                    },
-                    "threshold": {
-                        "type": "number"
-                    },
-                    "topics": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic"
-                        }
-                    }
-                }
-            },
-            "github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic": {
-                "type": "object",
-                "properties": {
-                    "definition": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
                     }
                 }
             },

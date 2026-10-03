@@ -406,6 +406,23 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest:
+    properties:
+      examples:
+        items:
+          type: string
+        type: array
+      id:
+        description: ID is the label's id in the app's catalog, opaque to TrustGate.
+        example: 0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b
+        type: string
+      instructions:
+        example: Questions about invoices, charges and refunds.
+        type: string
+      name:
+        example: Billing
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
@@ -586,6 +603,13 @@ definitions:
       tool:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest:
+    properties:
+      labels:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ConsumerLabelRequest'
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
       active:
@@ -658,6 +682,19 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse:
+    properties:
+      examples:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      instructions:
+        type: string
+      name:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse:
     properties:
       active:
@@ -684,6 +721,13 @@ definitions:
         type: string
       identity:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.IdentityResponse'
+      labels:
+        description: |-
+          Labels are the traffic labels the consumer's chat requests are
+          classified against; empty when it has none.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerLabelResponse'
+        type: array
       lb_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse'
       model_policies:
@@ -886,8 +930,8 @@ definitions:
         description: TenantID is required ownership for platform (empty JWT) create-for-tenant;
           tenant JWTs may match or omit it (JWT wins).
         type: string
-      topic_classification:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config'
+      traffic_labeling:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest:
     properties:
@@ -920,8 +964,12 @@ definitions:
         type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
-      topic_classification:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config'
+      traffic_labeling:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config'
+        description: |-
+          TrafficLabeling replaces the traffic labeling config. Omitted leaves it
+          unchanged and an explicit null clears it.
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts:
     properties:
@@ -964,8 +1012,8 @@ definitions:
         type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
-      topic_classification:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config'
+      traffic_labeling:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config'
       updated_at:
         type: string
       version:
@@ -2643,27 +2691,18 @@ definitions:
           type: string
         type: object
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_domain_topic.Config:
+  github_com_NeuralTrust_TrustGate_pkg_domain_trafficlabel.Config:
     properties:
       enabled:
         type: boolean
       message_window:
         type: integer
+      model:
+        type: string
+      registry_id:
+        type: string
       sampling_rate:
         type: number
-      threshold:
-        type: number
-      topics:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic'
-        type: array
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_domain_topic.Topic:
-    properties:
-      definition:
-        type: string
-      name:
-        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt:
     properties:
@@ -4269,6 +4308,63 @@ paths:
       security:
       - BearerAuth: []
       summary: Attach an auth to a consumer
+      tags:
+      - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/labels:
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the whole list of traffic labels a consumer''s chat requests
+        are classified against. Labels are projected from the app''s catalog: ids
+        are opaque and must be unique, names are unique ignoring case. At most 10
+        labels; name 1-64 characters, instructions 1-2000, up to 5 examples of 1-500.
+        Send `{"labels": []}` to clear. Only LLM consumers can hold labels. Returns
+        the full consumer.'
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The consumer's labels
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerLabelsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Replace a consumer's traffic labels
       tags:
       - consumers
   /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}:
