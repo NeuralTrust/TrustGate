@@ -96,6 +96,7 @@ const (
 	defaultTrafficLabelsTimeout            = 15 * time.Second
 	defaultTrafficLabelsMaxTokens          = 4096
 	defaultTrafficLabelsCacheTTL           = time.Hour
+	defaultTrafficLabelsConversationTTL    = time.Hour
 	defaultTrafficLabelsStreamMaxLen       = 100_000
 	defaultTrafficLabelsStreamRetention    = time.Hour
 	defaultTrafficLabelsGatewayQuota       = 100
@@ -417,6 +418,7 @@ type TrafficLabelsConfig struct {
 	ClassifierTimeout     time.Duration
 	MaxTokens             int
 	CacheTTL              time.Duration
+	ConversationTTL       time.Duration
 	StreamMaxLen          int64
 	StreamRetention       time.Duration
 	GatewayQuotaPerSecond int64
@@ -784,6 +786,7 @@ func getTrafficLabelsConfig() TrafficLabelsConfig {
 		ClassifierTimeout:    getEnvDuration("TRAFFIC_LABELS_TIMEOUT", defaultTrafficLabelsTimeout),
 		MaxTokens:            getEnvInt("TRAFFIC_LABELS_MAX_TOKENS", defaultTrafficLabelsMaxTokens),
 		CacheTTL:             getEnvDuration("TRAFFIC_LABELS_CACHE_TTL", defaultTrafficLabelsCacheTTL),
+		ConversationTTL:      getEnvDuration("TRAFFIC_LABELS_CONVERSATION_TTL", defaultTrafficLabelsConversationTTL),
 
 		StreamMaxLen:          getEnvInt64("TRAFFIC_LABELS_STREAM_MAX_LEN", defaultTrafficLabelsStreamMaxLen),
 		StreamRetention:       getEnvDuration("TRAFFIC_LABELS_STREAM_RETENTION", defaultTrafficLabelsStreamRetention),
