@@ -46,7 +46,7 @@ partial: a body with only `traffic_labeling` changes only that.
 | `enabled` | Label this gateway's chat requests |
 | `registry_id` | Registry that runs the classification. Required when enabled. It must be an LLM registry of the same gateway with stored credentials: the worker has no client key, so pass-through (and OAuth2) auth is refused |
 | `model` | Model sent to that registry. Required when enabled |
-| `message_window` | How many of the latest `user` messages are classified. 1 to 50, default 3. The system prompt is never sent |
+| `message_window` | How many of the latest `user` messages are classified. 1 to 50, default 3. The system prompt is never sent. See [the message window per API](#the-message-window-per-api) |
 | `sampling_rate` | Fraction of requests to label, 0 to 1. Default 1 |
 
 The defaults are stored explicitly, so the response always shows them.
@@ -121,7 +121,9 @@ Auth → HybridGatewayGuard → Session → Metrics → TrafficLabels → handle
   labeled too. Only `chat` routes are offered; embeddings, rerank, files,
   images and audio are not.
 - Nothing on the request path decodes JSON or reaches Redis. Requests that
-  sampling leaves out are dropped before their body is copied. The buffer is
+  sampling leaves out are dropped before their body is copied, except OpenAI
+  Responses requests with a session, which are still offered to keep their
+  conversation buffer complete (see below). The buffer is
   bounded both in entries and in bytes (`TRAFFIC_LABELS_INTAKE_MAX_BUFFER_BYTES`);
   when either is full the candidate is dropped and counted.
 - The queued entry carries the consumer's label sets and the registry and
@@ -136,6 +138,51 @@ Auth → HybridGatewayGuard → Session → Metrics → TrafficLabels → handle
   labeled twice. An entry handed out too many times is dropped.
 - A classification whose publish fails for a transient reason stays pending
   and is published again later, from the cache.
+
+## The message window per API
+
+`message_window` counts the latest `user` messages of the conversation. Where
+they come from depends on the API the client speaks:
+
+| API | Source of the window |
+|---|---|
+| Chat Completions, Anthropic Messages, Gemini, Cohere | The request body: these APIs are stateless, every request carries the whole history |
+| OpenAI Responses, full history in `input` (no `previous_response_id`, no `conversation`) | The request body, as above |
+| OpenAI Responses continuation (`previous_response_id` or `conversation`) | The conversation buffer plus the new turn's user messages: the body only carries the new turn |
+
+Body and buffer are never combined: a request that carries its own history is
+labeled from its body, a continuation from the buffer. Either way, on an OpenAI
+Responses request with a session the buffer is then replaced with the
+conversation's most recent user messages, so a stateless first turn seeds it
+and every continuation extends it.
+
+### The conversation buffer
+
+- **Key**: gateway, consumer and [session id](sessions.md). The session id is
+  the one the session middleware resolved (a header, the Responses
+  `conversation`, or the session of the `previous_response_id` turn). A
+  Responses request without one, or any request whose session id is a hidden
+  generated one, never uses the buffer. The Redis key name is an HMAC of the
+  three, so session ids do not appear in Redis.
+- **Value**: the latest user messages, at most 50 (`message_window`'s maximum)
+  and 10,000 characters in total, oldest dropped first.
+- **Encryption**: AES-256-GCM, bound to its key name, under a key derived from
+  `SERVER_SECRET_KEY` with HKDF (its own info string, separate from the result
+  cache's). Without `SERVER_SECRET_KEY` there is no buffer and continuations
+  are labeled on their new turn only.
+- **TTL**: `TRAFFIC_LABELS_CONVERSATION_TTL` (1 h by default), restarted by
+  every turn. After a longer pause the next continuation is labeled on its new
+  turn and starts a new buffer.
+- **Sampling**: a Responses turn with a session that sampling leaves out is
+  still read, only to update the buffer: it is neither classified nor counted
+  as an event, so the next sampled turn keeps its context. The body cap still
+  applies; a turn over it leaves a gap in the buffer.
+- **Where**: buffer reads and writes happen in the intake's background
+  workers, never on the request path. The cache key is the final classified
+  text, so a continuation and a stateless request with the same window share a
+  result.
+- Two turns of one conversation processed at the same moment (a client that
+  does not wait for the previous answer) can each miss the other's message.
 
 ### The classifier call
 
@@ -187,6 +234,11 @@ It never goes through the consumer or plugin pipeline.
   of the consumer's label sets (ids, names, instructions, label names and
   descriptions, whatever their order), the registry and the model, so editing
   a set never reuses an older result.
+- **To Redis, for OpenAI Responses conversations**: the latest user messages
+  of each conversation stay in the encrypted conversation buffer for up to
+  `TRAFFIC_LABELS_CONVERSATION_TTL` after its last turn, whether or not the
+  turns were sampled. Shorten the TTL if user text must not rest in Redis
+  that long.
 - **To the OTel collector**: one result per evaluated label set (set id and
   name, and the label or `""`), the trace and consumer ids, the registry and
   model and the call's usage, never the prompt. See the
