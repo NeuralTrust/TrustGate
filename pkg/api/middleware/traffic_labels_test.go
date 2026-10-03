@@ -35,6 +35,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/trafficlabel"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -72,6 +73,7 @@ type trafficLabelsSetup struct {
 	consumer   *consumerdomain.Consumer
 	noConsumer bool
 	noTrace    bool
+	session    *infracontext.Session
 	maxBody    int
 	accept     bool
 	// outcomes are the Intake outcomes the middleware must record, in any order.
@@ -137,6 +139,9 @@ func newTrafficLabelsApp(t *testing.T, s trafficLabelsSetup) (*fiber.App, *recor
 			}
 			if !s.noTrace {
 				ctx = trace.NewContext(ctx, trace.New("trace-123", trace.Metadata{}))
+			}
+			if s.session != nil {
+				ctx = infracontext.WithSession(ctx, *s.session)
 			}
 			c.SetUserContext(ctx)
 			return c.Next()
@@ -319,4 +324,90 @@ func TestTrafficLabels_EncodedBodyOverTheCapOnceDecoded(t *testing.T) {
 
 	assert.Equal(t, fiber.StatusOK, status)
 	assert.Empty(t, intake.submitted(), "the cap applies to the decoded size too")
+}
+
+const responsesContinuationBody = `{"model":"gpt-4o","previous_response_id":"resp_prev1","input":"and the second invoice?"}`
+
+func clientSession(id string) *infracontext.Session {
+	return &infracontext.Session{ID: id, Source: infracontext.SessionSourceKnownHeader, Exposed: true}
+}
+
+func TestTrafficLabels_CarriesTheEffectiveSessionID(t *testing.T) {
+	t.Parallel()
+
+	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{gateway: labeledGateway(true), accept: true, session: clientSession("sess-1")})
+	postTo(t, app, "/acme/v1/responses", responsesContinuationBody)
+	got := intake.submitted()
+	require.Len(t, got, 1)
+	assert.Equal(t, "sess-1", got[0].SessionID)
+	assert.False(t, got[0].BufferOnly)
+
+	hidden := &infracontext.Session{ID: "generated-1", Source: infracontext.SessionSourceGenerated}
+	app, intake = newTrafficLabelsApp(t, trafficLabelsSetup{gateway: labeledGateway(true), accept: true, session: hidden})
+	postTo(t, app, "/acme/v1/chat/completions", chatBody)
+	got = intake.submitted()
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].SessionID, "a hidden generated id is not a conversation")
+}
+
+// A sampled-out Responses turn still feeds the conversation buffer, or the
+// next sampled continuation would be labeled without it.
+func TestTrafficLabels_SampledOutResponsesTurnIsSubmittedForTheBufferOnly(t *testing.T) {
+	t.Parallel()
+	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{
+		gateway:  sampledGateway(0),
+		session:  clientSession("sess-1"),
+		accept:   true,
+		outcomes: []string{trafficlabels.OutcomeSampledOut},
+	})
+
+	status, echoed := postTo(t, app, "/acme/v1/responses", responsesContinuationBody)
+
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, responsesContinuationBody, echoed)
+	got := intake.submitted()
+	require.Len(t, got, 1)
+	assert.True(t, got[0].BufferOnly)
+	assert.Equal(t, "sess-1", got[0].SessionID)
+	assert.Equal(t, adapter.FormatOpenAIResponses, got[0].SourceFormat)
+}
+
+func TestTrafficLabels_SampledOutWithoutAConversationIsDropped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		body    string
+		session *infracontext.Session
+	}{
+		{name: "chat completions with a session", path: "/acme/v1/chat/completions", body: chatBody, session: clientSession("sess-1")},
+		{name: "responses without a session", path: "/acme/v1/responses", body: responsesContinuationBody},
+		{name: "responses with a hidden generated id", path: "/acme/v1/responses", body: responsesContinuationBody,
+			session: &infracontext.Session{ID: "generated-1", Source: infracontext.SessionSourceGenerated}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{
+				gateway:  sampledGateway(0),
+				session:  tt.session,
+				outcomes: []string{trafficlabels.OutcomeSampledOut},
+			})
+			postTo(t, app, tt.path, tt.body)
+			assert.Empty(t, intake.submitted())
+		})
+	}
+}
+
+func TestTrafficLabels_BufferOnlyOverTheCapIsNotCountedTwice(t *testing.T) {
+	t.Parallel()
+	app, intake := newTrafficLabelsApp(t, trafficLabelsSetup{
+		gateway:  sampledGateway(0),
+		session:  clientSession("sess-1"),
+		maxBody:  16,
+		outcomes: []string{trafficlabels.OutcomeSampledOut},
+	})
+	postTo(t, app, "/acme/v1/responses", responsesContinuationBody)
+	assert.Empty(t, intake.submitted())
 }

@@ -16,6 +16,7 @@ package trafficlabels
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"runtime/debug"
@@ -32,17 +33,25 @@ const (
 	defaultIntakeWorkers        = 2
 	defaultIntakeEnqueueTimeout = 500 * time.Millisecond
 	defaultIntakeMaxBufferBytes = 64 << 20
+
+	conversationIOTimeout = 500 * time.Millisecond
 )
 
+// Candidate is one request offered for labeling. SessionID is the effective
+// session id (empty for a hidden generated one). BufferOnly marks a request
+// sampling left out that is still read to keep its conversation buffer
+// complete: it is never classified.
 type Candidate struct {
 	GatewayID    string
 	ConsumerID   string
 	TraceID      string
+	SessionID    string
 	SourceFormat adapter.Format
 	Body         []byte
 	Config       *trafficlabel.Config
 	LabelSets    []trafficlabel.LabelSet
 	ReceivedAt   time.Time
+	BufferOnly   bool
 }
 
 type IntakeConfig struct {
@@ -77,12 +86,22 @@ type Intake interface {
 
 var _ Intake = (*intake)(nil)
 
+// IntakeOption configures optional intake collaborators.
+type IntakeOption func(*intake)
+
+// WithConversationBuffer lets the intake extend the labeling window of OpenAI
+// Responses continuations with the earlier turns of their conversation.
+func WithConversationBuffer(buffer ConversationBuffer) IntakeOption {
+	return func(i *intake) { i.conversations = buffer }
+}
+
 type intake struct {
-	logger   *slog.Logger
-	decoder  RequestDecoder
-	queue    Queue
-	recorder Recorder
-	cfg      IntakeConfig
+	logger        *slog.Logger
+	decoder       RequestDecoder
+	queue         Queue
+	recorder      Recorder
+	cfg           IntakeConfig
+	conversations ConversationBuffer
 
 	ch       chan Candidate
 	wg       sync.WaitGroup
@@ -94,16 +113,30 @@ type intake struct {
 	cancel  context.CancelFunc
 }
 
-func NewIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) Intake {
-	return newIntake(logger, decoder, queue, recorder, cfg)
+func NewIntake(
+	logger *slog.Logger,
+	decoder RequestDecoder,
+	queue Queue,
+	recorder Recorder,
+	cfg IntakeConfig,
+	opts ...IntakeOption,
+) Intake {
+	return newIntake(logger, decoder, queue, recorder, cfg, opts...)
 }
 
-func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorder Recorder, cfg IntakeConfig) *intake {
+func newIntake(
+	logger *slog.Logger,
+	decoder RequestDecoder,
+	queue Queue,
+	recorder Recorder,
+	cfg IntakeConfig,
+	opts ...IntakeOption,
+) *intake {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	cfg = cfg.withDefaults()
-	return &intake{
+	in := &intake{
 		logger:   logger,
 		decoder:  decoder,
 		queue:    queue,
@@ -111,30 +144,46 @@ func newIntake(logger *slog.Logger, decoder RequestDecoder, queue Queue, recorde
 		cfg:      cfg,
 		ch:       make(chan Candidate, cfg.QueueSize),
 	}
+	for _, opt := range opts {
+		opt(in)
+	}
+	return in
 }
 
 func (i *intake) Submit(c Candidate) bool {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
+	if c.BufferOnly && !i.buffers(c) {
+		return false
+	}
 	if i.closed {
-		i.recorder.Intake(OutcomeShuttingDown)
+		i.recordIntake(c, OutcomeShuttingDown)
 		return false
 	}
 	size := int64(len(c.Body))
 	if i.buffered.Add(size) > i.cfg.MaxBufferBytes {
 		i.buffered.Add(-size)
-		i.recorder.Intake(OutcomeBufferFull)
+		i.recordIntake(c, OutcomeBufferFull)
 		return false
 	}
 	select {
 	case i.ch <- c:
-		i.recorder.Intake(OutcomeAccepted)
+		i.recordIntake(c, OutcomeAccepted)
 		return true
 	default:
 		i.buffered.Add(-size)
-		i.recorder.Intake(OutcomeBufferFull)
+		i.recordIntake(c, OutcomeBufferFull)
 		return false
 	}
+}
+
+// recordIntake skips buffer-only candidates: the middleware already counted
+// them as sampled out.
+func (i *intake) recordIntake(c Candidate, outcome string) {
+	if c.BufferOnly {
+		return
+	}
+	i.recorder.Intake(outcome)
 }
 
 func (i *intake) Start() {
@@ -201,7 +250,7 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 				slog.String("stack", string(debug.Stack())))
 		}
 	}()
-	req, ok := i.build(c)
+	req, ok := i.build(ctx, c)
 	if !ok {
 		return
 	}
@@ -223,11 +272,14 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 	}
 }
 
-func (i *intake) build(c Candidate) (trafficlabel.Request, bool) {
+func (i *intake) build(ctx context.Context, c Candidate) (trafficlabel.Request, bool) {
 	if !c.Config.IsEnabled() || len(c.LabelSets) == 0 {
 		return trafficlabel.Request{}, false
 	}
-	text := userText(i.decoder, c.Body, c.SourceFormat, c.Config.Window())
+	text := i.text(ctx, c)
+	if c.BufferOnly {
+		return trafficlabel.Request{}, false
+	}
 	if text == "" {
 		i.recorder.Enqueue(OutcomeNoText)
 		return trafficlabel.Request{}, false
@@ -241,4 +293,70 @@ func (i *intake) build(c Candidate) (trafficlabel.Request, bool) {
 		LabelSets:  c.LabelSets,
 		ReceivedAt: c.ReceivedAt,
 	}), true
+}
+
+// text is the user text to classify. Only OpenAI Responses requests with a
+// session use the conversation buffer, and never together with the body
+// history: a continuation (previous_response_id or conversation) only carries
+// its new turn, so the window is the buffer plus that turn; any other request
+// carries its own history, so the body alone is the window. Either way the
+// buffer is left holding the conversation's most recent user messages.
+func (i *intake) text(ctx context.Context, c Candidate) string {
+	msgs := userMessages(i.decoder, c.Body, c.SourceFormat)
+	if !i.buffers(c) {
+		return windowText(msgs, c.Config.Window())
+	}
+	key := ConversationKey{GatewayID: c.GatewayID, ConsumerID: c.ConsumerID, SessionID: c.SessionID}
+	if isResponsesContinuation(c.Body) {
+		msgs = append(i.loadConversation(ctx, key), msgs...)
+	}
+	msgs = capConversation(msgs)
+	if len(msgs) > 0 {
+		i.saveConversation(ctx, key, msgs)
+	}
+	return windowText(msgs, c.Config.Window())
+}
+
+func (i *intake) buffers(c Candidate) bool {
+	return i.conversations != nil && c.SessionID != "" && c.SourceFormat == adapter.FormatOpenAIResponses
+}
+
+func (i *intake) loadConversation(ctx context.Context, key ConversationKey) []string {
+	ctx, cancel := context.WithTimeout(ctx, conversationIOTimeout)
+	defer cancel()
+	msgs, err := i.conversations.Load(ctx, key)
+	if err != nil {
+		i.logger.Debug("traffic labels: conversation buffer not read, labeling the new turn only",
+			slog.String("gateway_id", key.GatewayID), slog.String("error", err.Error()))
+		return nil
+	}
+	return msgs
+}
+
+func (i *intake) saveConversation(ctx context.Context, key ConversationKey, msgs []string) {
+	ctx, cancel := context.WithTimeout(ctx, conversationIOTimeout)
+	defer cancel()
+	if err := i.conversations.Save(ctx, key, msgs); err != nil {
+		i.logger.Debug("traffic labels: conversation buffer not written",
+			slog.String("gateway_id", key.GatewayID), slog.String("error", err.Error()))
+	}
+}
+
+func isResponsesContinuation(body []byte) bool {
+	var probe struct {
+		PreviousResponseID json.RawMessage `json:"previous_response_id"`
+		Conversation       json.RawMessage `json:"conversation"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return false
+	}
+	return present(probe.PreviousResponseID) || present(probe.Conversation)
+}
+
+func present(raw json.RawMessage) bool {
+	switch string(raw) {
+	case "", "null", `""`:
+		return false
+	}
+	return true
 }
