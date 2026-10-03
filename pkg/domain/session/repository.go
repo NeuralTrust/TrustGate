@@ -18,6 +18,11 @@ import "context"
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=session_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
+	// Save stores the session and, when it carries a LastTurnID, the reverse
+	// index from that turn to the session, both with the session's expiry.
 	Save(ctx context.Context, session *Session) error
 	Get(ctx context.Context, gatewayID, sessionID string) (*Session, error)
+	// FindSessionIDByTurn returns the session a provider turn id was recorded
+	// under, or empty when the turn is unknown or its index has expired.
+	FindSessionIDByTurn(ctx context.Context, gatewayID, turnID string) (string, error)
 }

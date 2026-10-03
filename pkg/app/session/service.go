@@ -25,7 +25,10 @@ import (
 
 const DefaultTTL = time.Hour
 
-const writeTimeout = 2 * time.Second
+const (
+	writeTimeout  = 2 * time.Second
+	lookupTimeout = 250 * time.Millisecond
+)
 
 type RecordInput struct {
 	GatewayID string
@@ -39,6 +42,7 @@ type RecordInput struct {
 type Store interface {
 	Record(ctx context.Context, in RecordInput)
 	LastTurnID(ctx context.Context, gatewayID, sessionID string) string
+	SessionForTurn(ctx context.Context, gatewayID, turnID string) string
 }
 
 var _ Store = (*Service)(nil)
@@ -99,4 +103,24 @@ func (s *Service) LastTurnID(ctx context.Context, gatewayID, sessionID string) s
 		return ""
 	}
 	return sess.LastTurnID
+}
+
+// SessionForTurn returns the session a previous provider turn was recorded
+// under, so a continuation that only names the turn (OpenAI Responses
+// previous_response_id) inherits its conversation. It runs on the request
+// path, so the lookup is bounded and any failure reads as a miss.
+func (s *Service) SessionForTurn(ctx context.Context, gatewayID, turnID string) string {
+	if !s.enabled || s.repo == nil || gatewayID == "" || turnID == "" {
+		return ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	sessionID, err := s.repo.FindSessionIDByTurn(lookupCtx, gatewayID, turnID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Debug("session store: turn lookup failed", slog.String("error", err.Error()))
+		}
+		return ""
+	}
+	return sessionID
 }
