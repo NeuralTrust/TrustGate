@@ -73,3 +73,22 @@ type Stream interface {
 type RequestDecoder interface {
 	DecodeRequestFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalRequest, error)
 }
+
+// ConversationKey names the conversation buffer of one session as seen by one
+// consumer of one gateway.
+type ConversationKey struct {
+	GatewayID  string
+	ConsumerID string
+	SessionID  string
+}
+
+// ConversationBuffer keeps the most recent user messages of a conversation
+// whose requests only carry the new turn (OpenAI Responses continuations), so
+// the labeling window can still span earlier turns. A miss returns no
+// messages and no error.
+//
+//go:generate mockery --name=ConversationBuffer --dir=. --output=./mocks --filename=conversation_buffer_mock.go --case=underscore --with-expecter
+type ConversationBuffer interface {
+	Load(ctx context.Context, key ConversationKey) ([]string, error)
+	Save(ctx context.Context, key ConversationKey, messages []string) error
+}
