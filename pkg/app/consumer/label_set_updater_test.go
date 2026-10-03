@@ -38,17 +38,26 @@ type countingSignaler struct{ n int }
 
 func (s *countingSignaler) Signal(context.Context) { s.n++ }
 
-func TestLabelUpdater_ReplacesTheLabels(t *testing.T) {
+func labelSet(id, name string) trafficlabel.LabelSet {
+	return trafficlabel.LabelSet{
+		ID:           id,
+		Name:         name,
+		Instructions: "overall mood",
+		Labels:       []trafficlabel.Label{{Name: "positive", Description: "happy"}, {Name: "negative"}},
+	}
+}
+
+func TestLabelSetUpdater_ReplacesTheLabelSets(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
-	existing.Labels = []trafficlabel.Label{{ID: "old", Name: "Old", Instructions: "x"}}
+	existing.LabelSets = []trafficlabel.LabelSet{labelSet("old", "Old")}
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
-		UpdateLabels(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.ID == existing.ID && len(c.Labels) == 1 && c.Labels[0].ID == "l-1" && c.Labels[0].Name == "Billing"
+		UpdateLabelSets(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.ID == existing.ID && len(c.LabelSets) == 1 && c.LabelSets[0].ID == "set-1" && c.LabelSets[0].Name == "Sentiment"
 		})).
 		Return(nil).
 		Once()
@@ -59,56 +68,58 @@ func TestLabelUpdater_ReplacesTheLabels(t *testing.T) {
 		Once()
 	signaler := &countingSignaler{}
 
-	updater := appconsumer.NewLabelUpdater(repo, newCacheManager(), publisher, newTestLogger(), signaler)
-	got, err := updater.UpdateLabels(context.Background(), appconsumer.UpdateLabelsInput{
+	updater := appconsumer.NewLabelSetUpdater(repo, newCacheManager(), publisher, newTestLogger(), signaler)
+	got, err := updater.UpdateLabelSets(context.Background(), appconsumer.UpdateLabelSetsInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Labels:    []trafficlabel.Label{{ID: " l-1 ", Name: " Billing ", Instructions: "refunds"}},
+		LabelSets: []trafficlabel.LabelSet{labelSet(" set-1 ", " Sentiment ")},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []trafficlabel.Label{{ID: "l-1", Name: "Billing", Instructions: "refunds"}}, got.Labels)
-	assert.Equal(t, 1, signaler.n, "the data planes get the new labels with the next snapshot")
+	assert.Equal(t, []trafficlabel.LabelSet{labelSet("set-1", "Sentiment")}, got.LabelSets)
+	assert.Equal(t, 1, signaler.n, "the data planes get the new label sets with the next snapshot")
 }
 
-func TestLabelUpdater_ClearsTheLabels(t *testing.T) {
+func TestLabelSetUpdater_ClearsTheLabelSets(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
-	existing.Labels = []trafficlabel.Label{{ID: "old", Name: "Old", Instructions: "x"}}
+	existing.LabelSets = []trafficlabel.LabelSet{labelSet("old", "Old")}
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
-		UpdateLabels(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool { return c.Labels == nil })).
+		UpdateLabelSets(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool { return c.LabelSets == nil })).
 		Return(nil).
 		Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appconsumer.NewLabelUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
-	got, err := updater.UpdateLabels(context.Background(), appconsumer.UpdateLabelsInput{
-		ID: existing.ID, GatewayID: gwID, Labels: []trafficlabel.Label{},
+	updater := appconsumer.NewLabelSetUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	got, err := updater.UpdateLabelSets(context.Background(), appconsumer.UpdateLabelSetsInput{
+		ID: existing.ID, GatewayID: gwID, LabelSets: []trafficlabel.LabelSet{},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, got.Labels)
+	assert.Empty(t, got.LabelSets)
 }
 
-func TestLabelUpdater_Rejects(t *testing.T) {
+func TestLabelSetUpdater_Rejects(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	valid := []trafficlabel.Label{{ID: "l-1", Name: "Billing", Instructions: "refunds"}}
+	valid := []trafficlabel.LabelSet{labelSet("set-1", "Sentiment")}
+	oneLabel := labelSet("set-1", "Sentiment")
+	oneLabel.Labels = oneLabel.Labels[:1]
 
 	tests := []struct {
 		name    string
 		mutate  func(c *domain.Consumer)
 		gateway ids.GatewayID
-		labels  []trafficlabel.Label
+		sets    []trafficlabel.LabelSet
 		want    error
 	}{
-		{name: "MCP consumer", mutate: func(c *domain.Consumer) { c.Type = domain.TypeMCP }, gateway: gwID, labels: valid, want: commonerrors.ErrValidation},
-		{name: "A2A consumer", mutate: func(c *domain.Consumer) { c.Type = domain.TypeA2A }, gateway: gwID, labels: valid, want: commonerrors.ErrValidation},
-		{name: "another gateway", gateway: ids.New[ids.GatewayKind](), labels: valid, want: domain.ErrNotFound},
-		{name: "invalid labels", gateway: gwID, labels: []trafficlabel.Label{{ID: "l-1", Name: "", Instructions: "x"}}, want: commonerrors.ErrValidation},
+		{name: "MCP consumer", mutate: func(c *domain.Consumer) { c.Type = domain.TypeMCP }, gateway: gwID, sets: valid, want: commonerrors.ErrValidation},
+		{name: "A2A consumer", mutate: func(c *domain.Consumer) { c.Type = domain.TypeA2A }, gateway: gwID, sets: valid, want: commonerrors.ErrValidation},
+		{name: "another gateway", gateway: ids.New[ids.GatewayKind](), sets: valid, want: domain.ErrNotFound},
+		{name: "invalid label set", gateway: gwID, sets: []trafficlabel.LabelSet{oneLabel}, want: commonerrors.ErrValidation},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,16 +131,16 @@ func TestLabelUpdater_Rejects(t *testing.T) {
 			repo := repomocks.NewRepository(t)
 			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-			updater := appconsumer.NewLabelUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
-			_, err := updater.UpdateLabels(context.Background(), appconsumer.UpdateLabelsInput{
-				ID: existing.ID, GatewayID: tt.gateway, Labels: tt.labels,
+			updater := appconsumer.NewLabelSetUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+			_, err := updater.UpdateLabelSets(context.Background(), appconsumer.UpdateLabelSetsInput{
+				ID: existing.ID, GatewayID: tt.gateway, LabelSets: tt.sets,
 			})
 			require.True(t, errors.Is(err, tt.want), "error = %v, want %v", err, tt.want)
 		})
 	}
 }
 
-func TestLabelUpdater_ClearingAnMCPConsumerIsAllowed(t *testing.T) {
+func TestLabelSetUpdater_ClearingAnMCPConsumerIsAllowed(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
@@ -137,16 +148,16 @@ func TestLabelUpdater_ClearingAnMCPConsumerIsAllowed(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().UpdateLabels(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().UpdateLabelSets(mock.Anything, mock.Anything).Return(nil).Once()
 	publisher := cachemocks.NewEventPublisher(t)
 	publisher.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appconsumer.NewLabelUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.UpdateLabels(context.Background(), appconsumer.UpdateLabelsInput{ID: existing.ID, GatewayID: gwID, Labels: nil})
-	require.NoError(t, err, "the app clears a consumer's labels without checking its type first")
+	updater := appconsumer.NewLabelSetUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	_, err := updater.UpdateLabelSets(context.Background(), appconsumer.UpdateLabelSetsInput{ID: existing.ID, GatewayID: gwID, LabelSets: nil})
+	require.NoError(t, err, "the app clears a consumer's label sets without checking its type first")
 }
 
-func TestLabelUpdater_PropagatesRepositoryErrors(t *testing.T) {
+func TestLabelSetUpdater_PropagatesRepositoryErrors(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingConsumer(gwID, ids.New[ids.RegistryKind]())
@@ -154,28 +165,28 @@ func TestLabelUpdater_PropagatesRepositoryErrors(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().UpdateLabels(mock.Anything, mock.Anything).Return(boom).Once()
+	repo.EXPECT().UpdateLabelSets(mock.Anything, mock.Anything).Return(boom).Once()
 
-	updater := appconsumer.NewLabelUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
-	_, err := updater.UpdateLabels(context.Background(), appconsumer.UpdateLabelsInput{
-		ID: existing.ID, GatewayID: gwID, Labels: []trafficlabel.Label{{ID: "l-1", Name: "Billing", Instructions: "refunds"}},
+	updater := appconsumer.NewLabelSetUpdater(repo, newCacheManager(), cachemocks.NewEventPublisher(t), newTestLogger(), nil)
+	_, err := updater.UpdateLabelSets(context.Background(), appconsumer.UpdateLabelSetsInput{
+		ID: existing.ID, GatewayID: gwID, LabelSets: []trafficlabel.LabelSet{labelSet("set-1", "Sentiment")},
 	})
 	require.ErrorIs(t, err, boom)
 }
 
-func TestUpdater_Update_LeavesLabelsUntouched(t *testing.T) {
+func TestUpdater_Update_LeavesLabelSetsUntouched(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
 	existing := existingConsumer(gwID, beID)
-	labels := []trafficlabel.Label{{ID: "l-1", Name: "Billing", Instructions: "refunds"}}
-	existing.Labels = labels
+	sets := []trafficlabel.LabelSet{labelSet("set-1", "Sentiment")}
+	existing.LabelSets = sets
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.Name == "paused" && !c.Active && len(c.Labels) == 1 && c.Labels[0].ID == "l-1"
+			return c.Name == "paused" && !c.Active && len(c.LabelSets) == 1 && c.LabelSets[0].ID == "set-1"
 		}), mock.Anything, mock.Anything).
 		Return(nil).
 		Once()
@@ -190,5 +201,5 @@ func TestUpdater_Update_LeavesLabelsUntouched(t *testing.T) {
 		Active:    ptr(false),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, labels, got.Labels, "a generic update without labels keeps the stored ones")
+	assert.Equal(t, sets, got.LabelSets, "a generic update keeps the stored label sets")
 }

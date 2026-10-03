@@ -78,8 +78,8 @@ func provideConsumerServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.LabelUpdater {
-		return appconsumer.NewLabelUpdater(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.LabelSetUpdater {
+		return appconsumer.NewLabelSetUpdater(repo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(consumerhttp.NewUpdateConsumerHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(consumerhttp.NewUpdateConsumerLabelsHandler); err != nil {
+	if err := c.Provide(consumerhttp.NewUpdateConsumerLabelSetsHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(consumerhttp.NewDeleteConsumerHandler); err != nil {

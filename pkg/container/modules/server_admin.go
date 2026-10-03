@@ -94,13 +94,13 @@ type adminRouterParams struct {
 	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
-	CreateConsumer       *consumerhttp.CreateConsumerHandler
-	GetConsumer          *consumerhttp.GetConsumerHandler
-	ListConsumer         *consumerhttp.ListConsumerHandler
-	UpdateConsumer       *consumerhttp.UpdateConsumerHandler
-	UpdateConsumerLabels *consumerhttp.UpdateConsumerLabelsHandler
-	DeleteConsumer       *consumerhttp.DeleteConsumerHandler
-	ConsumerAssociation  *consumerhttp.AssociationHandler
+	CreateConsumer          *consumerhttp.CreateConsumerHandler
+	GetConsumer             *consumerhttp.GetConsumerHandler
+	ListConsumer            *consumerhttp.ListConsumerHandler
+	UpdateConsumer          *consumerhttp.UpdateConsumerHandler
+	UpdateConsumerLabelSets *consumerhttp.UpdateConsumerLabelSetsHandler
+	DeleteConsumer          *consumerhttp.DeleteConsumerHandler
+	ConsumerAssociation     *consumerhttp.AssociationHandler
 
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
@@ -178,7 +178,7 @@ func ServerAdmin(c *container.Container) error {
 				GetConsumer:               p.GetConsumer,
 				ListConsumer:              p.ListConsumer,
 				UpdateConsumer:            p.UpdateConsumer,
-				UpdateConsumerLabels:      p.UpdateConsumerLabels,
+				UpdateConsumerLabelSets:   p.UpdateConsumerLabelSets,
 				DeleteConsumer:            p.DeleteConsumer,
 				ConsumerAssociation:       p.ConsumerAssociation,
 				CreateAuth:                p.CreateAuth,

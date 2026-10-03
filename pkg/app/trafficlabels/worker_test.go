@@ -157,7 +157,7 @@ func (c *fakeClassifier) texts() []string {
 
 func resultFor(text string) trafficlabel.Classification {
 	return trafficlabel.Classification{
-		LabelIDs:     []string{"l-billing"},
+		Results:      []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Billing"}},
 		InputTokens:  len(text),
 		OutputTokens: 3,
 		Latency:      time.Millisecond,
@@ -299,18 +299,24 @@ func (h *workerHarness) waitAcked(t *testing.T, n int) {
 }
 
 var (
-	billing = []trafficlabel.Label{{ID: "l-billing", Name: "Billing", Instructions: "refunds and invoices"}}
-	legal   = []trafficlabel.Label{{ID: "l-legal", Name: "Legal", Instructions: "contracts"}}
+	billing = []trafficlabel.LabelSet{{
+		ID: "set-topic", Name: "Topic", Instructions: "what the request is about",
+		Labels: []trafficlabel.Label{{Name: "Billing", Description: "refunds and invoices"}, {Name: "Legal", Description: "contracts"}},
+	}}
+	legal = []trafficlabel.LabelSet{{
+		ID: "set-sentiment", Name: "Sentiment",
+		Labels: []trafficlabel.Label{{Name: "positive"}, {Name: "negative"}},
+	}}
 )
 
-func queued(gateway string, labels []trafficlabel.Label, text string) trafficlabel.Request {
+func queued(gateway string, sets []trafficlabel.LabelSet, text string) trafficlabel.Request {
 	return trafficlabel.NewRequest(trafficlabel.RequestParams{
 		GatewayID:  gateway,
 		ConsumerID: "consumer-" + gateway,
 		TraceID:    "trace-" + gateway + "-" + text,
 		Text:       text,
 		Config:     enabledConfig(),
-		Labels:     labels,
+		LabelSets:  sets,
 	})
 }
 
@@ -325,7 +331,7 @@ func TestWorker_ClassifiesPublishesCachesAndAcks(t *testing.T) {
 	require.Len(t, calls, 2, "one classifier call per text")
 	assert.ElementsMatch(t, []string{"refund", "invoice"}, h.classifier.texts())
 	for _, c := range calls {
-		assert.Equal(t, billing, c.Labels)
+		assert.Equal(t, billing, c.LabelSets)
 		assert.Equal(t, testRegistryID, c.RegistryID)
 		assert.Equal(t, "gpt-4o-mini", c.Model)
 		assert.Equal(t, "gw", c.GatewayID)
@@ -335,7 +341,7 @@ func TestWorker_ClassifiesPublishesCachesAndAcks(t *testing.T) {
 	require.Len(t, out, 2)
 	for _, p := range out {
 		assert.Equal(t, len(p.req.Text), p.cls.InputTokens, "each request gets its own result")
-		assert.Equal(t, []string{"l-billing"}, p.cls.LabelIDs)
+		assert.Equal(t, []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Billing"}}, p.cls.Results)
 	}
 	assert.Equal(t, 2, h.cache.size())
 	assert.ElementsMatch(t, ids, h.stream.ackedIDs())
@@ -345,7 +351,8 @@ func TestWorker_CacheHitSkipsTheClassifier(t *testing.T) {
 	t.Parallel()
 	h := newWorkerHarness(t, testWorkerConfig(), nil)
 	hit := queued("gw", billing, "refund")
-	h.cache.put(cacheKeyOf(hit), trafficlabel.Classification{LabelIDs: []string{"from-cache"}})
+	fromCacheResults := []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Legal"}}
+	h.cache.put(cacheKeyOf(hit), trafficlabel.Classification{Results: fromCacheResults})
 
 	h.stream.push(hit, queued("gw", billing, "invoice"))
 	h.start(t)
@@ -355,13 +362,13 @@ func TestWorker_CacheHitSkipsTheClassifier(t *testing.T) {
 	var fromCache bool
 	for _, p := range h.sink.all() {
 		if p.req.Text == "refund" {
-			fromCache = slices.Equal(p.cls.LabelIDs, []string{"from-cache"}) && p.cls.InputTokens == 0
+			fromCache = slices.Equal(p.cls.Results, fromCacheResults) && p.cls.InputTokens == 0
 		}
 	}
 	assert.True(t, fromCache, "the cached result is the one published, at no cost")
 }
 
-func TestWorker_CachesLabelsWithoutCost(t *testing.T) {
+func TestWorker_CachesResultsWithoutCost(t *testing.T) {
 	t.Parallel()
 	h := newWorkerHarness(t, testWorkerConfig(), nil)
 	req := queued("gw", billing, "refund")
@@ -373,7 +380,7 @@ func TestWorker_CachesLabelsWithoutCost(t *testing.T) {
 	defer h.cache.mu.Unlock()
 	stored, ok := h.cache.entries[cacheKeyOf(req)]
 	require.True(t, ok)
-	assert.Equal(t, trafficlabel.Classification{LabelIDs: []string{"l-billing"}}, stored)
+	assert.Equal(t, trafficlabel.Classification{Results: []trafficlabel.Result{{LabelSetID: "set-topic", Label: "Billing"}}}, stored)
 }
 
 func TestWorker_NeverMixesGatewaysCatalogsOrClassifiers(t *testing.T) {
@@ -401,7 +408,7 @@ func TestWorker_NeverMixesGatewaysCatalogsOrClassifiers(t *testing.T) {
 		byText[c.Text] = c
 	}
 	assert.Equal(t, "gw-2", byText["b"].GatewayID)
-	assert.Equal(t, legal, byText["c"].Labels)
+	assert.Equal(t, legal, byText["c"].LabelSets)
 	assert.Equal(t, "small-chat-model", byText["d"].Model)
 	assert.Equal(t, otherRegistry.RegistryID, byText["e"].RegistryID)
 	assert.Equal(t, 5, h.cache.readCount(), "each group is its own batch")

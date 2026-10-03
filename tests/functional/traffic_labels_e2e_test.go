@@ -22,8 +22,8 @@ import (
 const (
 	labelsEventName = "traffic_labels"
 	labelsStreamKey = "{trafficlabels}:stream"
-	billingLabelID  = "0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b"
-	legalLabelID    = "1c0f4a3b-7d2e-4b8f-8c3a-4e5d6f7a8b9c"
+	sentimentSetID  = "0b9e3f2a-6c1d-4a7e-9b2f-3d4c5e6f7a8b"
+	topicSetID      = "1c0f4a3b-7d2e-4b8f-8c3a-4e5d6f7a8b9c"
 )
 
 type otlpReceiver struct {
@@ -59,7 +59,9 @@ func (r *otlpReceiver) contains(needle string) bool {
 }
 
 // classifierUpstream stands in for the LLM the gateway selected to label its
-// traffic: it records what it is asked and always picks the billing label.
+// traffic: it records what it is asked and always answers "negative" for the
+// sentiment set, "billing" (not the catalog's spelling) for the topic set and
+// a result for a set the consumer does not have.
 type classifierUpstream struct {
 	server *httptest.Server
 	mu     sync.Mutex
@@ -77,7 +79,7 @@ func newClassifierUpstream(t *testing.T) *classifierUpstream {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w,
 			`{"id":"chatcmpl-labels","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":9,"total_tokens":129}}`,
-			`{"labels":["`+billingLabelID+`"]}`,
+			`{"results":[{"label_set_id":"`+sentimentSetID+`","label":"negative"},{"label_set_id":"`+topicSetID+`","label":"billing"},{"label_set_id":"made-up","label":"x"}]}`,
 		)
 	}))
 	t.Cleanup(u.server.Close)
@@ -95,17 +97,33 @@ func (u *classifierUpstream) sawText(marker string) bool {
 	return false
 }
 
-func consumerLabels() []map[string]any {
+func consumerLabelSets() []map[string]any {
 	return []map[string]any{
-		{"id": billingLabelID, "name": "Billing", "instructions": "Refunds, invoices and charges", "examples": []string{"where is my refund"}},
-		{"id": legalLabelID, "name": "Legal", "instructions": "Contracts and terms of service"},
+		{
+			"id": sentimentSetID, "name": "Sentiment analysis", "instructions": "Classify the overall sentiment of the user's message",
+			"labels": []map[string]any{
+				{"name": "positive", "description": "Happy or satisfied"},
+				{"name": "negative", "description": "Angry or disappointed"},
+				{"name": "neutral"},
+			},
+		},
+		{
+			"id": topicSetID, "name": "Topic",
+			"labels": []map[string]any{
+				{"name": "Billing", "description": "Refunds, invoices and charges"},
+				{"name": "Legal", "description": "Contracts and terms of service"},
+			},
+		},
 	}
 }
 
-func putConsumerLabels(t *testing.T, gatewayID, consumerID string, labels []map[string]any) (int, map[string]any) {
+func labelSetsURL(gatewayID, consumerID string) string {
+	return fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/label-sets", AdminURL, gatewayID, consumerID)
+}
+
+func putConsumerLabelSets(t *testing.T, gatewayID, consumerID string, sets []map[string]any) (int, map[string]any) {
 	t.Helper()
-	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/labels", AdminURL, gatewayID, consumerID)
-	return sendRequest(t, http.MethodPut, url, nil, map[string]any{"labels": labels})
+	return sendRequest(t, http.MethodPut, labelSetsURL(gatewayID, consumerID), nil, map[string]any{"label_sets": sets})
 }
 
 func putGatewayLabeling(t *testing.T, gatewayID string, labeling any) (int, map[string]any) {
@@ -160,8 +178,8 @@ func setupLabelRoute(t *testing.T, enabled bool, receiver *otlpReceiver, policie
 	})
 	require.Equal(t, http.StatusOK, status, "enable traffic labeling failed: %v", body)
 
-	status, body = putConsumerLabels(t, gatewayID, consumerID, consumerLabels())
-	require.Equal(t, http.StatusOK, status, "set consumer labels failed: %v", body)
+	status, body = putConsumerLabelSets(t, gatewayID, consumerID, consumerLabelSets())
+	require.Equal(t, http.StatusOK, status, "set consumer label sets failed: %v", body)
 
 	apiKey := createAndAttachAPIKey(t, gatewayID, consumerID)
 	return labelRoute{gatewayID: gatewayID, consumerID: consumerID, apiKey: apiKey, path: chatCompletionsPath(t, consumerID), classifier: classifier}
@@ -216,7 +234,13 @@ func TestTrafficLabelsE2E_LabelsAndPublishesWithoutThePrompt(t *testing.T) {
 	require.Eventually(t, func() bool { return receiver.contains(labelsEventName) }, 30*time.Second, 250*time.Millisecond,
 		"no traffic_labels event reached the gateway's collector")
 
-	assert.True(t, receiver.contains(billingLabelID), "the event carries the matched label")
+	assert.True(t, receiver.contains("trustgate.label.results"), "the event carries one result per label set")
+	assert.True(t, receiver.contains(`{"label_set_id":"`+sentimentSetID+`","label_set_name":"Sentiment analysis","label":"negative"}`),
+		"the sentiment set got its label")
+	assert.True(t, receiver.contains(`{"label_set_id":"`+topicSetID+`","label_set_name":"Topic","label":"Billing"}`),
+		"the topic set got its label, in the catalog's spelling")
+	assert.False(t, receiver.contains("made-up"), "a set the consumer does not have is dropped")
+	assert.False(t, receiver.contains("trustgate.label.matched"), "the single-label attributes are gone")
 	assert.True(t, receiver.contains(route.consumerID), "and the consumer it was evaluated for")
 	assert.False(t, receiver.contains(marker), "the prompt must never reach the collector")
 	assert.False(t, receiver.contains("You are the ACME assistant"), "nor the system prompt")
@@ -257,21 +281,45 @@ func TestTrafficLabelsE2E_DisabledGatewayIsNotLabeled(t *testing.T) {
 	assert.False(t, receiver.contains(labelsEventName))
 }
 
-func TestTrafficLabelsE2E_ConsumerWithoutLabelsIsNotLabeled(t *testing.T) {
+func TestTrafficLabelsE2E_ConsumerWithoutLabelSetsIsNotLabeled(t *testing.T) {
 	defer Track(t, "TrafficLabels")()
 
 	receiver := newOTLPReceiver(t)
 	route := setupLabelRoute(t, true, receiver)
-	status, body := putConsumerLabels(t, route.gatewayID, route.consumerID, []map[string]any{})
-	require.Equal(t, http.StatusOK, status, "clear labels failed: %v", body)
-	assert.Empty(t, body["labels"])
-	marker := uniqueName("no-labels")
+	status, body := putConsumerLabelSets(t, route.gatewayID, route.consumerID, []map[string]any{})
+	require.Equal(t, http.StatusOK, status, "clear label sets failed: %v", body)
+	assert.Equal(t, []any{}, body["label_sets"])
+	marker := uniqueName("no-label-sets")
 
 	time.Sleep(2 * time.Second)
 	status = postUntilRouted(t, route.apiKey, route.path, chatWithUserText(marker))
 	assert.Equal(t, http.StatusOK, status)
 	time.Sleep(3 * time.Second)
-	assert.False(t, route.classifier.sawText(marker), "a consumer whose labels were cleared must not be labeled")
+	assert.False(t, route.classifier.sawText(marker), "a consumer whose label sets were cleared must not be labeled")
+}
+
+// consumerLabelSetsWithDefaults is consumerLabelSets as the API returns it:
+// every field present, empty strings included.
+func consumerLabelSetsWithDefaults() []map[string]any {
+	sets := consumerLabelSets()
+	for _, s := range sets {
+		if _, ok := s["instructions"]; !ok {
+			s["instructions"] = ""
+		}
+		for _, l := range s["labels"].([]map[string]any) {
+			if _, ok := l["description"]; !ok {
+				l["description"] = ""
+			}
+		}
+	}
+	return sets
+}
+
+func mustJSONString(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(raw)
 }
 
 func TestTrafficLabelsE2E_AdminAPI(t *testing.T) {
@@ -282,25 +330,88 @@ func TestTrafficLabelsE2E_AdminAPI(t *testing.T) {
 	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	consumerID := CreateConsumerWithRegistries(t, gatewayID, uniqueName("cons"), registryID)
 
-	status, body := putConsumerLabels(t, gatewayID, consumerID, consumerLabels())
-	require.Equal(t, http.StatusOK, status, "%v", body)
-	labels, ok := body["labels"].([]any)
-	require.True(t, ok, "labels missing from the consumer response: %v", body)
-	require.Len(t, labels, 2)
-	assert.Equal(t, consumerID, body["id"], "the full consumer is returned")
-
-	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID)
-	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	consumerURL := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID)
+	status, body := sendRequest(t, http.MethodGet, consumerURL, nil, nil)
 	require.Equal(t, http.StatusOK, status)
-	raw, err := json.Marshal(body["labels"])
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), billingLabelID)
+	assert.Equal(t, []any{}, body["label_sets"], "a consumer without label sets answers an empty list")
 
-	status, _ = putConsumerLabels(t, gatewayID, consumerID, []map[string]any{
-		{"id": "a", "name": "Same", "instructions": "x"},
-		{"id": "b", "name": "same", "instructions": "y"},
-	})
-	assert.Equal(t, http.StatusUnprocessableEntity, status, "names are unique ignoring case")
+	status, body = putConsumerLabelSets(t, gatewayID, consumerID, consumerLabelSets())
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	sets, ok := body["label_sets"].([]any)
+	require.True(t, ok, "label_sets missing from the consumer response: %v", body)
+	require.Len(t, sets, 2)
+	assert.Equal(t, consumerID, body["id"], "the full consumer is returned")
+	_, hasV1 := body["labels"]
+	assert.False(t, hasV1, "the single-label field is gone")
+
+	status, body = sendRequest(t, http.MethodGet, consumerURL, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	raw, err := json.Marshal(body["label_sets"])
+	require.NoError(t, err)
+	assert.JSONEq(t, mustJSONString(t, consumerLabelSetsWithDefaults()), string(raw))
+
+	status, body = sendRequest(t, http.MethodPut, consumerURL, nil, map[string]any{"name": uniqueName("renamed"), "label_sets": []any{}})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	updated, ok := body["label_sets"].([]any)
+	require.True(t, ok, "%v", body)
+	assert.Len(t, updated, 2, "the generic consumer update never touches the label sets")
+
+	set := func(id, name string, labels ...string) map[string]any {
+		out := make([]map[string]any, len(labels))
+		for i, l := range labels {
+			out[i] = map[string]any{"name": l}
+		}
+		return map[string]any{"id": id, "name": name, "labels": out}
+	}
+	tooMany := make([]map[string]any, 11)
+	for i := range tooMany {
+		tooMany[i] = set(fmt.Sprintf("set-%d", i), fmt.Sprintf("Set %d", i), "a", "b")
+	}
+	tooManyLabels := make([]string, 21)
+	for i := range tooManyLabels {
+		tooManyLabels[i] = fmt.Sprintf("label-%d", i)
+	}
+	for name, sets := range map[string][]map[string]any{
+		"more than 10 label sets":       tooMany,
+		"a single label":                {set("a", "Topic", "billing")},
+		"more than 20 labels":           {set("a", "Topic", tooManyLabels...)},
+		"duplicated label names":        {set("a", "Topic", "Billing", "billing")},
+		"duplicated label set names":    {set("a", "Same", "x", "y"), set("b", "same", "x", "y")},
+		"a label name over 64 chars":    {set("a", "Topic", strings.Repeat("n", 65), "b")},
+		"a label set without a name":    {set("a", "", "x", "y")},
+		"a label set without an id":     {set("", "Topic", "x", "y")},
+		"a label set name over 64 char": {set("a", strings.Repeat("n", 65), "x", "y")},
+	} {
+		status, _ = putConsumerLabelSets(t, gatewayID, consumerID, sets)
+		assert.Equal(t, http.StatusUnprocessableEntity, status, "%s must be refused", name)
+	}
+
+	for name, payload := range map[string]any{
+		"missing label_sets": map[string]any{},
+		"null label_sets":    map[string]any{"label_sets": nil},
+		"v1 labels field":    map[string]any{"labels": []any{}},
+		"missing body":       nil,
+	} {
+		status, _ = sendRequest(t, http.MethodPut, labelSetsURL(gatewayID, consumerID), nil, payload)
+		assert.Equal(t, http.StatusUnprocessableEntity, status, "%s must be refused", name)
+	}
+	status, body = sendRequest(t, http.MethodGet, consumerURL, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Len(t, body["label_sets"], 2, "a refused body leaves the label sets as they were")
+
+	status, _ = sendRequest(t, http.MethodPut, fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/labels", AdminURL, gatewayID, consumerID), nil,
+		map[string]any{"labels": []any{}})
+	assert.Equal(t, http.StatusNotFound, status, "the single-label endpoint is gone")
+
+	mcpConsumerID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("mcp-cons"), "type": "mcp"})
+	status, _ = putConsumerLabelSets(t, gatewayID, mcpConsumerID, consumerLabelSets())
+	assert.Equal(t, http.StatusUnprocessableEntity, status, "only LLM consumers can hold label sets")
+	status, body = putConsumerLabelSets(t, gatewayID, mcpConsumerID, []map[string]any{})
+	assert.Equal(t, http.StatusOK, status, "clearing an MCP consumer is allowed: %v", body)
+
+	status, body = putConsumerLabelSets(t, gatewayID, consumerID, []map[string]any{})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	assert.Equal(t, []any{}, body["label_sets"], "[] clears the label sets")
 
 	status, body = putGatewayLabeling(t, gatewayID, map[string]any{"enabled": true, "registry_id": registryID, "model": "gpt-4o-mini"})
 	require.Equal(t, http.StatusOK, status, "%v", body)

@@ -94,19 +94,19 @@ type AdminRouterDeps struct {
 	MCPWidePolicy   *policyhttp.MCPWidePolicyHandler
 	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
-	CreateConsumer       *consumerhttp.CreateConsumerHandler
-	GetConsumer          *consumerhttp.GetConsumerHandler
-	ListConsumer         *consumerhttp.ListConsumerHandler
-	UpdateConsumer       *consumerhttp.UpdateConsumerHandler
-	UpdateConsumerLabels *consumerhttp.UpdateConsumerLabelsHandler
-	DeleteConsumer       *consumerhttp.DeleteConsumerHandler
-	ConsumerAssociation  *consumerhttp.AssociationHandler
-	CreateAuth           *authhttp.CreateAuthHandler
-	GetAuth              *authhttp.GetAuthHandler
-	ListAuth             *authhttp.ListAuthHandler
-	UpdateAuth           *authhttp.UpdateAuthHandler
-	RotateAuth           *authhttp.RotateAuthHandler
-	DeleteAuth           *authhttp.DeleteAuthHandler
+	CreateConsumer          *consumerhttp.CreateConsumerHandler
+	GetConsumer             *consumerhttp.GetConsumerHandler
+	ListConsumer            *consumerhttp.ListConsumerHandler
+	UpdateConsumer          *consumerhttp.UpdateConsumerHandler
+	UpdateConsumerLabelSets *consumerhttp.UpdateConsumerLabelSetsHandler
+	DeleteConsumer          *consumerhttp.DeleteConsumerHandler
+	ConsumerAssociation     *consumerhttp.AssociationHandler
+	CreateAuth              *authhttp.CreateAuthHandler
+	GetAuth                 *authhttp.GetAuthHandler
+	ListAuth                *authhttp.ListAuthHandler
+	UpdateAuth              *authhttp.UpdateAuthHandler
+	RotateAuth              *authhttp.RotateAuthHandler
+	DeleteAuth              *authhttp.DeleteAuthHandler
 
 	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
@@ -213,7 +213,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Get("", r.deps.ListConsumer.Handle)
 	consumers.Get("/:id", r.deps.GetConsumer.Handle)
 	consumers.Put("/:id", r.deps.UpdateConsumer.Handle)
-	consumers.Put("/:id/labels", r.deps.UpdateConsumerLabels.Handle)
+	consumers.Put("/:id/label-sets", r.deps.UpdateConsumerLabelSets.Handle)
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
 	consumers.Post("/:id/registries/:registry_id", r.deps.ConsumerAssociation.AttachRegistry)
 	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)

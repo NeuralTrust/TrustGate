@@ -821,12 +821,12 @@ func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consum
 	return _c
 }
 
-// UpdateLabels provides a mock function with given fields: ctx, c
-func (_m *Repository) UpdateLabels(ctx context.Context, c *consumer.Consumer) error {
+// UpdateLabelSets provides a mock function with given fields: ctx, c
+func (_m *Repository) UpdateLabelSets(ctx context.Context, c *consumer.Consumer) error {
 	ret := _m.Called(ctx, c)
 
 	if len(ret) == 0 {
-		panic("no return value specified for UpdateLabels")
+		panic("no return value specified for UpdateLabelSets")
 	}
 
 	var r0 error
@@ -839,31 +839,31 @@ func (_m *Repository) UpdateLabels(ctx context.Context, c *consumer.Consumer) er
 	return r0
 }
 
-// Repository_UpdateLabels_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateLabels'
-type Repository_UpdateLabels_Call struct {
+// Repository_UpdateLabelSets_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateLabelSets'
+type Repository_UpdateLabelSets_Call struct {
 	*mock.Call
 }
 
-// UpdateLabels is a helper method to define mock.On call
+// UpdateLabelSets is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c *consumer.Consumer
-func (_e *Repository_Expecter) UpdateLabels(ctx interface{}, c interface{}) *Repository_UpdateLabels_Call {
-	return &Repository_UpdateLabels_Call{Call: _e.mock.On("UpdateLabels", ctx, c)}
+func (_e *Repository_Expecter) UpdateLabelSets(ctx interface{}, c interface{}) *Repository_UpdateLabelSets_Call {
+	return &Repository_UpdateLabelSets_Call{Call: _e.mock.On("UpdateLabelSets", ctx, c)}
 }
 
-func (_c *Repository_UpdateLabels_Call) Run(run func(ctx context.Context, c *consumer.Consumer)) *Repository_UpdateLabels_Call {
+func (_c *Repository_UpdateLabelSets_Call) Run(run func(ctx context.Context, c *consumer.Consumer)) *Repository_UpdateLabelSets_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].(*consumer.Consumer))
 	})
 	return _c
 }
 
-func (_c *Repository_UpdateLabels_Call) Return(_a0 error) *Repository_UpdateLabels_Call {
+func (_c *Repository_UpdateLabelSets_Call) Return(_a0 error) *Repository_UpdateLabelSets_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Repository_UpdateLabels_Call) RunAndReturn(run func(context.Context, *consumer.Consumer) error) *Repository_UpdateLabels_Call {
+func (_c *Repository_UpdateLabelSets_Call) RunAndReturn(run func(context.Context, *consumer.Consumer) error) *Repository_UpdateLabelSets_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -31,7 +31,7 @@ import (
 const defaultLabelIntakeMaxBodyBytes = 512 << 10
 
 // TrafficLabelsMiddleware offers the chat requests of a gateway with traffic
-// labeling on, from consumers that hold labels, to the async labeling intake.
+// labeling on, from consumers that hold label sets, to the async labeling intake.
 // It never blocks or alters the request.
 type TrafficLabelsMiddleware struct {
 	intake       trafficlabels.Intake
@@ -68,7 +68,7 @@ func (m *TrafficLabelsMiddleware) offer(c *fiber.Ctx) {
 		return
 	}
 	rc, ok := appconsumer.ConsumerFromContext(ctx)
-	if !ok || rc.Consumer == nil || len(rc.Consumer.Labels) == 0 {
+	if !ok || rc.Consumer == nil || len(rc.Consumer.LabelSets) == 0 {
 		return
 	}
 	rt := trace.FromContext(ctx)
@@ -107,7 +107,7 @@ func (m *TrafficLabelsMiddleware) offer(c *fiber.Ctx) {
 		SourceFormat: route.SourceFormat,
 		Body:         bytes.Clone(body),
 		Config:       gw.TrafficLabeling,
-		Labels:       rc.Consumer.Labels,
+		LabelSets:    rc.Consumer.LabelSets,
 		ReceivedAt:   time.Now().UTC(),
 	})
 }

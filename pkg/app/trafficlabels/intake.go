@@ -41,7 +41,7 @@ type Candidate struct {
 	SourceFormat adapter.Format
 	Body         []byte
 	Config       *trafficlabel.Config
-	Labels       []trafficlabel.Label
+	LabelSets    []trafficlabel.LabelSet
 	ReceivedAt   time.Time
 }
 
@@ -224,7 +224,7 @@ func (i *intake) process(ctx context.Context, c Candidate) {
 }
 
 func (i *intake) build(c Candidate) (trafficlabel.Request, bool) {
-	if !c.Config.IsEnabled() || len(c.Labels) == 0 {
+	if !c.Config.IsEnabled() || len(c.LabelSets) == 0 {
 		return trafficlabel.Request{}, false
 	}
 	text := userText(i.decoder, c.Body, c.SourceFormat, c.Config.Window())
@@ -238,7 +238,7 @@ func (i *intake) build(c Candidate) (trafficlabel.Request, bool) {
 		TraceID:    c.TraceID,
 		Text:       text,
 		Config:     c.Config,
-		Labels:     c.Labels,
+		LabelSets:  c.LabelSets,
 		ReceivedAt: c.ReceivedAt,
 	}), true
 }

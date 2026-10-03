@@ -96,15 +96,18 @@ func sampledGateway(rate float64) *gatewaydomain.Gateway {
 
 func labeledConsumer() *consumerdomain.Consumer {
 	return &consumerdomain.Consumer{
-		ID:     ids.New[ids.ConsumerKind](),
-		Type:   consumerdomain.TypeLLM,
-		Labels: []trafficlabel.Label{{ID: "l-billing", Name: "Billing", Instructions: "refunds and invoices"}},
+		ID:   ids.New[ids.ConsumerKind](),
+		Type: consumerdomain.TypeLLM,
+		LabelSets: []trafficlabel.LabelSet{{
+			ID: "set-topic", Name: "Topic",
+			Labels: []trafficlabel.Label{{Name: "Billing", Description: "refunds and invoices"}, {Name: "Legal"}},
+		}},
 	}
 }
 
 func unlabeledConsumer() *consumerdomain.Consumer {
 	c := labeledConsumer()
-	c.Labels = nil
+	c.LabelSets = nil
 	return c
 }
 
@@ -184,7 +187,7 @@ func TestTrafficLabels_OffersChatRequestsOfEnabledGateways(t *testing.T) {
 	assert.Equal(t, chatBody, string(got[0].Body))
 	assert.Same(t, gw.TrafficLabeling, got[0].Config)
 	assert.Equal(t, consumer.ID.String(), got[0].ConsumerID)
-	assert.Equal(t, consumer.Labels, got[0].Labels)
+	assert.Equal(t, consumer.LabelSets, got[0].LabelSets)
 	assert.False(t, got[0].ReceivedAt.IsZero())
 }
 
@@ -206,7 +209,7 @@ func TestTrafficLabels_SkipsWhatItMustNotClassify(t *testing.T) {
 			return gw
 		}()}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "no consumer in context", setup: trafficLabelsSetup{gateway: labeledGateway(true), noConsumer: true}, path: "/acme/v1/chat/completions", body: chatBody},
-		{name: "consumer without labels", setup: trafficLabelsSetup{gateway: labeledGateway(true), consumer: unlabeledConsumer()}, path: "/acme/v1/chat/completions", body: chatBody},
+		{name: "consumer without label sets", setup: trafficLabelsSetup{gateway: labeledGateway(true), consumer: unlabeledConsumer()}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "no trace", setup: trafficLabelsSetup{gateway: labeledGateway(true), noTrace: true}, path: "/acme/v1/chat/completions", body: chatBody},
 		{name: "non-chat route", setup: trafficLabelsSetup{gateway: labeledGateway(true)}, path: "/acme/v1/embeddings", body: `{"input":"hello","model":"text-embedding-3-small"}`},
 		{name: "unknown route", setup: trafficLabelsSetup{gateway: labeledGateway(true)}, path: "/acme/whatever", body: chatBody},

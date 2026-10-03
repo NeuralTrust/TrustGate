@@ -32,7 +32,7 @@ import (
 
 func labelsEvent() *events.TrafficLabels {
 	return &events.TrafficLabels{
-		SchemaVersion: events.SchemaVersion,
+		SchemaVersion: events.TrafficLabelsSchemaVersion,
 		TraceID:       "trace-123",
 		GatewayID:     "gw-1",
 		ConsumerID:    "consumer-1",
@@ -40,14 +40,16 @@ func labelsEvent() *events.TrafficLabels {
 		OccurredOn:    time.Date(2026, 9, 28, 10, 0, 5, 0, time.UTC).UnixMilli(),
 		RequestedOn:   time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC).UnixMilli(),
 		Retention:     &events.Retention{Plan: "enterprise", ExpiresAt: 1_900_000_000_000},
-		Matched:       []events.LabelRef{{ID: "l-1", Name: "Billing"}},
-		Evaluated:     []events.LabelRef{{ID: "l-1", Name: "Billing"}, {ID: "l-2", Name: "Legal"}},
-		RegistryID:    "reg-1",
-		Model:         "gpt-4o-mini",
-		CatalogHash:   "abc",
-		InputTokens:   120,
-		OutputTokens:  9,
-		LatencyMs:     340,
+		Results: []events.LabelResult{
+			{LabelSetID: "set-1", LabelSetName: "Sentiment analysis", Label: "negative"},
+			{LabelSetID: "set-2", LabelSetName: "Topic", Label: ""},
+		},
+		RegistryID:   "reg-1",
+		Model:        "gpt-4o-mini",
+		CatalogHash:  "abc",
+		InputTokens:  120,
+		OutputTokens: 9,
+		LatencyMs:    340,
 	}
 }
 
@@ -90,11 +92,13 @@ func TestExporter_PublishTrafficLabelsEmitsItsOwnRecord(t *testing.T) {
 	assert.Equal(t, "reg-1", str(attrLabelRegistryID))
 	assert.Equal(t, "gpt-4o-mini", str(attrLabelModel))
 	assert.Equal(t, "abc", str(attrLabelCatalogHash))
-	assert.JSONEq(t, `[{"id":"l-1","name":"Billing"}]`, str(attrLabelMatched))
-	assert.JSONEq(t, `[{"id":"l-1","name":"Billing"},{"id":"l-2","name":"Legal"}]`, str(attrLabelEvaluated))
+	assert.JSONEq(t, `[
+		{"label_set_id":"set-1","label_set_name":"Sentiment analysis","label":"negative"},
+		{"label_set_id":"set-2","label_set_name":"Topic","label":""}
+	]`, str(attrLabelResults))
 	assert.Equal(t, "enterprise", str(attrRetentionPlan))
-	assert.Equal(t, int64(events.SchemaVersion), num(attrLabelSchemaVersion))
-	assert.Equal(t, int64(1), num(attrLabelMatchedCount))
+	assert.Equal(t, int64(2), num(attrLabelSchemaVersion), "label sets are version 2 of the payload")
+	assert.Equal(t, int64(2), num(attrLabelResultsCount))
 	assert.Equal(t, int64(120), num(attrLabelInputTokens))
 	assert.Equal(t, int64(9), num(attrLabelOutputTokens))
 	assert.Equal(t, int64(340), num(attrLabelLatencyMs))
@@ -120,20 +124,48 @@ func TestExporter_PublishTrafficLabelsStaysOutOfTheRequestNamespace(t *testing.T
 	})
 }
 
-func TestExporter_PublishTrafficLabelsWithoutMatches(t *testing.T) {
+func TestExporter_PublishTrafficLabelsDropsTheV1Attributes(t *testing.T) {
+	t.Parallel()
+	exp, mem := newMemExporter(t)
+
+	require.NoError(t, exp.PublishTrafficLabels(context.Background(), labelsEvent()))
+
+	rec := mem.all()[0]
+	for _, key := range []string{"trustgate.label.matched", "trustgate.label.matched.count", "trustgate.label.evaluated"} {
+		_, ok := recordAttr(rec, key)
+		assert.False(t, ok, "%s was replaced by %s", key, attrLabelResults)
+	}
+}
+
+func TestExporter_PublishTrafficLabelsDefaultsTheSchemaVersion(t *testing.T) {
 	t.Parallel()
 	exp, mem := newMemExporter(t)
 	evt := labelsEvent()
-	evt.Matched = nil
+	evt.SchemaVersion = 0
+
+	require.NoError(t, exp.PublishTrafficLabels(context.Background(), evt))
+
+	rec := mem.all()[0]
+	assert.Equal(t, fmt.Sprintf("trustgate.%d.traffic_labels", events.SchemaVersion), rec.EventName())
+	v, ok := recordAttr(rec, attrLabelSchemaVersion)
+	require.True(t, ok)
+	assert.Equal(t, int64(events.TrafficLabelsSchemaVersion), v.AsInt64())
+}
+
+func TestExporter_PublishTrafficLabelsWithoutResults(t *testing.T) {
+	t.Parallel()
+	exp, mem := newMemExporter(t)
+	evt := labelsEvent()
+	evt.Results = nil
 	evt.InputTokens, evt.OutputTokens, evt.LatencyMs = 0, 0, 0
 	evt.Retention = nil
 
 	require.NoError(t, exp.PublishTrafficLabels(context.Background(), evt))
 
 	rec := mem.all()[0]
-	matched, _ := recordAttr(rec, attrLabelMatched)
-	assert.Equal(t, "[]", matched.AsString(), "no match is an empty list, not null")
-	count, _ := recordAttr(rec, attrLabelMatchedCount)
+	results, _ := recordAttr(rec, attrLabelResults)
+	assert.Equal(t, "[]", results.AsString(), "no result is an empty list, not null")
+	count, _ := recordAttr(rec, attrLabelResultsCount)
 	assert.Equal(t, int64(0), count.AsInt64())
 	tokens, ok := recordAttr(rec, attrLabelInputTokens)
 	require.True(t, ok, "unknown usage is reported as 0")
